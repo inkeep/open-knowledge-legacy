@@ -3,7 +3,7 @@ import type { CC1Signal as ServerCC1Signal } from '@inkeep/open-knowledge-server
 
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
-export type DerivedViewChannel = 'files' | 'backlinks' | 'graph';
+export type DerivedViewChannel = 'files' | 'backlinks' | 'graph' | 'sync-status';
 
 export interface CC1Signal extends ServerCC1Signal {
   ch: DerivedViewChannel;
@@ -14,7 +14,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isDerivedViewChannel(value: unknown): value is DerivedViewChannel {
-  return value === 'files' || value === 'backlinks' || value === 'graph';
+  return value === 'files' || value === 'backlinks' || value === 'graph' || value === 'sync-status';
 }
 
 export function parseCC1Signal(payload: string): CC1Signal | null {

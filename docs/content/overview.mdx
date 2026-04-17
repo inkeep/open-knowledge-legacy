@@ -32,10 +32,13 @@ The P0 audience is individual contributors -- developers and knowledge workers u
 ## Quick start
 
 ```bash
-npx @inkeep/open-knowledge init     # Scaffold .open-knowledge/ + register MCP configs
+npx @inkeep/open-knowledge clone https://github.com/company/docs  # Clone + start
+npx @inkeep/open-knowledge init     # Or: scaffold on an existing project
 npx @inkeep/open-knowledge start    # Hocuspocus collab; auto-spawns the editor at http://localhost:3000
 npx @inkeep/open-knowledge preview  # Show which files the watcher will track
 ```
+
+`clone` is the fastest path from a GitHub URL to editing -- it clones the repo, scaffolds the project, and starts the editor. Changes sync with GitHub automatically. For existing local projects, use `init` + `start` instead.
 
 After `init`, open your project in an MCP-compatible editor (Claude Code, Cursor, VS Code, or Windsurf) and approve the `open-knowledge` server. The agent can start working immediately — `start` is optional. When the agent calls its first MCP tool and no collab server is running, `ok mcp` detach-spawns `ok start` as a sibling process so resumption is zero-ceremony.
 
@@ -43,10 +46,16 @@ After `init`, open your project in an MCP-compatible editor (Claude Code, Cursor
 
 <Cards>
   <Card title="Getting started" href="/guides/getting-started">
-    Initialize a project, start the editor, connect AI agents.
+    Clone a repo or initialize an existing project, start the editor, connect AI agents.
+  </Card>
+  <Card title="GitHub Sync" href="/guides/github-sync">
+    Clone repos, auto-sync with your team, and resolve conflicts.
   </Card>
   <Card title="Configuration" href="/guides/configuration">
     Config schema, YAML hierarchy, environment variables, CLI flags.
+  </Card>
+  <Card title="CLI reference" href="/guides/cli-reference">
+    All commands: start, clone, auth, sync, push, pull, mcp, init, preview.
   </Card>
   <Card title="MCP integration" href="/guides/mcp-integration">
     Disk-only vs connected mode, available tools, supported clients.

@@ -268,16 +268,24 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const log = opts.log ?? getLogger('start');
 
-  // Auto-init: scaffold .open-knowledge/ on first run (unless skipped).
+  // Auto-init: scaffold .open-knowledge/ on every boot (unless skipped).
+  //
+  // We call initContent (not runInit) so the scaffolding is idempotent and
+  // scoped — it only fills in missing files under .open-knowledge/. We
+  // deliberately do NOT invoke upsertRootInstructions or MCP-config writes
+  // on every boot; those are first-time-setup concerns owned by `ok init`
+  // and the clone auto-init path. This makes partial .open-knowledge/
+  // states (scaffold files deleted, prior boot killed mid-init, etc.)
+  // self-heal on the next `ok start` without surprising the user by
+  // rewriting their root AGENTS.md.
   let didAutoInit = false;
   const okDir = resolve(cwd, OK_DIR);
-  if (!existsSync(okDir) && !skipAutoInit) {
+  const needsScaffold = !existsSync(okDir);
+  if (!skipAutoInit) {
     try {
-      const { runInit } = await import('./init.ts');
-      const result = runInit({ cwd, mcp: false });
-      if (result.mcpAction === 'failed') {
-        console.warn(`Auto-init: ${result.mcpError ?? 'unknown error'}`);
-      } else {
+      const { initContent } = await import('../content/init.ts');
+      const result = initContent(cwd);
+      if (needsScaffold || result.created.length > 0) {
         didAutoInit = true;
       }
     } catch (err) {
@@ -331,6 +339,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
     onAgentWrite,
+    // Pass the exact runtime that started this server so /api/local-op/* can
+    // spawn additional CLI processes without needing open-knowledge on PATH.
+    localOpCliArgs: [process.execPath, process.argv[1]],
   });
 
   // Auto-spawn the UI sibling when none is running. Greenfield: we don't try
@@ -368,16 +379,23 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
         .catch((err) => {
           console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
+          if (!res.writableEnded && !res.headersSent) {
             res.writeHead(500);
             res.end('Internal server error');
+          } else if (!res.writableEnded) {
+            res.end();
           }
         });
       return;

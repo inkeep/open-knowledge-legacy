@@ -32,6 +32,40 @@ export const ConfigSchema = z.object({
       include: ['**/*.md', '**/*.mdx'],
       exclude: [],
     }),
+  github: z
+    .object({
+      oauthAppClientId: z.string().default('Ov23liqlSd0V1MwR6rhI'),
+    })
+    .default({ oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' }),
+  sync: z
+    .object({
+      /** Auto-detect from remote presence when absent; override to explicitly enable/disable. */
+      enabled: z.boolean().optional(),
+      /** Seconds between push cycles. Default 60. ±15% jitter applied per cycle. */
+      pushIntervalSeconds: z.number().int().min(1).default(60),
+      /** Seconds between pull/fetch cycles. Default 30. ±15% jitter applied per cycle. */
+      pullIntervalSeconds: z.number().int().min(1).default(30),
+      /** Automatically commit local changes at L2 flush. */
+      autoCommit: z.boolean().default(true),
+      /** Automatically push after each commit. */
+      autoPush: z.boolean().default(true),
+      /** Automatically pull remote changes each cycle. */
+      autoPull: z.boolean().default(true),
+      /**
+       * Commit message for auto-commits.
+       * "auto" = match shadow ("WIP auto-save <ISO timestamp>").
+       * Any other string is used as a template.
+       */
+      commitMessage: z.string().default('auto'),
+    })
+    .default({
+      pushIntervalSeconds: 60,
+      pullIntervalSeconds: 30,
+      autoCommit: true,
+      autoPush: true,
+      autoPull: true,
+      commitMessage: 'auto',
+    }),
   server: z
     .object({
       // Default 0 asks the kernel to pick a free port; `ok start` writes the
