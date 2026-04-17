@@ -20,9 +20,14 @@
  * zero-ceremony promise assumes silent recovery, but bounded recovery with
  * a diagnostic surface is the correct fallback for a permanently-broken
  * configuration (misconfigured proxy, crashed-and-unrespawned `ok start`).
+ *
+ * The poll loop is extracted as `runCollabUrlPoll` so tests can drive it
+ * with fake clocks + mocked fetch — the hook is a thin React wrapper. This
+ * follows CLAUDE.md precedent #13b: implicit time-coupling is a test smell,
+ * so the primitive accepts `now / setTimeout / clearTimeout` as deps.
  */
 import { useEffect, useRef, useState } from 'react';
-import { fetchApiConfig } from '@/lib/api-config';
+import { type FetchApiConfigResult, fetchApiConfig } from '@/lib/api-config';
 import { defaultCollabWsUrl } from '@/lib/cc1';
 
 const INITIAL_DELAY_MS = 2_000;
@@ -44,6 +49,126 @@ export interface UseCollabUrlState {
   lastError: CollabUrlError | null;
   /** Call to reset backoff + wall-clock and resume polling (exits terminal). */
   retry: () => void;
+}
+
+export interface CollabPollState {
+  collabUrl: string | null;
+  attempts: number;
+  terminal: boolean;
+  lastError: CollabUrlError | null;
+}
+
+export interface CollabPollHandle {
+  /** Stop the loop and abort any in-flight fetch. Safe to call multiple times. */
+  cancel: () => void;
+}
+
+export interface CollabPollDeps {
+  fetchConfig: (signal: AbortSignal) => Promise<FetchApiConfigResult>;
+  fallbackUrl: () => string;
+  /** Current clock reading in ms. Production: `Date.now`. Tests: virtual clock. */
+  now: () => number;
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof globalThis.setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof globalThis.setTimeout>) => void;
+  onStateChange: (state: CollabPollState) => void;
+  /** Override for tests. Default `TERMINAL_AFTER_MS`. */
+  terminalAfterMs?: number;
+  /** Override for tests. Default `INITIAL_DELAY_MS`. */
+  initialDelayMs?: number;
+  /** Override for tests. Default `MAX_DELAY_MS`. */
+  maxDelayMs?: number;
+  /** Override for tests. Default `console.info`/`console.warn`. */
+  log?: {
+    info: (msg: string) => void;
+    warn: (msg: string) => void;
+  };
+}
+
+/**
+ * Run the collab-URL poll loop. Pure of React — callers wire it into
+ * `useEffect` + `useState` (see `useCollabUrl`) or drive it directly from a
+ * test harness with injected `now` / `setTimeout` / `clearTimeout`.
+ */
+export function runCollabUrlPoll(deps: CollabPollDeps): CollabPollHandle {
+  const terminalAfterMs = deps.terminalAfterMs ?? TERMINAL_AFTER_MS;
+  const initialDelayMs = deps.initialDelayMs ?? INITIAL_DELAY_MS;
+  const maxDelayMs = deps.maxDelayMs ?? MAX_DELAY_MS;
+  const log = deps.log ?? { info: console.info, warn: console.warn };
+
+  const ac = new AbortController();
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  let delay = initialDelayMs;
+  let attempt = 0;
+  let cancelled = false;
+  let nullCollabLogged = false;
+  let lastError: CollabUrlError | null = null;
+  const startedAt = deps.now();
+
+  const tick = async (): Promise<void> => {
+    attempt += 1;
+    let resolved: string | null = null;
+    try {
+      const result = await deps.fetchConfig(ac.signal);
+      if (result.status === 'absent') {
+        resolved = deps.fallbackUrl();
+        lastError = null;
+      } else if (result.status === 'ok' && result.config.collabUrl !== null) {
+        resolved = result.config.collabUrl;
+        lastError = null;
+      } else if (result.status === 'ok') {
+        if (!nullCollabLogged) {
+          nullCollabLogged = true;
+          log.info('[collab-url] ok ui responded but server.lock has no port yet — retrying');
+        }
+        lastError = { kind: 'null-collab' };
+      } else if (result.status === 'error') {
+        log.warn(`[collab-url] /api/config error (${result.code}) — retrying in ${delay}ms`);
+        lastError = { kind: 'error', code: result.code };
+      }
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') return;
+      lastError = { kind: 'error', code: 'network' };
+    }
+
+    if (cancelled) return;
+
+    if (resolved !== null) {
+      deps.onStateChange({
+        collabUrl: resolved,
+        attempts: attempt,
+        terminal: false,
+        lastError: null,
+      });
+      return;
+    }
+
+    const elapsed = deps.now() - startedAt;
+    if (elapsed >= terminalAfterMs) {
+      // Transition to terminal — stop automatic retries. Caller's `retry()`
+      // creates a new loop with a fresh wall-clock window.
+      deps.onStateChange({ collabUrl: null, attempts: attempt, terminal: true, lastError });
+      return;
+    }
+
+    deps.onStateChange({ collabUrl: null, attempts: attempt, terminal: false, lastError });
+    timer = deps.setTimeout(() => {
+      void tick();
+    }, delay);
+    delay = Math.min(delay * 2, maxDelayMs);
+  };
+
+  void tick();
+
+  return {
+    cancel: () => {
+      cancelled = true;
+      ac.abort();
+      if (timer !== null) {
+        deps.clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
 }
 
 interface LoopState {
@@ -71,71 +196,23 @@ export function useCollabUrl(): UseCollabUrlState {
     // referenced here so the dependency is observed by the linter.
     void retrySignal;
     const token = ++retryTokenRef.current.token;
-    const ac = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let delay = INITIAL_DELAY_MS;
-    let attempt = 0;
-    let cancelled = false;
-    let nullCollabLogged = false;
-    let lastError: CollabUrlError | null = null;
-    const startedAt = Date.now();
 
-    const tick = async (): Promise<void> => {
-      attempt += 1;
-      let resolved: string | null = null;
-      try {
-        const result = await fetchApiConfig(ac.signal);
-        if (result.status === 'absent') {
-          resolved = defaultCollabWsUrl();
-          lastError = null;
-        } else if (result.status === 'ok' && result.config.collabUrl !== null) {
-          resolved = result.config.collabUrl;
-          lastError = null;
-        } else if (result.status === 'ok') {
-          if (!nullCollabLogged) {
-            nullCollabLogged = true;
-            console.info('[collab-url] ok ui responded but server.lock has no port yet — retrying');
-          }
-          lastError = { kind: 'null-collab' };
-        } else if (result.status === 'error') {
-          console.warn(`[collab-url] /api/config error (${result.code}) — retrying in ${delay}ms`);
-          lastError = { kind: 'error', code: result.code };
-        }
-      } catch (err) {
-        if ((err as { name?: string }).name === 'AbortError') return;
-        lastError = { kind: 'error', code: 'network' };
-      }
-
-      if (cancelled || token !== retryTokenRef.current.token) return;
-
-      if (resolved !== null) {
-        setState({ collabUrl: resolved, attempts: attempt, terminal: false, lastError: null });
-        return;
-      }
-
-      const elapsed = Date.now() - startedAt;
-      if (elapsed >= TERMINAL_AFTER_MS) {
-        // Transition to terminal — stop automatic retries. `retry()` bumps
-        // `retrySignal`, which re-runs this effect with a fresh wall-clock.
-        setState({ collabUrl: null, attempts: attempt, terminal: true, lastError });
-        return;
-      }
-
-      setState({ collabUrl: null, attempts: attempt, terminal: false, lastError });
-      timer = setTimeout(() => {
-        void tick();
-      }, delay);
-      delay = Math.min(delay * 2, MAX_DELAY_MS);
-    };
-
-    void tick();
+    const handle = runCollabUrlPoll({
+      fetchConfig: fetchApiConfig,
+      fallbackUrl: defaultCollabWsUrl,
+      now: Date.now,
+      setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+      clearTimeout: (h) => globalThis.clearTimeout(h),
+      onStateChange: (next) => {
+        // In-flight loops from a previous effect run (before retry / unmount)
+        // may still resolve after their cancel — guard via token comparison.
+        if (token !== retryTokenRef.current.token) return;
+        setState(next);
+      },
+    });
 
     return () => {
-      cancelled = true;
-      ac.abort();
-      if (timer !== null) {
-        clearTimeout(timer);
-      }
+      handle.cancel();
     };
   }, [retrySignal]);
 
