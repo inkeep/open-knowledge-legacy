@@ -1,0 +1,92 @@
+diff --git a/dist/y-tiptap.cjs b/dist/y-tiptap.cjs
+index 4dd5b4df7c0c589f4781807bf775f791e216e92a..e8dcb7c7a3419e0e03c49cafd98736421c3e4b7f 100644
+--- a/dist/y-tiptap.cjs
++++ b/dist/y-tiptap.cjs
+@@ -891,10 +891,22 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline;
++    if (isInline) {
++      __okYps.inline++;
++    } else {
++      __okYps.block++;
++      if (schema.nodes.rawMdxFallback) {
++        try {
++          const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)]);
++          meta.mapping.set(el, fallback);
++          return fallback
++        } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr)); }
++      }
++    }
+     meta.mapping.delete(el);
+     return null
+   }
+@@ -926,10 +938,10 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)));
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    __okYps.inline++;
+     return null
+   }
+   // @ts-ignore
+diff --git a/dist/y-tiptap.js b/dist/y-tiptap.js
+index 1cddd60120846234225be3c6768fd2da8410fc5c..c53665aef4003bdb769050caf6e8eb6fe465d7d1 100644
+--- a/dist/y-tiptap.js
++++ b/dist/y-tiptap.js
+@@ -857,10 +857,22 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline;
++    if (isInline) {
++      __okYps.inline++;
++    } else {
++      __okYps.block++;
++      if (schema.nodes.rawMdxFallback) {
++        try {
++          const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)]);
++          meta.mapping.set(el, fallback);
++          return fallback
++        } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr)); }
++      }
++    }
+     meta.mapping.delete(el);
+     return null
+   }
+@@ -892,10 +904,10 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)));
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    __okYps.inline++;
+     return null
+   }
+   // @ts-ignore
