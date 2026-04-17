@@ -17,7 +17,7 @@ docs/      — Next.js docs site (Fumadocs)
 
 ```bash
 bun install                          # Install all workspace dependencies
-cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
+bun dev                              # Configure MCP + start Vite dev server (Hocuspocus + HMR on 5173)
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
 bun run build                        # Build all packages via turbo (cli, app, docs)
 cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
@@ -392,7 +392,13 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 ### Dev mode
 
-The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
+**Recommended:** `bun dev` from the workspace root.
+
+This is a thin two-step script: first `bun run dev:mcp` rewrites MCP configs (global `~/.cursor/mcp.json`, project-local `.cursor/mcp.json`, and `.mcp.json` for Claude Code) so every editor's `open-knowledge` MCP server points at this checkout's `packages/cli/src/cli.ts` on port 5173 via the resolved `bun` binary. Then it runs `bun run dev` inside `packages/app`, which is standard Vite. The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` so a single process gives Vite + Hocuspocus + file watcher on port 5173, with HMR for the editor UI.
+
+`dev:mcp` only touches MCP config files — no server processes, no lockfiles. It's safe to re-run; it's idempotent and only overwrites the `open-knowledge` entry. The Vite plugin participates in the same `server.lock` as the published CLI, so `bun dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
+
+`cd packages/app && bun run dev` still works if you've already configured MCP manually and want to skip the rewrite step.
 
 ### Source-view minimal polish
 

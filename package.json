@@ -21,6 +21,8 @@
     "tier1": "bun run check",
     "tier2": "bun run tier1 && turbo run test:stress:server-authoritative test:fuzz:bridge test:perf:regression:unit test:health:unit test:health test:e2e",
     "tier3": "STRESS_FIDELITY=1 STRESS_FUZZ_NIGHTLY=1 bun run tier2",
+    "dev": "bun run dev:mcp && cd packages/app && bun run dev",
+    "dev:mcp": "bun packages/cli/src/dev-mcp-setup.ts",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
     "changeset": "changeset",
     "version": "changeset version",
