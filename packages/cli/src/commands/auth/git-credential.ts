@@ -24,7 +24,12 @@ export async function handleCredentialGet(
   const entry = await tokenStore.get(host);
   if (entry == null) return 1;
 
-  output.write(`username=${entry.login}\npassword=${entry.token}\n`);
+  // Git's credential protocol is newline-delimited `key=value`. If `login` or
+  // `token` contained CR/LF (e.g. via a crafted OAuth profile flowing through
+  // TokenEntry), an unsanitized write would inject arbitrary protocol fields
+  // such as `\nurl=http://evil\npassword=stolen`. Strip them before writing.
+  const safeLine = (s: string) => s.replace(/[\r\n]/g, '');
+  output.write(`username=${safeLine(entry.login)}\npassword=${safeLine(entry.token)}\n`);
   return 0;
 }
 

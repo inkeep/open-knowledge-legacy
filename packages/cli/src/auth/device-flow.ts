@@ -55,7 +55,25 @@ export async function runDeviceFlow(options: DeviceFlowOptions): Promise<DeviceF
         : undefined,
   });
 
-  const result = await auth({ type: 'oauth' });
+  let result: Awaited<ReturnType<typeof auth>>;
+  try {
+    result = await auth({ type: 'oauth' });
+  } catch (error) {
+    // Octokit's Device Flow throws for timeout, user denial, and network
+    // errors. Propagating raw Octokit errors lands as a bare stack trace in
+    // the CLI; remap to a message the `login` / `pat` commands can format.
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('access_denied')) {
+        throw new Error('Device-flow authorization was denied.');
+      }
+      if (msg.includes('expired_token') || msg.includes('timeout') || msg.includes('timed out')) {
+        throw new Error('Device-flow code expired before authorization — please try again.');
+      }
+      throw new Error(`GitHub sign-in failed: ${error.message}`);
+    }
+    throw error;
+  }
   return {
     token: result.token,
     tokenType: result.tokenType,

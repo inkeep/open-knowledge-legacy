@@ -26,14 +26,20 @@ interface ConflictEntry {
 
 type ResolveStrategy = 'mine' | 'theirs' | 'content';
 
-async function fetchConflicts(): Promise<ConflictEntry[]> {
+interface ConflictsFetchResult {
+  conflicts: ConflictEntry[];
+  /** Set when the fetch itself failed — distinguishes from a real empty list. */
+  error?: 'network' | 'server';
+}
+
+async function fetchConflicts(): Promise<ConflictsFetchResult> {
   try {
     const res = await fetch('/api/sync/conflicts');
-    if (!res.ok) return [];
-    const data = (await res.json()) as { conflicts: ConflictEntry[] };
-    return data.conflicts ?? [];
+    if (!res.ok) return { conflicts: [], error: 'server' };
+    const data = (await res.json()) as { conflicts?: ConflictEntry[] };
+    return { conflicts: data.conflicts ?? [] };
   } catch {
-    return [];
+    return { conflicts: [], error: 'network' };
   }
 }
 
@@ -95,7 +101,17 @@ function ManualResolveDialog({ file, onResolve, onAbort }: ManualResolveDialogPr
   const [sides, setSides] = useState<ConflictSides | null>(null);
 
   useEffect(() => {
-    void fetchConflictSides(file).then(setSides);
+    // Guard against the dialog closing before the fetch resolves — otherwise
+    // React warns about setting state on an unmounted component and the
+    // previous file's content would also briefly flicker into a re-opened
+    // dialog.
+    let cancelled = false;
+    void fetchConflictSides(file).then((result) => {
+      if (!cancelled) setSides(result);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [file]);
 
   if (sides === null) {
@@ -145,12 +161,14 @@ interface ConflictResolverProps {
 
 export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) {
   const [conflicts, setConflicts] = useState<ConflictEntry[]>([]);
+  const [fetchError, setFetchError] = useState<'network' | 'server' | null>(null);
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [resolving, setResolving] = useState<Set<string>>(new Set());
   const [manualFile, setManualFile] = useState<string | null>(null);
 
   function refresh() {
-    void fetchConflicts().then((list) => {
+    void fetchConflicts().then(({ conflicts: list, error }) => {
+      setFetchError(error ?? null);
       setConflicts(list);
       // Remove resolved entries that no longer appear in the list
       setResolved((prev) => {
@@ -245,7 +263,18 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto">
-            {conflicts.length === 0 ? (
+            {fetchError ? (
+              <div className="px-4 py-6 text-sm text-center space-y-2">
+                <p className="text-destructive">
+                  {fetchError === 'network'
+                    ? 'Could not reach the sync server — check your connection.'
+                    : 'Sync server error — try again in a moment.'}
+                </p>
+                <Button variant="outline" size="sm" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            ) : conflicts.length === 0 ? (
               <p className="px-4 py-6 text-sm text-muted-foreground text-center">
                 No conflicts found.
               </p>

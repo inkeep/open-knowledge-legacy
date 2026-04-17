@@ -29,6 +29,14 @@ import { computeRemainingMs } from './sync-timing.ts';
 
 const log = getLogger('sync-engine');
 
+/**
+ * Git SHA-1 object IDs are 40 lowercase hex chars. `commit-tree` and similar
+ * plumbing can emit error text on stdout under failure modes (e.g. corrupt
+ * objects, disk full) — a non-empty truthy string is not enough to trust as a
+ * ref value, so we pattern-match before feeding it to `update-ref`.
+ */
+const SHA_HEX_40 = /^[0-9a-f]{40}$/i;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SyncState =
@@ -390,7 +398,21 @@ export class SyncEngine {
         clearTimeout(this.pushTimer);
         this.pushTimer = null;
       }
+      // Drain in-flight cycles so disable is observed before the next cycle
+      // mutates state. Cap the wait so a wedged pull/push (hung network,
+      // unresponsive remote) can't hold the toggle forever — disable will
+      // still land in-memory; the stuck cycle logs its own outcome when it
+      // eventually resolves.
+      const DRAIN_TIMEOUT_MS = 30_000;
+      const drainStartMs = Date.now();
       while (this.pullInFlight || this.pushInFlight) {
+        if (Date.now() - drainStartMs > DRAIN_TIMEOUT_MS) {
+          log.warn(
+            { pullInFlight: this.pullInFlight, pushInFlight: this.pushInFlight },
+            '[sync] setEnabled(false): timed out waiting for in-flight cycle to drain',
+          );
+          break;
+        }
         await new Promise((r) => setTimeout(r, 50));
       }
       this.pausedReason = undefined;
@@ -915,7 +937,14 @@ export class SyncEngine {
           await handle.git.raw(['commit-tree', newTreeSha, '-p', headSha, '-m', message])
         ).trim();
 
-        if (!newCommitSha) {
+        // `commit-tree` may return error text on stdout under failure modes
+        // (corrupt objects, disk issues). Treating that as a ref value would
+        // corrupt the branch pointer in the subsequent `update-ref`.
+        if (!newCommitSha || !SHA_HEX_40.test(newCommitSha)) {
+          log.warn(
+            { raw: newCommitSha },
+            '[sync] commit-tree returned invalid SHA — aborting push',
+          );
           this.transitionTo('idle');
           return;
         }
@@ -1097,7 +1126,15 @@ export class SyncEngine {
       const newCommitSha = (
         await isoHandle.git.raw(['commit-tree', newTreeSha, '-p', headSha, '-m', message])
       ).trim();
-      if (!newCommitSha) return null;
+      // Same rationale as the main push path: reject error text masquerading
+      // as a SHA before we feed it to `update-ref`.
+      if (!newCommitSha || !SHA_HEX_40.test(newCommitSha)) {
+        log.warn(
+          { raw: newCommitSha },
+          '[sync] commit-tree returned invalid SHA in commitDirtyContentFilesToHead',
+        );
+        return null;
+      }
 
       await handle.git.raw([
         'update-ref',
@@ -1231,7 +1268,12 @@ export class SyncEngine {
   private async handleMergeConflict(): Promise<void> {
     const handle = createGitInstance(this.projectDir, { credentialArgs: this.credentialArgs });
 
-    // List all conflicted files (those with U status in git's unmerged index)
+    // List all conflicted files (those with U status in git's unmerged index).
+    // If this listing fails we cannot tell content-vs-non-content conflicts
+    // apart, so the downstream auto-resolve and `commit --no-edit` path would
+    // silently commit a merge with unresolved files still in the index. Abort
+    // the merge and surface the error so the user can retry rather than
+    // produce a malformed commit.
     let conflictedFiles: string[] = [];
     try {
       const out = (await handle.git.raw(['diff', '--name-only', '--diff-filter=U'])).trim();
@@ -1242,10 +1284,19 @@ export class SyncEngine {
             .filter(Boolean)
         : [];
     } catch (e) {
-      log.warn(
+      log.error(
         { err: e },
-        '[sync] failed to list conflicted files — treating all as content conflicts',
+        '[sync] failed to list conflicted files — aborting merge to avoid committing unresolved state',
       );
+      try {
+        await handle.git.raw(['merge', '--abort']);
+      } catch (abortErr) {
+        log.warn({ err: abortErr }, '[sync] git merge --abort failed during cleanup');
+      }
+      this.error = 'Failed to detect conflict files — merge aborted';
+      this.pausedReason = undefined;
+      this.transitionTo('idle');
+      return;
     }
 
     // Partition: content files pause sync; non-content files are auto-resolved with theirs

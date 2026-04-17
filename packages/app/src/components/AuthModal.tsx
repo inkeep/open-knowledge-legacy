@@ -256,12 +256,25 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   const [pat, setPat] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Cancel any in-flight PAT validation when the panel unmounts so the stream
+  // reader doesn't keep running and calling setState on an unmounted component.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   async function handleSubmit() {
     if (!pat.trim()) {
       setError('Paste a personal access token');
       return;
     }
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setLoading(true);
     setError(null);
     try {
@@ -269,6 +282,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pat: pat.trim() }),
+        signal: ac.signal,
       });
       if (!res.ok || !res.body) {
         setError('Invalid token — check that it has repo scope');
@@ -307,8 +321,10 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         }
       }
       setError('No response — try again');
-    } catch {
-      setError('Connection error — try again');
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setError('Connection error — try again');
+      }
     }
     setLoading(false);
   }
@@ -329,6 +345,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
       </p>
       <Input
         type="password"
+        aria-label="Personal access token"
         placeholder="ghp_…"
         value={pat}
         onChange={(e) => setPat(e.target.value)}
@@ -368,12 +385,14 @@ function IdentityPrompt({ login, onSave, onSkip }: IdentityPromptProps) {
         Before syncing, set your identity for git commits:
       </p>
       <Input
+        aria-label="Name"
         placeholder={`Name (e.g. ${login})`}
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
       <Input
         type="email"
+        aria-label="Email"
         placeholder="Email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}

@@ -80,15 +80,27 @@ export function isLoopbackRequest(req: IncomingMessage): boolean {
 /**
  * Returns true if the Origin header (when present) is a loopback origin.
  * Absent Origin header is allowed (same-origin browser requests / CLI tools).
+ *
+ * Parses the URL and compares hostname exactly; a raw `startsWith` would
+ * accept crafted origins like `http://127.0.0.1.evil.com` if DNS rebinding
+ * ever lined up with the loopback socket check.
  */
 export function hasValidLocalOpOrigin(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
-  return (
-    origin.startsWith('http://127.0.0.1') ||
-    origin.startsWith('http://localhost') ||
-    origin.startsWith('http://[::1]')
-  );
+  try {
+    // WHATWG URL preserves the IPv6 brackets in `hostname` (e.g. `[::1]`), so
+    // the comparison set includes the bracketed form alongside the literal.
+    const { hostname } = new URL(origin);
+    return (
+      hostname === '127.0.0.1' ||
+      hostname === 'localhost' ||
+      hostname === '[::1]' ||
+      hostname === '::1'
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

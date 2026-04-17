@@ -90,14 +90,24 @@ export class FileBackend implements TokenStore {
     try {
       const raw = readFileSync(this.authFile, 'utf-8');
       return (yamlParse(raw) ?? {}) as Record<string, TokenEntry>;
-    } catch {
+    } catch (e) {
+      // Silent failure here would let the next `write()` overwrite a corrupted
+      // but recoverable auth.yml with `{}`, quietly wiping valid tokens. Surface
+      // the parse error so users can repair the file before re-authenticating.
+      const msg = e instanceof Error ? e.message : 'unknown error';
+      process.stderr.write(
+        `[auth] Failed to parse ${this.authFile}: ${msg}. Starting with empty credentials.\n`,
+      );
       return {};
     }
   }
 
   private write(data: Record<string, TokenEntry>): void {
     const dir = dirname(this.authFile);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    // 0o700 keeps the directory unreadable by other local users — matches the
+    // 0o600 file mode below and prevents listing "you have Open Knowledge
+    // credentials" from a shared-host account.
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
     writeFileSync(this.authFile, yamlStringify(data), { mode: 0o600 });
   }
 

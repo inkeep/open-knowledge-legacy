@@ -3989,6 +3989,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const engine = getSyncEngine?.();
     if (!engine) {
+      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
+      // reads these fields unconditionally.
       json(res, 200, {
         state: 'dormant',
         lastSyncUtc: null,
@@ -4000,6 +4002,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         conflictCount: 0,
         hasRemote: false,
         syncEnabled: false,
+        identityUnresolved: false,
       });
       return;
     }

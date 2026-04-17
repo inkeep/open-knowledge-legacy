@@ -39,21 +39,48 @@ export interface GitSyncStatus {
   pausedReason?: string;
 }
 
-async function fetchSyncStatus(): Promise<GitSyncStatus | null> {
+export type SyncStatusFetchError = 'network' | 'server';
+
+interface FetchSyncStatusResult {
+  status: GitSyncStatus | null;
+  error?: SyncStatusFetchError;
+}
+
+async function fetchSyncStatus(): Promise<FetchSyncStatusResult> {
   try {
     const res = await fetch('/api/sync/status');
-    if (!res.ok) return null;
-    return (await res.json()) as GitSyncStatus;
+    if (!res.ok) return { status: null, error: 'server' };
+    return { status: (await res.json()) as GitSyncStatus };
   } catch {
-    return null;
+    return { status: null, error: 'network' };
   }
 }
 
+/**
+ * Tracks sync status via CC1 `sync-status` pushes. Backwards-compatible: the
+ * primary return is still the status object (or null before the first
+ * successful response). Consumers that care about "is the server reachable?"
+ * can call {@link useGitSyncStatusDetailed} instead.
+ */
 export function useGitSyncStatus(): GitSyncStatus | null {
+  return useGitSyncStatusDetailed().status;
+}
+
+/**
+ * Variant of {@link useGitSyncStatus} that exposes a fetch-error classification.
+ * Distinguishes "we haven't loaded yet" from "the last fetch failed" so the UI
+ * can surface a connectivity warning instead of silently showing nothing.
+ */
+export function useGitSyncStatusDetailed(): {
+  status: GitSyncStatus | null;
+  fetchError: SyncStatusFetchError | null;
+} {
   const [status, setStatus] = useState<GitSyncStatus | null>(null);
+  const [fetchError, setFetchError] = useState<SyncStatusFetchError | null>(null);
 
   function refresh() {
-    void fetchSyncStatus().then((s) => {
+    void fetchSyncStatus().then(({ status: s, error }) => {
+      setFetchError(error ?? null);
       if (s) setStatus(s);
     });
   }
@@ -74,5 +101,5 @@ export function useGitSyncStatus(): GitSyncStatus | null {
     });
   }, []);
 
-  return status;
+  return { status, fetchError };
 }

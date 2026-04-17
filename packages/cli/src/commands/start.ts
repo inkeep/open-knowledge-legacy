@@ -268,16 +268,24 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const log = opts.log ?? getLogger('start');
 
-  // Auto-init: scaffold .open-knowledge/ on first run (unless skipped).
+  // Auto-init: scaffold .open-knowledge/ on every boot (unless skipped).
+  //
+  // We call initContent (not runInit) so the scaffolding is idempotent and
+  // scoped — it only fills in missing files under .open-knowledge/. We
+  // deliberately do NOT invoke upsertRootInstructions or MCP-config writes
+  // on every boot; those are first-time-setup concerns owned by `ok init`
+  // and the clone auto-init path. This makes partial .open-knowledge/
+  // states (scaffold files deleted, prior boot killed mid-init, etc.)
+  // self-heal on the next `ok start` without surprising the user by
+  // rewriting their root AGENTS.md.
   let didAutoInit = false;
   const okDir = resolve(cwd, OK_DIR);
-  if (!existsSync(okDir) && !skipAutoInit) {
+  const needsScaffold = !existsSync(okDir);
+  if (!skipAutoInit) {
     try {
-      const { runInit } = await import('./init.ts');
-      const result = runInit({ cwd, mcp: false });
-      if (result.mcpAction === 'failed') {
-        console.warn(`Auto-init: ${result.mcpError ?? 'unknown error'}`);
-      } else {
+      const { initContent } = await import('../content/init.ts');
+      const result = initContent(cwd);
+      if (needsScaffold || result.created.length > 0) {
         didAutoInit = true;
       }
     } catch (err) {

@@ -116,16 +116,18 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
       .catch(() => setIsSignedIn(false));
   }, [open]);
 
-  async function fetchRepos() {
+  async function fetchRepos(signal: AbortSignal) {
     setLoadingRepos(true);
     // No try/finally — React Compiler doesn't yet lower TryStatement finalizers.
     // All exit paths set repos + clear loading explicitly before returning.
     let list: RepoEntry[] = [];
+    let aborted = false;
     try {
       const res = await fetch('/api/local-op/auth/repos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
+        signal,
       });
       const reader = res.ok ? res.body?.getReader() : null;
       if (reader) {
@@ -147,9 +149,16 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
           buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
         }
       }
-    } catch {
-      list = [];
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        aborted = true;
+      } else {
+        list = [];
+      }
     }
+    // Skip state writes on abort — the effect already tore down and React
+    // would warn about a state update on an unmounted dialog.
+    if (aborted || signal.aborted) return;
     setRepos(list);
     setLoadingRepos(false);
   }
@@ -157,7 +166,9 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable
   useEffect(() => {
     if (!isSignedIn || !open) return;
-    void fetchRepos();
+    const ac = new AbortController();
+    void fetchRepos(ac.signal);
+    return () => ac.abort();
   }, [isSignedIn, open]);
 
   function handleUrlChange(value: string) {
@@ -237,8 +248,12 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
         }
       }
 
-      // Stream ended without a complete event
-      toast.dismiss(toastId);
+      // Stream ended without a terminal 'complete' or 'error' event. The
+      // server may have crashed or the response was truncated — surface it so
+      // the user knows the clone may be in an inconsistent state.
+      toast.error('Clone stream ended unexpectedly — check if the clone completed', {
+        id: toastId,
+      });
       setCloning(false);
       setAbortController(null);
     } catch (err) {
@@ -298,8 +313,12 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
           {/* Repo browser */}
           {isSignedIn && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Your repositories</span>
+              <label htmlFor="repo-filter" className="text-sm font-medium">
+                Your repositories
+              </label>
               <Input
+                id="repo-filter"
+                aria-label="Filter repositories"
                 placeholder="Filter repositories…"
                 value={repoFilter}
                 onChange={(e) => setRepoFilter(e.target.value)}

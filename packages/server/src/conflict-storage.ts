@@ -9,7 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { getLogger } from './logger.ts';
 
 const log = getLogger('conflict-storage');
@@ -190,7 +190,13 @@ export class ConflictStore {
       case 'content': {
         // content is guaranteed non-undefined here (validated above in early-return guard)
         if (!content) throw new Error(`[conflicts] strategy 'content' requires content parameter`);
-        const absPath = join(this.projectDir, file);
+        // A malicious git repo could seed `git diff` output with paths containing
+        // `..` components; reject anything that escapes projectDir before writing.
+        const projectRoot = resolve(this.projectDir);
+        const absPath = resolve(projectRoot, file);
+        if (absPath !== projectRoot && !absPath.startsWith(`${projectRoot}/`)) {
+          throw new Error(`[conflicts] file path escapes project directory: ${file}`);
+        }
         writeFileSync(absPath, content, 'utf-8');
         await handle.git.raw(['add', '--', file]);
         break;
@@ -213,11 +219,36 @@ export class ConflictStore {
         await handle.git.raw(['commit', '--no-edit']);
         log.info({ file }, '[conflicts] all conflicts resolved — merge commit created');
       } catch (e) {
-        // Commit failed — re-add the conflict so it stays visible in UI
-        this.addConflict({ file, detectedAt: new Date().toISOString() });
+        // Commit failed — the git index may still contain unmerged entries from
+        // other files the user previously resolved in this merge. Re-scan the
+        // index so every unmerged file is visible again, not just `file`.
+        const detectedAt = new Date().toISOString();
+        let reAdded = false;
+        try {
+          const raw = await handle.git.raw(['diff', '--name-only', '--diff-filter=U']);
+          const unmerged = raw
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          for (const f of unmerged) {
+            this.addConflict({ file: f, detectedAt });
+          }
+          reAdded = unmerged.length > 0;
+        } catch (scanErr) {
+          log.warn(
+            { err: scanErr },
+            '[conflicts] commit failed and re-scan of unmerged files failed — falling back to single-file re-add',
+          );
+        }
+        if (!reAdded) {
+          // Either the re-scan failed or reported no unmerged files but the
+          // commit still failed — at minimum keep the file we just touched
+          // visible so the user has something to act on.
+          this.addConflict({ file, detectedAt });
+        }
         log.warn(
           { err: e },
-          '[conflicts] failed to commit merge after all conflicts resolved — conflict re-added',
+          '[conflicts] failed to commit merge after all conflicts resolved — unmerged files re-added',
         );
       }
     }

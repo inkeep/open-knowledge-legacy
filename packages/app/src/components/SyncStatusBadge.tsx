@@ -8,8 +8,9 @@
  */
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
-import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
@@ -35,11 +36,16 @@ async function triggerSync(op: 'sync' | 'push' | 'pull'): Promise<void> {
 }
 
 async function setSyncEnabled(enabled: boolean): Promise<void> {
-  await fetch('/api/sync/set-enabled', {
+  const res = await fetch('/api/sync/set-enabled', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   });
+  if (!res.ok) {
+    // Surface as a thrown error so the caller can toast and avoid leaving
+    // the UI in a state where the switch flipped but the server didn't.
+    throw new Error(`set-enabled failed: HTTP ${res.status}`);
+  }
 }
 
 // ── inner: icon + color per state ────────────────────────────────────────────
@@ -180,7 +186,10 @@ function PopoverBody({
     try {
       await setSyncEnabled(next);
     } catch (e) {
+      // The switch animated but the server rejected the request — tell the
+      // user so they can retry instead of thinking sync silently flipped.
       console.error('[sync] toggle failed', e);
+      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
     }
     setToggling(false);
   }
@@ -294,10 +303,37 @@ export function SyncStatusBadge({
   onOpenConflictResolver,
   onSetIdentity,
 }: SyncStatusBadgeProps = {}) {
-  const status = useGitSyncStatus();
+  const { status, fetchError } = useGitSyncStatusDetailed();
 
-  // Nothing to show until status arrives
-  if (!status) return null;
+  // Surface a lightweight connectivity warning when the server has been
+  // reachable before (we have a prior status) but the last refresh failed.
+  // Before first successful fetch we stay hidden so the badge doesn't flash
+  // on every reload.
+  if (!status) {
+    if (fetchError) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              aria-label="Sync status unavailable"
+              disabled
+            >
+              <CloudOff className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {fetchError === 'network'
+              ? 'Sync status unavailable — server unreachable.'
+              : 'Sync status unavailable — server error.'}
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+    return null;
+  }
 
   // Hide when dormant with no remote (truly no git remote)
   if (status.state === 'dormant' && !status.hasRemote) return null;

@@ -225,8 +225,22 @@ const NETWORK_PATTERNS: RegExp[] = [
   /ehostunreach/i,
 ];
 
-const HTTP_5XX_PATTERNS: RegExp[] = [/\b5[0-9]{2}\b/];
-const HTTP_429_PATTERNS: RegExp[] = [/\b429\b/, /rate.?limit/i, /too many requests/i];
+// Anchored to HTTP-status contexts so unrelated 3-digit numbers (file paths
+// like `/data/file501.txt`, error text like "502 bytes") don't route local
+// faults into the network class with retry/backoff.
+const HTTP_5XX_PATTERNS: RegExp[] = [
+  /\bHTTP[\s/]*5[0-9]{2}\b/i,
+  /\bstatus:?\s*5[0-9]{2}\b/i,
+  /\berror\s*5[0-9]{2}\b/i,
+  /\bresponse.*?\b5[0-9]{2}\b/i,
+];
+const HTTP_429_PATTERNS: RegExp[] = [
+  /\bHTTP[\s/]*429\b/i,
+  /\bstatus:?\s*429\b/i,
+  /\berror\s*429\b/i,
+  /rate.?limit/i,
+  /too many requests/i,
+];
 
 // ---------------------------------------------------------------------------
 // Classifier
