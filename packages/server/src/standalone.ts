@@ -221,7 +221,15 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
-    hocuspocus.configuration.extensions.push(createServerObserverExtension({ mdManager, schema }));
+    hocuspocus.configuration.extensions.push(
+      createServerObserverExtension({
+        mdManager,
+        schema,
+        shadowRef,
+        contentRoot,
+        getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      }),
+    );
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;

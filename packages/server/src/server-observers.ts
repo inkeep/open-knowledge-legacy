@@ -21,6 +21,7 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
   applyFastDiff,
   applyIncrementalDiff,
+  BridgeMergeContentLossError,
   defaultScheduler,
   getFrontmatter,
   mergeThreeWay,
@@ -33,7 +34,13 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
-import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
+import {
+  incrementBridgeMergeCheckpointCreated,
+  incrementBridgeMergeContentLoss,
+  incrementServerObserverError,
+  incrementServerObserverFire,
+} from './metrics.ts';
+import { type ShadowHandle, saveInMemoryCheckpoint } from './shadow-repo.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Origin constant
@@ -100,6 +107,22 @@ const DEBOUNCE_MS = 50;
 // Public API
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Accessor for a `ShadowHandle` that may be lazy-initialized in the server
+ * lifecycle. Observer A Path B's silent-checkpoint writer reads this
+ * indirectly so a not-yet-ready shadow simply skips the checkpoint
+ * (logging continues regardless — telemetry still records the violation).
+ */
+export type ShadowAccessor = () => ShadowHandle | undefined;
+
+/**
+ * Accessor for the current project branch name; used in the
+ * `refs/checkpoints/<branch>/<sha>` ref namespace. Returns 'main' when the
+ * git HEAD resolver isn't available (e.g., standalone repos without a
+ * project `.git/`).
+ */
+export type BranchAccessor = () => string;
+
 export interface SetupServerObserversOpts {
   doc: Y.Doc;
   xmlFragment: Y.XmlFragment;
@@ -107,6 +130,20 @@ export interface SetupServerObserversOpts {
   mdManager: MarkdownManager;
   schema: Schema;
   scheduler?: Scheduler;
+  /**
+   * Per-document name; used as the tree-path + filename inside the silent
+   * checkpoint commit so TimelinePanel can attribute the artifact to the
+   * doc that produced the loss. Omit for unit tests that only exercise
+   * the bridge mechanics; Path B then skips the checkpoint but still
+   * emits the structured log and metrics counter.
+   */
+  docName?: string;
+  /** Accessor for the shadow handle (lazy; may return undefined pre-init). */
+  shadow?: ShadowAccessor;
+  /** Accessor for the current branch name. Defaults to 'main' when omitted. */
+  getBranch?: BranchAccessor;
+  /** Absolute content root (used to place the blob inside the checkpoint tree). */
+  contentRoot?: string;
 }
 
 /**
@@ -124,6 +161,64 @@ export interface SetupServerObserversOpts {
 export function setupServerObservers(opts: SetupServerObserversOpts): () => void {
   const { doc, xmlFragment, ytext, mdManager } = opts;
   const sched: Scheduler = opts.scheduler ?? defaultScheduler;
+
+  /**
+   * Structured-log + silent-checkpoint writer for mergeThreeWay post-condition
+   * violations (SPEC §6 R7 + R9). Fire-and-forget on the checkpoint; the
+   * bridge hot path never awaits the git commit. When `opts.shadow` /
+   * `opts.docName` / `opts.contentRoot` aren't provided (unit tests), skip
+   * the checkpoint — telemetry still records the violation.
+   */
+  const handleBridgeMergeLoss = (
+    err: BridgeMergeContentLossError,
+    preMergeBaseline: string,
+  ): void => {
+    // R9 structured log — machine-consumable, keyed shape so log aggregators
+    // can chart rate-per-doc over time. See CLAUDE.md "Logging conventions"
+    // — JSON.stringify for machine-read events, bracket-prefix for ad-hoc
+    // operational warnings.
+    console.warn(
+      JSON.stringify({
+        ...err.toLog(),
+        docName: opts.docName ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    incrementBridgeMergeContentLoss();
+
+    const shadow = opts.shadow?.();
+    if (!shadow || !opts.docName) return;
+    const branch = opts.getBranch?.() ?? 'main';
+    const contentRoot = opts.contentRoot ?? '';
+    queueMicrotask(() => {
+      saveInMemoryCheckpoint(shadow, contentRoot, {
+        kind: 'bridge-merge-loss',
+        docName: opts.docName as string,
+        contents: preMergeBaseline,
+        label: `Before concurrent merge @ ${new Date().toISOString()}`,
+        branch,
+        metadata: { lostSubstrings: err.info.lostSubstrings },
+      })
+        .then((sha) => {
+          incrementBridgeMergeCheckpointCreated();
+          console.warn(
+            JSON.stringify({
+              event: 'bridge-merge-checkpoint-created',
+              docName: opts.docName,
+              sha,
+              kind: 'bridge-merge-loss',
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        })
+        .catch((checkpointErr: unknown) => {
+          console.warn(
+            '[Server Observer A] Silent checkpoint write failed:',
+            checkpointErr instanceof Error ? checkpointErr.message : String(checkpointErr),
+          );
+        });
+    });
+  };
 
   // ─── Observer A: XmlFragment → Y.Text ─────────────────────
   let lastSyncedXmlMd = '';
@@ -169,14 +264,30 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         return;
       }
 
+      const preMergeBaseline = lastSyncedXmlMd;
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
           // Path A: Y.Text in sync with baseline — use diffLines
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Path B: Y.Text diverged — hybrid diff3+DMP three-way merge
-          const mergedText = mergeThreeWay(lastSyncedXmlMd, md, currentText);
-          applyFastDiff(ytext, currentText, mergedText);
+          // Path B: Y.Text diverged — hybrid diff3+DMP three-way merge.
+          // mergeThreeWay's post-condition (SPEC R1) throws
+          // BridgeMergeContentLossError if content is dropped by the merge.
+          // Production policy (D3-LOCKED, SPEC §10): log a structured event,
+          // queue a silent version-history checkpoint of the pre-merge state
+          // (US-004's saveInMemoryCheckpoint), and apply the merge as-computed
+          // so the editor keeps responding. Dev/test re-throws so
+          // integration tests and fuzz runs fail loudly.
+          try {
+            const mergedText = mergeThreeWay(lastSyncedXmlMd, md, currentText);
+            applyFastDiff(ytext, currentText, mergedText);
+          } catch (mergeErr) {
+            if (!(mergeErr instanceof BridgeMergeContentLossError)) throw mergeErr;
+            handleBridgeMergeLoss(mergeErr, preMergeBaseline);
+            if (process.env.NODE_ENV !== 'production') throw mergeErr;
+            // Apply the merge's as-computed result so the editor progresses.
+            applyFastDiff(ytext, currentText, mergeErr.info.result);
+          }
         }
       }, OBSERVER_SYNC_ORIGIN);
 
