@@ -1,5 +1,5 @@
 /**
- * Mechanical guard for precedent #18(b) / D14 LOCKED:
+ * Mechanical guard for precedent #19(b) / D14 LOCKED:
  *
  *   "DOM-level `handleDOMEvents.copy/cut/dragstart` is prohibited on the
  *    WYSIWYG editor. WYSIWYG uses PM's documented clipboard hooks
@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TIPTAP_EDITOR_PATH = join(__dirname, '..', 'TiptapEditor.tsx');
 
-describe('WYSIWYG STOP rule — no handleDOMEvents.copy/cut/dragstart (precedent #18(b))', () => {
+describe('WYSIWYG STOP rule — no handleDOMEvents.copy/cut/dragstart (precedent #19(b))', () => {
   const source = readFileSync(TIPTAP_EDITOR_PATH, 'utf-8');
 
   test('TiptapEditor.tsx does NOT register handleDOMEvents.copy', () => {

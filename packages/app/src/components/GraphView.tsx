@@ -9,6 +9,7 @@ import { usePageList } from '@/components/PageListContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { clusterColor } from './graph-colors';
 import {
   type GraphLabelLayoutLink,
   type GraphLabelLayoutNode,
@@ -434,6 +435,7 @@ export function GraphView({
   onSelectNode,
   onBackgroundClick,
   onStatsChange,
+  onClustersChange,
 }: {
   activeDocName: string;
   selectedNodeId?: string | null;
@@ -444,6 +446,7 @@ export function GraphView({
   onSelectNode?: (selection: GraphNodeSelection) => void;
   onBackgroundClick?: () => void;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
+  onClustersChange?: (clusters: string[]) => void;
 }) {
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
@@ -617,6 +620,17 @@ export function GraphView({
   useEffect(() => {
     onStatsChange?.(displayData.nodes.length, displayData.links.length, loading);
   }, [displayData, loading, onStatsChange]);
+
+  useEffect(() => {
+    if (!onClustersChange) return;
+    const seen = new Set<string>();
+    for (const node of graphData.nodes) {
+      if (node.kind === 'doc' && node.cluster) {
+        seen.add(node.cluster);
+      }
+    }
+    onClustersChange(Array.from(seen).sort());
+  }, [graphData, onClustersChange]);
 
   useEffect(() => {
     focusStateRef.current = {
@@ -961,6 +975,9 @@ export function GraphView({
               const nodeRadius = getGraphNodeCanvasRadius(state);
               const pointerRadius = getGraphNodePointerRadius(state, globalScale);
 
+              const docCluster = node.kind === 'doc' ? node.cluster : undefined;
+              const clusterFill = docCluster ? clusterColor(docCluster, isDark) : defaultNodeColor;
+
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
               ctx.fillStyle =
@@ -974,7 +991,7 @@ export function GraphView({
                         ? externalNodeColor
                         : isFolderTarget
                           ? folderNodeColor
-                          : defaultNodeColor;
+                          : clusterFill;
               ctx.fill();
 
               if (pointerRadius > nodeRadius) {

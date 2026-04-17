@@ -2,7 +2,9 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { sharedExtensions } from './extensions/shared.ts';
+import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
+import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
@@ -23,6 +25,15 @@ export interface PoolEntry {
   hasSynced: boolean;
   tearingDown: boolean;
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * True when `setupObservers` threw during initial sync. The provider stays
+   * pool-resident so `EditorArea` keeps rendering the boundary subtree (which
+   * shows `DocumentErrorBoundary`'s `BridgeSetupError` UI), but the entry is
+   * inert — observers are not wired, no further writes will land. The user's
+   * "Try again" path calls `pool.recycle(docName)` which destroys + recreates
+   * the entry to retry from a clean slate.
+   */
+  bridgeSetupFailed: boolean;
 }
 
 export type PoolChangeCallback = () => void;
@@ -44,6 +55,36 @@ const editorSchema = getSchema(sharedExtensions);
 const RECYCLE_DEBOUNCE_MS = 4_000;
 
 /**
+ * Periodic full-sync nudge for HocuspocusProvider. Secondary defense against
+ * the `synced`-never-fires edge cases documented in hocuspocus#183 and
+ * y-websocket#81; D7's 30s syncPromise timeout is the primary safety net.
+ *
+ * 5000ms chosen per SPEC.md §10 D8: 0.2 msgs/sec × 10 providers × 2 directions
+ * ≈ 4 msgs/sec steady-state — negligible overhead vs the 100 msgs/sec the
+ * originally-proposed 200ms interval would generate. Still catches the
+ * never-fires edge within 5s, imperceptible vs the 30s timeout.
+ */
+const FORCE_SYNC_INTERVAL_MS = 5_000;
+
+/**
+ * Default pool capacity. Exported so the single point of truth lives in this
+ * module (the pool that owns the constraint), and so callers that construct
+ * a `ProviderPool` can reference the same name rather than a magic literal.
+ *
+ * Coupled to `ACTIVITY_MOUNT_LIMIT = 3` (exported from `EditorActivityPool.tsx`)
+ * per SPEC.md §10 DX9 / precedent #15(c): `MAX_POOL` bounds how many warm
+ * providers we keep; `ACTIVITY_MOUNT_LIMIT` bounds how many editor subtrees
+ * are Activity-mounted inside those providers. The two constraints are
+ * intentionally independent — pool-resident-but-not-Activity-mounted docs
+ * keep their warm provider (≈5–10 MB) for fast Suspense-gated remount
+ * without paying per-editor memory or observer-CPU cost.
+ *
+ * Changing either constant is an ASK_FIRST boundary (spec §16 / CLAUDE.md
+ * scope). If one moves, audit the other for sympathetic impact.
+ */
+export const MAX_POOL = 10;
+
+/**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
  */
@@ -56,7 +97,7 @@ export class ProviderPool {
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
 
-  constructor(maxSize = 10, wsUrl?: string, recycleDebounceMs?: number) {
+  constructor(maxSize: number = MAX_POOL, wsUrl?: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
     // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
     this.wsUrl = wsUrl ?? defaultCollabWsUrl();
@@ -80,10 +121,14 @@ export class ProviderPool {
   }
 
   /**
-   * Open (or reuse) a document. Returns the pool entry.
-   * If the pool is at capacity, evicts the LRU entry (never the active doc).
+   * Open (or reuse) a document. Returns the pool entry, or `null` if the
+   * docName is reserved (the `__system__` pseudo-doc carries CC1 signals and
+   * is never user-editable — see SPEC.md §10 DX7). If the pool is at
+   * capacity, evicts the LRU entry (never the active doc).
    */
-  open(docName: string): PoolEntry {
+  open(docName: string): PoolEntry | null {
+    if (isSystemDoc(docName)) return null;
+
     const existing = this.entries.get(docName);
     if (existing) {
       existing.lastAccessedAt = Date.now();
@@ -100,6 +145,7 @@ export class ProviderPool {
     const provider = new HocuspocusProvider({
       url: this.wsUrl,
       name: docName,
+      forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
     });
 
     const entry: PoolEntry = {
@@ -111,6 +157,7 @@ export class ProviderPool {
       hasSynced: false,
       tearingDown: false,
       pendingRecycleTimer: null,
+      bridgeSetupFailed: false,
     };
 
     // Track sync state
@@ -132,7 +179,21 @@ export class ProviderPool {
       }
       this.notify();
 
-      // Set up bidirectional observers once after first sync
+      // Set up bidirectional observers once after first sync. A throw here
+      // (Y.js observer wiring failure, baseline read crash, schema mismatch)
+      // is rare but must not be silent — without surfacing it through the
+      // syncPromise, the user would see the doc vanish and fall back to the
+      // empty "Select a document" state with no signal about what happened.
+      //
+      // Path: reject the syncPromise with BridgeSetupError + mark the entry
+      // bridgeSetupFailed. The entry stays in the pool so `activeProvider`
+      // remains non-null and `EditorArea` continues to render the boundary
+      // subtree — `DocumentBoundary`'s suspended fiber re-renders, `use()`
+      // re-throws the rejection, and `DocumentErrorBoundary` shows the
+      // "Couldn't open document" UI. The user-driven retry path
+      // (`pool.recycle(docName)`) destroys + recreates the entry on click;
+      // until then the broken provider stays pool-resident but inert
+      // (observers not wired, no further writes possible from this client).
       if (!entry.observerCleanup) {
         try {
           const doc = provider.document;
@@ -148,8 +209,9 @@ export class ProviderPool {
             },
           });
         } catch (err) {
-          this.close(docName);
           console.error(`[ProviderPool] setupObservers init failed for ${docName}:`, err);
+          entry.bridgeSetupFailed = true;
+          rejectSyncPromise(docName, new BridgeSetupError(docName, err));
         }
       }
     };
@@ -235,6 +297,21 @@ export class ProviderPool {
     return this.entries.has(docName);
   }
 
+  /**
+   * Destroy and recreate the entry for `docName`, preserving `activeDocName`
+   * across the swap. Used by the "Try again" retry path in
+   * `DocumentErrorBoundary` and `NavigationPendingBar` tier-3 to recover from
+   * `BridgeSetupError` (or any sync failure that leaves the provider in a
+   * known-broken state). Differs from `close + open` in that it does NOT
+   * intermediately null `activeDocName`, so `EditorArea` does not flash the
+   * "Select a document" empty state during the swap.
+   *
+   * No-op if the doc is not in the pool.
+   */
+  recycle(docName: string): void {
+    this.recycleDisconnectedEntry(docName);
+  }
+
   /** Dispose of all entries. */
   dispose(): void {
     for (const entry of this.entries.values()) {
@@ -263,6 +340,12 @@ export class ProviderPool {
       clearTimeout(entry.pendingRecycleTimer);
       entry.pendingRecycleTimer = null;
     }
+    // Detach the syncPromise cache entry BEFORE destroy() fires the provider's
+    // `close` event — otherwise the sync-promise listener would reject the
+    // already-consumed promise with PreSyncDisconnectError on pool-triggered
+    // teardown. Natural (network-triggered) close events still reject as
+    // expected because this path only runs inside pool destroy/recycle/evict.
+    invalidateSyncPromise(entry.docName);
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
@@ -285,8 +368,11 @@ export class ProviderPool {
     this.lruOrder = this.lruOrder.filter((n) => n !== docName);
 
     if (wasActive) {
-      this.open(docName);
-      this.setActive(docName);
+      // docName came from `this.entries.get(docName)` above — a system doc
+      // cannot reach this branch because `open()` rejects system docs at
+      // admission time.
+      const reopened = this.open(docName);
+      if (reopened) this.setActive(docName);
       return;
     }
 

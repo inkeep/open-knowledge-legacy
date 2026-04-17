@@ -466,7 +466,7 @@ test.describe('WYSIWYG FR-specific paste behavior', () => {
 /**
  * Paste a payload at the Source editor's (CodeMirror) DOM. The chunked
  * Y.Text insertion path (`chunkedYTextInsert`) is invoked exclusively by
- * the Source dispatcher (per AGENTS.md precedent #18 + D14 LOCKED), so
+ * the Source dispatcher (per AGENTS.md precedent #19 + D14 LOCKED), so
  * the FR-21 frame-timing test must target `.cm-content`, not `.ProseMirror`.
  */
 async function pasteHtmlInSource(page: Page, html: string, plain: string) {
@@ -495,7 +495,7 @@ test.describe('FR-21 large-paste chunked insertion (Source view)', () => {
     await page.getByText('test-doc.md').click({ timeout: 10_000 });
     await waitForProvider(page);
     // Switch the editor pane to the Source view — the chunked path is
-    // Source-exclusive per D14 LOCKED / precedent #18. The mode toggle is a
+    // Source-exclusive per D14 LOCKED / precedent #19. The mode toggle is a
     // radio group (aria-label="Editor mode") with radios "Visual editor" +
     // "Markdown source"; the visible label for source is "Markdown".
     await page.getByRole('radio', { name: /Markdown source/i }).click({ timeout: 10_000 });

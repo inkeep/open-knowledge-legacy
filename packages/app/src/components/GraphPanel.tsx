@@ -2,6 +2,7 @@ import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowle
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, CheckCircle2, Globe, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
 import {
   type GraphNodeSelection,
@@ -296,6 +297,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
   const [selectedNode, setSelectedNode] = useState<GraphNodeSelection | null>(null);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
+  const [clusters, setClusters] = useState<string[]>([]);
   const [showUrlNodesDocked, setShowUrlNodesDocked] = useState(() =>
     loadBoolPref(GRAPH_URL_NODES_DOCKED_KEY),
   );
@@ -498,7 +500,9 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               }
               setStats({ nodes, links });
             }}
+            onClustersChange={isFullscreen ? setClusters : undefined}
           />
+          {isFullscreen && <GraphLegend clusters={clusters} />}
           {isFullscreen &&
           activeMode === 'explore' &&
           selectedNode !== null &&

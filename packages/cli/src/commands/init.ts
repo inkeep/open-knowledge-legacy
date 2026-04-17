@@ -14,7 +14,7 @@
  * value directly (defaults to `claude`).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
@@ -303,9 +303,15 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
       ? scaffoldLaunchJson(cwd, options.force ?? false)
       : undefined;
 
-  // 4. Append/replace the Open Knowledge section in root AGENTS.md
+  // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
+  const extraInstructionFiles = targets
+    .map((t) => t.instructionsPath?.(cwd))
+    .filter((p): p is string => p !== undefined)
+    .map((p) => (isAbsolute(p) ? relative(cwd, p) : p));
   const rootInstructions =
-    options.rootInstructions === false ? [] : upsertRootInstructions(cwd, options.force ?? false);
+    options.rootInstructions === false
+      ? []
+      : upsertRootInstructions(cwd, options.force ?? false, extraInstructionFiles);
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const primary = editorResults.find((r) => r.editorId === 'claude') ??

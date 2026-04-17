@@ -5,7 +5,7 @@
  * node types to `mdast`'s `RootContentMap`. Every custom type declared here
  * is visible to every consumer of mdast in the workspace (core, server,
  * app, docs) — every exhaustive `switch` on `Nodes` must handle them. The
- * broad blast radius is deliberate per architectural precedent #18(d):
+ * broad blast radius is deliberate per architectural precedent #19(d):
  * custom nodes are promoted to first-class mdast types instead of lying as
  * `{type:'html',value}` passthrough, so downstream handlers can match them
  * with compile-time safety. Future custom nodes go here — do not augment
@@ -34,7 +34,7 @@ import type { Position } from 'unist';
 
 /**
  * The set of mdast types we promote from the legacy `{type:'html',value}`
- * passthrough to first-class mdast per precedent #18(d). Every promoted
+ * passthrough to first-class mdast per precedent #19(d). Every promoted
  * type MUST have a handler on all three pipeline edges:
  *
  *   - parse (markdown → mdast)         — `index.ts` mdast → PM handlers +
@@ -52,7 +52,7 @@ import type { Position } from 'unist';
  * A missing handler on the to-hast edge silently falls through to
  * remark-rehype's default — which emits a hast `html` node with the raw
  * value as literal HTML, re-exposing the FR-20 security surface that
- * precedent #18(d) was written to eliminate. A missing handler on the
+ * precedent #19(d) was written to eliminate. A missing handler on the
  * to-markdown edge falls through to mdast-util-to-markdown's default text
  * passthrough, losing the node's structure on round-trip.
  *

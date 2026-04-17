@@ -1,33 +1,20 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { FolderOverview } from '@/components/FolderOverview';
+import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDocumentContext } from '@/editor/DocumentContext';
-import { SourceEditor } from '@/editor/SourceEditor';
-import { TiptapEditor } from '@/editor/TiptapEditor';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
+import { EditorActivityPool } from './EditorActivityPool';
 import type { EditorMode } from './EditorPane';
-
-function EditorSkeleton() {
-  return (
-    // Reuse the tiptap-editor grid so skeleton lines sit in the same content column
-    <div className="tiptap-editor pt-10">
-      <div className="space-y-3">
-        <Skeleton className="h-9 w-2/5 mt-6 mb-5" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-3/4" />
-      </div>
-    </div>
-  );
-}
 
 interface EditorAreaProps {
   editorMode: EditorMode;
@@ -37,11 +24,28 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider, activeTarget, syncState } = useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
+  const { openDocumentTransition } = useDocumentTransition();
   const isNewDoc = activeTarget?.kind === 'missing';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Track the previously-active docName for DocumentErrorBoundary's
+  // "Back to previous document" affordance. Updated AFTER render (effect) so
+  // the *current* render still sees the prior value — during an error, the
+  // user sees "Back to <previous>" where <previous> is the last successfully
+  // navigated-to doc, not the doc that just errored.
+  const previousDocNameRef = useRef<string | null>(null);
+  const [previousDocName, setPreviousDocName] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeDocName && activeDocName !== previousDocNameRef.current) {
+      // Capture prior ref value, then update ref + state for the next render.
+      const prior = previousDocNameRef.current;
+      previousDocNameRef.current = activeDocName;
+      setPreviousDocName(prior);
+    }
+  }, [activeDocName]);
 
   // FUTURE: The diff is a snapshot fetched once. If the document changes while
   // the user is in diff mode (e.g., agent writes), the diff view becomes stale.
@@ -118,7 +122,8 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
 
   if (!activeProvider || !activeDocName) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4">
+        <OkBlob size={80} />
         <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
       </div>
     );
@@ -134,52 +139,66 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">
           <div className="relative h-full">
-            <div
-              className="subtle-scrollbar h-full overflow-y-auto"
-              style={{ overflowAnchor: 'auto' }}
-            >
-              {/* Diff view — shown when editorMode === 'diff' */}
-              {isDiffMode && previewLoading && (
-                <div
-                  className="flex items-center justify-center py-16"
-                  role="status"
-                  aria-label="Loading version"
-                >
-                  <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-                </div>
-              )}
-              {isDiffMode && !previewLoading && diffContent !== null && (
-                <DiffView
-                  oldContent={diffContent.old}
-                  newContent={diffContent.new}
-                  layout={diffLayout}
-                />
-              )}
+            {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+                internal scroller in diff mode and (b) the per-Activity scroller
+                inside EditorActivityPool in editor mode. Hoisting the scroller
+                to this level would let the Activity subtree's content contract
+                on hidden-mode effect cleanup, clamping scrollTop to 0 and
+                losing the user's position across warm navigation (QA-002 /
+                SPEC US-007/F1). */}
 
-              {/* CSS-based show/hide — display:none keeps DOM alive without triggering
-                  React's effect lifecycle, so both editors survive mode switches. */}
-              <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-                {syncState === 'connecting' ? (
-                  <EditorSkeleton />
-                ) : (
-                  <>
-                    <div className={isSourceMode ? 'h-full' : 'hidden'}>
-                      <SourceEditor
-                        ytext={activeProvider.document.getText('source')}
-                        provider={activeProvider}
-                        placeholder={editorPlaceholder}
-                      />
-                    </div>
-                    <div className={isSourceMode ? 'hidden' : 'h-full'}>
-                      <TiptapEditor
-                        key={`${activeDocName}-${String(isNewDoc)}`}
-                        provider={activeProvider}
-                        placeholder={editorPlaceholder}
-                      />
-                    </div>
-                  </>
-                )}
+            {/* Diff view — shown when editorMode === 'diff' */}
+            {isDiffMode && previewLoading && (
+              <div
+                className="flex items-center justify-center py-16"
+                role="status"
+                aria-label="Loading version"
+              >
+                <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
               </div>
+            )}
+            {isDiffMode && !previewLoading && diffContent !== null && (
+              <DiffView
+                oldContent={diffContent.old}
+                newContent={diffContent.new}
+                layout={diffLayout}
+              />
+            )}
+
+            {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+                Outer display:none keeps the editor DOM alive when in diff mode.
+                Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
+                inner display:none toggle) is preserved inside EditorActivityPool
+                per spec §9 + audit A2. Each Activity entry owns its own scroll
+                container so scroll position is DOM-local to that doc's subtree
+                and survives the Activity hidden-mode mount/unmount cycle.
+
+                Error + Suspense scoping lives INSIDE EditorActivityPool — each
+                Activity wraps its own DocumentErrorBoundary + Suspense so a
+                hidden doc's cached rejected syncPromise cannot re-throw into
+                the visible UI (QA-023/024). See EditorActivityPool.tsx file
+                docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
+            <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+              <EditorActivityPool
+                activeDocName={activeDocName}
+                isSourceMode={isSourceMode}
+                editorPlaceholder={editorPlaceholder}
+                previousDocName={previousDocName ?? undefined}
+                onNavigateBack={(prev) => {
+                  // Navigate via hash so the URL stays in sync with app state —
+                  // NavigationHandler's hashchange listener will call
+                  // openDocumentTransition(prev). If the hash is already at
+                  // prev (rare — happens when back-nav is used after agent
+                  // nav without URL update), fall back to direct transition.
+                  const nextHash = hashFromDocName(prev);
+                  if (window.location.hash === nextHash) {
+                    openDocumentTransition(prev);
+                  } else {
+                    window.location.hash = nextHash;
+                  }
+                }}
+                onRecycle={recycleDocument}
+              />
             </div>
             <div className="absolute top-2 right-2 z-10">
               <Tooltip>

@@ -1,7 +1,7 @@
 /**
  * Three-edge handler-parity coverage test for `PROMOTED_MDAST_TYPES`.
  *
- * Enforces precedent #18(d): every type in the promoted union MUST have a
+ * Enforces precedent #19(d): every type in the promoted union MUST have a
  * handler on all three pipeline edges. A silent gap re-exposes the FR-20
  * security surface (to-hast default emits a hast `html` node that passes
  * raw value through as literal HTML) or breaks bit-exact markdown round-trip

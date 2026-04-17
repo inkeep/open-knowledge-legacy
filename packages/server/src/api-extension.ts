@@ -44,7 +44,11 @@ import {
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { findHubCandidates } from './hub-candidates.ts';
-import { extractPageTitle } from './page-identity.ts';
+import {
+  extractPageTitle,
+  type FrontmatterMetadata,
+  parseFrontmatterMetadata,
+} from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -511,6 +515,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return extractPageTitle(readFileSync(filePath, 'utf-8'), docName);
     } catch {
       return docName;
+    }
+  }
+
+  const EMPTY_METADATA: FrontmatterMetadata = {
+    cluster: undefined,
+    category: undefined,
+    tags: undefined,
+  };
+
+  function readFrontmatterMetadataForDocName(docName: string): FrontmatterMetadata {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      if (doc) {
+        const metaMap = doc.getMap('metadata');
+        const fm = metaMap.get('frontmatter');
+        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+      }
+    } catch {
+      /* fall through to disk */
+    }
+    try {
+      const filePath = resolveDocPath(docName);
+      if (!filePath || !existsSync(filePath)) return EMPTY_METADATA;
+      const content = readFileSync(filePath, 'utf-8');
+      const { frontmatter } = stripFrontmatter(content);
+      if (!frontmatter) return EMPTY_METADATA;
+      return parseFrontmatterMetadata(frontmatter);
+    } catch {
+      return EMPTY_METADATA;
     }
   }
 
@@ -1367,22 +1400,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
-      const enrichedNodes = nodes.map((node) =>
-        node.kind === 'doc'
-          ? {
-              id: node.id,
-              kind: 'doc' as const,
-              docName: node.docName,
-              anchor: node.anchor ?? null,
-              label: readPageTitleForDocName(node.docName),
-            }
-          : {
-              id: node.id,
-              kind: 'external' as const,
-              url: node.url,
-              label: node.label ?? node.url,
-            },
-      );
+      const enrichedNodes = nodes.map((node) => {
+        if (node.kind === 'doc') {
+          const meta = readFrontmatterMetadataForDocName(node.docName);
+          return {
+            id: node.id,
+            kind: 'doc' as const,
+            docName: node.docName,
+            anchor: node.anchor ?? null,
+            label: readPageTitleForDocName(node.docName),
+            cluster: meta.cluster ?? null,
+            category: meta.category ?? null,
+            tags: meta.tags ?? null,
+          };
+        }
+        return {
+          id: node.id,
+          kind: 'external' as const,
+          url: node.url,
+          label: node.label ?? node.url,
+        };
+      });
       json(res, 200, { ok: true, nodes: enrichedNodes, links });
     } catch (e) {
       console.error('[link-graph]', e);
