@@ -23,8 +23,8 @@
 }
 
 .slide-btn-accent {
-  background-color: var(--slide-accent) !important;
-  color: #fff !important;
+  background-color: var(--slide-accent);
+  color: #fff;
 }
 
 .slide-btn-accent:hover {
@@ -32,13 +32,13 @@
 }
 
 .slide-btn-outline {
-  border: 1px solid var(--slide-border) !important;
-  color: var(--slide-text) !important;
-  background: transparent !important;
+  border: 1px solid var(--slide-border);
+  color: var(--slide-text);
+  background: transparent;
 }
 
 .slide-btn-outline:hover {
-  background-color: color-mix(in srgb, var(--slide-text) 5%, transparent) !important;
+  background-color: color-mix(in srgb, var(--slide-text) 5%, transparent);
 }
 
 /* ------------------------------------------------------------------
@@ -238,8 +238,12 @@
   padding: 0;
   border-radius: 0;
 }
-.tippy-box[data-placement^="bottom"] > .tippy-arrow { display: none; }
-.tippy-box[data-placement^="top"] > .tippy-arrow { display: none; }
+.tippy-box[data-placement^="bottom"] > .tippy-arrow {
+  display: none;
+}
+.tippy-box[data-placement^="top"] > .tippy-arrow {
+  display: none;
+}
 .tippy-content {
   padding: 0;
 }
