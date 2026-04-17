@@ -32,9 +32,8 @@ const items: ShowcaseItem[] = [
   {
     step: '01',
     icon: TerminalIcon,
-    title: 'Run one command\nto start the server',
-    description:
-      'No config files, no setup wizard. A single npx command starts the server, editor, and MCP endpoint. Your current directory becomes the content root.',
+    title: 'Run one command',
+    description: 'npx @inkeep/open-knowledge',
     visual: <InstallVisual />,
   },
   {
