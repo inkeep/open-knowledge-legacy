@@ -46,9 +46,14 @@ export function createGitInstance(projectDir: string, options: GitHandleOptions 
 
   const gitConfig = credentialArgs.length >= 2 ? [credentialArgs[1]] : [];
 
+  // simple-git's block-unsafe-operations plugin rejects credential.helper=!<cmd>
+  // by default. Opt in when we're intentionally injecting our own helper.
+  const unsafe = gitConfig.length > 0 ? { allowUnsafeCredentialHelper: true } : undefined;
+
   const git = simpleGit({
     baseDir: projectDir,
     config: gitConfig,
+    unsafe,
   }).env(env as Record<string, string>);
 
   return { git, projectDir, credentialArgs };

@@ -78,7 +78,10 @@ export async function runClone(
   // Build -c credential.helper config if needed
   const gitConfig = resolved.credentialArgs.length >= 2 ? [resolved.credentialArgs[1]] : [];
 
-  const git = simpleGit({ baseDir: cwd, config: gitConfig }).env(env);
+  // simple-git's block-unsafe-operations plugin rejects credential.helper=!<cmd>
+  // by default. Opt in when we're intentionally injecting our own helper.
+  const unsafe = gitConfig.length > 0 ? { allowUnsafeCredentialHelper: true } : undefined;
+  const git = simpleGit({ baseDir: cwd, config: gitConfig, unsafe }).env(env);
 
   let lastPct = -1;
 
