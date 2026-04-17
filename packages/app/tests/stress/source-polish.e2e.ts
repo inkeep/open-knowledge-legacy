@@ -14,7 +14,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
+import {
+  createPage,
+  filterCriticalErrors,
+  type LogEntry,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
@@ -45,17 +50,24 @@ async function switchToSource(page: Page) {
 }
 
 // ── Console error accumulator ────────────────────────────────────────────────
+//
+// Structured entries (url + line) so the shared `filterCriticalErrors` helper
+// can strip known benign dev-server noise (by-design `/api/config` 404, Vite
+// HMR chatter, WebSocket reconnect races). Same pattern as `crdt-stress.e2e.ts`.
 
-const errors: string[] = [];
+const errors: LogEntry[] = [];
 
 // Per-test unique docName to avoid parallel-worker state contention.
 let testDocName = '';
 
 test.beforeEach(async ({ page }) => {
   errors.length = 0;
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  page.on('pageerror', (err) => errors.push({ type: 'uncaught', text: err.message }));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
+    if (msg.type() === 'error') {
+      const loc = msg.location();
+      errors.push({ type: 'error', text: msg.text(), url: loc.url, line: loc.lineNumber });
+    }
   });
 
   testDocName = `sp-${randomUUID().slice(0, 8)}`;
@@ -66,7 +78,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.afterEach(() => {
-  expect(errors, 'Expected zero console errors').toEqual([]);
+  expect(filterCriticalErrors(errors), 'Expected zero critical console errors').toEqual([]);
 });
 
 // ── §6.2 Strikethrough ──────────────────────────────────────────────────────

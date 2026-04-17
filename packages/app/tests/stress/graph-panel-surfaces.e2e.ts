@@ -478,6 +478,12 @@ test('fullscreen graph clicking the selected node toggles selection off', async 
 test('fullscreen graph external nodes use the same selection affordance', async ({ page }) => {
   const fixtures = await seedGraphFixtures();
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
+  // External URL nodes default to hidden (see `GraphPanel.tsx` —
+  // `GRAPH_URL_NODES_FULLSCREEN_KEY` loadBoolPref returns false for a fresh
+  // context). Toggle them on through the UI so the test exercises the full
+  // user journey (enable → click → selection) rather than reaching past the
+  // interface to localStorage.
+  await page.getByLabel('Show external URL nodes').click();
   expect(await clickGraphExternal(page, 'https://example.com/docs')).toBe(true);
 
   const selectedNode = page.getByRole('status', { name: 'Selected graph item' });
