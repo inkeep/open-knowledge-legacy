@@ -69,6 +69,75 @@ export function loadMdxCrashTaxonomy(): MdxCrashEntry[] {
   ) as MdxCrashEntry[];
 }
 
+/**
+ * A single built-in / jsxComponent fixture case. `blockForm` is the exact
+ * MDX string that should round-trip byte-identical through `mdManager` when
+ * pristine (sourceDirty=false). Some cases are inline-form (thin jsxInline
+ * shape per NG14) — the `blockForm` field carries those too for uniformity.
+ *
+ * Used by Component Blocks v2 fidelity tests:
+ *   - `jsx-pristine-byte-identity.test.ts` (I12)
+ *   - `jsx-edited-idempotence.test.ts` (I13)
+ *   - `jsx-cross-path-consistency.test.ts` (I15)
+ */
+export interface BuiltInFixture {
+  /** Unique key for the case (component name or scenario identifier). */
+  componentName: string;
+  /** MDX source to round-trip. Block or inline — either shape works. */
+  blockForm: string;
+  /** Optional inline form, when the component supports both. */
+  inlineForm?: string;
+  /** Free-text context for the case — why it's interesting. */
+  notes?: string;
+}
+
+/**
+ * 18 P0 built-in JSX component fixtures + edge cases (unknown attrs, boolean
+ * shorthand, expression attrs, spreads, unregistered components, inline thin-
+ * shape). Lifted from the inline fixtures formerly embedded in
+ * `packages/app/tests/fidelity/jsx-pristine-byte-identity.test.ts:22-85`.
+ *
+ * See `specs/2026-04-14-component-blocks-v2/SPEC.md:248` (I12 definition) and
+ * `packages/core/src/registry/built-ins.ts` for the authoritative descriptor
+ * list.
+ */
+export function loadBuiltInFixtures(): BuiltInFixture[] {
+  return JSON.parse(readFileSync(fixturePath('mdx', 'built-ins.json'), 'utf8')) as BuiltInFixture[];
+}
+
+// ─── ng-pinned/ ────────────────────────────────────────────────────────────
+
+/**
+ * A single NG-pinned case. `input` is the source MDX; `expectedOutput` is the
+ * exact byte-string that the canonical pipeline produces — or `null` when the
+ * case is idempotence-only (the idempotence property is asserted unconditionally;
+ * `expectedOutput` is an additional regression pin when populated).
+ */
+export interface NgPinnedCase {
+  id: string;
+  name: string;
+  input: string;
+  expectedOutput: string | null;
+  idempotent: boolean;
+  /** Cases where a library version bump could silently change the canonical. */
+  highlighted: boolean;
+  note: string;
+}
+
+/**
+ * NG12 — edited-node quoting normalization. 10 probe cases lifted from
+ * `specs/2026-04-14-component-blocks-v2/evidence/serialize-roundtrip-probe.md`.
+ * 4 cases are `highlighted: true` — those have the highest drift-risk profile
+ * (library-specific quoting, member-access shape, flush-left handler contract).
+ *
+ * Used by `ng-pinned.test.ts` NG12 section alongside NG1 and NG11 pins.
+ */
+export function loadNgPinnedCases(): NgPinnedCase[] {
+  return JSON.parse(
+    readFileSync(fixturePath('ng-pinned', 'component-blocks-v2.json'), 'utf8'),
+  ) as NgPinnedCase[];
+}
+
 // ─── perf/ ────────────────────────────────────────────────────────────────
 
 /**
