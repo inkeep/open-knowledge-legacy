@@ -14,6 +14,7 @@ import type { Node as PmNode } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import Image from 'next/image';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Markdown as TiptapMarkdown } from 'tiptap-markdown';
@@ -103,14 +104,23 @@ export function EditorDemo() {
 
   return (
     <section>
-      <div className="px-6 py-16 text-center md:py-20 border-t bg-[var(--slide-bg)]">
-        <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
+      <div className="relative overflow-hidden border-t bg-[var(--slide-bg)] px-6 py-16 text-center md:py-20">
+        <Image
+          src="/Wide.png"
+          alt=""
+          aria-hidden
+          width={3840}
+          height={1080}
+          className="pointer-events-none absolute left-0 w-full object-cover opacity-40"
+          style={{ top: '-45%', height: '140%' }}
+        />
+        <p className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
           Try it
         </p>
-        <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
+        <h2 className="relative z-10 text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
           Two modes, one source of truth
         </h2>
-        <p className="mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
+        <p className="relative z-10 mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
           Switch between rich editing and raw markdown. Edit in either mode — the content stays in
           sync, just like the real product.
         </p>
