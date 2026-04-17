@@ -338,12 +338,15 @@ export function EditorHeader({
         ) : activeDocName ? (
           <div className="flex min-w-0 items-center overflow-hidden">
             {/* Path prefix — shrinks first so filename stays visible */}
-            <span
-              className="shrink truncate text-sm text-muted-foreground/60 transition-[max-width,opacity] duration-200 ease-in-out"
-              style={isRenaming ? { maxWidth: 0, opacity: 0 } : { maxWidth: '20rem', opacity: 1 }}
-            >
-              {pathPrefix}
-            </span>
+            {pathPrefix && (
+              <span
+                className="flex shrink items-center overflow-hidden text-sm text-muted-foreground/60 transition-[max-width,opacity] duration-200 ease-in-out"
+                style={isRenaming ? { maxWidth: 0, opacity: 0 } : { maxWidth: '20rem', opacity: 1 }}
+              >
+                <span className="truncate">{pathPrefix.slice(0, -1)}</span>
+                <span className="shrink-0">/</span>
+              </span>
+            )}
             {isRenaming ? (
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex min-w-0 items-center gap-2">
@@ -370,7 +373,7 @@ export function EditorHeader({
                       }
                     }}
                     onBlur={() => void commitRename()}
-                    className="h-7 min-w-0 flex-1 bg-background text-sm"
+                    className="h-7 min-w-0 flex-1 border-none bg-background text-sm shadow-none focus-visible:ring-0"
                   />
                   <span aria-hidden="true" className="shrink-0 text-xs text-muted-foreground/40">
                     .md
