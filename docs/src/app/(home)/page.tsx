@@ -91,28 +91,27 @@ function HowItWorks() {
       step: '01',
       title: 'You write',
       description:
-        'Take notes in a rich WYSIWYG editor or raw markdown. Real-time CRDT sync means your cursor never fights the AI.',
+        'Rich editor or raw markdown. Real-time CRDT sync — your cursor never fights the AI.',
       icon: PenToolIcon,
     },
     {
       step: '02',
       title: 'AI co-authors',
       description:
-        'An AI agent writes alongside you — expanding ideas, adding references, structuring content — all visible in real time.',
+        'An agent writes alongside you — expanding, referencing, structuring — all live.',
       icon: BrainCircuitIcon,
     },
     {
       step: '03',
       title: 'Knowledge compiles',
-      description:
-        'A background agent continuously organizes your notes into a structured wiki — categorized, cross-linked, and always current.',
+      description: 'A background agent organizes your notes into a cross-linked, structured wiki.',
       icon: LayersIcon,
     },
     {
       step: '04',
       title: 'Query & grow',
       description:
-        'Ask complex questions against your knowledge base. Answers get filed back, so every query makes the wiki smarter.',
+        'Ask questions against your knowledge base. Answers get filed back automatically.',
       icon: ZapIcon,
     },
   ];
@@ -127,14 +126,14 @@ function HowItWorks() {
           From raw notes to structured knowledge
         </h2>
         <p className="mt-4 max-w-2xl text-[var(--slide-muted)]">
-          Inspired by Andrej Karpathy&apos;s viral{' '}
+          Inspired by Andrej Karpathy&apos;s{' '}
           <a
             className="text-[var(--slide-accent)]"
             href="https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f"
           >
             LLM knowledge base workflow
           </a>{' '}
-          — automated, real-time, and built for the way you actually think.
+          — automated and real-time.
         </p>
 
         <div className="mt-16 grid gap-12 md:grid-cols-2 lg:grid-cols-4 lg:gap-8">

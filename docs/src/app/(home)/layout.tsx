@@ -11,6 +11,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         ...base.nav,
         transparentMode: 'top',
       }}
+      searchToggle={{ enabled: false }}
     >
       {children}
     </HomeLayout>
