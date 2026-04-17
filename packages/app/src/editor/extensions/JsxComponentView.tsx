@@ -199,8 +199,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     requestAnimationFrame(() => {
       try {
         editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
-      } catch {
-        // Position may have changed if other transactions fired — safe to ignore
+      } catch (err) {
+        // Position may have changed if other transactions fired.
+        // Log as a structured event so recurring failures are visible in
+        // telemetry — the convertedRef guard prevents re-entry, but a
+        // swallowed exception here would otherwise leave the user on the
+        // "opening source editor..." placeholder with no signal.
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-auto-convert-failed',
+            component: node.attrs.componentName,
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
     });
   });

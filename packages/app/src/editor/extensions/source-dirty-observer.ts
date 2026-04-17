@@ -54,6 +54,12 @@ export const SourceDirtyObserver = Extension.create({
           for (const tr of transactions) {
             combinedMapping.appendMapping(tr.mapping);
           }
+          // Invert once per observer firing. A fresh `invert()` allocates a
+          // new Mapping of inverse steps; calling it inside the descendants
+          // loop is O(nodes * steps) and shows up on docs with many
+          // jsxComponents. The mapping is constant for the scope of this
+          // appendTransaction call.
+          const invertedMapping = combinedMapping.invert();
 
           const updates: Array<{ pos: number }> = [];
 
@@ -62,7 +68,7 @@ export const SourceDirtyObserver = Extension.create({
             if (node.attrs.sourceDirty) return; // already dirty, skip
 
             // Map from newState position back to oldState position
-            const oldPos = combinedMapping.invert().map(pos);
+            const oldPos = invertedMapping.map(pos);
             const oldNode = oldState.doc.nodeAt(oldPos);
             if (!oldNode) {
               // Node is new (inserted) — mark dirty if it has content

@@ -24,6 +24,7 @@
  */
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { ySyncPluginKey } from 'y-prosemirror';
 import { getDescriptor } from '../registry/index.ts';
 
 const typedChildrenGuardKey = new PluginKey('typedChildrenGuard');
@@ -38,6 +39,17 @@ export const TypedChildrenGuard = Extension.create({
         filterTransaction(tr, _state) {
           // Only filter transactions that modify the document
           if (!tr.docChanged) return true;
+
+          // Never filter CRDT-origin transactions. y-prosemirror sets
+          // ySyncPluginKey meta on transactions that apply remote Y.XmlFragment
+          // updates (incoming WebSocket sync, server-authoritative Observer B
+          // writes, agent-write, rollback, file-watcher). Rejecting these
+          // would diverge the local PM view from the authoritative CRDT
+          // state — the peer already persisted the change, and we'd stop
+          // seeing it. Let CRDT-origin transactions through; if the content
+          // is structurally illegal, the next parse/re-render cycle surfaces
+          // it as rawMdxFallback, not as silent divergence.
+          if (tr.getMeta(ySyncPluginKey)) return true;
 
           // Check each step in the transaction
           let dominated = false;

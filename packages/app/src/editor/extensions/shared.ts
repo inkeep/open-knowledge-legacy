@@ -14,10 +14,6 @@ import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
-// BridgeIdPlugin disabled — Context Bridge infrastructure is complete but unused
-// after Fallback 2 (DOM data-attribute compound wrappers). Re-enable when a
-// consumer (e.g., accessible Radix Context bridging) is added.
-// import { BridgeIdPlugin } from './bridge-id-plugin';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';

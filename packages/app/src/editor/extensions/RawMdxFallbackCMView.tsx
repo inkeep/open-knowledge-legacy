@@ -82,15 +82,25 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     const start = pos + 1;
     const end = pos + currentNode.nodeSize - 1;
 
+    // Always release the flag: if dispatch throws (e.g. position went stale
+    // under a concurrent transaction), leaving the flag true would pin the
+    // CM→PM bridge off for the rest of the NodeView's lifetime — the user
+    // keeps typing but keystrokes never reach PM. React Compiler does not
+    // support try/finally without a catch, so we catch/release/rethrow.
     updatingRef.current = true;
-    const tr = pmView.state.tr;
-    if (newText.length === 0) {
-      tr.delete(start, end);
-    } else {
-      const textNode = pmView.state.schema.text(newText);
-      tr.replaceWith(start, end, textNode);
+    try {
+      const tr = pmView.state.tr;
+      if (newText.length === 0) {
+        tr.delete(start, end);
+      } else {
+        const textNode = pmView.state.schema.text(newText);
+        tr.replaceWith(start, end, textNode);
+      }
+      pmView.dispatch(tr);
+    } catch (err) {
+      updatingRef.current = false;
+      throw err;
     }
-    pmView.dispatch(tr);
     updatingRef.current = false;
   };
 
@@ -192,10 +202,18 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     const change = computeChange(oldText, textContent);
     if (!change) return;
 
+    // Symmetric release with forwardUpdate: a CM dispatch throw must not
+    // strand the PM→CM bridge in the "skip" state forever. React Compiler
+    // does not support try/finally without a catch, so we catch/release/rethrow.
     updatingRef.current = true;
-    cmView.dispatch({
-      changes: { from: change.from, to: change.to, insert: change.text },
-    });
+    try {
+      cmView.dispatch({
+        changes: { from: change.from, to: change.to, insert: change.text },
+      });
+    } catch (err) {
+      updatingRef.current = false;
+      throw err;
+    }
     updatingRef.current = false;
   }, [textContent]);
 
