@@ -4,8 +4,6 @@ import {
   GitBranchIcon,
   LayersIcon,
   PenToolIcon,
-  TerminalIcon,
-  WrenchIcon,
   ZapIcon,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -19,7 +17,6 @@ export default function HomePage() {
       <EditorDemo />
       <StickyShowcase />
       <HowItWorks />
-      <Features />
       <Inspiration />
       <CTA />
       <SiteFooter />
@@ -148,74 +145,6 @@ function HowItWorks() {
                 <span className="font-mono text-xs text-[var(--slide-muted)]">{step}</span>
               </div>
               <h3 className="text-lg font-medium text-[var(--slide-text)]">{title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[var(--slide-muted)]">
-                {description}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Features() {
-  const features = [
-    {
-      icon: PenToolIcon,
-      title: 'Rich editing',
-      description:
-        'Obsidian-grade WYSIWYG with a source mode toggle. TipTap + CodeMirror, not a terminal text editor.',
-    },
-    {
-      icon: GitBranchIcon,
-      title: 'Markdown in git',
-      description:
-        'Plain .md files are the canonical source of truth. Branch, diff, merge — your knowledge is just files.',
-    },
-    {
-      icon: BrainCircuitIcon,
-      title: 'Bring Your Own Agent',
-      description:
-        'Any AI agent — Claude, Cursor, Codex — connects via MCP tools to read, write, and search.',
-    },
-    {
-      icon: ZapIcon,
-      title: 'Real-time CRDT',
-      description:
-        'Yjs-powered conflict-free editing. Human and AI cursors coexist without stepping on each other.',
-    },
-    {
-      icon: TerminalIcon,
-      title: 'One command',
-      description:
-        'npx @inkeep/open-knowledge — starts the server, editor, and MCP endpoint. No config required.',
-    },
-    {
-      icon: WrenchIcon,
-      title: 'Extensible',
-      description:
-        'Shadow git for attribution, undo/redo per agent, rescue buffers, reconciliation — built for serious knowledge work.',
-    },
-  ];
-
-  return (
-    <section className="bg-[var(--slide-bg)] px-6 py-24 md:py-32">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-16 text-center">
-          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
-            Features
-          </p>
-          <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
-            Everything you need for AI-native knowledge
-          </h2>
-        </div>
-
-        <div className="grid gap-x-12 gap-y-14 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map(({ icon: Icon, title, description }) => (
-            <div key={title}>
-              <Icon className="mb-4 size-8 text-[var(--slide-text)]" strokeWidth={1} />
-              <h3 className="text-base font-medium text-[var(--slide-text)]">{title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-[var(--slide-muted)]">
                 {description}
               </p>

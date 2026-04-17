@@ -46,8 +46,10 @@ This starts the server, editor, and MCP endpoint. Your current directory becomes
 export function EditorDemo() {
   const [mode, setMode] = useState<'visual' | 'source'>('visual');
   const [markdown, setMarkdown] = useState(DEMO_MARKDOWN);
-  const [inView, setInView] = useState(false);
+  const [headerInView, setHeaderInView] = useState(false);
+  const [editorInView, setEditorInView] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -56,11 +58,27 @@ export function EditorDemo() {
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          setInView(true);
+          setHeaderInView(true);
           observer.disconnect();
         }
       },
       { threshold: 0.15 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setEditorInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.1 },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -120,10 +138,10 @@ export function EditorDemo() {
     }
   }, [mode]);
 
-  const entrance = (delay: number) =>
+  const entrance = (delay: number, visible: boolean) =>
     ({
-      opacity: inView ? 1 : 0,
-      transform: inView
+      opacity: visible ? 1 : 0,
+      transform: visible
         ? 'perspective(1200px) translateZ(0) scale(1)'
         : 'perspective(1200px) translateZ(150px) scale(1.06)',
       transition: `opacity 0.8s cubic-bezier(0.23, 1, 0.32, 1) ${delay}s, transform 0.8s cubic-bezier(0.23, 1, 0.32, 1) ${delay}s`,
@@ -147,19 +165,19 @@ export function EditorDemo() {
         />
         <p
           className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]"
-          style={entrance(0)}
+          style={entrance(0, headerInView)}
         >
           Try it
         </p>
         <h2
           className="relative z-10 text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl"
-          style={entrance(0.07)}
+          style={entrance(0.07, headerInView)}
         >
           Two modes, one source of truth
         </h2>
         <p
           className="relative z-10 mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]"
-          style={entrance(0.14)}
+          style={entrance(0.14, headerInView)}
         >
           Switch between rich editing and raw markdown. Edit in either mode — the content stays in
           sync, just like the real product.
@@ -167,6 +185,7 @@ export function EditorDemo() {
       </div>
 
       <div
+        ref={editorRef}
         className="overflow-hidden"
         style={{
           borderColor: 'var(--slide-border)',
@@ -175,7 +194,7 @@ export function EditorDemo() {
       >
         <header
           className="flex h-12 shrink-0 items-center"
-          style={{ borderColor: 'var(--slide-border)', ...entrance(0.2) }}
+          style={{ borderColor: 'var(--slide-border)', ...entrance(0, editorInView) }}
         >
           <div className="flex flex-1 items-center gap-2 px-4 sm:px-6">
             <span className="truncate text-sm text-[var(--slide-muted)] ml-2">
@@ -192,7 +211,7 @@ export function EditorDemo() {
 
         <div
           className="relative h-[60vh] min-h-[420px] max-h-[640px] overflow-hidden"
-          style={entrance(0.3)}
+          style={entrance(0.1, editorInView)}
         >
           {/* Visual mode — real TipTap editor */}
           <div
