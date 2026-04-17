@@ -14,6 +14,7 @@ import {
 import { ConfigSchema } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import {
+  closeHttpServers,
   DEFAULT_UI_SAFETY_NET_MS,
   resolveRequestedPort,
   resolveUiLockCollision,
@@ -71,7 +72,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (handle) {
     handle.release();
-    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    await closeHttpServers(handle.httpServers);
     handle = null;
   }
   await rm(tmpDir, { recursive: true, force: true });
@@ -88,8 +89,8 @@ async function get(port: number, path: string) {
 }
 
 describe('resolveRequestedPort', () => {
-  test('default is 3000', () => {
-    expect(resolveRequestedPort(undefined, undefined)).toBe(3000);
+  test('default is 0 (kernel-allocated, D-033)', () => {
+    expect(resolveRequestedPort(undefined, undefined)).toBe(0);
   });
   test('--port wins over PORT env', () => {
     expect(resolveRequestedPort('4000', '5000')).toBe(4000);
@@ -97,8 +98,8 @@ describe('resolveRequestedPort', () => {
   test('PORT env used when --port absent', () => {
     expect(resolveRequestedPort(undefined, '5555')).toBe(5555);
   });
-  test('empty PORT env falls back to 3000', () => {
-    expect(resolveRequestedPort(undefined, '')).toBe(3000);
+  test('empty PORT env falls back to kernel-allocated (0)', () => {
+    expect(resolveRequestedPort(undefined, '')).toBe(0);
   });
   test('invalid --port throws', () => {
     expect(() => resolveRequestedPort('nope', undefined)).toThrow();
@@ -177,8 +178,88 @@ describe('startUiServer', () => {
     expect(readUiLock(lockDir)).toBeNull();
 
     // Keep afterEach happy — server is still up, just lock removed.
-    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    if (handle) await closeHttpServers(handle.httpServers);
     handle = null;
+  });
+
+  test('D-033: two-socket loopback — second bind via 127.0.0.1 fails loud with EADDRINUSE', async () => {
+    // Default mode (host undefined) binds BOTH [::1] and 127.0.0.1. A second
+    // bind to the same port on either family must fail — proving the pre-
+    // D-033 silent cross-family collision (one process on [::1]:3000 + another
+    // on 127.0.0.1:3000) can no longer happen. Verified empirically 2026-04-16
+    // that `::` with ipv6Only:false does NOT provide this property on macOS;
+    // only explicit two-socket binding does.
+    const h = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
+    handle = h;
+    expect(h.port).toBeGreaterThan(0);
+    expect(h.httpServers.length).toBe(2);
+
+    const collider = createHttpServer(() => {});
+    let errorCode: string | undefined;
+    await new Promise<void>((done) => {
+      collider.once('error', (err: NodeJS.ErrnoException) => {
+        errorCode = err.code;
+        done();
+      });
+      collider.listen(h.port, '127.0.0.1', () => {
+        // If listen succeeds, the IPv4 loopback side isn't bound.
+        collider.close(() => done());
+      });
+    });
+    expect(errorCode).toBe('EADDRINUSE');
+  });
+
+  test('D-033: two-socket loopback — second bind via [::1] also fails loud', async () => {
+    const h = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
+    handle = h;
+    const collider = createHttpServer(() => {});
+    let errorCode: string | undefined;
+    await new Promise<void>((done) => {
+      collider.once('error', (err: NodeJS.ErrnoException) => {
+        errorCode = err.code;
+        done();
+      });
+      collider.listen(h.port, '::1', () => {
+        collider.close(() => done());
+      });
+    });
+    expect(errorCode).toBe('EADDRINUSE');
+  });
+
+  test('D-033: two-socket loopback serves both families end-to-end', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
+    // Both families should answer on the same port.
+    const v4 = await fetch(`http://127.0.0.1:${handle.port}/api/config`);
+    expect(v4.status).toBe(200);
+    const v6 = await fetch(`http://[::1]:${handle.port}/api/config`);
+    expect(v6.status).toBe(200);
+  });
+
+  test('D-033 / G4: two projects with kernel-allocated port 0 get distinct ports', async () => {
+    // Two `ok ui` instances in different contentDirs must each acquire a
+    // unique kernel-allocated port. This is the mechanical property the
+    // pre-D-033 default (hardcoded 3000) did not provide.
+    const otherTmpDir = await mkdtemp(resolve(tmpdir(), 'ok-ui-cmd-test-'));
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0 });
+    const secondHandle = await startUiServer({
+      config: config(),
+      cwd: otherTmpDir,
+      port: 0,
+    });
+    try {
+      expect(handle.port).toBeGreaterThan(0);
+      expect(secondHandle.port).toBeGreaterThan(0);
+      expect(handle.port).not.toBe(secondHandle.port);
+      // Both reachable end-to-end.
+      const a = await fetch(`http://localhost:${handle.port}/api/config`);
+      const b = await fetch(`http://localhost:${secondHandle.port}/api/config`);
+      expect(a.status).toBe(200);
+      expect(b.status).toBe(200);
+    } finally {
+      secondHandle.release();
+      await closeHttpServers(secondHandle.httpServers);
+      await rm(otherTmpDir, { recursive: true, force: true });
+    }
   });
 
   test('GET /api/pages is proxied to the collab server when server.lock is live', async () => {
@@ -354,7 +435,7 @@ describe('startUiServer — D-025 12h safety-net', () => {
 
     // Wait for the close to complete on the event loop — fetch should fail
     // (or get ECONNREFUSED) once the listener is gone.
-    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    if (handle) await closeHttpServers(handle.httpServers);
     let connectError: unknown = null;
     try {
       await fetch(`http://localhost:${port}/api/config`);
@@ -420,7 +501,7 @@ describe('startUiServer — D-025 12h safety-net', () => {
     expect(existsSync(lockPath)).toBe(false);
 
     // Keep afterEach happy — server still up, just lock gone.
-    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    if (handle) await closeHttpServers(handle.httpServers);
     handle = null;
   });
 

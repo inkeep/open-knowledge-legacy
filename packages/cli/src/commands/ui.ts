@@ -37,7 +37,14 @@ import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-pro
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
 
 export interface UiServerHandle {
-  httpServer: HttpServer;
+  /**
+   * All bound HTTP servers. In two-socket-loopback mode (default, per D-033)
+   * this has length 2 — one IPv6 loopback (`[::1]`), one IPv4 loopback
+   * (`127.0.0.1`). When a caller passes an explicit `host`, length is 1.
+   * Callers that want to close the listener must close ALL servers; use the
+   * exported `closeHttpServers` helper.
+   */
+  httpServers: HttpServer[];
   port: number;
   /** Release the lock + cancel the safety-net timer. Idempotent. */
   release: () => void;
@@ -48,11 +55,37 @@ export interface UiServerHandle {
   nudgeSafetyNet: () => void;
 }
 
+/**
+ * Close every HTTP server in a `UiServerHandle` and resolve when all have
+ * fully released their listening sockets. Use instead of touching
+ * `handle.httpServers` directly so the two-socket lifecycle is centralized.
+ */
+export async function closeHttpServers(servers: HttpServer[]): Promise<void> {
+  await Promise.all(
+    servers.map(
+      (s) =>
+        new Promise<void>((done) => {
+          s.close(() => done());
+        }),
+    ),
+  );
+}
+
 export interface StartUiServerOptions {
   config: Config;
   cwd: string;
   port: number;
-  host: string;
+  /**
+   * Bind host. Undefined (default) triggers D-033 two-socket loopback mode:
+   * the server is bound twice on the same port — once on `[::1]` (IPv6
+   * loopback) and once on `127.0.0.1` (IPv4 loopback). Any subsequent bind
+   * attempt on the same port from either family fails loud with EADDRINUSE.
+   *
+   * Passing an explicit host (e.g. `'127.0.0.1'`, `'::1'`, `'0.0.0.0'`, `'::'`)
+   * degrades to single-socket binding on that host. Tests and operator
+   * overrides can still target a specific family.
+   */
+  host?: string;
   /** Override the 12h safety-net interval. Tests pass a small value. */
   safetyNetMs?: number;
   /** Scheduler override for tests (precedent #13b — implicit time-coupling is a smell). */
@@ -114,7 +147,10 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // live callback once the timer is in place.
   let apiConfigNudge: (() => void) | null = null;
 
-  const httpServer: HttpServer = createHttpServer((req, res) => {
+  // Request handler — the same function services every bound server (both
+  // [::1] and 127.0.0.1 in two-socket-loopback mode, or the single socket
+  // when a caller passes an explicit host).
+  const requestHandler = (req: import('node:http').IncomingMessage, res: ServerResponse) => {
     const url = req.url?.split('?')[0];
 
     // GET /api/config — zero-ceremony bootstrap for the React app. Reads the
@@ -195,26 +231,74 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     }
 
     notFound(res);
-  });
+  };
 
-  await new Promise<void>((done, fail) => {
-    const onError = (err: Error) => {
-      try {
-        releaseUiLock(lockDir);
-      } catch {
-        // Release is best-effort; the primary failure is more informative.
-      }
-      fail(err);
-    };
-    httpServer.once('error', onError);
-    httpServer.listen(opts.port, opts.host, () => {
-      httpServer.off('error', onError);
-      done();
-    });
-  });
+  // D-033 — BIND STRATEGY
+  //
+  // When `opts.host` is undefined (default), we bind two separate HTTP
+  // servers on the same port: one on `[::1]` (IPv6 loopback), one on
+  // `127.0.0.1` (IPv4 loopback). This is "two-socket loopback" mode.
+  //
+  // Why not `::` + `ipv6Only:false` (the spec's original wording)? That
+  // doesn't enforce EADDRINUSE on macOS — a second `127.0.0.1` bind
+  // succeeds even when the IPv6 wildcard is already claimed (verified
+  // empirically 2026-04-16). The only way to get cross-family collision-
+  // fail-loud on macOS is to bind both families explicitly.
+  //
+  // When `opts.host` is set (e.g. `-H 127.0.0.1`), we degrade to a
+  // single-socket bind so callers opting into a specific family get
+  // exactly that behavior.
+  //
+  // Sequencing: bind IPv6 first (the kernel assigns the port when
+  // `opts.port === 0`), then bind IPv4 at the resolved port. If the
+  // IPv4 bind fails (EADDRINUSE, EACCES, etc.), close the IPv6 server
+  // and release the lock before propagating the error.
+  const bindTargets: string[] = opts.host === undefined ? ['::1', '127.0.0.1'] : [opts.host];
+  const httpServers: HttpServer[] = [];
+  let boundPort = opts.port;
 
-  const addr = httpServer.address();
-  const realPort = typeof addr === 'object' && addr !== null ? addr.port : opts.port;
+  try {
+    for (const host of bindTargets) {
+      const server = createHttpServer(requestHandler);
+      httpServers.push(server);
+      await new Promise<void>((done, fail) => {
+        const onError = (err: Error) => fail(err);
+        server.once('error', onError);
+        server.listen(boundPort, host, () => {
+          server.off('error', onError);
+          const addr = server.address();
+          if (typeof addr === 'object' && addr !== null) {
+            // Pin the resolved port so the next bind in the loop uses the
+            // same port (matters when opts.port was 0).
+            boundPort = addr.port;
+          }
+          done();
+        });
+      });
+    }
+  } catch (err) {
+    // Any partial binds need to be torn down before we propagate.
+    await Promise.all(
+      httpServers.map(
+        (s) =>
+          new Promise<void>((done) => {
+            try {
+              s.close(() => done());
+            } catch {
+              done();
+            }
+          }),
+      ),
+    );
+    try {
+      releaseUiLock(lockDir);
+    } catch {
+      // Release is best-effort; the primary failure is more informative.
+    }
+    throw err;
+  }
+
+  const realPort = boundPort;
   resolvedPort = realPort;
   updateUiLockPort(lockDir, realPort);
 
@@ -264,10 +348,13 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       } catch {
         // best-effort observer
       }
-      try {
-        httpServer.close();
-      } catch {
-        // best-effort
+      // Close every bound HTTP server (two-socket loopback mode has two).
+      for (const server of httpServers) {
+        try {
+          server.close();
+        } catch {
+          // best-effort
+        }
       }
       release();
     }, safetyNetMs);
@@ -286,7 +373,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   armSafetyNet();
 
   return {
-    httpServer,
+    httpServers,
     port: realPort,
     release,
     detachSafetyNet,
@@ -314,7 +401,13 @@ function resolveRequestedPort(optsPort: string | undefined, envPort: string | un
     }
     return parsed;
   }
-  return 3000;
+  // D-033: default to kernel-allocation (0) instead of the hardcoded 3000.
+  // The previous default caused silent cross-project collisions when two
+  // projects' `ok ui` attempted to bind the same port from different address
+  // families. MCP preview URLs dereference `ui.lock.port` so no client
+  // contract breaks. Claude Code's `launch.json` retains `port: 3000` as the
+  // probe target; `autoPort: true` resolves the actual port end-to-end.
+  return 0;
 }
 
 /**
@@ -404,14 +497,19 @@ export async function resolveUiLockCollision(
 export function uiCommand(getConfig: () => Config): Command {
   return new Command('ui')
     .description('Serve the Open Knowledge React editor UI')
-    .option('-p, --port <port>', 'UI port (default: $PORT env or 3000)')
-    .option('-H, --host <host>', 'UI host', 'localhost')
+    .option('-p, --port <port>', 'UI port (default: $PORT env or 0 / kernel-allocated)')
+    .option(
+      '-H, --host <host>',
+      'UI host. Default: two-socket loopback bind (`[::1]` + `127.0.0.1`) so cross-family collisions fail loud (D-033). Pass an explicit host (e.g. `127.0.0.1`, `0.0.0.0`) to bind a single socket on that host.',
+    )
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');
       const { UiLockCollisionError } = await import('@inkeep/open-knowledge-server');
       const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
       const config = getConfig();
-      const host = opts.host ?? 'localhost';
+      // Undefined `host` triggers the default two-socket loopback mode in
+      // startUiServer. Callers who pass `-H` get single-socket bind as-is.
+      const host = opts.host;
 
       let requestedPort: number;
       try {
@@ -429,7 +527,14 @@ export function uiCommand(getConfig: () => Config): Command {
           port: requestedPort,
           host,
         });
-        console.log(`${dim('[ui]')} listening on http://${host}:${handle.port}`);
+        // Display a clickable URL in the log. Two-socket loopback mode
+        // (host === undefined) and wildcard binds don't have a single
+        // canonical host string, so default to `localhost` — it resolves
+        // to whichever loopback family the browser prefers and both are
+        // bound.
+        const displayHost =
+          host === undefined || host === '::' || host === '0.0.0.0' ? 'localhost' : host;
+        console.log(`${dim('[ui]')} listening on http://${displayHost}:${handle.port}`);
 
         let shuttingDown = false;
         const shutdown = (signal: NodeJS.Signals) => {
@@ -449,11 +554,10 @@ export function uiCommand(getConfig: () => Config): Command {
               process.exit(process.exitCode ?? 0);
             }
           };
-          try {
-            handle.httpServer.close(() => finish());
-          } catch {
-            finish();
-          }
+          // Close every bound server (two in the default two-socket mode)
+          // before releasing the lock. If any .close() throws synchronously
+          // we still fall through to finish() via the catch.
+          closeHttpServers(handle.httpServers).then(finish, finish);
           // Hard-deadline fallback — if close() hangs on an in-flight request,
           // we still release the lock and exit rather than stranding a stale
           // lockfile forever.
@@ -466,11 +570,18 @@ export function uiCommand(getConfig: () => Config): Command {
         if (!(err instanceof UiLockCollisionError)) throw err;
 
         const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+        // The proxy + collision code paths expect a concrete host string.
+        // When the caller didn't pass `-H`, fall back to `localhost` — the
+        // proxy only matters when a SECOND `ok ui` races against a live
+        // lock (Scenario B in the SPEC), and that proxy's single-socket
+        // loopback is acceptable (unlike the primary server, which does
+        // two-socket for collision-fail-loud).
+        const proxyHost = host ?? 'localhost';
         let result: UiCollisionResult;
         try {
           result = await resolveUiLockCollision({
             requestedPort,
-            host,
+            host: proxyHost,
             lockDir,
           });
         } catch (collisionErr) {
@@ -481,12 +592,12 @@ export function uiCommand(getConfig: () => Config): Command {
         }
 
         if (result.mode === 'already-running') {
-          console.log(`UI already running at http://${host}:${result.port}`);
+          console.log(`UI already running at http://${proxyHost}:${result.port}`);
           process.exit(0);
         }
 
         console.log(
-          `UI running at http://${host}:${result.upstreamPort}; acting as HTTP proxy on port ${result.handle.port}`,
+          `UI running at http://${proxyHost}:${result.upstreamPort}; acting as HTTP proxy on port ${result.handle.port}`,
         );
 
         let shuttingDown = false;

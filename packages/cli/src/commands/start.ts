@@ -73,11 +73,14 @@ export interface SpawnOkUiOptions {
  * `npx @inkeep/open-knowledge` to avoid cross-version lockfile-ABI drift and
  * the live-registry-fetch / supply-chain surface. See `self-spawn.ts`.
  *
- * **PORT env hygiene (QA-007):** the child `ok ui` resolves its bind port
- * via `PORT` env > `--port` flag > default 3000. When `ok start` itself was
- * invoked with `PORT=<X>` (e.g. operator override), we must NOT inherit
- * that to the child — both processes would try to bind the same port. We
- * always strip `PORT` from the child env; if the caller needs a specific
+ * **PORT env hygiene (QA-007; D-033):** the child `ok ui` resolves its bind
+ * port via `PORT` env > `--port` flag > default 0 (kernel-allocated per
+ * D-033). When `ok start` itself was invoked with `PORT=<X>` (e.g. operator
+ * override), we must NOT inherit that to the child — both processes would
+ * try to bind the same port. Stripping `PORT` means the child falls through
+ * to its default, which (post-D-033) is kernel-allocation — each auto-
+ * spawned UI gets a unique port and G4 (multi-project concurrency) is
+ * mechanically true, not just aspirational. If the caller needs a specific
  * UI port, they should invoke `ok ui --port <X>` directly.
  */
 export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
