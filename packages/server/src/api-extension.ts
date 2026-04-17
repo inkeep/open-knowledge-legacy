@@ -2905,8 +2905,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string }[] = [];
-      for (const [docName] of index) {
+      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      for (const [docName, entry] of index) {
         let title = docName;
         try {
           const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
@@ -2915,7 +2915,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title });
+        pages.push({ docName, title, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });

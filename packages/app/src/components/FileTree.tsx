@@ -363,7 +363,7 @@ const FileTreeNode: FC<{
             onCancelRename();
           }
         }}
-        className="h-7 min-w-0 flex-1 bg-background text-sm"
+        className="h-7 min-w-0 flex-1 bg-background text-sm text-foreground"
       />
       {isFile && <span className="text-xs text-sidebar-foreground/40">.md</span>}
     </div>
@@ -980,7 +980,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
-        <Button variant="outline" size="sm" onClick={() => startCreating('file', '')}>
+        <Button
+          variant="link"
+          size="sm"
+          className="font-mono uppercase"
+          onClick={() => startCreating('file', '')}
+        >
           Create your first file
         </Button>
       </div>
