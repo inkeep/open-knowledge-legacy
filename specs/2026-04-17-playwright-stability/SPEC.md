@@ -51,7 +51,7 @@
 | F2 | `list-keymap.e2e.ts` — per-test docName + fix `mode→position` | Same isolation pattern + change `mode: 'replace'` to `position: 'replace'` in `seedMarkdown` |
 | F3 | `ux-interactions.e2e.ts` — per-test docName | Same isolation pattern for all tests in this file |
 | F4 | `observer-a-multi-client.e2e.ts` — per-test docName + fix `mode→position` | Same isolation + fix body key |
-| F5 | `reveal-on-activate.e2e.ts` — remove unnecessary `beforeEach` reset | Delete the `test-reset` call from `beforeEach`. Tests that click `test-doc.md` should use a per-test created doc instead. |
+| F5 | `reveal-on-activate.e2e.ts` — remove unnecessary `beforeEach` reset | Delete the `test-reset` call from `beforeEach`. Tests that need a doc create their own per-test doc; tests that only read pre-seeded fixtures (`test-doc.md`, `nested-doc.md`) work without any reset. Read-only sidebar references to pre-seeded fixtures are acceptable — the issue was the WRITE-path `test-reset` call interfering with parallel tests. |
 | F6 | `graph-panel-surfaces.e2e.ts` — per-test fixture scoping | `seedGraphFixtures()` should use per-test unique doc names (e.g., `alpha-{uuid}`) and pass them through to all helpers. Remove the `test-reset` call from `seedGraphFixtures()`. |
 | F7 | `source-polish.e2e.ts` — per-test docName isolation | Same isolation pattern. Added under greenfield directive ("no deferred tech debt") after initial 6-file migration — same bug pattern, same fix. |
 | F8 | `outline-navigation.e2e.ts` — per-test docName isolation | Same isolation pattern. Seeds via `createPage` + `replaceDoc` with per-test docName; page-headings poll uses per-test docName. |
@@ -89,6 +89,11 @@ async function replaceDoc(docName: string, markdown: string) {
 }
 
 async function seedDocs(docs: Array<{ name: string; markdown: string }>) {
+  // NOTE: this unscoped test-reset is acceptable ONLY in docs-open.e2e.ts
+  // because every test creates unique doc names — the reset clears any
+  // leftover state but doesn't interfere with parallel tests since no
+  // other test writes to these unique names. Do NOT copy this pattern
+  // into tests that use hardcoded doc names.
   await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
   for (const d of docs) await createPage(`${d.name}.md`);
   for (const d of docs) await replaceDoc(d.name, d.markdown);
