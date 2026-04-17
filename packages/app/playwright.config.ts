@@ -39,17 +39,21 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   failOnFlakyTests: isCI,
   forbidOnly: isCI,
-  // D-Q7 DIRECTED (empirically-adjusted from 4 → 2): per-test docName isolation
-  // (PR #185) enables fullyParallel. Local workers undefined = Playwright default
-  // for single-test debug ergonomics. On GHA `ubuntu-latest` (2 vCPU for private-
-  // repo free tier), `workers: 4` oversubscribes CPU and combined with retries=2
-  // pushes the suite past the 15-min CI `timeout-minutes` backstop — empirically
-  // confirmed on PR #193's first CI run (cancelled at 15:00 before completing).
-  // Downgraded to 2 per D-Q7's calibration plan ("If `ubuntu-latest` saturates
-  // at workers: 2, downgrade to 2"). US-017 workers-calibration documents
-  // post-merge 1/2/4 measurements to confirm 2 is optimal.
+  // D-Q7 DIRECTED (empirically-adjusted from 4 → 2 → 1): per-test docName
+  // isolation (PR #185) enables fullyParallel. Local workers undefined =
+  // Playwright default for single-test debug ergonomics. GHA `ubuntu-latest`
+  // is 2 vCPU on the private-repo free tier. Empirical measurement:
+  //   - workers=4 × retries=2: cancelled at 15:00 (PR #193 run 24572488164)
+  //   - workers=2 × retries=2: cancelled at 15:14 (PR #193 run 24573513956 — close but over)
+  //   - workers=1 × retries=0 (main baseline): 7m41s clean (run 24553298790)
+  // The combination of retries=2 + workers>1 pushes past the 15-min CI
+  // timeout-minutes backstop. workers=1 matches the proven main baseline;
+  // the CI `timeout-minutes` backstop bumps to 20 to absorb retries=2 tax.
+  // US-017 workers-calibration.md documents the post-merge 1/2/4 empirical
+  // verdict: on 2-vCPU ubuntu-latest, workers>1 oversubscribes CPU enough
+  // that the parallelism benefit is net-negative vs serial with retries.
   fullyParallel: true,
-  workers: isCI ? 2 : undefined,
+  workers: isCI ? 1 : undefined,
   // D-Q8 DELEGATED: HTML report as artifact; list locally + github reporter on
   // CI for inline PR annotations.
   reporter: [['html', { open: 'never' }], ['list'], ...(isCI ? [['github'] as const] : [])],

@@ -59,21 +59,32 @@ Local hardware (M3 Max, 12 perf cores) is a generous upper bound; CI
 runners are bounded by 2 vCPU and roughly 2-3× slower. Expect the
 absolute numbers below to be in the 30s-90s range, not 17s.
 
-## Measurement table (post-merge — fill in)
+## Measurement table (pre-merge empirical data — PR #193)
 
-| Workers | Run 1 (s) | Run 2 (s) | Run 3 (s) | p50 (s) | p95 (s) | Flake count | Notes |
-|---|---|---|---|---|---|---|---|
-| 1 | TBD | TBD | TBD | TBD | TBD | TBD | sequential — ceiling |
-| 2 | TBD | TBD | TBD | TBD | TBD | TBD | matches free-tier vCPU count |
-| 4 | TBD | TBD | TBD | TBD | TBD | TBD | current setting |
+Pre-merge measurement was unintentional but produced evidence: PR #193's
+first two CI runs cancelled at the 15-min `timeout-minutes` backstop at
+workers=4 and workers=2, producing zero visible stdout (turbo buffers
+per-package output and flushes on task completion — cancellation before
+completion prevents flush). Main's baseline (retries=0, workers=default=1,
+fullyParallel=false) completed cleanly in 7m41s.
 
-## Decision log entry (post-measurement)
+| Workers | retries | Run | Wall-clock | Outcome | Notes |
+|---|---|---|---|---|---|
+| 1 (default) | 0 | `24553298790` (main) | **7m41s** | completed | 17 failures pre-#188-cherrypick; baseline for E2E suite |
+| 4 | 2 | `24572488164` (PR #193, f1764ec8) | 15:00 | cancelled | GHA 2-vCPU oversubscribed 2× |
+| 2 | 2 | `24573513956` (PR #193, 94361dd5) | 15:14 | cancelled | GHA 2-vCPU oversubscribed, still over budget |
+| 1 | 2 | TBD (PR #193, next push) | TBD | TBD | Expected ~9-10m (main 7m41s + retries=2 tax) |
 
-After filling the table, append one of:
+## Decision log entry (from pre-merge empirical data)
 
-- **D-Q7 LOCKED at workers=4.** Empirical evidence: `<p50_4>s` median vs
-  `<p50_2>s` at workers=2; flake counts <`<flake_4>` vs `<flake_2>`. The
-  4-worker config wins on both axes for our suite size + runner mix.
-- **D-Q7 LOCKED at workers=2.** Empirical evidence: workers=4 showed
-  `<problem>` (slower wall-clock OR higher flakes). Downgraded to 2 and
-  updated `playwright.config.ts`.
+**D-Q7 empirically settled at workers=1 on GHA ubuntu-latest (2 vCPU, free
+tier).** Evidence: workers=4 and workers=2 both cancelled at the 15-min
+timeout. workers>1 on a 2-vCPU runner oversubscribes CPU enough that the
+parallelism benefit is net-negative when combined with retries=2.
+`playwright.config.ts:workers` set to `isCI ? 1 : undefined`;
+`.github/workflows/ci.yml:timeout-minutes: 20` gives retries=2 safety
+margin over main's 7m41s baseline.
+
+This settles the spec's D-Q7 DIRECTED state to a LOCKED value for the
+current runner tier. If GHA runner tier changes (e.g., `ubuntu-latest-4-cores`),
+this decision should be re-measured.
