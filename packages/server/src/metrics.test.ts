@@ -3,6 +3,8 @@ import {
   getMetrics,
   incrementBatch,
   incrementBranchSwitch,
+  incrementBridgeMergeCheckpointCreated,
+  incrementBridgeMergeContentLoss,
   incrementConflict,
   incrementPark,
   incrementReconcile,
@@ -22,6 +24,20 @@ describe('reconciliation metrics', () => {
     expect(m.rescueBufferCount).toBe(0);
     expect(m.branchSwitchCount).toBe(0);
     expect(m.parkCount).toBe(0);
+    expect(m.bridgeMergeContentLoss).toBe(0);
+    expect(m.bridgeMergeCheckpointCreated).toBe(0);
+  });
+
+  test('bridge-correctness counters increment independently (SPEC §6 R9)', () => {
+    resetMetrics();
+    incrementBridgeMergeContentLoss();
+    incrementBridgeMergeContentLoss();
+    incrementBridgeMergeContentLoss();
+    incrementBridgeMergeCheckpointCreated();
+    incrementBridgeMergeCheckpointCreated();
+    const m = getMetrics();
+    expect(m.bridgeMergeContentLoss).toBe(3);
+    expect(m.bridgeMergeCheckpointCreated).toBe(2);
   });
 
   test('increments each counter independently', () => {
