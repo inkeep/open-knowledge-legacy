@@ -504,11 +504,24 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
                 : undefined
             }
             onStatsChange={(nodes, links, loading) => {
+              // Idempotent stats update — without this bail-out, every render
+              // of `GraphPanel` produces a fresh `onStatsChange` identity,
+              // which makes `GraphView`'s stats effect fire every render, and
+              // a naive `setStats({nodes,links})` allocates a new object each
+              // time — React sees a state change, re-renders GraphPanel, and
+              // we're in a render loop. React Compiler cannot memoize an
+              // inline prop-arrow in a way that breaks this cycle; the
+              // state-setter bail-out does it structurally.
+              //
+              // See `specs/2026-04-16-graph-demo-iteration-loop/evidence/timetravel-render-loop.md`.
               if (loading) {
-                setStats(null);
+                setStats((prev) => (prev === null ? prev : null));
                 return;
               }
-              setStats({ nodes, links });
+              setStats((prev) => {
+                if (prev && prev.nodes === nodes && prev.links === links) return prev;
+                return { nodes, links };
+              });
             }}
             onClustersChange={isFullscreen ? setClusters : undefined}
             onActiveAgentsChange={setActiveAgents}

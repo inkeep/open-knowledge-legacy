@@ -747,9 +747,18 @@ export function GraphView({
     }),
   );
 
+  // Stats feed a primitive-valued badge — depend on the COUNTS (primitives)
+  // rather than the `displayData` object identity. When the time-travel
+  // controller returns a fresh `overrideGraph` reference every render,
+  // `displayData` gets a new identity every render even though the underlying
+  // counts don't change; depending on the object would then feed `setStats`
+  // in a loop via the parent re-render it triggers. See bug trace in
+  // `specs/2026-04-16-graph-demo-iteration-loop/evidence/timetravel-render-loop.md`.
+  const displayNodeCount = displayData.nodes.length;
+  const displayLinkCount = displayData.links.length;
   useEffect(() => {
-    onStatsChange?.(displayData.nodes.length, displayData.links.length, loading);
-  }, [displayData, loading, onStatsChange]);
+    onStatsChange?.(displayNodeCount, displayLinkCount, loading);
+  }, [displayNodeCount, displayLinkCount, loading, onStatsChange]);
 
   useEffect(() => {
     if (!onClustersChange) return;
