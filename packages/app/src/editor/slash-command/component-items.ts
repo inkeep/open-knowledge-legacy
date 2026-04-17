@@ -9,23 +9,69 @@
  */
 
 import type { Editor } from '@tiptap/react';
-import * as LucideIcons from 'lucide-react';
-import { Box, type LucideIcon } from 'lucide-react';
+import {
+  Box,
+  ChevronDown,
+  ChevronsUpDown,
+  FileText,
+  Flag,
+  FolderOpen,
+  FolderTree,
+  GitGraph,
+  Hash,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  type LucideIcon,
+  MessageSquareWarning,
+  PanelTop,
+  Square,
+  SquareMousePointer,
+  Table,
+  Volume2,
+  ZoomIn,
+} from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
 
 /**
- * Resolve a descriptor icon name (e.g., `'MessageSquareWarning'`) to the
- * corresponding lucide-react component. Falls back to `Box` for unknown
- * names or descriptors without an icon (wildcard). Descriptor icon names
- * are authored in `built-ins.ts` as strings to keep the registry
- * React-free (`packages/core/` has no React dep).
+ * Map of descriptor `icon` string names to their lucide-react React components.
+ * Named imports (not namespace import) so Vite's tree-shaking only ships the
+ * icons actually referenced — a namespace import would bundle all ~1800
+ * lucide icons and blow the bundle-size gate. New icons require adding both
+ * the import above and the map entry here; the registry stays React-free
+ * (`packages/core/`) by carrying icons as strings.
+ */
+const ICON_COMPONENTS: Record<string, LucideIcon> = {
+  ChevronDown,
+  ChevronsUpDown,
+  FileText,
+  Flag,
+  FolderOpen,
+  FolderTree,
+  GitGraph,
+  Hash,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  MessageSquareWarning,
+  PanelTop,
+  Square,
+  SquareMousePointer,
+  Table,
+  Volume2,
+  ZoomIn,
+};
+
+/**
+ * Resolve a descriptor icon name (e.g., `'MessageSquareWarning'`) to its
+ * lucide-react component. Falls back to `Box` for unknown names or
+ * descriptors without an icon (wildcard).
  */
 function resolveIcon(iconName: string | undefined): LucideIcon {
   if (!iconName) return Box;
-  const icon = (LucideIcons as unknown as Record<string, LucideIcon>)[iconName];
-  return icon ?? Box;
+  return ICON_COMPONENTS[iconName] ?? Box;
 }
 
 /**
