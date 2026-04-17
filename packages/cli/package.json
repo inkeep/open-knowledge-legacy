@@ -13,7 +13,8 @@
     "open-knowledge": "./dist/cli.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "engines": {
     "node": ">=22"
