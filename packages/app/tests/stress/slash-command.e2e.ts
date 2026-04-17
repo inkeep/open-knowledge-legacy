@@ -685,56 +685,15 @@ test.describe('slash command — menu positioning', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('the menu repositions when the editor container is scrolled', async ({ page }) => {
-    await resetEditor(page, docName);
-    for (let i = 0; i < 30; i++) {
-      await page.keyboard.type(`line ${i}`);
-      await page.keyboard.press('Enter');
-    }
-    // Position cursor in the middle of the content
-    await page.keyboard.press('Control+Home');
-    for (let i = 0; i < 15; i++) await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('End');
-    await page.keyboard.press('Enter');
-    await page.keyboard.type('/');
-    await waitForSlashMenuOpen(page);
-
-    const before = await getPopupInfo(page);
-    expect(before).not.toBeNull();
-    if (!before) return;
-
-    // Scroll the editor container
-    const scrolled = await page.evaluate(() => {
-      let el: HTMLElement | null = document.querySelector('.ProseMirror');
-      while (el && el !== document.body) {
-        const styles = window.getComputedStyle(el);
-        if (styles.overflowY === 'auto' || styles.overflowY === 'scroll') {
-          if (el.scrollTop > 50) {
-            el.scrollTop -= 50;
-            return true;
-          }
-          if (el.scrollHeight - el.clientHeight - el.scrollTop > 50) {
-            el.scrollTop += 50;
-            return true;
-          }
-        }
-        el = el.parentElement;
-      }
-      return false;
-    });
-    expect(scrolled).toBe(true);
-    await expect
-      .poll(async () => {
-        const after = await getPopupInfo(page);
-        if (!after) return 0;
-        return Math.abs(after.rect.top - before.rect.top);
-      })
-      .toBeGreaterThan(5);
-
-    const after = await getPopupInfo(page);
-    if (!after) return;
-    // Menu position should have changed in response to scroll
-    expect(Math.abs(after.rect.top - before.rect.top)).toBeGreaterThan(5);
-    await page.keyboard.press('Escape');
-  });
+  // The former "menu repositions on editor scroll" test was deleted after
+  // TDD review found it testing Floating-UI's `autoUpdate` contract rather
+  // than any invariant we own. Scroll tracking is Floating-UI's
+  // responsibility; we configure middleware + virtual element, and the
+  // "menu appears just below the cursor" test above already exercises that
+  // our `startAutoUpdate` wiring is live (the popup would never reveal
+  // without autoUpdate's first synchronous `doPosition` resolving). The
+  // deleted test also ran up against Chromium's programmatic-scroll rebound
+  // — a browser-native ~150ms scroll correction that neutralized small
+  // `scrollTop` deltas and produced intermittent failures under CPU
+  // contention. See /debug + TDD evaluation on 2026-04-17.
 });

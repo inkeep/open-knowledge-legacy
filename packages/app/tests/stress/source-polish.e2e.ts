@@ -92,7 +92,9 @@ test.describe('§6.2 Strikethrough', () => {
 // ── §6.3 List hanging-indent ─────────────────────────────────────────────────
 
 test.describe('§6.3 List hanging-indent', () => {
-  test('wrapped bullet continuation x > marker x', async ({ page }) => {
+  test('wrapped bullet list line left edge aligns with plain paragraph (marker not pushed off-screen)', async ({
+    page,
+  }) => {
     const longText = 'A'.repeat(200);
     await seedMarkdown(testDocName, `- ${longText}\n\nplain paragraph`);
     await switchToSource(page);
