@@ -136,8 +136,12 @@ export {
 } from './server-observer-extension.ts';
 export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 export {
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  DEFAULT_CHECKPOINT_RETENTION,
+  gcCheckpointRefs,
   type InMemoryCheckpointParams,
   initShadowRepo,
   listRescueCheckpoints,

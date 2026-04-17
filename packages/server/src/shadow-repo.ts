@@ -335,10 +335,24 @@ export async function saveInMemoryCheckpoint(
   const treePath = contentRoot
     ? `${contentRoot.replace(/\/$/, '')}/${params.docName}`
     : params.docName;
+  // Byte-size of the rescued content; encoded in metadata so the rescue
+  // read path can render the listing without spawning a per-ref `git ls-tree`
+  // subprocess (bridge-correctness review iteration 5).
+  const size = Buffer.byteLength(params.contents, 'utf-8');
   const parsed: ParsedCheckpoint =
     params.kind === 'bridge-merge-loss'
-      ? { kind: 'bridge-merge-loss', metadata: params.metadata }
-      : { kind: 'external-change-rescue', metadata: params.metadata };
+      ? {
+          kind: 'bridge-merge-loss',
+          docName: params.docName,
+          size,
+          metadata: params.metadata,
+        }
+      : {
+          kind: 'external-change-rescue',
+          docName: params.docName,
+          size,
+          metadata: params.metadata,
+        };
   const bodyLine = formatCheckpointBodyLine(parsed);
   const message = `checkpoint: ${params.label}\n\n${bodyLine}`;
 
@@ -408,6 +422,13 @@ export interface TimelineRescueEntry {
  * and filtering by kind. Does not walk ancestry — each ref is resolved
  * directly via `git log --no-walk`. Returns an empty array on any git error
  * to match the graceful-degradation posture of `getDocumentHistory`.
+ *
+ * Bridge-correctness review iteration 5: `docName` + `size` are now read
+ * from the parsed `ok-checkpoint-v1:` metadata body line. The per-ref
+ * `git ls-tree` fan-out the prior implementation performed is retained
+ * only as a backward-compat fallback for checkpoints written before the
+ * metadata was enriched (none in a fresh install; included for robustness
+ * on worktrees carrying earlier-iteration artifacts).
  */
 export async function listRescueCheckpoints(
   shadow: ShadowHandle,
@@ -451,26 +472,32 @@ export async function listRescueCheckpoints(
     const parsed = parseCheckpoint(body);
     if (parsed?.kind !== 'external-change-rescue') continue;
 
-    // Infer docName + blob size from the tree. We expect saveInMemoryCheckpoint
-    // to have placed exactly one blob keyed by `<contentRoot>/<docName>`.
-    let docName = '';
-    let size = 0;
-    try {
-      const tree = (await sg.raw('ls-tree', '-r', '--long', sha)).trim();
-      const line = tree.split('\n')[0];
-      if (line) {
-        const cols = line.split(/\s+/);
-        const pathIdx = 4;
-        const sizeIdx = 3;
-        size = Number(cols[sizeIdx] ?? '0');
-        docName =
-          (cols[pathIdx] ?? '')
-            .replace(/\.mdx?$/, '')
-            .split('/')
-            .slice(-1)[0] ?? '';
+    // Fast path: metadata carries docName + size directly (bridge-correctness
+    // review iteration 5). Per-commit subprocess skipped in this path.
+    let docName = parsed.docName ?? '';
+    let size = parsed.size ?? 0;
+
+    // Backward-compat fallback for any pre-enrichment checkpoints on this
+    // branch. Safe no-op for fresh commits since the fast-path already
+    // populated both fields.
+    if (!docName) {
+      try {
+        const tree = (await sg.raw('ls-tree', '-r', '--long', sha)).trim();
+        const line = tree.split('\n')[0];
+        if (line) {
+          const cols = line.split(/\s+/);
+          const pathIdx = 4;
+          const sizeIdx = 3;
+          if (size === 0) size = Number(cols[sizeIdx] ?? '0');
+          docName =
+            (cols[pathIdx] ?? '')
+              .replace(/\.mdx?$/, '')
+              .split('/')
+              .slice(-1)[0] ?? '';
+        }
+      } catch {
+        // ignore — docName stays empty; caller treats as unparseable
       }
-    } catch {
-      // ignore — docName stays empty; caller treats as unparseable
     }
     if (!docName) continue;
     out.push({
@@ -483,6 +510,185 @@ export async function listRescueCheckpoints(
     });
   }
   return out;
+}
+
+// ─── Checkpoint GC (bridge-correctness SPEC §6 R7 + review iteration 5) ────
+
+/** Per-kind retention policy for `refs/checkpoints/<branch>/*`. */
+export interface CheckpointRetentionPolicy {
+  /**
+   * Maximum `bridge-merge-loss` checkpoints to keep per branch. These are
+   * written on every Observer A Path B post-condition violation. Default 50.
+   */
+  maxBridgeMergeLoss: number;
+  /**
+   * Maximum `external-change-rescue` checkpoints to keep per branch. These
+   * are written on reconcile-delete / branch-switch disk-overrode-memory
+   * paths. Default 50.
+   */
+  maxExternalChangeRescue: number;
+  /**
+   * `ok-checkpoint-v1`-tagged checkpoints older than this TTL (ms) are
+   * GC-eligible regardless of count. Default 30 days. `Save Version`
+   * checkpoints (no `ok-checkpoint-v1:` body line) are NOT affected —
+   * their retention was set at PR inception as permanent.
+   */
+  ttlMs: number;
+}
+
+export const DEFAULT_CHECKPOINT_RETENTION: CheckpointRetentionPolicy = {
+  maxBridgeMergeLoss: 50,
+  maxExternalChangeRescue: 50,
+  ttlMs: 30 * 24 * 60 * 60 * 1000,
+};
+
+export interface CheckpointGcResult {
+  scanned: number;
+  deletedBridgeMergeLoss: number;
+  deletedExternalChangeRescue: number;
+  retained: number;
+}
+
+/**
+ * GC `refs/checkpoints/<branch>/*` kind-aware: keep the most-recent N per
+ * kind (per policy), delete older entries, apply TTL as a lower bound.
+ * Untyped checkpoints (no `ok-checkpoint-v1:` body line — i.e. user-
+ * triggered `Save Version` artifacts) are always retained to preserve the
+ * permanent-history contract.
+ *
+ * Batched: single `for-each-ref` + single `git log --no-walk` regardless of
+ * ref count. Deletion is one `update-ref -d` per eligible ref.
+ */
+export async function gcCheckpointRefs(
+  shadow: ShadowHandle,
+  branch = 'main',
+  policy: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
+): Promise<CheckpointGcResult> {
+  const result: CheckpointGcResult = {
+    scanned: 0,
+    deletedBridgeMergeLoss: 0,
+    deletedExternalChangeRescue: 0,
+    retained: 0,
+  };
+  const sg = shadowGit(shadow);
+  let refOutput: string;
+  try {
+    refOutput = await sg.raw(
+      'for-each-ref',
+      '--format=%(objectname) %(refname)',
+      `refs/checkpoints/${branch}/`,
+    );
+  } catch {
+    return result;
+  }
+  const refLines = refOutput
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (refLines.length === 0) return result;
+
+  // Maintain the ref → sha mapping so we can delete by refname (stable even
+  // if a future rewrite changes the sha-under-ref naming convention).
+  const shaToRef = new Map<string, string>();
+  const shas: string[] = [];
+  for (const line of refLines) {
+    const spaceIdx = line.indexOf(' ');
+    if (spaceIdx < 0) continue;
+    const sha = line.slice(0, spaceIdx);
+    const ref = line.slice(spaceIdx + 1);
+    if (sha.length !== 40) continue;
+    shaToRef.set(sha, ref);
+    shas.push(sha);
+  }
+  result.scanned = shas.length;
+  if (shas.length === 0) return result;
+
+  let logRaw: string;
+  try {
+    logRaw = await sg.raw(
+      'log',
+      '--no-walk',
+      '--author-date-order',
+      '--format=%H%x00%aI%x00%B%x1e',
+      ...shas,
+    );
+  } catch {
+    return result;
+  }
+
+  interface Entry {
+    sha: string;
+    timestamp: number; // ms since epoch
+    kind: 'bridge-merge-loss' | 'external-change-rescue' | null;
+  }
+  const entries: Entry[] = [];
+  for (const record of logRaw.split('\x1e')) {
+    const trimmed = record.trimStart();
+    if (!trimmed) continue;
+    const [sha = '', timestamp = '', body = ''] = trimmed.split('\x00');
+    if (!sha) continue;
+    const parsed = parseCheckpoint(body);
+    const kind = parsed?.kind ?? null;
+    const ts = Date.parse(timestamp);
+    entries.push({ sha, timestamp: Number.isFinite(ts) ? ts : 0, kind });
+  }
+
+  // Partition by kind. Save-Version (kind=null) entries are always retained.
+  const byKind: Record<'bridge-merge-loss' | 'external-change-rescue', Entry[]> = {
+    'bridge-merge-loss': [],
+    'external-change-rescue': [],
+  };
+  let retainedUntyped = 0;
+  for (const e of entries) {
+    if (e.kind === null) {
+      retainedUntyped++;
+      continue;
+    }
+    byKind[e.kind].push(e);
+  }
+
+  const now = Date.now();
+  const deleteRefs: string[] = [];
+  const planDeletions = (
+    list: Entry[],
+    limit: number,
+    counter: 'deletedBridgeMergeLoss' | 'deletedExternalChangeRescue',
+  ): void => {
+    // Newest first so the count-based keep-N is trivial.
+    list.sort((a, b) => b.timestamp - a.timestamp);
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (!entry) continue;
+      const overCount = i >= limit;
+      const overTtl =
+        policy.ttlMs > 0 && entry.timestamp > 0 && now - entry.timestamp > policy.ttlMs;
+      if (overCount || overTtl) {
+        const ref = shaToRef.get(entry.sha);
+        if (ref) {
+          deleteRefs.push(ref);
+          result[counter]++;
+        }
+      }
+    }
+  };
+  planDeletions(byKind['bridge-merge-loss'], policy.maxBridgeMergeLoss, 'deletedBridgeMergeLoss');
+  planDeletions(
+    byKind['external-change-rescue'],
+    policy.maxExternalChangeRescue,
+    'deletedExternalChangeRescue',
+  );
+
+  for (const ref of deleteRefs) {
+    try {
+      await sg.raw('update-ref', '-d', ref);
+    } catch (err) {
+      console.warn('[checkpoint-gc] failed to delete', ref, err);
+    }
+  }
+
+  result.retained = retainedUntyped + (result.scanned - deleteRefs.length - retainedUntyped);
+  return result;
 }
 
 // ─── Park / Load / Restore ──────────────────────────────────────────────────

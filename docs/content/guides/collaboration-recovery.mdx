@@ -1,0 +1,42 @@
+---
+title: Collaboration and concurrent-edit recovery
+description: Understand how Open Knowledge preserves content under concurrent editing and how to restore an auto-saved checkpoint if a race ever slips through.
+---
+
+Open Knowledge's editor is collaborative out of the box — two collaborators (or an agent and a user) can type in the same document at the same time, in either the WYSIWYG or source view, and both sets of edits are preserved. The collaboration layer is a Y.js CRDT; it handles the overwhelming majority of concurrent edits without any visible signal.
+
+A very small class of interleavings can still trip the underlying CRDT's structural limit (formally proven by [Khanna-Kunal-Pierce 2007](https://repository.upenn.edu/cis_papers/277/)). When that happens, Open Knowledge automatically:
+
+1. Logs a structured `bridge-merge-content-loss` event (visible in the server's stdout / log aggregator).
+2. Writes a silent checkpoint of the pre-merge state to the timeline.
+3. Keeps the editor responsive — you keep typing.
+
+No toast, no modal, no interruption. The recovery affordance lives in the [[TimelinePanel]] — always available, never in your way.
+
+## What you'll see
+
+If you notice a paragraph blink, or feel like "a chunk of my text just vanished," open the **Timeline** panel for the affected document. Recent entries carry distinct icons:
+
+- **Diamond** — a user-triggered *Save Version*. Nothing automatic.
+- **Amber alert-triangle** — **"Auto-saved before a concurrent edit (&lt;size&gt;)"**. Open Knowledge saved a snapshot of the document right before a concurrent edit finalized. If your lost content is anywhere, it's here.
+- **Sky file-archive** — **"Recovered from an external change (&lt;size&gt;)"**. An external writer (another process, a `git checkout`, a file-watcher sync) overrode an in-memory draft. The draft is preserved under this entry.
+
+Click the entry to view the snapshot. The editor shows the pre-merge state in read-only preview; from there you can copy out the missing fragment or restore the whole snapshot over the current doc.
+
+## How often does this happen?
+
+For typical usage (one or two collaborators, normal typing cadence), the rate is well under one checkpoint per document per day. If you see checkpoints accumulating faster than that, file an issue — it's worth investigating the specific interleaving.
+
+## What if I don't notice in time?
+
+The server retains the most-recent **50** auto-saved checkpoints per branch per kind, plus anything within a **30-day** TTL (whichever is more generous). Older silent checkpoints are garbage-collected automatically so the Timeline stays readable. User-triggered *Save Version* checkpoints are retained permanently.
+
+## Advanced
+
+- Set `OK_TELEMETRY_VERBOSE=1` on the server to include the raw lost-substring content in the `bridge-merge-content-loss` log line (default is a redacted length + FNV-1a digest so verbatim user content never reaches a log aggregator).
+- Set `OK_RETHROW_BRIDGE_LOSS=1` to force the merge error to throw rather than silently recover. Useful for local debugging or CI harnesses that want the loud-fail path. Production deployments should leave this unset — the default keeps users typing.
+
+## Where to learn more
+
+- Architectural detail: the [[architecture]] internals page covers the settlement-based observer bridge and the content-preservation post-condition.
+- Full spec: `specs/2026-04-16-bridge-correctness/SPEC.md` in the repo.

@@ -806,25 +806,22 @@ describe('A1: middle-region replacement preserves outer agent Items', () => {
 
 describe('markUserTyping — global keystroke timestamp (US-006)', () => {
   test('getLastUserKeystroke advances on markUserTyping', () => {
-    const doc = new Y.Doc();
     const before = getLastUserKeystroke();
-    markUserTyping(doc);
+    markUserTyping();
     const after = getLastUserKeystroke();
     expect(after).toBeGreaterThanOrEqual(before);
     expect(after).toBeGreaterThan(0);
   });
 
-  test('global timestamp is shared across multiple docs', () => {
-    const doc1 = new Y.Doc();
-    const doc2 = new Y.Doc();
-    markUserTyping(doc1);
+  test('global timestamp is shared across call sites (no per-doc state)', () => {
+    markUserTyping();
     const ts1 = getLastUserKeystroke();
     // Small advance so the next call is observably later even on fast systems
     const wait = Date.now() + 1;
     while (Date.now() < wait) {
       /* spin */
     }
-    markUserTyping(doc2);
+    markUserTyping();
     const ts2 = getLastUserKeystroke();
     expect(ts2).toBeGreaterThan(ts1);
   });

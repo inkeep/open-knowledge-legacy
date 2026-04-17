@@ -71,21 +71,49 @@ export const OBSERVER_SYNC_ORIGIN = {
 } satisfies LocalTransactionOrigin;
 
 /**
- * Paired-write origins — transactions where the caller atomically wrote BOTH
- * XmlFragment and Y.Text inside a single `doc.transact(..., ORIGIN)` block.
- * Today: AGENT_WRITE_ORIGIN, FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN,
- * MANAGED_RENAME_ORIGIN.
+ * Branded `LocalTransactionOrigin` for paired-write semantics — transactions
+ * where the caller atomically writes BOTH Y.XmlFragment and Y.Text inside
+ * one `doc.transact(..., ORIGIN)` block.
  *
- * Semantic match (bridge-correctness SPEC §6 R0, precedent #1 extension): an
- * origin opts in by setting `context.paired === true` at its definition site.
- * New paired-write origins declare the marker in their literal rather than
- * enlisting themselves in a hardcoded Set here — observer behavior tracks the
- * structural property instead of an out-of-band registry.
+ * Compile-time extension of precedent #1 (bridge-correctness SPEC §6 R0 +
+ * review iteration 5). Origin literals opt in by asserting `satisfies
+ * PairedWriteOrigin` at their definition site; that annotation forces the
+ * literal to carry `context.paired: true` and prevents typos. See the
+ * four paired origins in the repo — AGENT_WRITE_ORIGIN, FILE_WATCHER_ORIGIN,
+ * ROLLBACK_ORIGIN, MANAGED_RENAME_ORIGIN — each satisfies this shape.
+ *
+ * Runtime remains structural (`context.paired === true`) so remote-arriving
+ * transactions (where the origin object identity is reconstructed by Yjs)
+ * still match; `satisfies PairedWriteOrigin` is the authoring-site gate,
+ * not a runtime `instanceof` narrowing.
+ *
+ * Today's paired origin count: 4. When adding a 5th, the ONLY required
+ * change is `satisfies PairedWriteOrigin` at the literal. No registry
+ * update. No Observer A/B wiring. No `BRIDGE_ENFORCING_ORIGINS` change
+ * (that set is unrelated — it enforces the bridge-invariant watcher's
+ * post-transaction assertion, not paired-write short-circuit).
+ */
+export type PairedWriteOrigin = LocalTransactionOrigin & {
+  readonly context: {
+    readonly origin: string;
+    readonly paired: true;
+  };
+};
+
+/**
+ * Semantic match (bridge-correctness SPEC §6 R0, precedent #1 extension).
  *
  * When an observer callback sees a paired-write origin, it refreshes
  * `lastSyncedXmlMd` synchronously from the post-write state and declines to
  * set its dirty flag — the settlement handler then has no work to dispatch
  * for this drain (the paired writer already made both CRDTs consistent).
+ *
+ * The structural runtime check covers both locally-written origins (where the
+ * object identity is the one we exported) and remote-arriving transactions
+ * (where Yjs may have reconstructed the origin from the wire payload). The
+ * `PairedWriteOrigin` brand above is the authoring-site compile-time gate;
+ * this predicate is the read-site runtime gate. Both together close the
+ * loop the T8/T9/T10 regression class left open.
  *
  * Fuzz reproduction: `STRESS_FUZZ_SEED=1776325179241 bun test
  * packages/app/tests/stress/bridge-convergence.fuzz.test.ts` produces an

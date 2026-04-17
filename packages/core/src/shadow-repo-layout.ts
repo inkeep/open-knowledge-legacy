@@ -166,10 +166,27 @@ const OK_CHECKPOINT_PREFIX = 'ok-checkpoint-v1: ';
  * body line. The body line coexists with `ok-contributors:` lines —
  * `parseContributors` skips unknown prefixes, so the two channels do not
  * interfere (Q7 verified).
+ *
+ * `docName` and `size` are carried inline so the `/api/rescue` read path can
+ * enumerate checkpoints via a single batched `git log` without a per-ref
+ * `git ls-tree` fan-out (bridge-correctness review iteration 5). They are
+ * optional in the parsed shape for backward-compatible reads: pre-enrichment
+ * commits returned `null` for both and the rescue list fell back to
+ * `ls-tree`. New writes (`saveInMemoryCheckpoint`) always populate them.
  */
 export type ParsedCheckpoint =
-  | { kind: 'bridge-merge-loss'; metadata: { lostSubstrings: string[] } }
-  | { kind: 'external-change-rescue'; metadata: { incomingDiskSha: string } };
+  | {
+      kind: 'bridge-merge-loss';
+      docName: string | null;
+      size: number | null;
+      metadata: { lostSubstrings: string[] };
+    }
+  | {
+      kind: 'external-change-rescue';
+      docName: string | null;
+      size: number | null;
+      metadata: { incomingDiskSha: string };
+    };
 
 /**
  * Parse the `ok-checkpoint-v1:` metadata line from a commit message body.
@@ -192,15 +209,24 @@ export function parseCheckpoint(body: string): ParsedCheckpoint | null {
       return null;
     }
     if (parsed === null || typeof parsed !== 'object') return null;
-    const obj = parsed as { kind?: unknown; metadata?: unknown };
+    const obj = parsed as {
+      kind?: unknown;
+      metadata?: unknown;
+      docName?: unknown;
+      size?: unknown;
+    };
     const kind = obj.kind;
     const metadata = obj.metadata;
     if (metadata === null || typeof metadata !== 'object') return null;
+    const docName = typeof obj.docName === 'string' ? obj.docName : null;
+    const size = typeof obj.size === 'number' && Number.isFinite(obj.size) ? obj.size : null;
     if (kind === 'bridge-merge-loss') {
       const m = metadata as { lostSubstrings?: unknown };
       if (Array.isArray(m.lostSubstrings) && m.lostSubstrings.every((s) => typeof s === 'string')) {
         return {
           kind: 'bridge-merge-loss',
+          docName,
+          size,
           metadata: { lostSubstrings: m.lostSubstrings as string[] },
         };
       }
@@ -211,6 +237,8 @@ export function parseCheckpoint(body: string): ParsedCheckpoint | null {
       if (typeof m.incomingDiskSha === 'string') {
         return {
           kind: 'external-change-rescue',
+          docName,
+          size,
           metadata: { incomingDiskSha: m.incomingDiskSha },
         };
       }
@@ -230,10 +258,18 @@ export function parseCheckpoint(body: string): ParsedCheckpoint | null {
  * serialization rule with the parser — see precedent #4 (shared computation).
  */
 export function formatCheckpointBodyLine(parsed: ParsedCheckpoint): string {
-  return `${OK_CHECKPOINT_PREFIX}${JSON.stringify({
+  const payload: {
+    kind: ParsedCheckpoint['kind'];
+    docName?: string;
+    size?: number;
+    metadata: ParsedCheckpoint['metadata'];
+  } = {
     kind: parsed.kind,
     metadata: parsed.metadata,
-  })}`;
+  };
+  if (parsed.docName !== null) payload.docName = parsed.docName;
+  if (parsed.size !== null) payload.size = parsed.size;
+  return `${OK_CHECKPOINT_PREFIX}${JSON.stringify(payload)}`;
 }
 
 /**

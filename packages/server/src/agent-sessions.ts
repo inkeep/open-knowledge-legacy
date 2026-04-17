@@ -8,12 +8,7 @@
  * The broken scaffold (UndoManager, undo/redo endpoints, AgentUndoButton)
  * was removed in V0-16 per TQ13.
  */
-import type {
-  DirectConnection,
-  Document,
-  Hocuspocus,
-  LocalTransactionOrigin,
-} from '@hocuspocus/server';
+import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
   applyFastDiff,
@@ -28,6 +23,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 
 const log = getLogger('agent-sessions');
 
@@ -42,24 +38,27 @@ export interface AgentDirectConnection extends DirectConnection {
 }
 
 /**
- * Agent write origin — typed LocalTransactionOrigin
+ * Agent write origin — typed `PairedWriteOrigin` (bridge-correctness SPEC §6 R0,
+ * precedent #1 extension, review iteration 5 compile-time gate).
  *
  * Passed to `document.transact(fn, AGENT_WRITE_ORIGIN)` in all agent write
  * paths. Load-bearing for observer origin guards and future UndoManager scoping.
  *
- * skipStoreHooks: false — persistence SHOULD fire after agent writes so
+ * `skipStoreHooks: false` — persistence SHOULD fire after agent writes so
  * content reaches disk through the normal debounce pipeline.
  *
- * paired: true — the caller atomically writes BOTH XmlFragment and Y.Text inside
- * one `doc.transact(..., AGENT_WRITE_ORIGIN)` block (see applyAgentMarkdownWrite
- * below). Server Observer A/B match via `context.paired === true` and short-circuit
- * symmetrically (bridge-correctness SPEC §6 R0/R0b/R0c, precedent #1).
+ * `paired: true` — the caller atomically writes BOTH Y.XmlFragment and Y.Text
+ * inside one `doc.transact(..., AGENT_WRITE_ORIGIN)` block (see
+ * `applyAgentMarkdownWrite` below). The `satisfies PairedWriteOrigin`
+ * annotation forces the literal to carry the marker; the compile-time gate
+ * catches omissions before they reach runtime (T8/T9/T10 regression-class
+ * prevention).
  */
 export const AGENT_WRITE_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'agent-write', paired: true },
-} satisfies LocalTransactionOrigin;
+} as const satisfies PairedWriteOrigin;
 
 /** Map known MCP clientInfo.name values to icon identifiers. */
 export function iconFromClientName(name?: string): string {

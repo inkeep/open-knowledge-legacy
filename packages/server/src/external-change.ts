@@ -6,12 +6,13 @@
  * otherwise easily miss the other.
  */
 
-import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
+import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 
 /**
  * Transaction origin for file-watcher disk→CRDT bridge operations.
@@ -33,7 +34,7 @@ export const FILE_WATCHER_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: true,
   context: { origin: 'file-watcher', paired: true },
-} satisfies LocalTransactionOrigin;
+} as const satisfies PairedWriteOrigin;
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the

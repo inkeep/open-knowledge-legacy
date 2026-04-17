@@ -36,6 +36,8 @@ describe('checkpointVariant', () => {
           message: 'checkpoint: Before concurrent merge @ 2026-04-17T00:00:00Z',
           checkpoint: {
             kind: 'bridge-merge-loss',
+            docName: null,
+            size: null,
             metadata: { lostSubstrings: ['hello'] },
           },
         }),
@@ -49,6 +51,8 @@ describe('checkpointVariant', () => {
         baseEntry({
           checkpoint: {
             kind: 'external-change-rescue',
+            docName: null,
+            size: null,
             metadata: { incomingDiskSha: 'abc123' },
           },
         }),
@@ -57,47 +61,84 @@ describe('checkpointVariant', () => {
   });
 });
 
-describe('checkpointHeadlineLabel', () => {
+describe('checkpointHeadlineLabel (user-outcome language — review iteration 5)', () => {
   test('ordinary checkpoint → "Save Version"', () => {
     expect(checkpointHeadlineLabel(baseEntry({}))).toBe('Save Version');
   });
 
-  test('bridge-merge-loss → strips "checkpoint: " prefix', () => {
+  test('bridge-merge-loss → user-outcome label, not implementation terms', () => {
     expect(
       checkpointHeadlineLabel(
         baseEntry({
           message: 'checkpoint: Before concurrent merge @ 2026-04-17T08:00:00Z',
           checkpoint: {
             kind: 'bridge-merge-loss',
+            docName: 'notes.md',
+            size: 1234,
             metadata: { lostSubstrings: [] },
           },
         }),
       ),
-    ).toBe('Before concurrent merge @ 2026-04-17T08:00:00Z');
+    ).toBe('Auto-saved before a concurrent edit (1.2 KB)');
   });
 
-  test('external-change-rescue → strips "checkpoint: " prefix', () => {
+  test('bridge-merge-loss without size omits the size suffix', () => {
+    expect(
+      checkpointHeadlineLabel(
+        baseEntry({
+          message: '',
+          checkpoint: {
+            kind: 'bridge-merge-loss',
+            docName: null,
+            size: null,
+            metadata: { lostSubstrings: [] },
+          },
+        }),
+      ),
+    ).toBe('Auto-saved before a concurrent edit');
+  });
+
+  test('external-change-rescue → user-outcome label', () => {
     expect(
       checkpointHeadlineLabel(
         baseEntry({
           message: 'checkpoint: External change recovered @ 2026-04-17T08:00:00Z',
           checkpoint: {
             kind: 'external-change-rescue',
+            docName: 'root.md',
+            size: 42,
             metadata: { incomingDiskSha: 'x' },
           },
         }),
       ),
-    ).toBe('External change recovered @ 2026-04-17T08:00:00Z');
+    ).toBe('Recovered from an external change (42 B)');
   });
 
-  test('fallback: bridge-merge-loss without a message prefix returns a safe default', () => {
-    expect(
+  test('does NOT leak implementation terms (no "merge", "mergeThreeWay", "observer", etc.)', () => {
+    const labels = [
       checkpointHeadlineLabel(
         baseEntry({
-          message: '',
-          checkpoint: { kind: 'bridge-merge-loss', metadata: { lostSubstrings: [] } },
+          checkpoint: {
+            kind: 'bridge-merge-loss',
+            docName: null,
+            size: null,
+            metadata: { lostSubstrings: [] },
+          },
         }),
       ),
-    ).toBe('Before concurrent merge');
+      checkpointHeadlineLabel(
+        baseEntry({
+          checkpoint: {
+            kind: 'external-change-rescue',
+            docName: null,
+            size: null,
+            metadata: { incomingDiskSha: 'x' },
+          },
+        }),
+      ),
+    ];
+    for (const label of labels) {
+      expect(label).not.toMatch(/mergeThreeWay|observer|observer A|Path B/i);
+    }
   });
 });

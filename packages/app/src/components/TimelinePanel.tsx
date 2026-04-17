@@ -158,18 +158,37 @@ export function checkpointVariant(entry: TimelineEntry): CheckpointVariant {
   return entry.checkpoint.kind;
 }
 
+/**
+ * Checkpoint headline label — user-outcome language rather than implementation
+ * speak (bridge-correctness review iteration 5; SPEC §G amended). The timestamp
+ * lives on the row's relative-time chip already, so the headline itself leads
+ * with the affordance ("this is a restore point"), not the mechanism.
+ *
+ * For rescue-kind rows, the optional byte-size hint from the checkpoint
+ * metadata (`docSize`) is surfaced to let users gauge "how much" without
+ * opening the row — "Auto-saved before a concurrent edit (1.2 KB)" reads
+ * as a recoverable snapshot on first glance.
+ */
 export function checkpointHeadlineLabel(entry: TimelineEntry): string {
   const variant = checkpointVariant(entry);
+  if (variant === 'save') return 'Save Version';
+  const size = entry.checkpoint?.size ?? null;
+  const sizeSuffix = size != null && size > 0 ? ` (${formatBytes(size)})` : '';
   if (variant === 'bridge-merge-loss') {
-    // `message` shape is `checkpoint: Before concurrent merge @ <iso>`.
-    // Strip the leading `checkpoint: ` so the label reads naturally in the
-    // header chip position.
-    return entry.message.replace(/^checkpoint:\s*/, '') || 'Before concurrent merge';
+    return `Auto-saved before a concurrent edit${sizeSuffix}`;
   }
-  if (variant === 'external-change-rescue') {
-    return entry.message.replace(/^checkpoint:\s*/, '') || 'External change recovered';
-  }
-  return 'Save Version';
+  // external-change-rescue
+  return `Recovered from an external change${sizeSuffix}`;
+}
+
+/**
+ * Pretty byte-size for the headline's inline hint. Deliberately coarse —
+ * the TimelinePanel row is a navigation affordance, not a debug surface.
+ */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
+  return `${Math.round(n / 1048.576) / 1000} MB`;
 }
 
 // ─── Entry row ────────────────────────────────────────────────────────────────

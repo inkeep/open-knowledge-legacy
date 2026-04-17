@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
+import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
@@ -84,6 +84,7 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
   type ShadowRef,
@@ -97,33 +98,39 @@ import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.t
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
- * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
+ * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
- * skipStoreHooks: false — L1 persistence SHOULD fire after rollback so the
- * restored content reaches disk through the normal pipeline. The file-watcher's
- * registerWrite hash check prevents the self-write from re-triggering reconciliation.
+ * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
+ * restored content reaches disk through the normal pipeline. The
+ * file-watcher's registerWrite hash check prevents the self-write from
+ * re-triggering reconciliation.
+ *
+ * `paired: true` — rollback atomically writes both XmlFragment and Y.Text
+ * inside one `doc.transact()` block. `satisfies PairedWriteOrigin` gates the
+ * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
-} satisfies LocalTransactionOrigin;
+} as const satisfies PairedWriteOrigin;
 
 /**
- * Managed-rename origin — typed LocalTransactionOrigin.
+ * Managed-rename origin — typed `PairedWriteOrigin`.
  *
  * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
  * and so server observers can resolve `context.paired` without importing the
  * object transitively (bridge-correctness SPEC §6 R0d).
  *
- * paired: true — the caller atomically writes BOTH XmlFragment (via
- * updateYFragment) and Y.Text (via applyFastDiff) inside one transact block.
+ * `paired: true` — the caller atomically writes BOTH XmlFragment (via
+ * `updateYFragment`) and Y.Text (via `applyFastDiff`) inside one transact
+ * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
-} satisfies LocalTransactionOrigin;
+} as const satisfies PairedWriteOrigin;
 
 const log = getLogger('api');
 

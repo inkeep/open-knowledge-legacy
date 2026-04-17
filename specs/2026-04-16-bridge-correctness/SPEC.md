@@ -217,8 +217,10 @@ effect → silent checkpoint → J2-style recovery path.
 ### J5. Developer (P4)
 
 Runs `bun run check`. Lint passes (no `setTimeout` in bridge code per R6).
-Tests pass. `bridge-convergence.fuzz.test.ts` runs 1000 seeds; any failure
-produces an op-sequence snapshot + a pinned regression test stub in
+Tests pass. `bridge-convergence.fuzz.test.ts` runs 200 seeds in PR tier
+(`STRESS_FUZZ_PR=1`, calibrated to fit the 15-min Tier 1 budget per D11)
+and 10 000 seeds nightly (`STRESS_FUZZ_NIGHTLY=1`); any failure produces
+an op-sequence snapshot + a pinned regression test stub in
 `merge-three-way.test.ts`. Post-condition assertion in
 `mergeThreeWay` fires loudly with a `BridgeMergeContentLossError` naming
 the lost substring.
@@ -846,9 +848,17 @@ export async function awaitDocQuiescence(doc: Y.Doc, opts?: { timeoutMs?: number
   when counter returns to zero for N consecutive microtasks, or (b) promise
   resolved inside a one-shot `afterAllTransactions` listener. Decide via
   spike during Bucket B implementation.
-- **D11 (DELEGATED).** Fuzz sample count CI time budget. 1000 seeds/PR @ ~5s each local
-  = ~80 min; CI hardware may be slower. Verify + shard if needed during
-  Bucket A implementation.
+- **D11 (LOCKED, review iteration 5).** Fuzz sample count CI time budget. Split
+  by tier: PR tier (`STRESS_FUZZ_PR=1`) runs 200 seeds, calibrated for the
+  15-min Tier 1 budget under turbo parallel contention + 60 s convergence
+  tail. Nightly (`STRESS_FUZZ_NIGHTLY=1`) runs 10 000 seeds. Weekly
+  (`STRESS_FIDELITY=1`) runs the fidelity PBTs at 10 K fast-check samples.
+  Not sharded via `matrix.seed-shard` — split-by-tier is simpler and
+  avoids shard-timing variance. Env declared in `turbo.json`'s
+  `test:fuzz:bridge` task so the cache key is correct; `ci.yml` exports
+  `STRESS_FUZZ_PR=1` on the PR matrix entry. The fuzz harness logs
+  `[bridge-convergence fuzzer] mode=<pr|nightly|default|custom> seeds=<n>`
+  at startup so reviewers can verify coverage in CI logs.
 - **D12 (DELEGATED).** R0e determinism approach: full deterministic via scheduler DI +
   new `pauseOutbound` primitive on `ControllableWebSocket` (Challenge F7),
   OR probabilistic (run-many-times, rate-based acceptance). Spike during

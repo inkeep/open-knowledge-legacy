@@ -81,12 +81,13 @@ export function getLastUserKeystroke(): number {
  * handlers (keydown, paste, drop, etc.). Updates the global keystroke
  * timestamp consumed by `SystemDocSubscriber`'s agent-focus typing guard.
  *
- * The `doc` parameter is retained for call-site compatibility (callers
- * pass `provider.document`) but no longer drives per-doc state — the
- * typing-defer logic that previously used it was deleted under
- * server-authoritative bridge + settlement dispatch.
+ * Previous iterations accepted a `Y.Doc` parameter that drove per-doc
+ * typing-defer state; that state was deleted under server-authoritative
+ * bridge + settlement dispatch (precedent #14 + SPEC §6 R5b). The
+ * zero-arg shape pins the reduced surface so callers don't hold onto
+ * `provider.document` unnecessarily (review iteration 5 cleanup).
  */
-export function markUserTyping(_doc: Y.Doc): void {
+export function markUserTyping(): void {
   lastGlobalUserKeystrokeMs = Date.now();
 }
 

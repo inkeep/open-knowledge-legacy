@@ -216,9 +216,11 @@ describe('getShadowRepoPath', () => {
 });
 
 describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §6 R7d)', () => {
-  test('round-trips bridge-merge-loss', () => {
+  test('round-trips bridge-merge-loss with enriched docName + size', () => {
     const line = formatCheckpointBodyLine({
       kind: 'bridge-merge-loss',
+      docName: 'notes/foo.md',
+      size: 1234,
       metadata: { lostSubstrings: ['a', 'b', 'c'] },
     });
     const body = `checkpoint: X\n\n${line}`;
@@ -226,12 +228,16 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
     expect(parsed?.kind).toBe('bridge-merge-loss');
     if (parsed?.kind === 'bridge-merge-loss') {
       expect(parsed.metadata.lostSubstrings).toEqual(['a', 'b', 'c']);
+      expect(parsed.docName).toBe('notes/foo.md');
+      expect(parsed.size).toBe(1234);
     }
   });
 
-  test('round-trips external-change-rescue', () => {
+  test('round-trips external-change-rescue with enriched docName + size', () => {
     const line = formatCheckpointBodyLine({
       kind: 'external-change-rescue',
+      docName: 'root.md',
+      size: 42,
       metadata: { incomingDiskSha: 'deadbeef' },
     });
     const body = `checkpoint: Y\n\n${line}`;
@@ -239,6 +245,23 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
     expect(parsed?.kind).toBe('external-change-rescue');
     if (parsed?.kind === 'external-change-rescue') {
       expect(parsed.metadata.incomingDiskSha).toBe('deadbeef');
+      expect(parsed.docName).toBe('root.md');
+      expect(parsed.size).toBe(42);
+    }
+  });
+
+  test('backward-compat: pre-enrichment body without docName/size returns nulls', () => {
+    // Simulates a checkpoint commit written before the docName/size enrichment
+    // (bridge-correctness review iteration 5). The rescue read path's fallback
+    // branch handles this case via ls-tree.
+    const legacyLine =
+      'ok-checkpoint-v1: {"kind":"external-change-rescue","metadata":{"incomingDiskSha":"abc"}}';
+    const body = `checkpoint: Legacy\n\n${legacyLine}`;
+    const parsed = parseCheckpoint(body);
+    expect(parsed?.kind).toBe('external-change-rescue');
+    if (parsed?.kind === 'external-change-rescue') {
+      expect(parsed.docName).toBe(null);
+      expect(parsed.size).toBe(null);
     }
   });
 
@@ -272,7 +295,7 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
       'checkpoint: some label',
       '',
       'ok-contributors: {"id":"human-a","name":"Alice","docs":["a.md"]}',
-      'ok-checkpoint-v1: {"kind":"bridge-merge-loss","metadata":{"lostSubstrings":["x"]}}',
+      'ok-checkpoint-v1: {"kind":"bridge-merge-loss","docName":"x.md","size":10,"metadata":{"lostSubstrings":["x"]}}',
       'ok-contributors: {"id":"human-b","name":"Bob","docs":["b.md"]}',
     ].join('\n');
 
