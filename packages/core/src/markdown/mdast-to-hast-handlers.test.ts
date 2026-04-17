@@ -186,6 +186,31 @@ describe('rawMdxFallback mdast→hast', () => {
     const out = html(wrap(node));
     expect(out).toContain('<!-- Parse error: unknown -->');
   });
+
+  test('reason containing "-->" cannot close the comment prematurely', () => {
+    // rehype-stringify emits hast `comment.value` verbatim per HTML spec —
+    // if reason contained `-->` it would escape the comment and the raw
+    // source that follows would no longer be inside `<pre><code>`. The
+    // handler normalizes `--` to em-dash defensively.
+    const node: RawMdxFallbackMdast = {
+      type: 'rawMdxFallback',
+      value: '<script>alert(1)</script>',
+      data: {
+        reason: 'broken --> escape attempt',
+        originalSpan: { start: 0, end: 0 },
+      },
+    };
+    const out = html(wrap(node));
+    // The `-->` sequence must not appear anywhere except as the closing
+    // delimiter of the comment itself.
+    const commentCloses = out.match(/-->/g) ?? [];
+    expect(commentCloses.length).toBe(1);
+    // The em-dash normalization is visible in the comment.
+    expect(out).toContain('\u2014> escape attempt');
+    // Adversarial source still escapes properly inside <pre><code>.
+    expect(out).not.toContain('<script>');
+    expect(out).toContain('&#x3C;script>');
+  });
 });
 
 describe('FR-20 adversarial fuzz — no unescaped <script> in any emitted HTML', () => {

@@ -135,9 +135,16 @@ const rawMdxFallbackHandler: Handler = (state, node) => {
   const fb = node as RawMdxFallbackMdast;
   const reason = fb.data.reason || 'unknown';
   const raw = fb.value || '';
+  // Defense-in-depth: rehype-stringify emits hast `comment.value` verbatim
+  // per the HTML spec (no entity encoding inside comments). If `reason`
+  // contained `-->` it would prematurely close the comment. Error messages
+  // from the MDX parser don't surface `-->` in practice, but we normalize
+  // any `--` pair to an em-dash so the comment cannot break its own shape
+  // regardless of what the underlying parser throws.
+  const safeReason = reason.replace(/--/g, '\u2014');
   const comment: Comment = {
     type: 'comment',
-    value: ` Parse error: ${reason} `,
+    value: ` Parse error: ${safeReason} `,
   };
   const code: Element = {
     type: 'element',
