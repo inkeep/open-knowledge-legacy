@@ -126,6 +126,23 @@ function stateLabel(state: GitSyncStatus['state']): string {
   }
 }
 
+function formatPausedReason(reason: string): string {
+  switch (reason) {
+    case 'external-changes-pending':
+      return 'External changes pending';
+    case 'dirty-tree':
+      return 'Working tree has uncommitted changes';
+    case 'detached-head':
+      return 'Detached HEAD — checkout a branch to resume';
+    case 'auth-error':
+      return 'Sign in required';
+    case 'protected-branch':
+      return 'Protected branch — cannot push';
+    default:
+      return reason;
+  }
+}
+
 function tooltipLabel(status: GitSyncStatus): string {
   if (!status.syncEnabled) return 'Sync off';
   if (status.state === 'idle') {
@@ -185,7 +202,7 @@ function PopoverBody({
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}
       {status.pausedReason && (
-        <p className="text-xs text-muted-foreground">{status.pausedReason}</p>
+        <p className="text-xs text-muted-foreground">{formatPausedReason(status.pausedReason)}</p>
       )}
 
       <div className="text-xs text-muted-foreground space-y-0.5">

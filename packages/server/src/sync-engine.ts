@@ -118,6 +118,34 @@ function jitteredMs(seconds: number): number {
   return Math.round(base + jitter);
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the project repo has an unborn HEAD (git init with no
+ * commits yet). Checks both loose refs (`.git/refs/heads/<branch>`) and
+ * packed refs (`.git/packed-refs`) to avoid misclassifying a fully-committed
+ * repo whose refs happen to be packed.
+ */
+function isUnbornHead(projectDir: string): boolean {
+  try {
+    const headPath = join(projectDir, '.git', 'HEAD');
+    if (!existsSync(headPath)) return false;
+    const headContent = readFileSync(headPath, 'utf-8').trim();
+    const match = /^ref:\s+(refs\/.+)$/.exec(headContent);
+    if (!match) return false;
+    const refName = match[1] as string;
+    if (existsSync(join(projectDir, '.git', refName))) return false;
+    const packedRefsPath = join(projectDir, '.git', 'packed-refs');
+    if (existsSync(packedRefsPath)) {
+      const packed = readFileSync(packedRefsPath, 'utf-8');
+      if (new RegExp(`^[0-9a-f]+\\s+${refName}$`, 'm').test(packed)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Backoff thresholds ──────────────────────────────────────────────────────
 
 function backoffMs(consecutiveFailures: number): number {
@@ -358,13 +386,21 @@ export class SyncEngine {
   /** Trigger an immediate pull + push cycle (bypasses backoff, resets consecutiveFailures). */
   async trigger(op: 'sync' | 'push' | 'pull' = 'sync'): Promise<void> {
     this.consecutiveFailures = 0;
+    // Retry clears transient paused reasons; protected-branch etc. stay set.
+    if (this.pausedReason === 'dirty-tree' || this.pausedReason === 'external-changes-pending') {
+      this.pausedReason = undefined;
+      this.error = undefined;
+    }
     if (op === 'push') {
       await this.runPushCycle();
     } else if (op === 'pull') {
       await this.runPullCycle();
     } else {
-      await this.runPullCycle();
+      // Push first so pending working-tree edits get committed via the
+      // isolated-index path. A subsequent merge then has a clean tree
+      // instead of refusing with "working tree has uncommitted changes".
       await this.runPushCycle();
+      await this.runPullCycle();
     }
   }
 
@@ -488,6 +524,13 @@ export class SyncEngine {
       this.schedulePull(); // retry after interval but don't fetch while conflicted
       return;
     }
+    // Skip cleanly if the project repo has no commits yet — nothing to pull
+    // against and `rev-parse HEAD` would otherwise throw an ambiguous-argument
+    // error that's classified as a generic unknown-local failure.
+    if (isUnbornHead(this.projectDir)) {
+      this.schedulePull();
+      return;
+    }
 
     this.pullInFlight = true;
     try {
@@ -548,6 +591,13 @@ export class SyncEngine {
       // Gate batch to suppress HEAD watcher reconciliation during SyncEngine merge
       this.setBatchInProgress?.(true);
       try {
+        // Commit content-scoped dirty files first so `git merge` doesn't
+        // refuse with dirty-tree. Non-content dirty files are the user's
+        // responsibility — pause if any remain.
+        await this.commitDirtyContentFilesToHead(handle);
+        if (!(await this.pauseIfNonContentDirty(handle))) {
+          return;
+        }
         await handle.git.merge([`origin/${branch}`]);
         this.lastSyncUtc = new Date().toISOString();
         this.behind = 0;
@@ -577,6 +627,10 @@ export class SyncEngine {
     if (this.pushInFlight) return;
     if (this.state === 'dormant' || this.state === 'disabled') return;
     if (this.state === 'conflict' || this.state === 'auth-error') return;
+    if (isUnbornHead(this.projectDir)) {
+      this.schedulePush();
+      return;
+    }
 
     this.pushInFlight = true;
     try {
@@ -607,10 +661,30 @@ export class SyncEngine {
         });
 
         // ── 1. Get current HEAD SHA ────────────────────────────────────────────
+        // Short-circuit unborn HEAD by checking .git/HEAD directly — more
+        // reliable than catching revparse's error, since simple-git surfaces
+        // the same error message for several unrelated failure modes.
+        if (isUnbornHead(this.projectDir)) {
+          log.info({}, '[sync] repo has no commits yet — skipping push cycle');
+          this.transitionTo('idle');
+          return;
+        }
         let headSha: string;
         try {
           headSha = (await handle.git.revparse('HEAD')).trim();
         } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const raw = (e as { git?: unknown }).git?.toString() ?? msg;
+          const combined = `${msg}\n${raw}`;
+          if (
+            /unknown revision or path not in the working tree/i.test(combined) ||
+            /ambiguous argument 'HEAD'/i.test(combined) ||
+            /does not have any commits yet/i.test(combined)
+          ) {
+            log.info({}, '[sync] repo has no commits yet — skipping push cycle');
+            this.transitionTo('idle');
+            return;
+          }
           this.handleError(classifyGitError(e instanceof Error ? e : new Error(String(e))));
           return; // early exit from lock
         }
@@ -673,8 +747,33 @@ export class SyncEngine {
           }
         }
 
-        // ── 8. Build commit message ────────────────────────────────────────────
-        const message = this.buildCommitMessage(contentFiles.map((f) => f.contentRelPath));
+        // ── 8. Build commit message from files that actually changed in this
+        //       commit (HEAD tree vs new tree), not from every tracked file.
+        let changedContentRelPaths: string[] = [];
+        try {
+          const diffOut = (
+            await handle.git.raw(['diff-tree', '--name-only', '-r', headSha, newTreeSha])
+          ).trim();
+          if (diffOut) {
+            const contentFileByProjRel = new Map(
+              contentFiles.map((f) => [f.projectRelPath, f.contentRelPath]),
+            );
+            for (const line of diffOut.split('\n')) {
+              const projRelPath = line.trim();
+              if (!projRelPath) continue;
+              const contentRelPath =
+                contentFileByProjRel.get(projRelPath) ??
+                relative(this.contentDir, join(this.projectDir, projRelPath));
+              if (contentRelPath && !contentRelPath.startsWith('..')) {
+                changedContentRelPaths.push(contentRelPath);
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: fall back to all-files message so we still commit.
+          changedContentRelPaths = contentFiles.map((f) => f.contentRelPath);
+        }
+        const message = this.buildCommitMessage(changedContentRelPaths);
 
         // ── 9. Author identity (FR20a: resolveGitIdentity chain, soft fallback) ─
         // Chain: repo-local → global → (OAuth profile, when tokenStore plumbed) →
@@ -716,6 +815,28 @@ export class SyncEngine {
           headSha,
         ]);
 
+        // ── 11b. Sync the real index with new HEAD for the content paths we
+        //        just committed. Uses a handle WITHOUT the isolated GIT_INDEX_FILE
+        //        so the reset targets `.git/index`, not our tmp index. Without
+        //        this, the real index keeps the old HEAD's tree entries and
+        //        `git status` reports phantom "M" in the index column. Scoped
+        //        to content paths only so user WIP staging on non-content
+        //        files is preserved.
+        if (contentFiles.length > 0) {
+          const realIndexHandle = createGitInstance(this.projectDir, {
+            credentialArgs: this.credentialArgs,
+          });
+          const BATCH = 100;
+          for (let i = 0; i < contentFiles.length; i += BATCH) {
+            const batch = contentFiles.slice(i, i + BATCH).map((f) => f.projectRelPath);
+            try {
+              await realIndexHandle.git.raw(['reset', 'HEAD', '--', ...batch]);
+            } catch {
+              // Non-fatal: worst case is phantom MM until next sync cycle.
+            }
+          }
+        }
+
         // ── 12. Push — set upstream if branch has none ─────────────────────────
         let hasUpstream = false;
         try {
@@ -739,6 +860,15 @@ export class SyncEngine {
         if (this.state === 'pushing') {
           this.transitionTo('idle');
         }
+        // If we were paused on dirty-tree, the commit we just made cleared
+        // the working tree relative to HEAD. Clear the paused reason and
+        // schedule an immediate pull so any pending merge (behind>0) lands
+        // now that the tree is clean.
+        if (this.pausedReason === 'dirty-tree') {
+          this.pausedReason = undefined;
+          this.error = undefined;
+          this.schedulePull(0);
+        }
       }
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -753,6 +883,15 @@ export class SyncEngine {
           this.setBatchInProgress?.(true);
           try {
             await retryHandle.git.fetch('origin');
+            // Commit content-scoped dirty files before merging so the editor
+            // racing against the outer push's `update-ref` doesn't cause
+            // `git merge` to refuse with dirty-tree. Files outside the
+            // content scope are the user's to handle — pause if any remain.
+            await this.commitDirtyContentFilesToHead(retryHandle);
+            if (!(await this.pauseIfNonContentDirty(retryHandle))) {
+              this.setBatchInProgress?.(false);
+              return;
+            }
             await retryHandle.git.merge([`origin/${this.currentBranch}`]);
           } catch (mergeErr) {
             const mc = classifyGitError(
@@ -792,6 +931,128 @@ export class SyncEngine {
   // ─── Push cycle helpers ───────────────────────────────────────────────────
 
   /**
+   * Stage the current working tree's **content** files against HEAD and, if
+   * the result differs from HEAD's tree, create a commit + fast-forward
+   * `refs/heads/<branch>`. Content scope matches the main push cycle — only
+   * files returned by `gatherContentFilesSync()` are staged.
+   *
+   * Returns the new commit SHA, or null if there was nothing content-scoped
+   * to commit.
+   *
+   * Note: this does not clean the tree entirely — files outside the content
+   * scope (e.g. package.json, untracked config) remain dirty. Callers that
+   * need a truly clean tree (e.g. before `git merge`) must also call
+   * `checkTreeCleanAfterContentCommit` and pause if it's not.
+   */
+  private async commitDirtyContentFilesToHead(
+    handle: import('./git-handle.ts').GitHandle,
+  ): Promise<string | null> {
+    const status = await handle.git.status();
+    if (status.files.length === 0) return null;
+
+    const headSha = (await handle.git.revparse('HEAD')).trim();
+    const contentFiles = this.gatherContentFilesSync();
+    if (contentFiles.length === 0) return null;
+
+    const tmpIndex = join(tmpdir(), `ok-sync-retry-idx-${process.pid}-${Date.now()}.idx`);
+    const isoHandle = createGitInstance(this.projectDir, {
+      credentialArgs: this.credentialArgs,
+      gitIndexFile: tmpIndex,
+    });
+    try {
+      await isoHandle.git.raw(['read-tree', headSha]);
+      const BATCH = 100;
+      for (let i = 0; i < contentFiles.length; i += BATCH) {
+        const batch = contentFiles.slice(i, i + BATCH).map((f) => f.projectRelPath);
+        await isoHandle.git.raw(['add', '--', ...batch]);
+      }
+      const newTreeSha = (await isoHandle.git.raw(['write-tree'])).trim();
+      const headTreeSha = (await isoHandle.git.raw(['rev-parse', `${headSha}^{tree}`])).trim();
+      if (newTreeSha === headTreeSha) return null;
+
+      const identity = await resolveGitIdentity(this.projectDir);
+      const authorName = identity?.name ?? 'Open Knowledge';
+      const authorEmail = identity?.email ?? 'sync@open-knowledge.local';
+      isoHandle.git.env({
+        GIT_AUTHOR_NAME: authorName,
+        GIT_AUTHOR_EMAIL: authorEmail,
+        GIT_COMMITTER_NAME: authorName,
+        GIT_COMMITTER_EMAIL: authorEmail,
+      });
+
+      const message = 'Auto-save: interim before merge';
+      const newCommitSha = (
+        await isoHandle.git.raw(['commit-tree', newTreeSha, '-p', headSha, '-m', message])
+      ).trim();
+      if (!newCommitSha) return null;
+
+      await handle.git.raw([
+        'update-ref',
+        `refs/heads/${this.currentBranch}`,
+        newCommitSha,
+        headSha,
+      ]);
+
+      // Sync the real index with new HEAD for the paths we just committed
+      // (see push-cycle step 11b for the full rationale). `handle` has no
+      // isolated GIT_INDEX_FILE — resets the real `.git/index`.
+      for (let i = 0; i < contentFiles.length; i += BATCH) {
+        const batch = contentFiles.slice(i, i + BATCH).map((f) => f.projectRelPath);
+        try {
+          await handle.git.raw(['reset', 'HEAD', '--', ...batch]);
+        } catch {
+          // Non-fatal: phantom MM until next cycle, but merge will still work.
+        }
+      }
+
+      return newCommitSha;
+    } finally {
+      try {
+        unlinkSync(tmpIndex);
+      } catch {}
+    }
+  }
+
+  /**
+   * After committing content-scoped dirty files, verify the tree is truly
+   * clean. If any files remain dirty (outside the content scope), set
+   * `pausedReason = 'external-changes-pending'` with up to 3 paths in
+   * `error`, transition to idle, and return false — caller must NOT proceed
+   * with the merge.
+   */
+  private async pauseIfNonContentDirty(
+    handle: import('./git-handle.ts').GitHandle,
+  ): Promise<boolean> {
+    // `diff-index --name-only HEAD` lists only TRACKED files whose working-
+    // tree content differs from HEAD's. Untracked files are intentionally
+    // excluded: `git merge` only refuses on untracked files when the merge
+    // commit adds the same path, which git itself will surface at merge time
+    // with a specific error — we don't need to pre-pause for every untracked
+    // file (they're common: build artifacts, IDE state, scratch notes).
+    let out = '';
+    try {
+      out = (await handle.git.raw(['diff-index', '--name-only', 'HEAD'])).trim();
+    } catch {
+      return true; // can't diff — don't block the merge attempt
+    }
+    if (!out) return true;
+    const paths = out
+      .split('\n')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (paths.length === 0) return true;
+    const display = paths.slice(0, 3).join(', ');
+    const rest = paths.length > 3 ? `, +${paths.length - 3} more` : '';
+    this.error = `External changes pending: ${display}${rest}`;
+    this.pausedReason = 'external-changes-pending';
+    this.consecutiveFailures = 0;
+    this.transitionTo('idle');
+    this.scheduleSaveState();
+    log.warn({ files: paths }, '[sync] paused — non-content tracked files dirty');
+    return false;
+  }
+
+  /**
    * Recursively walk contentDir and return all files that pass ContentFilter.
    * Uses synchronous FS because this runs under the parentGitMutex.
    */
@@ -808,12 +1069,15 @@ export class SyncEngine {
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Skip git internals, open-knowledge config, node_modules, and hidden dirs
+          // Skip git internals, node_modules, and hidden dirs. `.open-knowledge`
+          // used to be skipped wholesale, but its config.yml / AGENTS.md /
+          // catalogs are legitimately user-content that should sync; runtime
+          // state (cache/, server.lock, sync-state.json) is gitignored and
+          // will be filtered out by `contentFilter.isExcluded` below.
           if (
             entry.name === 'node_modules' ||
             entry.name === '.git' ||
-            entry.name === '.open-knowledge' ||
-            entry.name.startsWith('.')
+            (entry.name.startsWith('.') && entry.name !== '.open-knowledge')
           )
             continue;
           walk(fullPath);
@@ -968,7 +1232,12 @@ export class SyncEngine {
   private handleError(classified: ClassifiedError): void {
     this.error = classified.message;
     log.warn(
-      { class: classified.class, subclass: classified.subclass, retryable: classified.retryable },
+      {
+        class: classified.class,
+        subclass: classified.subclass,
+        retryable: classified.retryable,
+        rawStderr: classified.rawStderr,
+      },
       `[sync-error] ${classified.message}`,
     );
 
@@ -979,6 +1248,14 @@ export class SyncEngine {
       this.syncEnabled = false; // Disable permanently — user must change branch or permissions
       this.transitionTo('disabled');
       this.pausedReason = 'protected-branch';
+    } else if (classified.class === 'local' && classified.subclass === 'dirty-tree') {
+      // Self-heal: schedule an immediate push. The push cycle commits
+      // working-tree edits via an isolated index, which reconciles the
+      // tree against HEAD and lets the subsequent merge proceed.
+      this.consecutiveFailures++;
+      this.transitionTo('idle');
+      this.pausedReason = 'dirty-tree';
+      this.schedulePush(0);
     } else if (classified.retryable) {
       this.consecutiveFailures++;
       this.transitionTo('offline');
