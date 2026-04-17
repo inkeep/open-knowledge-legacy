@@ -49,11 +49,16 @@ export interface AgentDirectConnection extends DirectConnection {
  *
  * skipStoreHooks: false — persistence SHOULD fire after agent writes so
  * content reaches disk through the normal debounce pipeline.
+ *
+ * paired: true — the caller atomically writes BOTH XmlFragment and Y.Text inside
+ * one `doc.transact(..., AGENT_WRITE_ORIGIN)` block (see applyAgentMarkdownWrite
+ * below). Server Observer A/B match via `context.paired === true` and short-circuit
+ * symmetrically (bridge-correctness SPEC §6 R0/R0b/R0c, precedent #1).
  */
 export const AGENT_WRITE_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'agent-write' },
+  context: { origin: 'agent-write', paired: true },
 } satisfies LocalTransactionOrigin;
 
 /** Map known MCP clientInfo.name values to icon identifiers. */

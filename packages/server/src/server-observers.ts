@@ -33,8 +33,6 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
-import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
-import { FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
 
 // ─────────────────────────────────────────────────────────────
@@ -61,17 +59,22 @@ export const OBSERVER_SYNC_ORIGIN = {
 
 /**
  * Paired-write origins — transactions where the caller atomically wrote BOTH
- * XmlFragment and Y.Text inside a single `doc.transact(..., ORIGIN)` block:
+ * XmlFragment and Y.Text inside a single `doc.transact(..., ORIGIN)` block.
+ * Today: AGENT_WRITE_ORIGIN, FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN,
+ * MANAGED_RENAME_ORIGIN.
  *
- *   - AGENT_WRITE_ORIGIN   → applyAgentMarkdownWrite (agent-sessions.ts)
- *   - FILE_WATCHER_ORIGIN  → applyExternalChange (external-change.ts)
+ * Semantic match (bridge-correctness SPEC §6 R0, precedent #1 extension): an
+ * origin opts in by setting `context.paired === true` at its definition site.
+ * New paired-write origins declare the marker in their literal rather than
+ * enlisting themselves in a hardcoded Set here — observer behavior tracks the
+ * structural property instead of an out-of-band registry.
  *
- * Observer A MUST synchronously refresh `lastSyncedXmlMd` and cancel any
- * pending debounce when it sees one of these origins. Otherwise, a concurrent
- * Y.Text mutation arriving during the 50 ms debounce window causes
- * `runObserverASync` to fire with a stale baseline and run Path B's
- * `mergeThreeWay` — which duplicates content when user (XmlFragment) and
- * agent (Y.Text) both contain the same addition.
+ * Observer A AND Observer B both synchronously refresh their view of the
+ * baseline and cancel any pending debounce when they see one of these origins.
+ * Otherwise, a concurrent mutation arriving during the 50 ms debounce window
+ * causes `runObserverASync`/`runObserverBSync` to fire with stale state and
+ * run Path B's `mergeThreeWay` — which duplicates content when user
+ * (XmlFragment) and agent (Y.Text) both contain the same addition.
  *
  * Fuzz reproduction: `STRESS_FUZZ_SEED=1776325179241 bun test
  * packages/app/tests/stress/bridge-convergence.fuzz.test.ts` produces an
@@ -79,8 +82,11 @@ export const OBSERVER_SYNC_ORIGIN = {
  * whose proximate cause is a duplicated `M0-alpha echo` line that a later
  * agent-patch `indexOf('alpha')` locks onto instead of the intended target.
  */
-const isPairedWriteOrigin = (origin: unknown): boolean =>
-  origin === AGENT_WRITE_ORIGIN || origin === FILE_WATCHER_ORIGIN;
+const isPairedWriteOrigin = (origin: unknown): boolean => {
+  if (origin == null || typeof origin !== 'object') return false;
+  const ctx = (origin as { context?: { paired?: boolean } }).context;
+  return ctx?.paired === true;
+};
 
 // Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
 // diffLinesFast, Scheduler, defaultScheduler, getFrontmatter, normalizeBridge)
@@ -379,9 +385,36 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // Self-skip: our own cross-CRDT write
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
-    // Already-paired writes: agent-write and file-watcher both write both
-    // sides atomically. runObserverBSync will early-exit at the already-in-sync
-    // gate, but we skip scheduling entirely to avoid unnecessary work.
+    // Paired-write origins atomically wrote both XmlFragment and Y.Text inside
+    // this transaction. Symmetric counterpart to Observer A's branch above
+    // (bridge-correctness SPEC §6 R0c). Cancel any pending Observer B debounce
+    // so a later `runObserverBSync` firing doesn't race against a concurrent
+    // XmlFragment mutation that arrives in the debounce window, and refresh
+    // Observer A's baseline (`lastSyncedXmlMd`) from the post-paired-write
+    // XmlFragment state — defensive, since Observer A's own paired-write branch
+    // already runs for the same transaction, but this makes Observer B's
+    // short-circuit self-contained if the firing order ever changes.
+    if (isPairedWriteOrigin(transaction.origin)) {
+      try {
+        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const body = mdManager.serialize(json);
+        const frontmatter = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        if (debounceB) {
+          sched.clearTimeout(debounceB);
+          debounceB = null;
+        }
+      } catch (err) {
+        incrementServerObserverError('b');
+        console.warn(
+          '[Server Observer B] Paired-write baseline refresh failed — falling through to debounce:',
+          err instanceof Error ? err.message : String(err),
+        );
+        if (debounceB) sched.clearTimeout(debounceB);
+        debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
+      }
+      return;
+    }
 
     if (debounceB) sched.clearTimeout(debounceB);
     debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);

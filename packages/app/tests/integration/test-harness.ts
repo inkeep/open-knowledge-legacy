@@ -34,6 +34,7 @@ import {
   AGENT_WRITE_ORIGIN,
   createServer,
   FILE_WATCHER_ORIGIN,
+  MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
   ROLLBACK_ORIGIN,
   type ServerInstance,
@@ -516,9 +517,10 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
  * Every entry is a `LocalTransactionOrigin` OBJECT reference per precedent #1
  * (AGENTS.md): ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE (observers.ts),
  * AGENT_WRITE_ORIGIN (agent-sessions.ts), FILE_WATCHER_ORIGIN (external-change.ts),
- * ROLLBACK_ORIGIN (api-extension.ts). `Set.has()` performs identity matching for
- * objects — a string literal would NEVER match the actual production tx.origin
- * object, silently skipping enforcement.
+ * ROLLBACK_ORIGIN + MANAGED_RENAME_ORIGIN (api-extension.ts), OBSERVER_SYNC_ORIGIN
+ * (server-observers.ts). `Set.has()` performs identity matching for objects —
+ * a string literal would NEVER match the actual production tx.origin object,
+ * silently skipping enforcement.
  *
  * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
  * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
@@ -529,6 +531,7 @@ const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   AGENT_WRITE_ORIGIN,
   FILE_WATCHER_ORIGIN,
   ROLLBACK_ORIGIN,
+  MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
 ]);
 

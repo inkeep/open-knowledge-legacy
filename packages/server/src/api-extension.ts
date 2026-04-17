@@ -104,13 +104,23 @@ import { getDocumentHistory } from './timeline-query.ts';
 export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'rollback-apply' },
+  context: { origin: 'rollback-apply', paired: true },
 } satisfies LocalTransactionOrigin;
 
-const MANAGED_RENAME_ORIGIN = {
+/**
+ * Managed-rename origin — typed LocalTransactionOrigin.
+ *
+ * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
+ * and so server observers can resolve `context.paired` without importing the
+ * object transitively (bridge-correctness SPEC §6 R0d).
+ *
+ * paired: true — the caller atomically writes BOTH XmlFragment (via
+ * updateYFragment) and Y.Text (via applyFastDiff) inside one transact block.
+ */
+export const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'managed-rename' },
+  context: { origin: 'managed-rename', paired: true },
 } satisfies LocalTransactionOrigin;
 
 const log = getLogger('api');

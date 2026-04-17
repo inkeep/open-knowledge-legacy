@@ -23,11 +23,16 @@ import { setReconciledBase } from './persistence.ts';
  *
  * skipStoreHooks: true — prevents persistence from re-saving a file we just
  * loaded from disk (feedback loop prevention).
+ *
+ * paired: true — `applyExternalChange` atomically writes BOTH XmlFragment and
+ * Y.Text inside one `doc.transact(..., FILE_WATCHER_ORIGIN)` block. Server
+ * Observer A/B match via `context.paired === true` and short-circuit
+ * symmetrically (bridge-correctness SPEC §6 R0/R0b/R0c).
  */
 export const FILE_WATCHER_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: true,
-  context: { origin: 'file-watcher' },
+  context: { origin: 'file-watcher', paired: true },
 } satisfies LocalTransactionOrigin;
 
 /**

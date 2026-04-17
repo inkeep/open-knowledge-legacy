@@ -10,6 +10,7 @@ export {
 export {
   type ApiExtensionOptions,
   createApiExtension,
+  MANAGED_RENAME_ORIGIN,
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
