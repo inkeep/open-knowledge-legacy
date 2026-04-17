@@ -10,6 +10,7 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -49,11 +50,20 @@ const DOC = [
   FILLER,
 ].join('\n');
 
-async function seedDoc(page: Page) {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
+
+async function seedDoc(page: Page): Promise<string> {
+  const docName = `outline-${randomUUID().slice(0, 8)}`;
+  await createPage(`${docName}.md`);
+  await page.goto(`${BASE}/#/${docName}`);
   await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
     timeout: 15_000,
   });
@@ -64,7 +74,7 @@ async function seedDoc(page: Page) {
   const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown: DOC, position: 'replace' }),
+    body: JSON.stringify({ docName, markdown: DOC, position: 'replace' }),
   });
   if (!writeRes.ok) throw new Error(`agent-write-md failed: ${writeRes.status}`);
 
@@ -72,7 +82,7 @@ async function seedDoc(page: Page) {
   await expect
     .poll(
       async () => {
-        const r = await fetch(`${BASE}/api/page-headings?docName=test-doc`);
+        const r = await fetch(`${BASE}/api/page-headings?docName=${docName}`);
         if (!r.ok) return 0;
         const d = (await r.json()) as { ok: boolean; headings?: unknown[] };
         return d.ok ? (d.headings?.length ?? 0) : 0;
@@ -88,6 +98,8 @@ async function seedDoc(page: Page) {
       document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3').length === 3,
     { timeout: 10_000 },
   );
+
+  return docName;
 }
 
 test('outline click scrolls to the matching heading in WYSIWYG mode', async ({ page }) => {

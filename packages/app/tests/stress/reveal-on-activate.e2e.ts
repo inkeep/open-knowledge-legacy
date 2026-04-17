@@ -1,3 +1,10 @@
+// These tests assert sidebar UI state only — they never write content. They
+// read-only against the pre-seeded fixtures (`test-doc.md`, `sidebar-folder/
+// nested-doc.md`) from playwright.config.ts, which is why this file has no
+// beforeEach reset. Do not re-introduce a blanket /api/test-reset — it
+// interferes with parallel tests in other files (see spec §6 AC6). If a future
+// test here needs to assert doc *content*, migrate that specific test to the
+// per-test unique-docName pattern instead.
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -5,11 +12,6 @@ const BASE = `http://localhost:${port}`;
 
 const sidebar = (page: Page) => page.locator('[data-slot="sidebar-container"]');
 const folderButton = (page: Page) => page.getByRole('button', { name: 'sidebar-folder' });
-
-test.beforeEach(async () => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-});
 
 test('direct URL load reveals nested doc on first paint', async ({ page }) => {
   await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);

@@ -10,6 +10,7 @@
  * webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
 
@@ -23,13 +24,24 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
   page.on('console', (m) => logs.push({ type: m.type(), text: m.text() }));
   page.on('pageerror', (e) => logs.push({ type: 'uncaught', text: e.message }));
 
-  // 2. Reset server state
-  const resetRes = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  // 2. Create a per-test doc + reset its server state (avoids racing with
+  //    parallel tests that would otherwise share the global `test-doc` name).
+  const docName = `test-crdtstress-${randomUUID().slice(0, 8)}`;
+  const createRes = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: `${docName}.md` }),
+  });
+  if (!createRes.ok && createRes.status !== 409) {
+    throw new Error(`create-page failed: ${createRes.status}`);
+  }
+  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
   if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
 
-  // 3. Navigate + open test-doc from sidebar (multi-doc arch requires explicit selection)
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+  // 3. Navigate directly to the per-test doc via hash routing.
+  await page.goto(`${BASE}/#/${docName}`);
   await page.waitForFunction(() => Boolean(window.__activeProvider), {
     timeout: 15_000,
   });
@@ -43,7 +55,7 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
     const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markdown: FIXTURE }),
+      body: JSON.stringify({ docName, markdown: FIXTURE }),
     });
     expect(writeRes.ok).toBe(true);
 

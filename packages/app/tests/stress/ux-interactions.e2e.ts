@@ -8,6 +8,7 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -26,16 +27,36 @@ async function getYText(page: Page): Promise<string> {
   });
 }
 
-test.beforeEach(async ({ page }) => {
-  // Reset server state and navigate
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  // Multi-doc arch: must open a document from sidebar before provider is active
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
+
+function uniqueDocName(label: string): string {
+  return `test-ux-${label}-${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Create a per-test doc, reset it on the server, open it, and wait for sync.
+ * Returns the docName so tests can pass it to agent-write-md.
+ */
+async function openFreshDoc(page: Page, label: string): Promise<string> {
+  const docName = uniqueDocName(label);
+  await createPage(`${docName}.md`);
+  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
+  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  await page.goto(`${BASE}/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
-});
+  return docName;
+}
 
 // Editor mode toggle is a Radix ToggleGroup with type="single" — items render
 // as role="radio" (not "button") and carry aria-label="Visual editor" / "Markdown source".
@@ -45,6 +66,7 @@ const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown s
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
+  await openFreshDoc(page, 'wysiwyg-to-source');
   // Type in WYSIWYG mode
   await page.locator('.ProseMirror').focus();
   await page.keyboard.type('Hello from WYSIWYG', { delay: 10 });
@@ -68,6 +90,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
 });
 
 test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page }) => {
+  await openFreshDoc(page, 'source-to-wysiwyg');
   // Switch to Source mode
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
@@ -99,6 +122,7 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
 });
 
 test('round-trip: edits in both modes survive toggle cycle', async ({ page }) => {
+  await openFreshDoc(page, 'round-trip');
   // Type in WYSIWYG
   await page.locator('.ProseMirror').focus();
   await page.keyboard.type('WYSIWYG edit', { delay: 10 });
@@ -146,6 +170,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 });
 
 test('concurrent agent write: user + agent content coexist', async ({ page }) => {
+  const docName = await openFreshDoc(page, 'concurrent-agent');
   // Type in WYSIWYG
   await page.locator('.ProseMirror').focus();
   await page.keyboard.type('User typing', { delay: 10 });
@@ -160,7 +185,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   const res = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown: '## Agent Section\n\nAgent content here.' }),
+    body: JSON.stringify({ docName, markdown: '## Agent Section\n\nAgent content here.' }),
   });
   expect(res.ok).toBe(true);
 
@@ -190,6 +215,11 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   // toggle. Pre-#175 the row itself toggled — that version of this test lived
   // at this path and was failing post-merge (two main commits red before the
   // rewrite) until it was updated to the new contract here.
+  //
+  // This test relies only on the pre-seeded sidebar-folder/nested-doc.md
+  // fixture (see playwright.config.ts). It does not write content, so no
+  // per-test doc is required.
+  await page.goto(BASE);
   const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
   const chevron = page.getByRole('button', { name: 'Expand sidebar-folder' });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
@@ -235,12 +265,13 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
 test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({
   page,
 }) => {
+  const docName = await openFreshDoc(page, 'link-edit');
   const doc = '[Beta page](beta.md)';
 
   const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown: doc, position: 'replace' }),
+    body: JSON.stringify({ docName, markdown: doc, position: 'replace' }),
   });
   expect(writeRes.ok).toBe(true);
 

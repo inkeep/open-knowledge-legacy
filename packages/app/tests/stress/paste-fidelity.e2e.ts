@@ -17,6 +17,7 @@
  *   bun run test:stress:e2e  (or bunx playwright test paste-fidelity.e2e.ts)
  */
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,16 @@ const _dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURE_ROOT = join(_dirname, '../../../core/src/markdown/rehype-plugins/fixtures');
 function fixture(name: string): string {
   return readFileSync(join(FIXTURE_ROOT, name), 'utf-8');
+}
+
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
 }
 
 async function waitForProvider(page: Page) {
@@ -172,12 +183,14 @@ async function simulateCutAndRead(
 // ─── Paste baseline tests ───
 
 test.describe('V1 paste baseline — text/plain content through WYSIWYG', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-base-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -231,11 +244,14 @@ test.describe('V1 paste baseline — text/plain content through WYSIWYG', () => 
 // ─── Copy-side scenarios (FR-1, FR-2, FR-4) ───
 
 test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-copy-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
   });
 
   test('WYSIWYG copy → text/plain carries markdown', async ({ page }) => {
@@ -267,7 +283,7 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        docName: 'test-doc',
+        docName,
         markdown: 'See [[Page|Alias]] here\n',
         position: 'replace',
       }),
@@ -300,11 +316,14 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
 // ─── Paste-side cross-vendor scenarios (Branch D) ───
 
 test.describe('Paste from vendor HTML → structured content through Branch D', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-vendor-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -392,11 +411,14 @@ test.describe('Paste from vendor HTML → structured content through Branch D', 
 // ─── FR-specific WYSIWYG scenarios ───
 
 test.describe('WYSIWYG FR-specific paste behavior', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-fr-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -489,11 +511,14 @@ async function pasteHtmlInSource(page: Page, html: string, plain: string) {
 }
 
 test.describe('FR-21 large-paste chunked insertion (Source view)', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-chunk-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Switch the editor pane to the Source view — the chunked path is
     // Source-exclusive per D14 LOCKED / precedent #19. The mode toggle is a
     // radio group (aria-label="Editor mode") with radios "Visual editor" +
@@ -539,11 +564,14 @@ test.describe('FR-21 large-paste chunked insertion (Source view)', () => {
 // ─── FR-22 drag-and-drop parity ───
 
 test.describe('FR-22 drag-and-drop MIME parity (dragstart uses same hooks as copy)', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-dnd-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -588,11 +616,14 @@ test.describe('FR-22 drag-and-drop MIME parity (dragstart uses same hooks as cop
 // ─── F3: vendor-fixture paste coverage (QA-038..QA-041) ───
 
 test.describe('Vendor HTML fixtures → structured content through Branch D', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-fixture-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -661,11 +692,14 @@ test.describe('Vendor HTML fixtures → structured content through Branch D', ()
 // ─── F2 + QA-012 + QA-036: Source-view cross-view symmetry ───
 
 test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-srcopy-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Seed with markdown via the WYSIWYG pane so both views have identical
     // logical content.
     await page.click('.ProseMirror');
@@ -716,11 +750,14 @@ test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
 // ─── F5 (QA-031): HtmlPayloadTooLargeError fallback ───
 
 test.describe('FR-11 fallback: oversized text/html falls through to text/plain', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-fallback-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -760,11 +797,14 @@ test.describe('FR-11 fallback: oversized text/html falls through to text/plain',
 // ─── F6 (QA-034): URL scheme sanitization end-to-end on the copy path ───
 
 test.describe('FR-20 URL scheme sanitization on copy', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-xss-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -783,7 +823,7 @@ test.describe('FR-20 URL scheme sanitization on copy', () => {
     await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ docName: 'test-doc', markdown: evil, position: 'replace' }),
+      body: JSON.stringify({ docName, markdown: evil, position: 'replace' }),
     });
     await expect(async () => {
       expect(await getYText(page)).toContain('run-js');
@@ -808,11 +848,14 @@ test.describe('FR-20 URL scheme sanitization on copy', () => {
 // ─── F4 (QA-020, QA-043): Drag-and-drop beyond dragstart parity ───
 
 test.describe('FR-16 drag-and-drop scenarios beyond dragstart MIME parity', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-dnd2-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -865,11 +908,14 @@ test.describe('FR-16 drag-and-drop scenarios beyond dragstart MIME parity', () =
 // ─── QA-044 WYSIWYG cut parity ───
 
 test.describe('FR-12 WYSIWYG cut writes MIMEs AND deletes selection', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-cut-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -893,11 +939,14 @@ test.describe('FR-12 WYSIWYG cut writes MIMEs AND deletes selection', () => {
 // ─── F1 (QA-022): FR-21 frame-timing oracle ───
 
 test.describe('FR-21 chunked insertion maintains 60fps frame budget', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-fps-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.getByRole('radio', { name: /Markdown source/i }).click({ timeout: 10_000 });
     await page.waitForSelector('.cm-content', { timeout: 10_000 });
   });
@@ -1021,11 +1070,14 @@ test.describe('FR-21 chunked insertion maintains 60fps frame budget', () => {
 // ─── QA-011 Source-side FR-17 Cmd+Shift+V + QA-016/QA-037 Source cut behavior ───
 
 test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-srcparity-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Seed content in the WYSIWYG side first, then switch to Source view
     // so the buffer has markdown available for cut / select-all tests.
     await page.click('.ProseMirror');
@@ -1139,11 +1191,14 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
 // contexts) requires shared OS clipboard and is out of scope here.
 
 test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-paste-rt-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
   });
 
   test('wikiLink + heading + bold round-trips through Branch C losslessly', async ({ page }) => {
@@ -1154,7 +1209,7 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ docName: 'test-doc', markdown: seedMarkdown, position: 'replace' }),
+      body: JSON.stringify({ docName, markdown: seedMarkdown, position: 'replace' }),
     });
     await expect(async () => {
       expect(await getYText(page)).toContain('[[Page|Alias]]');
@@ -1169,10 +1224,12 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     expect(captured.plain).toContain('[[Page|Alias]]');
 
     // Reset the doc so subsequent paste can't just "inherit" the seed.
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.reload();
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+      method: 'POST',
+    });
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
     await expect(async () => {
       const content = await getYText(page);
@@ -1210,7 +1267,7 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ docName: 'test-doc', markdown: seedMarkdown, position: 'replace' }),
+      body: JSON.stringify({ docName, markdown: seedMarkdown, position: 'replace' }),
     });
     await expect(async () => {
       expect(await getYText(page)).toContain('[[Thing]]');
@@ -1221,10 +1278,12 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     const captured = await simulateCopyAndRead(page, 'wysiwyg');
     expect(captured.html).toContain('data-pm-slice');
 
-    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    await page.reload();
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+      method: 'POST',
+    });
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
 
     await pasteWithMimes(page, {
