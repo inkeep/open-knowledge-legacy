@@ -51,6 +51,7 @@ import {
   parseFrontmatterMetadata,
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
+import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -3269,20 +3270,41 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * the content dir from cwd + config. So we spawn with `cwd: dir` instead
    * of passing a flag.
    */
+  /**
+   * Ensure both the collab server (`ok start`) and the React UI (`ok ui`) are
+   * live for `dir`, and return the UI port — that's the browser-navigable
+   * redirect target post-lifecycle-split. `ok start` serves only the collab
+   * API/WebSocket and returns 404 at `/` with an `ok ui`-pointing message.
+   *
+   * Three cases:
+   *   1. `ui.lock` is live → reuse its port (UI already running in that dir).
+   *   2. `server.lock` live but `ui.lock` absent/stale → spawn `ok ui` alone;
+   *      `ok start` won't re-spawn its UI sibling when the server-lock is held.
+   *   3. Nothing live → spawn `ok start`; it auto-spawns `ok ui` as a sibling
+   *      (see `start.ts` ~line 340, "auto-spawned ok ui sibling").
+   *
+   * Polls `ui.lock` (not `server.lock`) because only `ui.lock.port` hosts the
+   * React bundle. Single polling loop covers cases 2 and 3 uniformly.
+   */
   async function startServerAtDirAndGetPort(
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
     const lockDir = resolve(absDir, '.open-knowledge');
 
-    // If a live server is already running in that dir, reuse it.
-    const existing = readServerLock(lockDir);
-    if (existing && existing.port > 0) {
-      return { port: existing.port };
+    // Case 1: UI already live — reuse.
+    const existingUi = readUiLock(lockDir);
+    if (existingUi && existingUi.port > 0) {
+      return { port: existingUi.port };
     }
 
+    // Case 2 vs 3: pick which CLI command to spawn based on whether the
+    // collab server is already live. `ok ui` alone is correct and necessary
+    // when `server.lock` is held (can't re-run `ok start` under a live lock).
+    const existingServer = readServerLock(lockDir);
     const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'start'];
+    const cliCmd = existingServer && existingServer.port > 0 ? 'ui' : 'start';
+    const spawnArgs = [...baseArgs, cliCmd];
     // Pipe stderr so we can log why a spawn failed; ignore stdout.
     const child = spawn(cmd, spawnArgs, {
       cwd: absDir,
@@ -3295,7 +3317,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderrChunks.push(chunk);
       log.warn(
-        { cwd: absDir, msg: chunk.toString('utf-8').trim() },
+        { cwd: absDir, cliCmd, msg: chunk.toString('utf-8').trim() },
         '[local-op/open] child stderr',
       );
     });
@@ -3312,20 +3334,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise<void>((r) => setTimeout(r, 500));
-      const lock = readServerLock(lockDir);
-      if (lock && lock.port > 0) {
-        return { port: lock.port };
+      const uiLock = readUiLock(lockDir);
+      if (uiLock && uiLock.port > 0) {
+        return { port: uiLock.port };
       }
       if (earlyExitCode !== null) {
         const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
         return {
-          error: `Server process exited (code ${earlyExitCode})${stderr ? ` — ${stderr}` : ''}`,
+          error: `\`ok ${cliCmd}\` exited (code ${earlyExitCode})${stderr ? ` — ${stderr}` : ''}`,
         };
       }
     }
     const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
     return {
-      error: `Server did not start within the expected time${stderr ? ` — ${stderr}` : ''}`,
+      error: `UI did not start within the expected time${stderr ? ` — ${stderr}` : ''}`,
     };
   }
 
