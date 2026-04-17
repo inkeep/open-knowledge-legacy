@@ -639,22 +639,23 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     try {
       const ops = generateOps(rng, clientCount, opCount);
 
-      // Apply ops with short inter-op waits. Pacing matters for the Bug-A
-      // trigger: a wysiwyg-type edit propagates XmlFragment to the server
-      // via CRDT (<50ms typical). Client Observer A then takes another
-      // DEBOUNCE_MS=50ms before propagating to Y.Text. Bug-A fires when an
-      // agent-write lands at the server in that ~50ms window — when server
-      // XmlFragment has the user's content but server Y.Text hasn't received
-      // it yet from the client's Observer A.
-      //
-      // Strategy: keep inter-op wait SHORT (20ms) so agent-write frequently
-      // hits inside the debounce window. A small pre-agent-write wait (30ms)
-      // skews timing toward mid-debounce. This produces a reliable Bug-A race
-      // on every 2-4 seeds instead of once per ~12 seeds.
+      // Apply ops back-to-back. Under the server-authoritative settlement
+      // bridge (bridge-correctness SPEC §6 R4 — `doc.on('afterAllTransactions',
+      // ...)` in server-observers.ts) there is no 50 ms debounce window for
+      // inter-op wall-clock pacing to target. The historical pre-agent-write
+      // `wait(30)` + post-op `wait(20)` were calibrated to hit "mid-debounce"
+      // for the pre-US-009 Bug-A trigger, which observer-layer paired-write
+      // symmetry (US-001) has closed. The RGA-level race that remains (SPEC
+      // §1 D7) is sampled structurally by the `sync-pause`/`sync-resume` op
+      // kinds, not by wall-clock pacing. Generated `wait` ops still run
+      // through `applyOp` and contribute deliberate fuzz-generated delays.
+      // Convergence timing (WebSocket propagation) is handled at the end
+      // of the run by `driveToConvergence`'s quiescence-gated loop. Net
+      // savings: ~600 ms per seed (~12 ops × ~50 ms average), so the fuzz
+      // harness fits its tier-1 budget at the calibrated 200-seed coverage
+      // and nightly's 10000-seed tier-2 run completes faster. (US-010 /
+      // precedent #13(b): prefer structural gates over wall-clock waits.)
       for (const op of ops) {
-        if (op.kind === 'agent-write' || op.kind === 'agent-patch') {
-          await wait(30);
-        }
         await applyOp(op, clients, server, docName);
 
         // Update marker tracking AFTER the op succeeds (oracle d prefix set).
@@ -667,10 +668,6 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
         // Update full-body expectation (oracle e).
         updateExpectedBody(op);
-
-        if (op.kind !== 'wait' && op.kind !== 'sync-pause' && op.kind !== 'sync-resume') {
-          await wait(20);
-        }
       }
 
       // Resume all paused clients
