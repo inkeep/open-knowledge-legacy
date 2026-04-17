@@ -111,8 +111,8 @@ export function EditorDemo() {
           aria-hidden
           width={3840}
           height={1080}
-          className="pointer-events-none absolute left-0 w-full object-contain opacity-40"
-          style={{ top: '0', height: '100%' }}
+          className="pointer-events-none absolute left-0 w-full object-cover opacity-40"
+          style={{ top: '-100%', height: '200%', clipPath: 'inset(50% 0 0 0)' }}
         />
         <p className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
           Try it
