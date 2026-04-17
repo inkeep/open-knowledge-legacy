@@ -37,7 +37,7 @@ The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative
 3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
 4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
 5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
-6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyByPrefixSuffix` (shared `@inkeep/open-knowledge-core` utility) — minimal mutation, preserves non-agent Y.Text Items and their origins
+6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyFastDiff` (character-level DMP write exported from `@inkeep/open-knowledge-core/bridge`) — minimal mutation, preserves non-agent Y.Text Items and their origins
 
 The XmlFragment-authoritative shape is required to preserve concurrent user WYSIWYG content during agent writes. The prior implementation (`syncTextToFragment`, deleted by the `2026-04-14-bridge-convergence-under-concurrent-writes` spec — FR-9) read `Y.Text` as the authoritative input, which lagged the XmlFragment for client-originated WYSIWYG typing and caused `updateYFragment` to stomp user content (Bug-A, deterministic).
 

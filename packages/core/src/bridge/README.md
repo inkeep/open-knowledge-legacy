@@ -33,8 +33,10 @@ Architectural governance:
 
 ## Why a hybrid merge
 
-The Khanna-Kunal-Pierce 2007 result proves no purely-state-based three-way merge preserves content under arbitrary interleavings (diff3 is not idempotent, not near-success-on-similar-replicas, not stable). The hybrid diff3+DMP algorithm inherits that ceiling, but `assertContentPreservation` + silent recovery turn any residual drop into an observable, recoverable event rather than silent corruption. The structural fix is single-CRDT collapse (SS-1), tracked in parallel; see `reports/three-way-merge-content-preservation/` for the academic analysis.
+The Khanna-Kunal-Pierce 2007 result proves no purely-state-based three-way merge preserves content under arbitrary interleavings (diff3 is not idempotent, not near-success-on-similar-replicas, not stable). The hybrid diff3+DMP algorithm inherits that ceiling, but `assertContentPreservation` + silent recovery turn any residual drop into an observable, recoverable event rather than silent corruption. The structural fix is single-CRDT collapse (SS-1), tracked in parallel. See `specs/2026-04-16-bridge-correctness/SPEC.md` §10 D2 for the in-PR decision rationale citing KKP, and `reports/tree-level-three-way-merge-prior-art/` for the adjacent prior-art survey that grounds the same impossibility result.
 
-## Non-exports
+## No wall-clock timers in bridge code (precedent #13(b))
 
-The historical `Scheduler` / `defaultScheduler` symbols are gone. Under the settlement-based dispatch model (precedent #13(b); `doc.on('afterAllTransactions', ...)` in `server-observers.ts`) the bridge has no wall-clock timers. The grep gate at `packages/server/src/bridge-no-wallclock.test.ts` fails CI on any reintroduction in the two bridge observer files.
+Under the settlement-based dispatch model (`doc.on('afterAllTransactions', ...)` in `server-observers.ts`) the bridge observer files have no wall-clock timers. `server-observers.ts` and `packages/app/src/editor/observers.ts` do not call `setTimeout`, `setInterval`, `sched.*`, or consume the `Scheduler` type. The grep gate at `packages/server/src/bridge-no-wallclock.test.ts` fails CI on any reintroduction in those two files.
+
+The `Scheduler` / `defaultScheduler` primitive itself remains exported from `@inkeep/open-knowledge-core` (defined at `packages/core/src/bridge/scheduler.ts`) for non-bridge consumers that legitimately need test-deterministic DI around `setTimeout` — `packages/server/src/idle-shutdown.ts` and `packages/cli/src/commands/ui.ts` both use it. Its presence in the package is compatible with the bridge invariant because the gate enforces by path, not by symbol presence.
