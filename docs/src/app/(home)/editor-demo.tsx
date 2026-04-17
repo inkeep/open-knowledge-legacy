@@ -46,7 +46,25 @@ This starts the server, editor, and MCP endpoint. Your current directory becomes
 export function EditorDemo() {
   const [mode, setMode] = useState<'visual' | 'source'>('visual');
   const [markdown, setMarkdown] = useState(DEMO_MARKDOWN);
+  const [inView, setInView] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.15 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -102,8 +120,17 @@ export function EditorDemo() {
     }
   }, [mode]);
 
+  const entrance = (delay: number) =>
+    ({
+      opacity: inView ? 1 : 0,
+      transform: inView
+        ? 'perspective(1200px) translateZ(0) scale(1)'
+        : 'perspective(1200px) translateZ(150px) scale(1.06)',
+      transition: `opacity 0.8s cubic-bezier(0.23, 1, 0.32, 1) ${delay}s, transform 0.8s cubic-bezier(0.23, 1, 0.32, 1) ${delay}s`,
+    }) as React.CSSProperties;
+
   return (
-    <section>
+    <section ref={sectionRef}>
       <div className="relative overflow-hidden bg-[var(--slide-bg)] px-6 pt-16 pb-28 text-center md:pt-20 md:pb-36">
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 md:h-32"
@@ -118,13 +145,22 @@ export function EditorDemo() {
           className="pointer-events-none absolute left-0 w-full object-cover opacity-40"
           style={{ top: '-100%', height: '200%', clipPath: 'inset(50% 0 0 0)' }}
         />
-        <p className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
+        <p
+          className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]"
+          style={entrance(0)}
+        >
           Try it
         </p>
-        <h2 className="relative z-10 text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
+        <h2
+          className="relative z-10 text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl"
+          style={entrance(0.07)}
+        >
           Two modes, one source of truth
         </h2>
-        <p className="relative z-10 mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
+        <p
+          className="relative z-10 mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]"
+          style={entrance(0.14)}
+        >
           Switch between rich editing and raw markdown. Edit in either mode — the content stays in
           sync, just like the real product.
         </p>
@@ -139,7 +175,7 @@ export function EditorDemo() {
       >
         <header
           className="flex h-12 shrink-0 items-center"
-          style={{ borderColor: 'var(--slide-border)' }}
+          style={{ borderColor: 'var(--slide-border)', ...entrance(0.2) }}
         >
           <div className="flex flex-1 items-center gap-2 px-4 sm:px-6">
             <span className="truncate text-sm text-[var(--slide-muted)] ml-2">
@@ -154,7 +190,10 @@ export function EditorDemo() {
           </div>
         </header>
 
-        <div className="relative h-[60vh] min-h-[420px] max-h-[640px] overflow-hidden">
+        <div
+          className="relative h-[60vh] min-h-[420px] max-h-[640px] overflow-hidden"
+          style={entrance(0.3)}
+        >
           {/* Visual mode — real TipTap editor */}
           <div
             className="absolute inset-0 overflow-y-auto transition-all duration-400"
