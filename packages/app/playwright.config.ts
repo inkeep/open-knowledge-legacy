@@ -28,15 +28,37 @@ const baseURL = `http://localhost:${port}`;
  * ('Meta+V')` with system clipboard content), add per-file project scoping
  * for those tests only — not a global 3× multiplier.
  */
+const isCI = !!process.env.CI;
+
 export default defineConfig({
   testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
-  retries: 0,
+  // D-Q5 LOCKED: retries absorb transient infra noise; failOnFlakyTests keeps
+  // the verdict strict — retry-success still fails the PR.
+  retries: isCI ? 2 : 0,
+  failOnFlakyTests: isCI,
+  forbidOnly: isCI,
+  // D-Q7 DIRECTED: per-test docName isolation (PR #185) enables fullyParallel.
+  // Local workers undefined = Playwright default for single-test debug
+  // ergonomics; US-017 workers-calibration validates CI value empirically.
+  fullyParallel: true,
+  workers: isCI ? 4 : undefined,
+  // D-Q8 DELEGATED: HTML report as artifact; list locally + github reporter on
+  // CI for inline PR annotations.
+  reporter: [['html', { open: 'never' }], ['list'], ...(isCI ? [['github'] as const] : [])],
   globalTeardown: './tests/stress/global-teardown.ts',
   use: {
     baseURL,
     headless: true,
+    // D-Q9 DELEGATED: 1280×720 matches the most common default viewport; the
+    // default 800×450 crops the sidebar in narrow-viewport tests. Retained only
+    // on failure to bound storage growth.
+    video: { mode: 'retain-on-failure', size: { width: 1280, height: 720 } },
+    // 'on-first-retry' captures trace on retry 1 only; subsequent retries skip
+    // to stay under the CI runtime envelope (AC-12).
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: `VITE_PORT=${port} bun run dev`,
