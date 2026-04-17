@@ -9,7 +9,7 @@
  * TipTap extension registration.
  */
 
-import { Extension } from '@tiptap/core';
+import { type Editor, Extension } from '@tiptap/core';
 
 export const ArrowHandler = Extension.create({
   name: 'arrowHandler',
@@ -24,10 +24,7 @@ export const ArrowHandler = Extension.create({
   },
 });
 
-function handleArrow(
-  _editor: import('@tiptap/core').Editor,
-  _direction: 'up' | 'down' | 'left' | 'right',
-): boolean {
+function handleArrow(_editor: Editor, _direction: 'up' | 'down' | 'left' | 'right'): boolean {
   // For now, delegate to default ProseMirror behavior.
   // The nested CM NodeView handles focus transfer via its own
   // DOM event handlers — this extension is a forward-compatible

@@ -11,8 +11,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
-import { sharedExtensions } from '../../../../packages/core/src/extensions/shared.js';
-import { MarkdownManager } from '../../../../packages/core/src/markdown/index.js';
+import { sharedExtensions } from '../../../../packages/core/src/extensions/shared.ts';
+import { MarkdownManager } from '../../../../packages/core/src/markdown/index.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 

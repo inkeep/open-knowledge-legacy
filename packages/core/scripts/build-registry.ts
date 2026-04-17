@@ -47,7 +47,7 @@ function mapType(rdtType: string): 'string' | 'boolean' | 'number' | 'enum' | 'r
 /** Extract enum values from a union type string like '"info" | "warn" | "error"'. */
 function extractEnumValues(rdtType: string): string[] {
   const matches = rdtType.match(/"([^"]+)"/g);
-  return matches ? matches.map((m) => m.replace(/"/g, '')) : [];
+  return matches ? matches.map((m) => m.replaceAll('"', '')) : [];
 }
 
 // Configure the parser per §9.9 critical correctness detail

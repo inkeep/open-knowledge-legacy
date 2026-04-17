@@ -46,16 +46,16 @@ export function createRegistry(): ComponentRegistry {
   }
 
   return {
-    get(name: string): JsxComponentMeta {
+    get(name) {
       return map.get(name) ?? (map.get('*') as JsxComponentMeta);
     },
-    set(name: string, meta: JsxComponentMeta): void {
+    set(name, meta) {
       map.set(name, meta);
     },
-    has(name: string): boolean {
+    has(name) {
       return map.has(name);
     },
-    entries(): IterableIterator<[string, JsxComponentMeta]> {
+    entries() {
       return map.entries();
     },
   };

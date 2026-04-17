@@ -9,7 +9,7 @@
  */
 
 import type { Editor } from '@tiptap/react';
-import { Box, type LucideIcon } from 'lucide-react';
+import { Box } from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
@@ -126,7 +126,7 @@ export function getComponentItems(): SlashCommandItem[] {
   return descriptors.map((desc) => ({
     name: `component-${desc.name}`,
     label: desc.displayName ?? desc.name,
-    icon: Box as LucideIcon,
+    icon: Box,
     category: desc.category ?? 'content',
     command: createInsertCommand(desc),
     aliases: desc.searchTerms,
