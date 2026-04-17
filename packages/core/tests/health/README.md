@@ -260,9 +260,9 @@ Turbo task definitions at `turbo.json`:
 }
 ```
 
-Cache key design: tier-1 does not include `baseline.json` (the unit tests don't depend on it); tier-2 does. This lets baseline edits invalidate only the tier-2 cache without re-running tier-1 logic.
+Cache key design: the local-only helper (`test:health:unit`) does not include `baseline.json` (the unit tests don't depend on it); the nightly `test:health` does. This lets baseline edits invalidate only the nightly cache without re-running the synthetic unit tests.
 
-Why tier-1 gets the synthetic-regression tests but not the corpus harvest: 10s is acceptable for nightly but noticeable on every PR when most PRs don't touch the markdown pipeline. The synthetic crash-class coverage (5 classes from `crash-taxonomy.json`) is the PR-time confidence that the gate itself still works.
+Why the local-only helper exists separately from the nightly corpus harvest: 10s is acceptable for nightly but noticeable in a warm local `bun run check` when most edits don't touch the markdown pipeline. The synthetic crash-class coverage (5 classes from `crash-taxonomy.json`) gives fast local feedback that the gate itself still works without re-walking the full fixture corpus.
 
 ---
 
