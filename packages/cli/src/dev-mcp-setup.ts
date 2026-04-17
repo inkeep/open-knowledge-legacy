@@ -14,9 +14,12 @@
  * are preserved. Safe to re-run.
  */
 
+import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isObject } from './utils/is-object.ts';
 
 /**
  * Robust project root detection that works regardless of how the script is invoked.
@@ -62,15 +65,19 @@ function getProjectRoot(): string {
 const PROJECT_ROOT = getProjectRoot();
 
 function getBunPath(): string {
-  // Prefer `which bun` but fall back gracefully
+  // Resolve the absolute `bun` path so the MCP config works from any cwd the
+  // editor spawns us in. `where` on Windows, `which` everywhere else; the
+  // try/catch keeps the bare `'bun'` fallback if the probe fails.
   try {
-    const { execSync } = require('node:child_process');
-    const whichBun = execSync('which bun', { encoding: 'utf8' }).trim();
-    if (whichBun) return whichBun;
+    const cmd = process.platform === 'win32' ? 'where bun' : 'which bun';
+    const resolved = execSync(cmd, { encoding: 'utf8' }).trim();
+    // `where` on Windows may return multiple newline-separated lines.
+    const first = resolved.split(/\r?\n/)[0]?.trim();
+    if (first) return first;
   } catch {
     // Fall through to default
   }
-  return 'bun'; // fallback - let the shell resolve it
+  return 'bun';
 }
 
 interface McpConfig {
@@ -85,14 +92,23 @@ interface McpConfig {
 }
 
 function readMcpConfig(path: string): McpConfig {
-  if (!existsSync(path)) {
-    return {};
-  }
+  if (!existsSync(path)) return {};
+  const raw = readFileSync(path, 'utf-8');
+  const trimmed = raw.trim();
+  if (trimmed === '') return {};
+  let parsed: unknown;
   try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
-    return {};
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    // Refuse to touch a file we can't parse — silently overwriting would
+    // destroy the user's other MCP server entries. Matches init.ts behavior.
+    const msg = err instanceof Error ? err.message : 'invalid JSON';
+    throw new Error(`${path} contains invalid JSON: ${msg}`);
   }
+  if (!isObject(parsed)) {
+    throw new Error(`${path} root must be a JSON object`);
+  }
+  return parsed as McpConfig;
 }
 
 function writeMcpConfig(path: string, config: McpConfig): void {
@@ -133,7 +149,6 @@ interface SetupDevMcpOptions {
   port?: number;
   cwd?: string;
   home?: string;
-  force?: boolean;
 }
 
 /**
@@ -146,7 +161,10 @@ interface SetupDevMcpOptions {
 export function setupDevMcp(options: SetupDevMcpOptions = {}): void {
   const port = options.port ?? 5173;
   const cwd = options.cwd ?? process.cwd();
-  const home = options.home ?? process.env.HOME ?? '~';
+  // `'~'` is a shell construct — Node's fs APIs do not expand it, so we must
+  // resolve the real home directory. Fall back to os.homedir() when $HOME
+  // isn't set (e.g. sandboxed CI, some container runtimes).
+  const home = options.home ?? process.env.HOME ?? homedir();
 
   const bunPath = getBunPath();
   const cliPath = resolve(PROJECT_ROOT, 'packages/cli/src/cli.ts');
@@ -178,6 +196,14 @@ export default setupDevMcp;
 // The root `dev:mcp` script in package.json invokes this shape.
 if (import.meta.main) {
   const portArg = process.argv[2];
-  const port = portArg ? Number(portArg) : 5173;
+  let port = 5173;
+  if (portArg !== undefined) {
+    const parsed = Number(portArg);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+      console.error(`Invalid port: ${portArg} (must be an integer 1..65535)`);
+      process.exit(1);
+    }
+    port = parsed;
+  }
   setupDevMcp({ port });
 }
