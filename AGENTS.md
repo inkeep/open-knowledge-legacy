@@ -143,7 +143,9 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/types/link-graph.ts` — `LinkGraph`, `DocNode`, `UrlNode`, `LinkEdge`, `LastEditedBy`, plus `HistoricalNode` / `HistoricalLink` / `GraphDiff` shapes consumed by the graph-timeline endpoints
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
+- `src/constants/graph-attribution.ts` — `HALO_DURATION_MS`, `HALO_FADE_MS`; shared between `LiveAttributionTracker` (server) and halo-render helpers (client) so decay timing cannot drift
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
@@ -242,7 +244,10 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
-| GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
+| GET    | `/api/link-graph`             | Backlink graph; doc nodes carry frontmatter metadata (`cluster`, `category`, `tags`) and live `lastEditedBy` attribution |
+| GET    | `/api/checkpoints`            | Graph timeline — recent `save_version` checkpoints from the shadow repo (`sha`, `message`, `timestamp`, `writers`) |
+| GET    | `/api/graph-at`               | Reconstruct the link-graph at a historical checkpoint (`?sha=<ref>`); replays blobs through an in-memory `BacklinkIndex` |
+| GET    | `/api/graph-diff`             | Node + link delta between two checkpoints (`?from=<sha>&to=<sha>`); returns only added/removed IDs so clients compose the union graph |
 
 ### Key files
 
@@ -260,7 +265,10 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
+- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, metrics, and graph-timeline endpoints
+- `src/live-attribution.ts` — `LiveAttributionTracker`: per-doc "last edited by" with `HALO_DURATION_MS` decay window; consumed by `/api/link-graph` to emit `lastEditedBy` on doc nodes
+- `src/timeline-query.ts` — `listCheckpoints()` enumerates recent `save_version` refs from the shadow repo for `/api/checkpoints`; extracts writer identity from commit-trailer metadata
+- `src/historical-graph.ts` — `buildHistoricalGraph(sha)` + `diffHistoricalGraphs(fromSha, toSha)`; reconstructs the graph at any shadow-repo commit via a single `git ls-tree -r` + one `git cat-file --batch` subprocess (O(1) regardless of file count, ~22× faster than per-file `git show`), replaying blobs through an in-memory `BacklinkIndex` for exact parity with live `/api/link-graph`
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline + 50ms debounce via injected `Scheduler`
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
@@ -407,9 +415,15 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
 - `src/components/NewItemDialog.tsx` — Unified file/folder creation dialog (`kind: 'file' | 'folder'`); shared by header `+`, row context menu, empty-state CTA, `Cmd/Ctrl+Alt+N` shortcut, and broken wiki-link flow
-- `src/components/GraphView.tsx` — Force-directed graph visualization (`react-force-graph-2d`); cluster-based node coloring, metadata tooltips
-- `src/components/GraphPanel.tsx` — Graph controls shell; renders `GraphLegend` in fullscreen Explore mode
+- `src/components/GraphView.tsx` — Force-directed graph visualization (`react-force-graph-2d`); cluster-based node coloring, metadata tooltips, live-attribution halos, and historical-mode rendering via `overrideGraph` + `diffMarks` props
+- `src/components/GraphPanel.tsx` — Graph controls shell; hosts the live `/api/link-graph` fetch, owns the `useGraphTimeline` controller in Explore mode, and renders `GraphLegend`, `GraphAgentLegend`, and `GraphTimeline`. `onStatsChange` uses a state-setter bailout to break the derived-state render loop under historical mode (see `evidence/timetravel-render-loop.md`)
 - `src/components/GraphLegend.tsx` — Cluster color legend (fullscreen Explore only; max 10 entries)
+- `src/components/GraphAgentLegend.tsx` — Active-editor legend overlay (bottom-right in Explore mode); lists writers whose halos are currently visible, color-matched to their node rings
+- `src/components/GraphTimeline.tsx` — Timeline strip rendered in fullscreen Explore mode; step / Now / compare-picker / Play controls driven by a `GraphTimelineController`
+- `src/components/useGraphTimeline.ts` — `useGraphTimeline()` hook: owns checkpoint list (TanStack Query), selection state, historical snapshot + diff fetches, union-graph composition via `mergeGraphsWithDiff`, and 1.5s/step replay timer. Exposes a pure `GraphTimelineController` surface to `GraphPanel` / `GraphTimeline`
+- `src/components/graph-attribution.ts` — `attributionHaloColor(node)` + `activeAttributionsFromNodes(nodes)`: pure helpers driving Stage 6 halo rendering and agent-legend entries; reads `lastEditedBy` from `/api/link-graph` doc nodes
+- `src/components/graph-diff-marks.ts` — `mergeGraphsWithDiff(from, to, diff)` + `nodeDiffState` / `linkDiffState`: client-side diff composition on the union graph (`added` / `removed` / `updated` / `unchanged`). `normalizeLinkKey` keeps link identity stable across `graph-at` snapshots and `graph-diff` deltas
+- `src/components/graph-timeline-util.ts` — `normalizeHistoricalNode` / `normalizeHistoricalLink` bridge the server's `HistoricalNode` / `HistoricalLink` shapes to the client `GraphNode` / `GraphLink` types; `formatCheckpoint` derives user-facing labels from commit metadata
 - `src/components/graph-colors.ts` — Deterministic hash-to-color mapping for cluster names (16-color palette, theme-aware)
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
 - `src/presence/PresenceBar.tsx` — Presence bar component

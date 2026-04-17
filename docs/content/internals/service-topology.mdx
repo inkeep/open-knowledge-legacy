@@ -85,6 +85,32 @@ A dedicated `__system__` Y.Doc carries push signals for derived views (file list
 
 `__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the `isSystemDoc()` helper in `packages/server/src/cc1-broadcast.ts`, and `ContentFilter` rejects user-created `__system__.md` at admit time. V0-3 (backlinks) and V0-11 (graph panels) will inherit this contract on their own channels.
 
+## Graph panel
+
+The graph panel consumes three server surfaces for its live and historical views.
+
+### Live link-graph with attribution
+
+`GET /api/link-graph` returns the backlink graph the app already consumed for cluster coloring and tooltips, now enriched with per-document `lastEditedBy` metadata for Stage 6 agent-attribution halos. The enrichment comes from `LiveAttributionTracker` (`packages/server/src/live-attribution.ts`) -- a single in-memory table that records "who last wrote to doc X, and when." Entries decay after `HALO_DURATION_MS` (shared between server and client via `packages/core/src/constants/graph-attribution.ts` so the timing cannot drift). The client overlays a pulsing color ring per active writer and surfaces an `GraphAgentLegend` in the bottom-right of the Explore view.
+
+The tracker is fed from the same agent-write code path that the existing `activity` side-channel uses, so attribution is always consistent with what the document editor shows during a live write.
+
+### Time-travel over shadow-repo checkpoints
+
+Stage 7 turns every `save_version` into a scrubbable checkpoint. Three endpoints form the timeline contract:
+
+- `GET /api/checkpoints` -- recent commits from the shadow repo's checkpoint refs, with writer identity parsed from commit-trailer metadata. Backed by `timeline-query.ts`.
+- `GET /api/graph-at?sha=<ref>` -- reconstructs the link-graph at a historical commit via `buildHistoricalGraph` (`historical-graph.ts`). A throwaway in-memory `BacklinkIndex` is fed every blob from the tree; the output shape matches live `/api/link-graph` exactly, so the client can swap between live and historical views without branching rendering code.
+- `GET /api/graph-diff?from=<sha>&to=<sha>` -- returns only the node-id and link-key delta between two checkpoints. Clients fetch the `to` snapshot separately and compose a union graph locally (`mergeGraphsWithDiff`), tagging each node/link as `added | removed | updated | unchanged`. Added items glow green; removed items render with a red dashed ring on the union graph so deleted content stays visible.
+
+<Callout type="info" title="Why client-side union instead of a merged server payload">
+Keeping `graph-diff` as pure delta metadata and composing the union on the client keeps the three endpoints orthogonal. `graph-at` and `graph-diff` cache independently, and future consumers (e.g. a "what changed today" widget) can recombine them for their own view without pulling down redundant graphs.
+</Callout>
+
+### Subprocess budget
+
+`buildHistoricalGraph` uses a fixed subprocess budget -- one `git ls-tree -r` followed by one `git cat-file --batch` -- regardless of repo size. An earlier version spawned one `git show` per file and took ~55s on a 5,000-file corpus (dominated by fork/exec overhead); the batch version runs in ~2.5s on the same repo. The batch reader is offset-based and treats `<sha> missing` as a skip so partial trees degrade gracefully.
+
 ## Branch awareness
 
 The `reconciledBase` (three-way merge base) is scoped by branch name: `Map<branch, Map<docName, content>>`. When the HEAD watcher detects a branch switch:
