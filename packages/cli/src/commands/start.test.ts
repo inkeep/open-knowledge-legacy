@@ -593,4 +593,45 @@ describe('bootStartServer (integration)', () => {
     expect(booted.port).toBeGreaterThan(0);
     expect(booted.port).toBeLessThan(65536);
   });
+
+  test('D-034: /collab/keepalive accepts a bare WS upgrade without routing to Hocuspocus', async () => {
+    // The MCP keep-alive path is served by a special upgrade branch in
+    // start.ts that completes the WS handshake without handing off to
+    // Hocuspocus. The WS has no docName, no Y.Doc — it exists purely so
+    // the idle-shutdown primitive (which counts `/collab*` upgrades) sees
+    // MCP as an active WebSocket client. Without this test, a future
+    // refactor could silently route /collab/keepalive to Hocuspocus and
+    // the WS would close immediately when Hocuspocus couldn't resolve a
+    // docName, defeating the keep-alive.
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+    });
+
+    const ws = new WebSocket(`ws://localhost:${booted.port}/collab/keepalive?pid=${process.pid}`);
+    try {
+      await new Promise<void>((done, fail) => {
+        const onOpen = () => {
+          ws.removeEventListener('error', onError);
+          done();
+        };
+        const onError = () => {
+          ws.removeEventListener('open', onOpen);
+          fail(new Error('keepalive WS did not open'));
+        };
+        ws.addEventListener('open', onOpen, { once: true });
+        ws.addEventListener('error', onError, { once: true });
+      });
+      expect(ws.readyState).toBe(1); // OPEN
+
+      // The WS should stay open — not get closed by the server after the
+      // handshake. We wait 100ms and re-check readyState.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(ws.readyState).toBe(1);
+    } finally {
+      ws.close();
+    }
+  });
 });

@@ -399,6 +399,45 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     log.error({ err }, 'WebSocketServer error');
   });
   httpServer.on('upgrade', (req, socket, head) => {
+    // D-034 — MCP keep-alive channel.
+    //
+    // Path `/collab/keepalive` is intercepted BEFORE Hocuspocus sees it. The
+    // `ok mcp` process opens a bare WebSocket here on startup (no docName,
+    // no Y.Doc) purely to have a TCP socket that is visible to the idle-
+    // shutdown primitive's `/collab*` upgrade counter. Without this channel,
+    // MCP stdio uses HTTP fetch for every tool call and never holds a WS —
+    // so the server can idle-shutdown while MCP is still actively connected
+    // (observed 2026-04-16: tool calls failed with "Server unreachable:
+    // fetch failed" until user manually `/mcp` reconnected).
+    //
+    // The idle-shutdown listener (registered separately below) already
+    // counts this upgrade via its own `/collab*`-prefixed path check; no
+    // change is needed there.
+    if (req.url?.startsWith('/collab/keepalive')) {
+      socket.on('error', (err: Error) => {
+        log.error({ err }, 'MCP keepalive socket error');
+      });
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        // Optional server-initiated ping keeps the connection lively through
+        // any TCP idle pruning. Local loopback typically does not need this,
+        // but emitting a ping every 30s costs effectively nothing.
+        const pingTimer = setInterval(() => {
+          try {
+            ws.ping();
+          } catch {
+            // best-effort
+          }
+        }, 30_000);
+        pingTimer.unref?.();
+        ws.on('close', () => clearInterval(pingTimer));
+        ws.on('error', (err: Error) => {
+          log.error({ err }, 'MCP keepalive WS error');
+          ws.terminate();
+        });
+      });
+      return;
+    }
+
     if (req.url?.startsWith('/collab')) {
       socket.on('error', (err: Error) => {
         log.error({ err }, 'Upgrade socket error');
