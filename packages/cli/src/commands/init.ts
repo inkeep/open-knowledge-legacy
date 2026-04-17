@@ -23,6 +23,7 @@ import {
   upsertRootInstructions,
 } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -118,18 +119,71 @@ export interface InitCommandResult {
 const LAUNCH_JSON_VERSION = '0.0.1';
 const LAUNCH_CONFIG_NAME = 'open-knowledge';
 
-export type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'failed';
+export type LaunchJsonAction =
+  | 'created'
+  | 'merged'
+  | 'skipped-existing'
+  | 'skipped-stale'
+  | 'failed';
 
 export interface LaunchJsonResult {
   action: LaunchJsonAction;
   configPath: string;
   error?: string;
+  /**
+   * When `action === 'skipped-stale'`: fields that differ between the existing
+   * entry and the target entry. Surfaced to the user so they know to re-run
+   * with `--force` to pick up the new defaults.
+   */
+  staleFields?: string[];
+}
+
+/**
+ * Compare an existing launch-json entry against the current target shape and
+ * return the names of fields that differ. Empty array ⇒ entries match (safe
+ * to skip). Non-empty ⇒ user has an outdated entry (typically from a prior
+ * `ok init` before Zero-Ceremony Resume) and should re-run with `--force`.
+ *
+ * Only the fields we actively manage are compared — `name` is intentionally
+ * excluded because it's the identity key, and any user-added fields (env,
+ * cwd, etc.) are ignored so hand-edits are not flagged as stale.
+ */
+function diffLaunchEntry(
+  existing: Record<string, unknown>,
+  target: {
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+    autoPort: boolean;
+  },
+): string[] {
+  const stale: string[] = [];
+  if (existing.runtimeExecutable !== target.runtimeExecutable) {
+    stale.push('runtimeExecutable');
+  }
+  const existingArgs = existing.runtimeArgs;
+  const argsMatch =
+    Array.isArray(existingArgs) &&
+    existingArgs.length === target.runtimeArgs.length &&
+    existingArgs.every((a, i) => a === target.runtimeArgs[i]);
+  if (!argsMatch) stale.push('runtimeArgs');
+  if (existing.port !== target.port) stale.push('port');
+  if (existing.autoPort !== target.autoPort) stale.push('autoPort');
+  return stale;
 }
 
 /**
  * Scaffold or merge a `.claude/launch.json` entry so that Claude Code's
  * built-in preview browser can start the Open Knowledge dev server via
  * `preview_start("open-knowledge")`.
+ *
+ * D-020 / D-031: `runtimeArgs` launches `ok ui` (not `ok start`). The UI
+ * sibling-process is what the preview pane actually renders; collab runs
+ * in a separate `ok start` process auto-spawned by `ok ui` via the MCP
+ * stdio path. `autoPort: true` lets Claude Code reroute to a free port
+ * when 3000 is busy — our `ok ui` lock-collision handler then enters
+ * proxy mode (D-022 revised / D-032) so the preview pane always reaches
+ * a live UI regardless of which process bound the port first.
  *
  * - File missing        → create with the OK entry
  * - File exists, no OK  → merge the entry into configurations
@@ -140,8 +194,9 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
   const entry = {
     name: LAUNCH_CONFIG_NAME,
     runtimeExecutable: 'npx',
-    runtimeArgs: ['open-knowledge', 'start'],
+    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
     port: 3000,
+    autoPort: true,
   };
 
   try {
@@ -164,6 +219,11 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
     );
 
     if (existingIdx >= 0 && !force) {
+      const existingEntry = configs[existingIdx] as Record<string, unknown>;
+      const staleFields = diffLaunchEntry(existingEntry, entry);
+      if (staleFields.length > 0) {
+        return { action: 'skipped-stale', configPath, staleFields };
+      }
       return { action: 'skipped-existing', configPath };
     }
 
@@ -422,6 +482,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         case 'skipped-existing':
           lines.push(`  launch.json   ${displayPath}  already has open-knowledge entry`);
           break;
+        case 'skipped-stale':
+          lines.push(
+            `  launch.json   ${displayPath}  ${warning('\u26a0 existing open-knowledge entry is out of date')}`,
+          );
+          if (lj.staleFields && lj.staleFields.length > 0) {
+            lines.push(
+              `                ${warning(`${lj.staleFields.join(', ')} differ from current defaults`)}`,
+            );
+          }
+          lines.push(`                ${warning('re-run with --force to update')}`);
+          break;
         case 'failed':
           lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);
           break;
@@ -498,6 +569,29 @@ function parseEditorFlag(value: string): EditorId[] {
   return ids;
 }
 
+/**
+ * Detect every editor whose MCP config directory already exists. The parent
+ * directory of each editor's `configPath` is the probe location so an empty
+ * editor install (no `mcp.json` yet) still counts as detected. Covers both
+ * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
+ * Code `.vscode/`) and Windsurf's user-global `~/.codeium/windsurf/`.
+ *
+ * Used by the Commander action to default to all detected editors in both
+ * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
+ * D-013.
+ */
+export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
+  const detected: EditorId[] = [];
+  for (const id of ALL_EDITOR_IDS) {
+    const target = EDITOR_TARGETS[id];
+    const configPath = target.configPath(cwd, home);
+    if (existsSync(dirname(configPath))) {
+      detected.push(id);
+    }
+  }
+  return detected;
+}
+
 export function initCommand(): Command {
   return new Command('init')
     .description(
@@ -508,7 +602,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated)',
+      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -525,8 +619,18 @@ export function initCommand(): Command {
           return;
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
-        // Interactive prompt
+        // Interactive prompt — pre-select every detected editor regardless of
+        // scope. Empty detection set shows all four unselected alongside a
+        // hint (D-019) so the user can still pick manually or cancel and use
+        // --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
+
+        const detected = new Set(detectInstalledEditors(cwd));
+        if (detected.size === 0) {
+          process.stdout.write(
+            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|cursor|vscode|windsurf>.\n',
+          );
+        }
 
         const editorChoices = ALL_EDITOR_IDS.map((id) => {
           const target = EDITOR_TARGETS[id];
@@ -534,14 +638,11 @@ export function initCommand(): Command {
             target.scope === 'global'
               ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
               : relative(cwd, target.configPath(cwd));
-          // Pre-select editors whose config directory already exists
-          const dirExists =
-            target.scope === 'project' && existsSync(dirname(target.configPath(cwd)));
           return {
             value: id,
             label: target.label,
             hint,
-            initialValue: dirExists || id === 'claude',
+            initialValue: detected.has(id),
           };
         });
 
@@ -558,8 +659,16 @@ export function initCommand(): Command {
 
         editors = selected as EditorId[];
       } else {
-        // Non-interactive fallback
-        editors = ['claude'];
+        // Non-interactive fallback — default to every detected editor.
+        // Zero detected: exit 1 with a helpful hint (D-019).
+        editors = detectInstalledEditors(cwd);
+        if (editors.length === 0) {
+          process.stderr.write(
+            'No MCP-capable editors detected. Use --editor <all|claude|cursor|vscode|windsurf> to force.\n',
+          );
+          process.exitCode = 1;
+          return;
+        }
       }
 
       const result = runInit({

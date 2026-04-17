@@ -330,8 +330,31 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     /* logged inside refreshRoots */
   });
 
+  // D-034 — keep-alive WebSocket to `/collab/keepalive`.
+  //
+  // Holds a single WS open for the lifetime of this MCP stdio process. Server-
+  // side idle-shutdown counts `/collab*` upgrades, so this channel (which
+  // carries no traffic) is exactly what keeps the collab server alive while
+  // a user has an MCP client connected but no browser tab open. Reconnects
+  // with exponential backoff so a server restart on a different port is
+  // picked up transparently.
+  const { startKeepalive } = await import('./keepalive.ts');
+  const keepaliveHandle = startKeepalive({
+    resolveWsUrl: async () => {
+      const httpUrl = await resolveServerUrlForTools();
+      if (!httpUrl) return undefined;
+      return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+    },
+    log,
+  });
+
   // Cleanup on exit
   const shutdown = (): void => {
+    try {
+      keepaliveHandle.close();
+    } catch {
+      // best-effort
+    }
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

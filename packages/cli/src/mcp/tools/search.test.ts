@@ -10,12 +10,20 @@ import { buildSearchResult } from './search.ts';
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
 let tmpDir: string;
+let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-search-test-'));
+  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
+  if (originalEnv === undefined) {
+    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  } else {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -43,7 +51,7 @@ describe('search — folder-rule flow-through (US-005)', () => {
       folders: [{ match: 'specs/**', frontmatter: { tags: ['spec'] } }],
     });
 
-    const result = await buildSearchResult(
+    const { text: result } = await buildSearchResult(
       { query: 'searchterm' },
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
@@ -67,12 +75,11 @@ describe('search — folder-rule flow-through (US-005)', () => {
       ],
     });
 
-    const result = await buildSearchResult(
+    const { text: result } = await buildSearchResult(
       { query: 'searchterm' },
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
 
-    // Heading pattern: `### <title> (<path>)`
     expect(result).toContain('### Specifications (specs/foo.md)');
     expect(result).toContain('Spec docs');
   });
@@ -87,7 +94,7 @@ describe('search — folder-rule flow-through (US-005)', () => {
       folders: [{ match: 'specs/**', frontmatter: { title: 'Folder Title' } }],
     });
 
-    const result = await buildSearchResult(
+    const { text: result } = await buildSearchResult(
       { query: 'searchterm' },
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
@@ -109,12 +116,11 @@ describe('search — folder-rule flow-through (US-005)', () => {
       folders: [{ match: 'specs/**', frontmatter: { tags: ['spec', 'architecture'] } }],
     });
 
-    const result = await buildSearchResult(
+    const { text: result } = await buildSearchResult(
       { query: 'searchterm' },
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
 
-    // Tags row: "Tags: spec, architecture, wip" (folder rule first; file last; dedup first-seen)
     expect(result).toContain('Tags: spec, architecture, wip');
   });
 
@@ -127,15 +133,63 @@ describe('search — folder-rule flow-through (US-005)', () => {
       '---\ntitle: File Title\ntags:\n  - wip\n---\n\nsearchterm here\n',
     );
 
-    const result = await buildSearchResult(
+    const { text: result } = await buildSearchResult(
       { query: 'searchterm' },
       { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     );
 
     expect(result).toContain('### File Title (specs/foo.md)');
     expect(result).toContain('Tags: wip');
-    // No folder-derived fields in the absence of rules
     expect(result).not.toContain('Folder');
     expect(result).not.toContain('spec,');
+  });
+});
+
+describe('search — previewUrl + ui block', () => {
+  test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
+    writeFileSync(resolve(tmpDir, 'articles/auth.md'), '---\ntitle: Auth\n---\nneedle here\n');
+    writeFileSync(resolve(tmpDir, 'articles/sso.md'), '---\ntitle: SSO\n---\nneedle too\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'needle' },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
+    );
+    expect(structured).toBeTruthy();
+    expect(structured?.matchCount).toBe(2);
+    expect(structured?.fileCount).toBe(2);
+    for (const row of structured?.results ?? []) {
+      expect(row.previewUrl).toBe(`https://env.example/#/${row.docName}`);
+      expect(row.previewUrlSource).toBe('env');
+      expect(row.docName.endsWith('.md')).toBe(false);
+    }
+    expect(structured?.ui).toEqual({ baseUrl: null, port: null });
+  });
+
+  test('previewUrl null when resolver returns null', async () => {
+    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
+    writeFileSync(resolve(tmpDir, 'articles/auth.md'), '---\ntitle: Auth\n---\nneedle\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'needle' },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
+    );
+    expect(structured?.results[0]?.previewUrl).toBeNull();
+    expect(structured?.ui.baseUrl).toBeNull();
+  });
+
+  test('zero-match query still emits an empty structured block + ui', async () => {
+    mkdirSync(resolve(tmpDir, 'articles'), { recursive: true });
+    writeFileSync(resolve(tmpDir, 'articles/a.md'), 'no matches');
+
+    const { text, structured } = await buildSearchResult(
+      { query: 'needle' },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
+    );
+    expect(text).toContain('No matches');
+    expect(structured?.matchCount).toBe(0);
+    expect(structured?.results).toEqual([]);
+    expect(structured?.ui).toEqual({ baseUrl: null, port: null });
   });
 });

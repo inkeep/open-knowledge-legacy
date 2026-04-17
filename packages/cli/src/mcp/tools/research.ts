@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import { textPlusStructured } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
   return `Research this topic and write provisional findings inside the project content directory. Research is **provisional, not canonical** — it captures findings, trade-offs, and open questions at a point in time. Promoting to canonical articles is a deliberate later step (via the \`consolidate\` tool).
@@ -184,10 +184,15 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, config: Config): void {
+  // previewUrl is null per FR-2.1: research is a workflow primer keyed on a
+  // `topic` — the target research doc's path is chosen by the agent during the
+  // prompt's Step 4. There is no single canonical document to preview at call
+  // time. Uniform with ingest / consolidate / save_version.
   server.tool(
     'research',
     DESCRIPTION,
     { topic: z.string().describe('The topic, question, or anchor URL to research') },
-    (args: { topic: string }) => textResult(buildBody(args.topic, config.content.dir)),
+    (args: { topic: string }) =>
+      textPlusStructured(buildBody(args.topic, config.content.dir), { previewUrl: null }),
   );
 }
