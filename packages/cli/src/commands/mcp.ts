@@ -29,11 +29,25 @@ import { Command } from 'commander';
 import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { startMcpServer } from '../mcp/server.ts';
+import { resolveSelfSpawn } from './self-spawn.ts';
 
 /** Default deadline for the post-spawn `server.lock` poll. */
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
 /** Default polling interval during the spawn deadline window. */
 const DEFAULT_POLL_INTERVAL_MS = 100;
+
+/**
+ * Read `OK_MCP_SPAWN_TIMEOUT_MS` from the environment. Returns the parsed
+ * number of milliseconds, or undefined when unset / invalid. Invalid values
+ * fall back to the default rather than crashing the MCP — the env knob is an
+ * operator escape hatch, not a precondition.
+ */
+export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
 /** Tempfile name used by the kernel stderr redirect — also consumed on timeout. */
 const SPAWN_ERROR_LOG = 'last-spawn-error.log';
 
@@ -105,8 +119,9 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
 
   if (lock) {
     // Lock exists but we decided to spawn — either port=0 (foreign process
-    // still booting) or dead pid (readProcessLock may have preserved a
-    // cross-host lock). Surface that for operators.
+    // still booting) or dead pid (readLock already filtered out cross-host
+    // and stale locks, so this is a live-but-not-usable same-host lock).
+    // Surface the state for operator diagnosis.
     return {
       action: 'spawn',
       message: `existing lock is not usable (port=${lock.port}, pid=${lock.pid}) — spawning ok start`,
@@ -201,9 +216,10 @@ export async function ensureServerRunning(
   // `asyncSpawnError` shape so the downstream reporting is uniform regardless
   // of whether Node chose sync-throw or async-emit for this particular failure.
   let asyncSpawnError: string | undefined;
+  const self = resolveSelfSpawn();
   try {
     try {
-      child = spawnFn('npx', ['@inkeep/open-knowledge', 'start'], {
+      child = spawnFn(self.command, [...self.prefixArgs, 'start'], {
         detached: true,
         stdio: ['ignore', 'ignore', stderrFd],
         cwd: opts.contentDir,
@@ -253,8 +269,19 @@ export async function ensureServerRunning(
   }
   const stderr = readErrorLog(stderrPath);
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);
+  // Distinguish slow-start from crashed-start: if the child pid is still
+  // alive, the server is slow (big machine, cold cache, contended IO) —
+  // operators can raise `OK_MCP_SPAWN_TIMEOUT_MS`. If the child is gone,
+  // something crashed before the poll could catch it — they want stderr.
+  const childPid = child?.pid;
+  let livenessHint = '';
+  if (typeof childPid === 'number') {
+    livenessHint = isAlive(childPid)
+      ? ` child pid=${childPid} is still running — raise OK_MCP_SPAWN_TIMEOUT_MS if this is a slow boot.`
+      : ` child pid=${childPid} exited — check last-spawn-error.log.`;
+  }
   throw new Error(
-    `OK: server did not start within ${seconds}s.${stderr ? ` stderr:\n${stderr}` : ''}`,
+    `OK: server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
   );
 }
 
@@ -280,6 +307,9 @@ export function mcpCommand(getConfig: () => Config): Command {
           portOverride: opts.port,
           envAutoStart: process.env.OK_MCP_AUTOSTART,
           configAutoStart: config.mcp.autoStart,
+          // `OK_MCP_SPAWN_TIMEOUT_MS` — operator escape hatch for slow boots
+          // on contended machines. Invalid values fall back to the 5s default.
+          timeoutMs: parseSpawnTimeoutEnv(process.env.OK_MCP_SPAWN_TIMEOUT_MS),
         });
         process.stderr.write(`[mcp] ${message}\n`);
 

@@ -60,8 +60,32 @@ describe('decideUiSpawn', () => {
 });
 
 describe('buildIdleShutdownHandler', () => {
-  test('SIGTERMs UI sibling then awaits destroy when UI alive', async () => {
+  test('SIGTERMs UI sibling; if it exits within grace, awaits destroy', async () => {
     const events: string[] = [];
+    // Simulate a well-behaved UI: stays alive initially, exits after SIGTERM.
+    let alive = true;
+    const onShutdown = buildIdleShutdownHandler({
+      readUiLock: () => ({ pid: 1234, port: 3000 }),
+      isAlive: () => alive,
+      killPid: (pid, sig) => {
+        events.push(`kill:${pid}:${sig}`);
+        if (sig === 'SIGTERM') alive = false;
+      },
+      destroy: async () => {
+        events.push('destroy');
+      },
+      sigtermGraceMs: 100,
+      sigtermPollIntervalMs: 5,
+      sleep: async () => {},
+    });
+    await onShutdown();
+    expect(events).toEqual(['kill:1234:SIGTERM', 'destroy']);
+  });
+
+  test('escalates to SIGKILL when SIGTERM grace expires', async () => {
+    const events: string[] = [];
+    // Simulate a wedged UI: stays alive through SIGTERM, never exits.
+    const warned: object[] = [];
     const onShutdown = buildIdleShutdownHandler({
       readUiLock: () => ({ pid: 1234, port: 3000 }),
       isAlive: () => true,
@@ -71,9 +95,18 @@ describe('buildIdleShutdownHandler', () => {
       destroy: async () => {
         events.push('destroy');
       },
+      sigtermGraceMs: 20,
+      sigtermPollIntervalMs: 5,
+      sleep: async () => {},
+      log: {
+        info: () => {},
+        warn: (obj) => warned.push(obj),
+        error: () => {},
+      },
     });
     await onShutdown();
-    expect(events).toEqual(['kill:1234:SIGTERM', 'destroy']);
+    expect(events).toEqual(['kill:1234:SIGTERM', 'kill:1234:SIGKILL', 'destroy']);
+    expect(warned.find((w) => (w as { pid?: number }).pid === 1234)).toBeDefined();
   });
 
   test('skips kill when UI lock absent', async () => {
@@ -174,8 +207,10 @@ describe('spawnOkUi', () => {
     expect(existsSync(lockDir)).toBe(true);
     expect(existsSync(join(lockDir, 'last-spawn-error.log'))).toBe(true);
     expect(calls.length).toBe(1);
-    expect(calls[0]?.cmd).toBe('npx');
-    expect(calls[0]?.args).toEqual(['@inkeep/open-knowledge', 'ui']);
+    // Re-exec via the current CLI binary (not npx) — see self-spawn.ts.
+    expect(calls[0]?.cmd).toBe(process.execPath);
+    const callArgs = calls[0]?.args ?? [];
+    expect(callArgs[callArgs.length - 1]).toBe('ui');
   });
 
   test('passes detached + ignore stdio + cwd to spawn', () => {
@@ -214,7 +249,9 @@ describe('spawnOkUi', () => {
         >;
       }) as never,
     });
-    expect(calls[0]?.args).toEqual(['@inkeep/open-knowledge', 'ui', '--port', '9999']);
+    // Re-exec mode (self-spawn.ts): args[0] is the CLI entry script, followed
+    // by the subcommand args in order.
+    expect(calls[0]?.args.slice(-3)).toEqual(['ui', '--port', '9999']);
   });
 
   test('strips PORT env from the spawned child (QA-007 — prevents same-port bind race)', () => {
@@ -453,8 +490,10 @@ describe('bootStartServer (integration)', () => {
     });
 
     expect(spawnCalls.length).toBe(1);
-    expect(spawnCalls[0]?.cmd).toBe('npx');
-    expect(spawnCalls[0]?.args).toEqual(['@inkeep/open-knowledge', 'ui']);
+    // Re-exec via the current CLI binary (not npx) — see self-spawn.ts.
+    expect(spawnCalls[0]?.cmd).toBe(process.execPath);
+    const spawnCallArgs = spawnCalls[0]?.args ?? [];
+    expect(spawnCallArgs[spawnCallArgs.length - 1]).toBe('ui');
     expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
   });
 

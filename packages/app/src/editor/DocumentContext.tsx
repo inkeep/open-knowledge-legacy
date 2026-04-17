@@ -26,6 +26,20 @@ export interface DocumentContextValue {
    * (e.g. `SystemDocSubscriber`) skip wiring until resolved.
    */
   collabUrl: string | null;
+  /**
+   * True when the `/api/config` resolver has given up automatic retries
+   * (no resolution within ~30s). Consumer banners surface an actionable
+   * error message + manual-retry button. `retryCollab()` resets to
+   * auto-retry mode.
+   */
+  collabTerminal: boolean;
+  /** Observed last-error shape (only populated when `collabTerminal`). */
+  collabLastError:
+    | { kind: 'error'; code: number | 'network' | 'invalid-body' }
+    | { kind: 'null-collab' }
+    | null;
+  /** Reset retry state — exits terminal mode, resumes polling. */
+  retryCollab: () => void;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -87,7 +101,12 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
-  const { collabUrl } = useCollabUrl();
+  const {
+    collabUrl,
+    terminal: collabTerminal,
+    lastError: collabLastError,
+    retry: retryCollab,
+  } = useCollabUrl();
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -141,6 +160,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       persistPinToStorage(null);
     },
     collabUrl,
+    collabTerminal,
+    collabLastError,
+    retryCollab,
   };
 
   return <DocumentContext value={value}>{children}</DocumentContext>;

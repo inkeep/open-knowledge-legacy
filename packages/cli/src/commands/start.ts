@@ -27,6 +27,7 @@ import type { PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import { resolveSelfSpawn } from './self-spawn.ts';
 
 /** 30 minutes — matches SPEC §9 default threshold. */
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -59,7 +60,7 @@ export interface SpawnOkUiOptions {
   cwd: string;
   /** Override for tests — defaults to `node:child_process#spawn`. */
   spawn?: typeof NativeSpawn;
-  /** Args to pass after `npx @inkeep/open-knowledge` — defaults to `['ui']`. */
+  /** Args to pass after the CLI entry — defaults to `['ui']`. */
   args?: string[];
 }
 
@@ -67,6 +68,10 @@ export interface SpawnOkUiOptions {
  * Spawn `ok ui` as a detached sibling. Child's stderr is redirected at the
  * kernel layer to `<lockDir>/last-spawn-error.log` — matches the MCP spawn
  * template in SPEC §9 / FR-1.4 so the same log consumer can surface failures.
+ *
+ * Re-execs the current CLI binary rather than shelling out via
+ * `npx @inkeep/open-knowledge` to avoid cross-version lockfile-ABI drift and
+ * the live-registry-fetch / supply-chain surface. See `self-spawn.ts`.
  *
  * **PORT env hygiene (QA-007):** the child `ok ui` resolves its bind port
  * via `PORT` env > `--port` flag > default 3000. When `ok start` itself was
@@ -81,8 +86,9 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   const stderrFd = openSync(stderrPath, 'w');
   const spawnFn = opts.spawn ?? nativeSpawn;
   const { PORT: _strippedPort, ...childEnv } = process.env;
+  const self = resolveSelfSpawn();
   try {
-    const child = spawnFn('npx', ['@inkeep/open-knowledge', ...(opts.args ?? ['ui'])], {
+    const child = spawnFn(self.command, [...self.prefixArgs, ...(opts.args ?? ['ui'])], {
       detached: true,
       stdio: ['ignore', 'ignore', stderrFd],
       cwd: opts.cwd,
@@ -105,6 +111,12 @@ export interface BuildIdleShutdownHandlerInput {
   isAlive: (pid: number) => boolean;
   killPid: (pid: number, signal: NodeJS.Signals) => void;
   destroy: () => Promise<void>;
+  /** Poll `isAlive(pid)` every this many ms while waiting for SIGTERM to take. */
+  sigtermPollIntervalMs?: number;
+  /** Abandon SIGTERM and escalate to SIGKILL after this wall-clock elapses. */
+  sigtermGraceMs?: number;
+  /** Injectable sleep for deterministic tests. */
+  sleep?: (ms: number) => Promise<void>;
   log?: {
     info: (obj: object, msg: string) => void;
     warn: (obj: object, msg: string) => void;
@@ -112,17 +124,34 @@ export interface BuildIdleShutdownHandlerInput {
   };
 }
 
+/** 10s grace before SIGKILL escalation — long enough for a healthy UI to
+ * release its lock + close sockets; short enough that a wedged UI (GC
+ * pause, downstream fetch hang) doesn't stall idle-shutdown indefinitely. */
+export const DEFAULT_SIGTERM_GRACE_MS = 10_000;
+export const DEFAULT_SIGTERM_POLL_MS = 200;
+
 /**
  * Build the idle-shutdown `onShutdown` closure. On fire:
  *   (1) look up `ui.lock`; SIGTERM the sibling if it's still alive;
- *   (2) await `destroy()`, which releases `server.lock` as its final step.
+ *   (2) poll its liveness up to `sigtermGraceMs` (default 10s);
+ *   (3) if still alive after the grace window, escalate to SIGKILL;
+ *   (4) await `destroy()`, which releases `server.lock` as its final step.
  *
- * Extracted so tests can exercise each branch (no UI, live UI, stale UI) and
- * assert kill / destroy ordering without standing up Hocuspocus.
+ * Escalation matters because a hung `ok ui` (stuck in a GC pause or a
+ * downstream fetch in `/api/config`) would otherwise block idle-shutdown
+ * indefinitely. Escalation is logged at WARN so the operator sees that a
+ * non-standard path ran.
+ *
+ * Extracted so tests can exercise each branch (no UI, live UI, stale UI,
+ * SIGTERM-takes, SIGKILL-escalation) without standing up Hocuspocus.
  */
 export function buildIdleShutdownHandler(
   input: BuildIdleShutdownHandlerInput,
 ): () => Promise<void> {
+  const graceMs = input.sigtermGraceMs ?? DEFAULT_SIGTERM_GRACE_MS;
+  const pollMs = input.sigtermPollIntervalMs ?? DEFAULT_SIGTERM_POLL_MS;
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
   return async () => {
     try {
       const lock = input.readUiLock();
@@ -130,6 +159,27 @@ export function buildIdleShutdownHandler(
         try {
           input.killPid(lock.pid, 'SIGTERM');
           input.log?.info({ pid: lock.pid, port: lock.port }, 'idle-shutdown: SIGTERM UI sibling');
+          // Wait up to graceMs for the UI process to exit under SIGTERM.
+          const deadline = Date.now() + graceMs;
+          while (Date.now() < deadline) {
+            if (!input.isAlive(lock.pid)) break;
+            await sleep(pollMs);
+          }
+          if (input.isAlive(lock.pid)) {
+            // Grace expired — escalate to SIGKILL. Operators see this at WARN.
+            try {
+              input.killPid(lock.pid, 'SIGKILL');
+              input.log?.warn(
+                { pid: lock.pid, graceMs },
+                'idle-shutdown: SIGTERM grace expired — escalated to SIGKILL',
+              );
+            } catch (err) {
+              input.log?.error(
+                { pid: lock.pid, err: err instanceof Error ? err.message : String(err) },
+                'idle-shutdown: SIGKILL failed',
+              );
+            }
+          }
         } catch (err) {
           input.log?.warn(
             { pid: lock.pid, err: err instanceof Error ? err.message : String(err) },

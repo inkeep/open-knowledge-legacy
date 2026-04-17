@@ -11,8 +11,8 @@
  *
  * Static-asset serving — app bundle from `dist/public` (published CLI) or
  * `packages/app/dist` (monorepo dev), plus filter-aware content serving over
- * `contentDir` — mirrors `start.ts` verbatim so asset-path precedence does
- * not change post-split.
+ * `contentDir`. `ok ui` is the sole server of the React bundle post-split
+ * (`ok start` no longer serves static assets — see FR-1.2).
  *
  * Lock-collision handling (US-005): when another `ok ui` already holds
  * `ui.lock`, `resolveUiLockCollision` decides between three modes —
@@ -87,9 +87,8 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // the server is binding; `updateUiLockPort` rewrites after `listen()`.
   acquireUiLock(lockDir, { port: 0, worktreeRoot: opts.cwd });
 
-  // Locate the built React app. Priority mirrors `start.ts` so dev + published
-  // CLI both work from a single code path (DRY with start.ts pending its own
-  // cleanup in US-006).
+  // Locate the built React app. Priority: published dist/public (bundled CLI)
+  // first, then monorepo dev paths.
   const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
   const assetPaths = [
     resolve(cliDir, 'public'), // npm install: dist/public/ (bundled)
@@ -131,6 +130,9 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       const body = JSON.stringify({ collabUrl, previewUrl: null, port: resolvedPort });
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Cache-Control', 'no-store');
+      // `nosniff` — defense in depth against a misconfigured intermediate or
+      // browser that would otherwise content-sniff the response body.
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.statusCode = 200;
       if (req.method === 'HEAD') {
         res.end();
@@ -434,11 +436,28 @@ export function uiCommand(getConfig: () => Config): Command {
           if (shuttingDown) return;
           shuttingDown = true;
           console.log(dim(`\n[ui] Shutting down (${signal})...`));
-          handle.release();
-          handle.httpServer.close(() => {
-            process.exit(process.exitCode ?? 0);
-          });
-          setTimeout(() => process.exit(process.exitCode ?? 0), 2000).unref();
+          // CC8 ordering: release the lock LAST, inside a finally, so a
+          // mid-shutdown throw still removes the lockfile. Inverting this
+          // (lock first, socket close second) re-introduces the stale-lock
+          // + EADDRINUSE race the zero-ceremony design set out to eliminate.
+          // Matches the shutdown pattern in `packages/server/src/standalone.ts`.
+          handle.detachSafetyNet();
+          const finish = () => {
+            try {
+              handle.release();
+            } finally {
+              process.exit(process.exitCode ?? 0);
+            }
+          };
+          try {
+            handle.httpServer.close(() => finish());
+          } catch {
+            finish();
+          }
+          // Hard-deadline fallback — if close() hangs on an in-flight request,
+          // we still release the lock and exit rather than stranding a stale
+          // lockfile forever.
+          setTimeout(finish, 2000).unref();
         };
         process.once('SIGINT', () => shutdown('SIGINT'));
         process.once('SIGTERM', () => shutdown('SIGTERM'));

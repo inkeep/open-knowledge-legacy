@@ -303,8 +303,12 @@ describe('ensureServerRunning', () => {
     });
     expect(result.serverUrl).toBe(`ws://localhost:${aliveLock.port}`);
     expect(calls.length).toBe(1);
-    expect(calls[0]?.cmd).toBe('npx');
-    expect(calls[0]?.args).toEqual(['@inkeep/open-knowledge', 'start']);
+    // Re-exec via the current CLI binary (not npx) to avoid cross-version
+    // lockfile-ABI drift. `cmd` is the current runtime (node/bun), `args[0]` is
+    // the CLI entry script, followed by the `start` subcommand.
+    expect(calls[0]?.cmd).toBe(process.execPath);
+    expect(calls[0]?.args.length).toBe(2);
+    expect(calls[0]?.args[1]).toBe('start');
     expect(calls[0]?.opts.detached).toBe(true);
     expect(calls[0]?.opts.cwd).toBe(tmpDir);
     expect(calls[0]?.opts.stdio?.[0]).toBe('ignore');

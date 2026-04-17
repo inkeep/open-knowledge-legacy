@@ -7,8 +7,10 @@ feat: Zero-Ceremony Resume — dual-process lifecycle + MCP auto-spawn
 Behavior changes operators should know about:
 
 - **`ok mcp` auto-spawns `ok start` by default.** When `ok mcp` starts with no
-  live `server.lock`, it detach-spawns `npx @inkeep/open-knowledge start` as a
-  sibling process. Opt out via the `OK_MCP_AUTOSTART=0` env var or
+  live `server.lock`, it detach-spawns the current `@inkeep/open-knowledge`
+  binary with `start` as a sibling process (re-exec via `process.execPath` —
+  not `npx`, so the sibling is pinned to the same version the MCP client is
+  running). Opt out via the `OK_MCP_AUTOSTART=0` env var or
   `mcp.autoStart: false` config. A pre-existing live lock is always connected
   regardless of the opt-out (opt-out only suppresses the spawn path).
 - **`server.port` default changed from `3000` to `0`.** `ok start` now asks

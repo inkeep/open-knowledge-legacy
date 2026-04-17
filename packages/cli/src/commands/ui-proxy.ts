@@ -45,6 +45,35 @@ export interface StartProxyOptions {
  * hung upstream doesn't keep browser connections open indefinitely. */
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 
+/** Per-request client-side deadline — prevents a malicious/local slow-loris peer
+ * from pinning the proxy socket indefinitely. 30s leaves ample margin over the
+ * upstream timeout above so we never time out a healthy request. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Hop-by-hop headers per RFC 7230 §6.1 — these MUST NOT be forwarded by a
+ * proxy. Additionally we drop `Cookie` / `Set-Cookie` because `ok ui` does
+ * not set cookies and there is no legitimate reason for localhost peers to
+ * flow cookies through our reverse proxy.
+ *
+ * `Upgrade` is special-cased: we drop it for plain HTTP but WebSocket upgrade
+ * is not currently routed through this proxy (React calls the collab WebSocket
+ * directly with the `collabUrl` from `/api/config`, not via the proxy). If
+ * that ever changes we'll need a dedicated upgrade handler here.
+ */
+const HOP_BY_HOP_HEADERS: readonly string[] = [
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'cookie',
+  'set-cookie',
+];
+
 export async function startProxyServer(opts: StartProxyOptions): Promise<ProxyServerHandle> {
   const timeoutMs = opts.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const httpServer: HttpServer = createHttpServer((req, res) => {
@@ -111,10 +140,39 @@ function forwardRequest(
   upstreamPort: number,
   upstreamTimeoutMs: number,
 ): void {
-  // Drop the inbound Host header — we'll set our own. Keeping it would surface
-  // the proxy's listen port in upstream logs, which is only confusing.
+  // Strip hop-by-hop headers (RFC 7230 §6.1) + Cookie / Set-Cookie. Drop the
+  // inbound Host header so we can rewrite it to the upstream authority —
+  // keeping the browser's Host would surface the proxy port in upstream logs
+  // and confuse vhost-routing upstreams.
   const headers: IncomingHttpHeaders = { ...req.headers };
   delete headers.host;
+  for (const name of HOP_BY_HOP_HEADERS) {
+    delete headers[name];
+  }
+
+  // Per-request deadline — destroy the upstream + response on elapse so a
+  // slow-loris client or hung upstream can't pin sockets past DEFAULT_REQUEST_TIMEOUT_MS.
+  req.setTimeout(DEFAULT_REQUEST_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      try {
+        res.writeHead(408, { 'Content-Type': 'text/plain' });
+        res.end('Request Timeout');
+      } catch {
+        // already closed
+      }
+    } else {
+      try {
+        res.end();
+      } catch {
+        // already closed
+      }
+    }
+    try {
+      req.socket?.destroy();
+    } catch {
+      // best-effort
+    }
+  });
 
   const upstreamReq = httpRequest(
     {
@@ -125,7 +183,13 @@ function forwardRequest(
       headers: { ...headers, host: `${upstreamHost}:${upstreamPort}` },
     },
     (upstreamRes) => {
-      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      // Strip hop-by-hop headers + Set-Cookie on the response path too —
+      // same rationale as the inbound direction.
+      const resHeaders = { ...upstreamRes.headers };
+      for (const name of HOP_BY_HOP_HEADERS) {
+        delete resHeaders[name];
+      }
+      res.writeHead(upstreamRes.statusCode ?? 502, resHeaders);
       upstreamRes.pipe(res);
       upstreamRes.once('error', () => {
         try {
