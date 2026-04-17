@@ -22,6 +22,7 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -89,7 +90,12 @@ function SortableHeader({
 }) {
   const isActive = activeKey === sortKey;
   return (
-    <Button variant="ghost" size="sm" className="-ml-3 h-8" onClick={() => onSort(sortKey)}>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-ml-3 h-8 uppercase font-mono"
+      onClick={() => onSort(sortKey)}
+    >
       {label}
       {isActive ? (
         activeDir === 'asc' ? (
@@ -105,12 +111,45 @@ function SortableHeader({
 }
 
 export function FolderOverview({ folderPath }: { folderPath: string }) {
-  const { addPage, folderPaths, pages, pageTitles, pageMeta } = usePageList();
+  const { addPage, folderPaths, loading, pages, pageTitles, pageMeta } = usePageList();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [creatingIndex, setCreatingIndex] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  if (loading) {
+    return (
+      <div className="flex min-h-0 flex-1 items-start overflow-y-auto subtle-scrollbar">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Skeleton className="size-5 rounded" />
+              <Skeleton className="h-7 w-48" />
+            </div>
+            <Skeleton className="h-9 w-20 rounded-md" />
+          </div>
+          <div className="rounded-lg border">
+            <div className="flex items-center gap-4 border-b px-4 py-3">
+              <Skeleton className="h-4 w-16" />
+              <div className="ml-auto">
+                <Skeleton className="h-4 w-20" />
+              </div>
+            </div>
+            {['a', 'b', 'c', 'd'].map((id) => (
+              <div key={id} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
+                <Skeleton className="size-4 rounded" />
+                <Skeleton className="h-4 w-40" />
+                <div className="ml-auto">
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const data = buildFolderOverviewData(folderPath, { pages, pageTitles, pageMeta, folderPaths });
   const sorted = sortEntries(data.children, sortKey, sortDir);

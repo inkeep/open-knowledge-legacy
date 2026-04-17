@@ -121,6 +121,11 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   }
 
   if (!activeProvider || !activeDocName) {
+    // If there's a hash in the URL, navigation is in-flight — show nothing
+    // instead of flashing the blob idle state.
+    if (window.location.hash.length > 1) {
+      return <div className="flex-1" />;
+    }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4">
         <OkBlob size={80} />
