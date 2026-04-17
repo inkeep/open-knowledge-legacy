@@ -117,7 +117,7 @@ export interface InitCommandResult {
 // ---------------------------------------------------------------------------
 
 const LAUNCH_JSON_VERSION = '0.0.1';
-const LAUNCH_CONFIG_NAME = 'open-knowledge';
+const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
 
 export type LaunchJsonAction =
   | 'created'
@@ -154,7 +154,6 @@ function diffLaunchEntry(
     runtimeExecutable: string;
     runtimeArgs: string[];
     port: number;
-    autoPort: boolean;
   },
 ): string[] {
   const stale: string[] = [];
@@ -168,22 +167,18 @@ function diffLaunchEntry(
     existingArgs.every((a, i) => a === target.runtimeArgs[i]);
   if (!argsMatch) stale.push('runtimeArgs');
   if (existing.port !== target.port) stale.push('port');
-  if (existing.autoPort !== target.autoPort) stale.push('autoPort');
   return stale;
 }
 
 /**
  * Scaffold or merge a `.claude/launch.json` entry so that Claude Code's
  * built-in preview browser can start the Open Knowledge dev server via
- * `preview_start("open-knowledge")`.
+ * `preview_start("open-knowledge-ui")`.
  *
- * D-020 / D-031: `runtimeArgs` launches `ok ui` (not `ok start`). The UI
- * sibling-process is what the preview pane actually renders; collab runs
- * in a separate `ok start` process auto-spawned by `ok ui` via the MCP
- * stdio path. `autoPort: true` lets Claude Code reroute to a free port
- * when 3000 is busy — our `ok ui` lock-collision handler then enters
- * proxy mode (D-022 revised / D-032) so the preview pane always reaches
- * a live UI regardless of which process bound the port first.
+ * `runtimeArgs` launches `open-knowledge ui` (not `open-knowledge start`) —
+ * the UI sibling-process is what the preview pane renders; collab runs in a
+ * separate `open-knowledge start` process auto-spawned by `ok ui` via the
+ * MCP stdio path.
  *
  * - File missing        → create with the OK entry
  * - File exists, no OK  → merge the entry into configurations
@@ -194,9 +189,8 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
   const entry = {
     name: LAUNCH_CONFIG_NAME,
     runtimeExecutable: 'npx',
-    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+    runtimeArgs: ['open-knowledge', 'ui'],
     port: 3000,
-    autoPort: true,
   };
 
   try {
@@ -473,7 +467,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       switch (lj.action) {
         case 'created':
           lines.push(
-            `  launch.json   ${displayPath}  created (preview_start("open-knowledge") ready)`,
+            `  launch.json   ${displayPath}  created (preview_start("${LAUNCH_CONFIG_NAME}") ready)`,
           );
           break;
         case 'merged':

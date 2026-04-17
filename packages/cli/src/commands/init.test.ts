@@ -373,7 +373,7 @@ describe('runInit', () => {
   // -----------------------------------------------------------------------
 
   describe('launch.json scaffolding', () => {
-    it('writes a fresh .claude/launch.json pointing at ok ui with autoPort', () => {
+    it('writes a fresh .claude/launch.json pointing at open-knowledge ui', () => {
       const result = runInit({ cwd: testDir });
 
       expect(result.launchJson).toBeDefined();
@@ -385,14 +385,14 @@ describe('runInit', () => {
 
       expect(parsed.configurations).toHaveLength(1);
       const entry = parsed.configurations[0];
-      expect(entry.name).toBe('open-knowledge');
+      expect(entry.name).toBe('open-knowledge-ui');
       expect(entry.runtimeExecutable).toBe('npx');
-      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.runtimeArgs).toEqual(['open-knowledge', 'ui']);
       expect(entry.port).toBe(3000);
-      expect(entry.autoPort).toBe(true);
+      expect(entry.autoPort).toBeUndefined();
     });
 
-    it('flags a stale open-knowledge entry without --force', () => {
+    it('flags a stale open-knowledge-ui entry without --force', () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -402,7 +402,7 @@ describe('runInit', () => {
             version: '0.0.1',
             configurations: [
               {
-                name: 'open-knowledge',
+                name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['open-knowledge', 'start'],
                 port: 3000,
@@ -416,17 +416,14 @@ describe('runInit', () => {
 
       const result = runInit({ cwd: testDir });
       expect(result.launchJson?.action).toBe('skipped-stale');
-      expect(result.launchJson?.staleFields).toEqual(
-        expect.arrayContaining(['runtimeArgs', 'autoPort']),
-      );
+      expect(result.launchJson?.staleFields).toEqual(expect.arrayContaining(['runtimeArgs']));
 
       // Unchanged — still the old shape (user must re-run with --force)
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
-      expect(parsed.configurations[0].autoPort).toBeUndefined();
     });
 
-    it('skips an up-to-date open-knowledge entry without --force', () => {
+    it('skips an up-to-date open-knowledge-ui entry without --force', () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -436,11 +433,10 @@ describe('runInit', () => {
             version: '0.0.1',
             configurations: [
               {
-                name: 'open-knowledge',
+                name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
-                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+                runtimeArgs: ['open-knowledge', 'ui'],
                 port: 3000,
-                autoPort: true,
               },
             ],
           },
@@ -454,7 +450,7 @@ describe('runInit', () => {
       expect(result.launchJson?.staleFields).toBeUndefined();
     });
 
-    it('migrates an existing open-knowledge entry on --force', () => {
+    it('migrates an existing open-knowledge-ui entry on --force', () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -464,7 +460,7 @@ describe('runInit', () => {
             version: '0.0.1',
             configurations: [
               {
-                name: 'open-knowledge',
+                name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['open-knowledge', 'start'],
                 port: 3000,
@@ -482,9 +478,9 @@ describe('runInit', () => {
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations).toHaveLength(1);
       const entry = parsed.configurations[0];
-      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.runtimeArgs).toEqual(['open-knowledge', 'ui']);
       expect(entry.port).toBe(3000);
-      expect(entry.autoPort).toBe(true);
+      expect(entry.autoPort).toBeUndefined();
     });
 
     it('merges the new entry into an existing launch.json with other configurations', () => {
@@ -513,9 +509,11 @@ describe('runInit', () => {
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations).toHaveLength(2);
-      const ok = parsed.configurations.find((c: { name: string }) => c.name === 'open-knowledge');
-      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
-      expect(ok.autoPort).toBe(true);
+      const ok = parsed.configurations.find(
+        (c: { name: string }) => c.name === 'open-knowledge-ui',
+      );
+      expect(ok.runtimeArgs).toEqual(['open-knowledge', 'ui']);
+      expect(ok.autoPort).toBeUndefined();
     });
 
     it('does NOT scaffold launch.json when Claude is not among selected editors', () => {
@@ -543,30 +541,27 @@ describe('runInit', () => {
       expect(claudeEntry?.action).toBe('created');
     });
 
-    it('writes .cursorrules when cursor editor is selected', () => {
+    it('writes only AGENTS.md for cursor (no rule-file scaffolding)', () => {
       const result = runInit({ cwd: testDir, mcp: false, editors: ['cursor'] });
 
-      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
-      expect(readFileSync(join(testDir, '.cursorrules'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      expect(result.rootInstructions.find((r) => r.file === '.cursorrules')?.action).toBe(
-        'created',
-      );
+      // AGENTS.md is the tool-agnostic instruction surface; Cursor picks it up natively.
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(1);
+      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes .windsurfrules when windsurf editor is selected', () => {
+    it('writes only AGENTS.md for windsurf (no rule-file scaffolding)', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
       const result = runInit({ cwd: testDir, mcp: false, editors: ['windsurf'], home: fakeHome });
 
-      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
-      expect(readFileSync(join(testDir, '.windsurfrules'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      expect(result.rootInstructions.find((r) => r.file === '.windsurfrules')?.action).toBe(
-        'created',
-      );
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(1);
+      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
     it('writes no extra instruction files for vscode (no instructionsPath)', () => {
@@ -578,7 +573,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.vscoderules'))).toBe(false);
     });
 
-    it('writes all per-editor files for claude + cursor + windsurf', () => {
+    it('writes AGENTS.md + CLAUDE.md for claude + cursor + windsurf combined', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
       const result = runInit({
@@ -588,11 +583,15 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
+      // Only Claude has an instructionsPath (CLAUDE.md). Cursor + Windsurf read
+      // the root AGENTS.md natively, so no extra files are scaffolded for them.
       expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
       expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
-      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
-      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
-      expect(result.rootInstructions).toHaveLength(4); // AGENTS.md + CLAUDE.md + .cursorrules + .windsurfrules
+      expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(2);
     });
   });
 
