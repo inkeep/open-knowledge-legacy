@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { FolderOverview } from '@/components/FolderOverview';
+import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -121,7 +122,8 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
 
   if (!activeProvider || !activeDocName) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4">
+        <OkBlob size={80} />
         <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
       </div>
     );
