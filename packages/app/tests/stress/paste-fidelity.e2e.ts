@@ -116,7 +116,11 @@ async function simulateCopyAndRead(
 ): Promise<{ plain: string; html: string }> {
   const selector = view === 'source' ? '.cm-content' : '.ProseMirror';
   await page.focus(selector);
-  await page.keyboard.press('Meta+a');
+  // ControlOrMeta = Cmd on macOS, Ctrl on Linux/Windows. Plain `Meta+a`
+  // resolves to Super on Linux (no-op), which makes the dispatched copy
+  // event run against an empty selection on CI. Cross-platform:
+  // https://playwright.dev/docs/api/class-keyboard#keyboard-press
+  await page.keyboard.press('ControlOrMeta+a');
   // Yield a frame so PM / CM6 flush their selection state.
   await page.waitForTimeout(50);
   return page.evaluate((sel) => {
@@ -154,7 +158,7 @@ async function simulateCutAndRead(
 ): Promise<{ plain: string; html: string; contentAfter: string }> {
   const selector = view === 'source' ? '.cm-content' : '.ProseMirror';
   await page.focus(selector);
-  await page.keyboard.press('Meta+a');
+  await page.keyboard.press('ControlOrMeta+a');
   await page.waitForTimeout(50);
   return page.evaluate((sel) => {
     const editor = document.querySelector(sel) as HTMLElement | null;
@@ -589,7 +593,7 @@ test.describe('FR-22 drag-and-drop MIME parity (dragstart uses same hooks as cop
     // view.state.selection is empty. A DOM-range selection alone is not
     // sufficient; Meta+A drives PM's selectAll command.
     await page.focus('.ProseMirror');
-    await page.keyboard.press('Meta+a');
+    await page.keyboard.press('ControlOrMeta+a');
     await page.waitForTimeout(50);
     const out = await page.evaluate(() => {
       const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
@@ -1107,7 +1111,7 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
     const before = (await getYText(page)).length;
     await page.focus('.cm-content');
     // Position cursor at end of existing buffer.
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.evaluate((shiftKey) => {
       const editor = document.querySelector('.cm-content');
       if (!editor) throw new Error('no cm-content');
@@ -1151,7 +1155,7 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
   test('QA-016-source empty-selection copy is a no-op (FR-15)', async ({ page }) => {
     // Place cursor at a specific position with no range selection.
     await page.focus('.cm-content');
-    await page.keyboard.press('Meta+End'); // move cursor to end, no range
+    await page.keyboard.press('ControlOrMeta+End'); // move cursor to end, no range
     // Fire the raw synthetic copy WITHOUT the Meta+A select-all dance, so
     // the Source handler sees from === to and must return false.
     const out = await page.evaluate(() => {

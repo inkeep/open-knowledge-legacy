@@ -403,8 +403,10 @@ test.describe('§6.7 Cross-cutting', () => {
 
     // Select all and copy
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+a');
-    await page.keyboard.press('Meta+c');
+    // ControlOrMeta resolves to Cmd on macOS, Ctrl on Linux/Windows — plain
+    // `Meta+a` is Super on Linux (no-op in the editor).
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('ControlOrMeta+c');
 
     // Read clipboard
     const clipboard = await page.evaluate(() => navigator.clipboard.readText());
