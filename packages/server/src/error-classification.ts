@@ -150,6 +150,9 @@ const MERGE_CONFLICT_PATTERNS: RegExp[] = [
   /automatic merge failed/i,
   /CONFLICT \(/,
   /\bconflict\b.*\bmerge\b/i,
+  // simple-git's GitResponseError wraps MergeSummaryDetail; both its
+  // `message` and `error.git.toString()` produce "CONFLICTS: file:reason[, …]".
+  /(?:^|\n)CONFLICTS:\s/i,
 ];
 
 // ---------------------------------------------------------------------------

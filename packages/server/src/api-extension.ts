@@ -4116,6 +4116,49 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSyncConflictContent(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 503, { ok: false, error: 'Project repo not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const file = url.searchParams.get('file');
+    if (!file) {
+      json(res, 400, { ok: false, error: 'Missing required query param: file' });
+      return;
+    }
+    // Reject obvious path-traversal; git itself rejects paths outside the index.
+    if (file.includes('..') || file.startsWith('/')) {
+      json(res, 400, { ok: false, error: 'Invalid file path' });
+      return;
+    }
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    // git stages: 1 = base, 2 = ours, 3 = theirs. Any may be missing for
+    // delete/edit or add/add conflicts — tolerate by returning empty content.
+    async function showStage(stage: 1 | 2 | 3): Promise<string> {
+      try {
+        return await pg.raw(['show', `:${stage}:${file}`]);
+      } catch {
+        return '';
+      }
+    }
+    try {
+      const [base, ours, theirs] = await Promise.all([showStage(1), showStage(2), showStage(3)]);
+      json(res, 200, { ok: true, file, base, ours, theirs });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4169,6 +4212,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/trigger': handleSyncTrigger,
     '/api/sync/set-enabled': handleSyncSetEnabled,
     '/api/sync/conflicts': handleSyncConflicts,
+    '/api/sync/conflict-content': handleSyncConflictContent,
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
     '/api/sync/abort-merge': handleSyncAbortMerge,
     '/api/local-op/clone': handleLocalOpClone,

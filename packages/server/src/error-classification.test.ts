@@ -177,6 +177,28 @@ describe('classifyGitError', () => {
       expect(r.subclass).toBe('merge-conflict');
       expect(r.retryable).toBe(false);
     });
+
+    test('simple-git GitResponseError shape (CONFLICTS: file:reason)', () => {
+      // Mirrors the actual error simple-git throws from `git.merge()` when
+      // conflicts occur: `new GitResponseError(MergeSummaryDetail)` produces
+      // `message = "CONFLICTS: <file>:<reason>[, …]"` and `git` is the
+      // MergeSummaryDetail object whose toString() yields the same string.
+      const mergeSummary = {
+        conflicts: [{ file: 'test.md', reason: 'content' }],
+        merges: [],
+        result: 'success',
+        failed: true,
+        toString() {
+          return 'CONFLICTS: test.md:content';
+        },
+      };
+      const err = new Error('CONFLICTS: test.md:content');
+      (err as unknown as Record<string, unknown>).git = mergeSummary;
+      const r = classifyGitError(err);
+      expect(r.class).toBe('semantic');
+      expect(r.subclass).toBe('merge-conflict');
+      expect(r.retryable).toBe(false);
+    });
   });
 
   describe('Class 4 — Structural (non-retryable)', () => {

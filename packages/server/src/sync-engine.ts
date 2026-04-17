@@ -267,10 +267,56 @@ export class SyncEngine {
 
     this.transitionTo('idle');
 
+    // Reconcile persisted conflict state against git's view. The user may
+    // have resolved (or aborted) the merge externally between server runs,
+    // so conflicts.json can be stale — git is the source of truth.
+    const mergeHeadPath = join(this.projectDir, '.git', 'MERGE_HEAD');
+    const mergeInProgress = existsSync(mergeHeadPath);
+
+    if (this.conflictCount > 0 && !mergeInProgress) {
+      // Tracked conflicts but no merge in progress → fully resolved externally.
+      log.warn(
+        { count: this.conflictCount },
+        '[sync] persisted conflicts but no MERGE_HEAD — clearing stale state',
+      );
+      this.conflictStore.clear();
+      this.conflictCount = 0;
+    } else if (this.conflictCount > 0 && mergeInProgress) {
+      // Merge still in progress — drop any tracked entries git considers resolved.
+      try {
+        const handle = createGitInstance(this.projectDir, {
+          credentialArgs: this.credentialArgs,
+        });
+        const out = (await handle.git.raw(['diff', '--name-only', '--diff-filter=U'])).trim();
+        const stillUnmerged = new Set(
+          out
+            ? out
+                .split('\n')
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : [],
+        );
+        const before = this.conflictCount;
+        for (const entry of this.conflictStore.list()) {
+          if (!stillUnmerged.has(entry.file)) {
+            this.conflictStore.removeConflict(entry.file);
+          }
+        }
+        this.conflictCount = this.conflictStore.count();
+        if (this.conflictCount < before) {
+          log.info(
+            { cleared: before - this.conflictCount, remaining: this.conflictCount },
+            '[sync] reconciled conflicts.json against git unmerged index',
+          );
+        }
+      } catch (e) {
+        log.warn({ err: e }, '[sync] failed to reconcile conflicts with git index');
+      }
+    }
+
     // Clean up stale merge state: if MERGE_HEAD exists but no conflicts are tracked,
     // a previous crash left the repo in a half-merged state — abort to recover.
-    const mergeHeadPath = join(this.projectDir, '.git', 'MERGE_HEAD');
-    if (existsSync(mergeHeadPath) && this.conflictCount === 0) {
+    if (mergeInProgress && this.conflictCount === 0) {
       log.warn({}, '[sync] stale MERGE_HEAD detected with no tracked conflicts — aborting merge');
       try {
         const handle = createGitInstance(this.projectDir, { credentialArgs: this.credentialArgs });
@@ -767,17 +813,50 @@ export class SyncEngine {
           // Non-fatal: fall through and let commit-tree handle it
         }
         if (headTreeSha && headTreeSha === newTreeSha) {
-          // Nothing to commit — mark this cycle's SHA as last-pushed so subsequent
-          // no-op cycles short-circuit via the same path and the UI settles.
-          // Logged so "Sync now returns OK but nothing happens" is diagnosable:
-          // user edits still in the persistence debounce (default 2s) haven't
-          // landed on disk yet, or the edited path is filtered out.
+          // Working tree matches HEAD — nothing new to commit. But local HEAD
+          // may still be ahead of `origin/<branch>` (e.g. a merge commit
+          // produced by conflict resolution): in that case we still need to
+          // push, just without creating a new commit on top.
+          let upstreamSha: string | null = null;
+          try {
+            upstreamSha = (
+              await handle.git.raw(['rev-parse', `origin/${this.currentBranch}`])
+            ).trim();
+          } catch {
+            // No origin/<branch> ref yet — treat as ahead so push --set-upstream runs.
+          }
+
+          if (upstreamSha === headSha) {
+            // Truly synced. Logged so "Sync now returns OK but nothing happens"
+            // is still diagnosable when user edits sit in the persistence
+            // debounce (default 2s) and haven't landed on disk yet.
+            log.info(
+              { contentFileCount: contentFiles.length, headSha },
+              '[sync] push cycle: nothing to commit (tree unchanged, origin matches HEAD)',
+            );
+            this.lastPushedSha = headSha;
+            this.transitionTo('idle');
+            return;
+          }
+
           log.info(
-            { contentFileCount: contentFiles.length, headSha },
-            '[sync] push cycle: nothing to commit (tree unchanged)',
+            { headSha, upstreamSha },
+            '[sync] push cycle: tree unchanged but local ahead of origin — pushing existing commits',
           );
-          this.lastPushedSha = headSha;
-          this.transitionTo('idle');
+
+          let hasUpstream = false;
+          try {
+            await handle.git.raw(['rev-parse', '--abbrev-ref', `${this.currentBranch}@{u}`]);
+            hasUpstream = true;
+          } catch {}
+
+          if (hasUpstream) {
+            await handle.git.raw(['push', 'origin', this.currentBranch]);
+          } else {
+            await handle.git.raw(['push', '--set-upstream', 'origin', this.currentBranch]);
+          }
+
+          commitSha = headSha;
           return;
         }
 

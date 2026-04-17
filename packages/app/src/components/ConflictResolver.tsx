@@ -4,7 +4,7 @@
  * Lists conflicted files from GET /api/sync/conflicts. Per-file actions:
  *   - Keep my version  → POST /api/sync/resolve-conflict { strategy: 'mine' }
  *   - Keep team's version → POST /api/sync/resolve-conflict { strategy: 'theirs' }
- *   - Resolve manually → opens DiffView in conflictMode (US-025)
+ *   - Resolve manually → opens a large Dialog containing DiffView in conflictMode.
  *
  * Progress shows "N of M resolved". "Exit merge" aborts and closes.
  * When all files are resolved the sheet closes with a success toast.
@@ -37,16 +37,24 @@ async function fetchConflicts(): Promise<ConflictEntry[]> {
   }
 }
 
-async function fetchDocumentContent(file: string): Promise<string> {
+interface ConflictSides {
+  ours: string;
+  theirs: string;
+  base: string;
+}
+
+async function fetchConflictSides(file: string): Promise<ConflictSides> {
   try {
-    // Strip leading path and .md extension to get docName
-    const docName = file.replace(/\.md$/, '');
-    const res = await fetch(`/api/document?docName=${encodeURIComponent(docName)}`);
-    if (!res.ok) return '';
-    const data = (await res.json()) as { content?: string };
-    return data.content ?? '';
+    const res = await fetch(`/api/sync/conflict-content?file=${encodeURIComponent(file)}`);
+    if (!res.ok) return { ours: '', theirs: '', base: '' };
+    const data = (await res.json()) as Partial<ConflictSides>;
+    return {
+      ours: data.ours ?? '',
+      theirs: data.theirs ?? '',
+      base: data.base ?? '',
+    };
   } catch {
-    return '';
+    return { ours: '', theirs: '', base: '' };
   }
 }
 
@@ -78,18 +86,23 @@ interface ManualResolveDialogProps {
   onAbort: () => void;
 }
 
+// Override DialogContent's default `grid gap-4` + `sm:max-w-sm` for a
+// near-fullscreen diff editor. Width/height pin to viewport so the diff has
+// room to breathe; flex column lets the inner DiffView fill the area.
+const DIALOG_SIZE_CLASSES = 'w-[98vw] !max-w-[98vw] h-[96vh] flex flex-col gap-0 sm:!max-w-[98vw]';
+
 function ManualResolveDialog({ file, onResolve, onAbort }: ManualResolveDialogProps) {
-  const [content, setContent] = useState<string | null>(null);
+  const [sides, setSides] = useState<ConflictSides | null>(null);
 
   useEffect(() => {
-    void fetchDocumentContent(file).then(setContent);
+    void fetchConflictSides(file).then(setSides);
   }, [file]);
 
-  if (content === null) {
+  if (sides === null) {
     return (
       <Dialog open onOpenChange={(o) => !o && onAbort()}>
-        <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
-          <DialogHeader>
+        <DialogContent className={DIALOG_SIZE_CLASSES}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>Resolving: {file}</DialogTitle>
           </DialogHeader>
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -102,17 +115,18 @@ function ManualResolveDialog({ file, onResolve, onAbort }: ManualResolveDialogPr
 
   return (
     <Dialog open onOpenChange={(o) => !o && onAbort()}>
-      <DialogContent className="max-w-3xl h-[80vh] flex flex-col p-0">
-        <DialogHeader className="px-4 pt-4 shrink-0">
+      <DialogContent className={`${DIALOG_SIZE_CLASSES} p-0`}>
+        <DialogHeader className="px-4 pt-4 pb-2 shrink-0">
           <DialogTitle className="text-sm font-medium">Resolving: {file}</DialogTitle>
           <p className="text-xs text-muted-foreground">
-            Accept or reject each hunk, then confirm the merged result.
+            Red = your version (ours). Green = team&apos;s version (theirs). Accept each hunk to
+            take theirs, reject to keep yours, then save.
           </p>
         </DialogHeader>
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <DiffView
-            oldContent=""
-            newContent={content}
+            oldContent={sides.ours}
+            newContent={sides.theirs}
             layout="unified"
             conflictMode
             onResolve={onResolve}

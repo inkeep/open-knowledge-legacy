@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
 
 const darkTheme = basicDarkInit({
@@ -49,6 +49,9 @@ export function DiffView({
   const { resolvedTheme } = useTheme();
   const onResolveRef = useRef(onResolve);
   const onAbortRef = useRef(onAbort);
+  // Tracks unresolved hunk count in conflictMode so the "Save resolution"
+  // button can gate on it. null = pre-init (no view yet).
+  const [chunksRemaining, setChunksRemaining] = useState<number | null>(null);
   useEffect(() => {
     onResolveRef.current = onResolve;
     onAbortRef.current = onAbort;
@@ -84,11 +87,12 @@ export function DiffView({
           collapseUnchanged: { margin: 3, minSize: 4 },
         }),
         EditorView.updateListener.of((update) => {
-          if (!update.docChanged) return;
+          // @codemirror/merge's acceptChunk dispatches effects-only (no doc
+          // change), so we cannot gate on update.docChanged. Re-read chunks
+          // on every update and let the explicit "Save resolution" button
+          // drive completion.
           const result = getChunks(update.state);
-          if (result && result.chunks.length === 0) {
-            onResolveRef.current?.(update.state.doc.toString());
-          }
+          setChunksRemaining(result ? result.chunks.length : 0);
         }),
       ];
       const view = new EditorView({
@@ -97,6 +101,9 @@ export function DiffView({
         parent: containerRef.current,
       });
       viewRef.current = view;
+      // Seed initial hunk count (updateListener only fires on subsequent updates).
+      const initial = getChunks(view.state);
+      setChunksRemaining(initial ? initial.chunks.length : 0);
     } else if (layout === 'split') {
       const mv = new MergeView({
         a: { doc: oldContent, extensions: sharedExtensions },
@@ -133,14 +140,47 @@ export function DiffView({
     };
   }, [oldContent, newContent, layout, resolvedTheme, conflictMode]);
 
+  function handleSaveResolution() {
+    const view = viewRef.current;
+    if (!view || !(view instanceof EditorView)) return;
+    onResolveRef.current?.(view.state.doc.toString());
+  }
+
+  const allResolved = chunksRemaining === 0;
+  const hunksLabel =
+    chunksRemaining === null
+      ? ''
+      : chunksRemaining === 0
+        ? 'All hunks resolved'
+        : `${chunksRemaining} unresolved hunk${chunksRemaining === 1 ? '' : 's'}`;
+
   return (
     <div className={conflictMode ? 'flex flex-col h-full' : 'h-full'}>
       <div ref={containerRef} className="diff-view flex-1 overflow-y-auto subtle-scrollbar" />
-      {conflictMode && onAbort && (
-        <div className="flex justify-end px-3 py-2 border-t shrink-0">
-          <Button variant="ghost" size="sm" onClick={onAbort}>
-            Exit merge
-          </Button>
+      {conflictMode && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-t shrink-0">
+          <span
+            className={`text-xs ${allResolved ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}
+          >
+            {hunksLabel}
+          </span>
+          <div className="flex items-center gap-2">
+            {onAbort && (
+              <Button variant="ghost" size="sm" onClick={onAbort}>
+                Exit merge
+              </Button>
+            )}
+            {onResolve && (
+              <Button
+                variant="default"
+                size="sm"
+                disabled={!allResolved}
+                onClick={handleSaveResolution}
+              >
+                Save resolution
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>

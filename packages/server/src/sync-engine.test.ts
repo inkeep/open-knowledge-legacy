@@ -139,37 +139,59 @@ describe('SyncEngine state persistence round-trip', () => {
     expect(engine.getStatus().conflictCount).toBe(2);
   });
 
-  // Regression: state must transition to 'conflict' whenever conflictCount > 0
-  // on restart, not 'idle' or 'disabled'. Otherwise the ConflictBanner + paused
-  // sync UI won't render and the user sees only the stale conflictCount in the
-  // popover while sync appears active — the exact symptom reported 2026-04-17.
-  test('state is "conflict" (not "idle") when restarting with inflightConflicts and a remote', async () => {
-    // Real git repo with a remote so start() gets past the hasRemote gate
-    // and reaches the conflictCount > 0 branch at sync-engine.ts:284.
+  /**
+   * Set up a project repo with a real in-progress merge conflict on the given
+   * files. After this returns: `.git/MERGE_HEAD` exists and each file appears
+   * in `git diff --name-only --diff-filter=U`.
+   */
+  async function setupRealMergeConflict(files: string[]): Promise<void> {
     const git = simpleGit(projectDir);
     await git.init();
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
-    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    // Base commit with all files
+    for (const f of files) {
+      const dir = join(projectDir, f, '..');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(projectDir, f), 'base\n', 'utf-8');
+    }
     await git.add('.');
-    await git.commit('Initial');
-
+    await git.commit('base');
+    // Feature branch diverges
+    await git.checkoutLocalBranch('feature');
+    for (const f of files) writeFileSync(join(projectDir, f), 'feature\n', 'utf-8');
+    await git.add('.');
+    await git.commit('feature changes');
+    // Main also diverges, then merging feature conflicts on every file
+    await git.checkout('main');
+    for (const f of files) writeFileSync(join(projectDir, f), 'main\n', 'utf-8');
+    await git.add('.');
+    await git.commit('main changes');
+    try {
+      await git.merge(['feature']);
+    } catch {
+      // Expected — merge throws on conflict; MERGE_HEAD + unmerged stages now exist.
+    }
     const bareDir = join(tmpDir, 'bare.git');
     mkdirSync(bareDir, { recursive: true });
-    const bareGit = simpleGit(bareDir);
-    await bareGit.init(true);
+    await simpleGit(bareDir).init(true);
     await git.addRemote('origin', bareDir);
+  }
 
-    // Pre-write conflicts.json + sync-state.json so start() restores them
+  // Regression: state must transition to 'conflict' whenever conflictCount > 0
+  // on restart AND git agrees (MERGE_HEAD + unmerged stages present). Otherwise
+  // the ConflictBanner + paused sync UI won't render and the user sees only the
+  // stale conflictCount in the popover while sync appears active.
+  test('state is "conflict" (not "idle") when restarting mid-merge with tracked conflicts', async () => {
+    const files = ['docs/a.md', 'docs/b.md'];
+    await setupRealMergeConflict(files);
+
     writeFileSync(
       join(okDir, 'conflicts.json'),
       JSON.stringify({
         version: 1,
         branch: 'main',
-        conflicts: [
-          { file: 'docs/a.md', detectedAt: '2026-04-17T00:00:00.000Z' },
-          { file: 'docs/b.md', detectedAt: '2026-04-17T00:00:00.000Z' },
-        ],
+        conflicts: files.map((f) => ({ file: f, detectedAt: '2026-04-17T00:00:00.000Z' })),
       }),
       'utf-8',
     );
@@ -181,7 +203,7 @@ describe('SyncEngine state persistence round-trip', () => {
         lastFetchUtc: null,
         lastPushedSha: null,
         consecutiveFailures: 0,
-        inflightConflicts: ['docs/a.md', 'docs/b.md'],
+        inflightConflicts: files,
       }),
       'utf-8',
     );
@@ -190,9 +212,109 @@ describe('SyncEngine state persistence round-trip', () => {
     try {
       await engine.start();
       const status = engine.getStatus();
-      // The invariant: conflictCount > 0 ⟹ state === 'conflict'.
+      // The invariant: conflictCount > 0 (and git agrees) ⟹ state === 'conflict'.
       expect(status.conflictCount).toBe(2);
       expect(status.state).toBe('conflict');
+    } finally {
+      await engine.destroy();
+    }
+  });
+
+  // Regression: if the user resolved (or aborted) the merge externally via CLI
+  // between server runs, conflicts.json is stale. On restart we must trust git
+  // and clear the persisted conflicts — otherwise the conflict warning lingers
+  // forever even though there's nothing to resolve.
+  test('clears stale conflicts.json when MERGE_HEAD is gone (user resolved externally)', async () => {
+    // Real repo + remote, no merge in progress
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    await simpleGit(bareDir).init(true);
+    await git.addRemote('origin', bareDir);
+
+    // Stale persisted state from a previous run; user resolved via CLI in between.
+    writeFileSync(
+      join(okDir, 'conflicts.json'),
+      JSON.stringify({
+        version: 1,
+        branch: 'main',
+        conflicts: [{ file: 'test.md', detectedAt: '2026-04-17T00:00:00.000Z' }],
+      }),
+      'utf-8',
+    );
+    writeFileSync(
+      statePath(),
+      JSON.stringify({
+        version: 1,
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        consecutiveFailures: 0,
+        inflightConflicts: ['test.md'],
+      }),
+      'utf-8',
+    );
+
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      const status = engine.getStatus();
+      expect(status.conflictCount).toBe(0);
+      expect(status.state).not.toBe('conflict');
+    } finally {
+      await engine.destroy();
+    }
+  });
+
+  // Partial external resolve: user fixed one file via CLI but left the other,
+  // leaving the merge still in progress. On restart we should drop the resolved
+  // file from the store but keep the still-unmerged one.
+  test('reconciles partial external resolve against git unmerged index', async () => {
+    const files = ['docs/a.md', 'docs/b.md'];
+    await setupRealMergeConflict(files);
+
+    // User resolved docs/a.md externally via `git checkout --theirs && git add`,
+    // leaving docs/b.md still unmerged.
+    const git = simpleGit(projectDir);
+    await git.raw(['checkout', '--theirs', '--', 'docs/a.md']);
+    await git.raw(['add', '--', 'docs/a.md']);
+
+    writeFileSync(
+      join(okDir, 'conflicts.json'),
+      JSON.stringify({
+        version: 1,
+        branch: 'main',
+        conflicts: files.map((f) => ({ file: f, detectedAt: '2026-04-17T00:00:00.000Z' })),
+      }),
+      'utf-8',
+    );
+    writeFileSync(
+      statePath(),
+      JSON.stringify({
+        version: 1,
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        consecutiveFailures: 0,
+        inflightConflicts: files,
+      }),
+      'utf-8',
+    );
+
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      const status = engine.getStatus();
+      expect(status.conflictCount).toBe(1);
+      expect(status.state).toBe('conflict');
+      const conflicts = engine.getConflicts().map((c) => c.file);
+      expect(conflicts).toEqual(['docs/b.md']);
     } finally {
       await engine.destroy();
     }
@@ -201,24 +323,8 @@ describe('SyncEngine state persistence round-trip', () => {
   // Complement of the restart test: resolving the last conflict must clear
   // the 'conflict' state. Together these pin the invariant from both sides.
   test('state transitions out of "conflict" once the last conflict is resolved', async () => {
-    const git = simpleGit(projectDir);
-    await git.init();
-    await git.raw('config', 'user.name', 'Test');
-    await git.raw('config', 'user.email', 'test@test.com');
-    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
-    await git.add('.');
-    await git.commit('Initial');
-
-    const bareDir = join(tmpDir, 'bare.git');
-    mkdirSync(bareDir, { recursive: true });
-    await simpleGit(bareDir).init(true);
-    await git.addRemote('origin', bareDir);
-
-    // Seed a single conflict on disk at the path we'll resolve below
     const conflictedFile = 'a.md';
-    writeFileSync(join(projectDir, conflictedFile), 'ours', 'utf-8');
-    await git.add('.');
-    await git.commit('conflict seed');
+    await setupRealMergeConflict([conflictedFile]);
 
     writeFileSync(
       join(okDir, 'conflicts.json'),
@@ -424,6 +530,55 @@ describe('SyncEngine lifecycle edge cases', () => {
     const engine = makeEngine({ syncEnabled: false });
     await engine.start();
     expect(engine.getStatus().pausedReason).toBe('detached-head');
+  });
+});
+
+// ─── Push cycle: ahead-of-origin without new commits ───────────────────────
+
+describe('SyncEngine push cycle pushes existing commits when local is ahead of origin', () => {
+  // Regression: after conflict resolution finalizes a merge with `git commit
+  // --no-edit`, the working tree matches the new HEAD. The push cycle's
+  // "tree unchanged" early-exit used to short-circuit before `git push`,
+  // leaving the merge commit unpushed forever. Repro: 2026-04-17, ~/Documents/concrete-wiki
+  // sat 2 commits ahead of origin including a merge commit; lastPushedSha
+  // recorded the merge SHA but origin/main had never received it.
+  test('pushes existing HEAD when local is ahead of origin and tree is clean', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    await simpleGit(bareDir).init(true);
+    await git.addRemote('origin', bareDir);
+    await git.push(['--set-upstream', 'origin', 'main']);
+
+    // Simulate the post-conflict-resolution state: a local commit that
+    // hasn't been pushed yet, and a clean working tree (commit-finalized
+    // merge, or any prior unpushed commit).
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n\nlocal change\n');
+    await git.add('.');
+    await git.commit('local commit not yet pushed');
+
+    const headBefore = (await git.revparse(['HEAD'])).trim();
+    const remoteBefore = (await git.revparse(['origin/main'])).trim();
+    expect(headBefore).not.toBe(remoteBefore);
+
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      await engine.trigger('push');
+
+      const remoteAfter = (await git.revparse(['origin/main'])).trim();
+      expect(remoteAfter).toBe(headBefore);
+      expect(engine.getStatus().lastPushedSha).toBe(headBefore);
+    } finally {
+      await engine.destroy();
+    }
   });
 });
 
