@@ -18,6 +18,11 @@ tmp/
 .idea/
 .bun/
 
+# Open Knowledge runtime state — lock files, per-session artifacts.
+# `server.lock` holds pid/hostname/absolute-path and mutates on every start.
+.open-knowledge/server.lock
+**/.open-knowledge/*.lock
+
 # TypeScript incremental build cache
 *.tsbuildinfo
 

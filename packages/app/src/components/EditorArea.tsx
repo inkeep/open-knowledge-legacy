@@ -10,10 +10,12 @@ import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { useDocumentStats } from '@/hooks/use-document-stats';
 import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
+import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
@@ -26,7 +28,9 @@ interface EditorAreaProps {
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  const stats = useDocumentStats(activeProvider, activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
+  const showFooter = !!activeDocName && activeTarget?.kind !== 'folder' && editorMode !== 'diff';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -138,8 +142,9 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
     <div className="flex min-h-0 flex-1">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">
-          <div className="relative h-full">
-            {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+          <div className="relative flex h-full flex-col">
+            <div className="relative min-h-0 flex-1">
+              {/* No outer scroller. Scrolling is owned by (a) DiffView's own
                 internal scroller in diff mode and (b) the per-Activity scroller
                 inside EditorActivityPool in editor mode. Hoisting the scroller
                 to this level would let the Activity subtree's content contract
@@ -147,25 +152,25 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                 losing the user's position across warm navigation (QA-002 /
                 SPEC US-007/F1). */}
 
-            {/* Diff view — shown when editorMode === 'diff' */}
-            {isDiffMode && previewLoading && (
-              <div
-                className="flex items-center justify-center py-16"
-                role="status"
-                aria-label="Loading version"
-              >
-                <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-              </div>
-            )}
-            {isDiffMode && !previewLoading && diffContent !== null && (
-              <DiffView
-                oldContent={diffContent.old}
-                newContent={diffContent.new}
-                layout={diffLayout}
-              />
-            )}
+              {/* Diff view — shown when editorMode === 'diff' */}
+              {isDiffMode && previewLoading && (
+                <div
+                  className="flex items-center justify-center py-16"
+                  role="status"
+                  aria-label="Loading version"
+                >
+                  <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+                </div>
+              )}
+              {isDiffMode && !previewLoading && diffContent !== null && (
+                <DiffView
+                  oldContent={diffContent.old}
+                  newContent={diffContent.new}
+                  layout={diffLayout}
+                />
+              )}
 
-            {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+              {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
                 Outer display:none keeps the editor DOM alive when in diff mode.
                 Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
                 inner display:none toggle) is preserved inside EditorActivityPool
@@ -178,52 +183,54 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                 hidden doc's cached rejected syncPromise cannot re-throw into
                 the visible UI (QA-023/024). See EditorActivityPool.tsx file
                 docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-            <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-              <EditorActivityPool
-                activeDocName={activeDocName}
-                isSourceMode={isSourceMode}
-                editorPlaceholder={editorPlaceholder}
-                previousDocName={previousDocName ?? undefined}
-                onNavigateBack={(prev) => {
-                  // Navigate via hash so the URL stays in sync with app state —
-                  // NavigationHandler's hashchange listener will call
-                  // openDocumentTransition(prev). If the hash is already at
-                  // prev (rare — happens when back-nav is used after agent
-                  // nav without URL update), fall back to direct transition.
-                  const nextHash = hashFromDocName(prev);
-                  if (window.location.hash === nextHash) {
-                    openDocumentTransition(prev);
-                  } else {
-                    window.location.hash = nextHash;
-                  }
-                }}
-                onRecycle={recycleDocument}
-              />
-            </div>
-            <div className="absolute top-2 right-2 z-10">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() =>
-                      isCollapsed ? panelRef.current?.expand() : panelRef.current?.collapse()
+              <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+                <EditorActivityPool
+                  activeDocName={activeDocName}
+                  isSourceMode={isSourceMode}
+                  editorPlaceholder={editorPlaceholder}
+                  previousDocName={previousDocName ?? undefined}
+                  onNavigateBack={(prev) => {
+                    // Navigate via hash so the URL stays in sync with app state —
+                    // NavigationHandler's hashchange listener will call
+                    // openDocumentTransition(prev). If the hash is already at
+                    // prev (rare — happens when back-nav is used after agent
+                    // nav without URL update), fall back to direct transition.
+                    const nextHash = hashFromDocName(prev);
+                    if (window.location.hash === nextHash) {
+                      openDocumentTransition(prev);
+                    } else {
+                      window.location.hash = nextHash;
                     }
-                    aria-label={isCollapsed ? 'Show document panel' : 'Hide document panel'}
-                    className="text-muted-foreground"
-                  >
-                    {isCollapsed ? (
-                      <PanelRightOpen className="size-4" />
-                    ) : (
-                      <PanelRightClose className="size-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">
-                  {isCollapsed ? 'Show panel' : 'Hide panel'}
-                </TooltipContent>
-              </Tooltip>
+                  }}
+                  onRecycle={recycleDocument}
+                />
+              </div>
+              <div className="absolute top-2 right-2 z-10">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() =>
+                        isCollapsed ? panelRef.current?.expand() : panelRef.current?.collapse()
+                      }
+                      aria-label={isCollapsed ? 'Show document panel' : 'Hide document panel'}
+                      className="text-muted-foreground"
+                    >
+                      {isCollapsed ? (
+                        <PanelRightOpen className="size-4" />
+                      ) : (
+                        <PanelRightClose className="size-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    {isCollapsed ? 'Show panel' : 'Hide panel'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             </div>
+            {showFooter && <EditorFooter stats={stats} />}
           </div>
         </ResizablePanel>
 
