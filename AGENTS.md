@@ -534,7 +534,7 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 | D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
 | Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
 | Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I10) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Fidelity    | PBT invariants (I1-I11) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/` (I1-I10 + handler PBTs); `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (I11) | `bun run test:fidelity` + core unit suite (I11 runs in `bun run test`) |
 
 ### Tier 1 integration harness
 
@@ -766,7 +766,7 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 **Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
 
-### Fidelity invariants (I1-I10 active, I11 pending)
+### Fidelity invariants (I1-I11 active)
 
 | ID  | Invariant                   | Description                                                                                         |
 | --- | --------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -780,9 +780,9 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 | I8  | Crash resistance            | `parse()` never throws non-SyntaxError on fuzzed input; `SyntaxError` allowed only for matched `{…}` with non-JS content |
 | I9  | Guard completeness          | After `protectFromMdx`, remark-mdx never encounters an unmatched `<` or unclosed `{` that crashes  |
 | I10 | Structural crash resistance | Nested / truncated / interleaved constructs (dangerous chars inside marks, half-typed JSX, etc.) parse without unexpected errors |
-| I11 | rawMdxFallback coverage     | Pending — introduced by the tolerant-parsing spec (`specs/2026-04-13-mdx-tolerant-parsing/`); activates when that spec merges |
+| I11 | R23 guard precision         | After `protectFromMdx`, valid MDX (self-closing, paired, attrs/URLs/expressions) survives unchanged — no false-positive PUA replacements. Complements I9 (completeness). PBT at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (1K runs default, 10K under `STRESS_FIDELITY=1`). Originates in `specs/2026-04-13-mdx-tolerant-parsing/` §M4 / §D2 and ships with the R23 guard family. |
 
-PBT invariants live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. US-014 added six handler-specific PBTs alongside them — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
+PBT invariants I1-I10 live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. I11 lives at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (colocated with the R23 guard it covers; runs under core's unit suite rather than `test:fidelity`). US-014 added six handler-specific PBTs alongside the I-numbered set — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
 
 ### Irreducible gaps (by design)
 
