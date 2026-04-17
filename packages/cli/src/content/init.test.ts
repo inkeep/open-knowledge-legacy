@@ -74,9 +74,11 @@ describe('initContent', () => {
     expect(agents).toContain('Navigation');
     expect(agents).toContain('exec');
 
-    // .gitignore excludes cache/
+    // .gitignore excludes cache/ and the per-process lock files
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
+    expect(gitignore).toContain('server.lock');
+    expect(gitignore).toContain('ui.lock');
 
     // config.yml is the fully-commented starter — every section header
     // present, every key commented out so the file parses to a no-op.
