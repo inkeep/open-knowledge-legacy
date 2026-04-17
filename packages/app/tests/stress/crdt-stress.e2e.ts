@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
+import { filterCriticalErrors } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
@@ -99,46 +100,14 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
     );
   }
 
-  // 5. Final assertions
+  // 5. Final assertions.
+  // `filterCriticalErrors` (from `_helpers/error-filters.ts`) strips known
+  // dev-server noise — favicon/HMR/Vite chatter, WebSocket reconnect race
+  // during /api/test-reset, the by-design /api/config 404. The remaining
+  // entries are genuine failures. See the helper module for the full
+  // predicate list + rationale.
   const errors = logs.filter((l) => l.type === 'error' || l.type === 'uncaught');
-  // Filter out known non-critical errors.
-  // - favicon / HMR / [vite]: dev-server noise unrelated to CRDT behavior.
-  // - WebSocket / ws://.../collab / Firefox can't establish: benign
-  //   race during `/api/test-reset` — the Hocuspocus WebSocket is
-  //   closed by the server mid-handshake as state is torn down and
-  //   reconnected by the client automatically. Chromium logs this at
-  //   `debug` level and it doesn't reach our error stream; WebKit and
-  //   Firefox both log at `error`. Since our multi-browser projects
-  //   were added (QA-046), we see these on the non-Chromium browsers
-  //   too. The subsequent assertions verify actual CRDT convergence —
-  //   if the reconnect didn't heal, ytext/fragment state would be
-  //   wrong, not just the transient log line.
-  const criticalErrors = errors.filter(
-    (e) =>
-      !e.text.includes('favicon') &&
-      !e.text.includes('HMR') &&
-      !e.text.includes('[vite]') &&
-      !e.text.includes('WebSocket') &&
-      !e.text.includes('ws://') &&
-      !e.text.includes("can't establish a connection") &&
-      !e.text.includes('can’t establish a connection') &&
-      !e.url?.endsWith('.map') &&
-      !e.url?.includes('/favicon') &&
-      !e.url?.includes('.hot-update.') &&
-      // Vite HMR / dev-server pre-bundling requests occasionally 404 during
-      // heavy pages (e.g., on-demand dep re-optimize). These are dev-only
-      // and don't reach production. Filter by the `/@` or `/node_modules/.vite`
-      // URL prefixes that Vite uses for its internal requests.
-      !e.url?.includes('/@vite/') &&
-      !e.url?.includes('/@fs/') &&
-      !e.url?.includes('/@id/') &&
-      !e.url?.includes('/node_modules/.vite/') &&
-      // `/api/config` is intentionally absent in `bun run dev` mode (see
-      // `src/lib/api-config.ts` header). The app classifies the 404 as
-      // `{status: 'absent'}` and falls back to same-origin WebSocket — the
-      // network 404 is a by-design signal, not a failure mode.
-      !e.url?.endsWith('/api/config'),
-  );
+  const criticalErrors = filterCriticalErrors(errors);
   if (criticalErrors.length > 0) {
     // Include full URL + line info in the assertion failure so the flake is
     // diagnosable from CI logs alone.

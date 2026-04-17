@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { selectAllAndWaitForSelection } from './_helpers';
+import { selectAllAndWaitForSelection, simulateCopyAndRead, simulateCutAndRead } from './_helpers';
 
 const PERF_BASELINE: { qa022: { p50Ms: number } } = JSON.parse(
   readFileSync(join(fileURLToPath(import.meta.url), '..', 'perf-baseline.json'), 'utf-8'),
@@ -105,83 +105,10 @@ async function pasteWithMimes(
   );
 }
 
-/**
- * FR-1 / FR-2 / FR-4 copy-side harness (§13 Next Action #8).
- *
- * Selects all content in the active editor (via real Meta+A keypress so
- * PM's / CM6's internal selection state is synced — a DOM-range selection
- * alone leaves `view.state.selection.empty === true` and PM's copy handler
- * bails before calling `setData`, producing false-negative empty captures),
- * then dispatches a synthetic copy event and intercepts setData on the
- * event.clipboardData. Returns the captured MIME map.
- */
-async function simulateCopyAndRead(
-  page: Page,
-  view: 'wysiwyg' | 'source' = 'wysiwyg',
-): Promise<{ plain: string; html: string }> {
-  const selector = view === 'source' ? '.cm-content' : '.ProseMirror';
-  // PM / CM6 sync their internal selection state on Meta+A; the DOM Selection
-  // becomes non-empty within a frame. Poll for that signal rather than yielding
-  // a fixed 50ms. Empty-doc callers (FR-15 test) catch the throw.
-  await selectAllAndWaitForSelection(page, selector);
-  return page.evaluate((sel) => {
-    const editor = document.querySelector(sel) as HTMLElement | null;
-    if (!editor) throw new Error(`editor ${sel} not found`);
-    const captured: Record<string, string> = {};
-    const dt = new DataTransfer();
-    const origSetData = dt.setData.bind(dt);
-    dt.setData = (key: string, value: string): void => {
-      captured[key] = value;
-      origSetData(key, value);
-    };
-    const event = new ClipboardEvent('copy', {
-      clipboardData: dt,
-      bubbles: true,
-      cancelable: true,
-    });
-    editor.dispatchEvent(event);
-    return {
-      plain: captured['text/plain'] ?? '',
-      html: captured['text/html'] ?? '',
-    };
-  }, selector);
-}
-
-/**
- * FR-12 cut-side harness (parallel to simulateCopyAndRead).
- * WYSIWYG's cut path is PM's default path that calls our clipboard hooks
- * + dispatches deleteSelection; Source's cut path is our explicit dispatch.
- * Both write text/plain + text/html; both delete the selection.
- */
-async function simulateCutAndRead(
-  page: Page,
-  view: 'wysiwyg' | 'source' = 'wysiwyg',
-): Promise<{ plain: string; html: string; contentAfter: string }> {
-  const selector = view === 'source' ? '.cm-content' : '.ProseMirror';
-  await selectAllAndWaitForSelection(page, selector);
-  return page.evaluate((sel) => {
-    const editor = document.querySelector(sel) as HTMLElement | null;
-    if (!editor) throw new Error(`editor ${sel} not found`);
-    const captured: Record<string, string> = {};
-    const dt = new DataTransfer();
-    const origSetData = dt.setData.bind(dt);
-    dt.setData = (key: string, value: string): void => {
-      captured[key] = value;
-      origSetData(key, value);
-    };
-    const event = new ClipboardEvent('cut', {
-      clipboardData: dt,
-      bubbles: true,
-      cancelable: true,
-    });
-    editor.dispatchEvent(event);
-    return {
-      plain: captured['text/plain'] ?? '',
-      html: captured['text/html'] ?? '',
-      contentAfter: editor.textContent ?? '',
-    };
-  }, selector);
-}
+// `simulateCopyAndRead` + `simulateCutAndRead` live in `_helpers/clipboard.ts`
+// (imported via the barrel above). They replace the previous in-file copies.
+// See the helper module for MIME-capture semantics and cross-view (wysiwyg /
+// source) selector handling.
 
 // ─── Paste baseline tests ───
 

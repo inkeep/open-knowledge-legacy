@@ -9,12 +9,14 @@
  * move files without touching any e2e test's imports.
  */
 
+export { simulateCopyAndRead, simulateCutAndRead } from './clipboard.ts';
 export {
   createPage,
   replaceDoc,
   seedDocs,
   selectAllAndWaitForSelection,
 } from './editor-state.ts';
+export { filterCriticalErrors, type LogEntry } from './error-filters.ts';
 export {
   installClockAfterSync,
   type WaitForProviderOptions,
