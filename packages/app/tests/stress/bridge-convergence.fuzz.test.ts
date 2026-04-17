@@ -484,15 +484,18 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 //     scaling / bisection runs.
 //   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): 10000 seeds (tier 2; 30-min
 //     budget). Split across `nightly.yml` + `weekly.yml` as needed.
-//   - PR mode (`STRESS_FUZZ_PR=1`): 200 seeds. The SPEC §6 R2 draft target
-//     was 1000, but per-seed convergence under turbo parallel contention
-//     (60s tail + macOS/Linux scheduler jitter) put 1000 over the 15-min
-//     tier-1 budget. 200 seeds ~8×'s the default-mode coverage while
-//     fitting the budget; the tail comes out in nightly + weekly runs
-//     (D11 resolution: split-by-tier, not matrix-shard).
+//   - PR mode (`STRESS_FUZZ_PR=1`): 75 seeds. The SPEC §6 R2 draft target
+//     was 1000, but measured per-seed timing on GitHub Actions ubuntu-latest
+//     free tier is ~9-10s/seed (M-series laptop baseline ~4.7s/seed;
+//     runners ≈ 2× slower). 200 seeds hit the 15-min tier-1 timeout at
+//     14m56s (PR #192 run 24577509123). 75 seeds × 10s ≈ 12.5min of
+//     test work + ~1.5min install/cache leaves a ~1min headroom under the
+//     15-min budget. Still 3× the default-mode coverage. The long tail
+//     (1K–10K seeds) runs in tier-2 nightly / tier-3 weekly on-demand
+//     workflows (D11 resolution: split-by-tier, not matrix-shard).
 //   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
 //     and keeps local developer runs cheap.
-const SEED_COUNT_PR = 200;
+const SEED_COUNT_PR = 75;
 const SEED_COUNT_NIGHTLY = 10_000;
 const SEED_COUNT_DEFAULT = 25;
 function resolveSeedCount(): number {
