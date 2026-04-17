@@ -120,7 +120,7 @@ export function EditorDemo() {
         className="overflow-hidden"
         style={{
           borderColor: 'var(--slide-border)',
-          backgroundColor: 'var(--slide-bg-elevated)',
+          backgroundColor: 'var(--slide-bg)',
         }}
       >
         <header
@@ -140,7 +140,7 @@ export function EditorDemo() {
           </div>
         </header>
 
-        <div className="relative h-[50vh] min-h-[420px] max-h-[640px] overflow-hidden">
+        <div className="relative h-[60vh] min-h-[420px] max-h-[640px] overflow-hidden">
           {/* Visual mode — real TipTap editor */}
           <div
             className="absolute inset-0 overflow-y-auto transition-all duration-400"
@@ -174,8 +174,7 @@ export function EditorDemo() {
           <div
             className="pointer-events-none absolute right-0 bottom-0 left-0 h-24 z-10"
             style={{
-              background:
-                'linear-gradient(to top, var(--slide-bg), var(--slide-bg-elevated) 60%, transparent)',
+              background: 'linear-gradient(to top, var(--slide-bg), transparent)',
             }}
           />
         </div>
