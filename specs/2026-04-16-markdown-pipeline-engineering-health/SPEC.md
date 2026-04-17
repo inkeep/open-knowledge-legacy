@@ -58,7 +58,7 @@ Shares `pipeline.ts` with the tolerant-parsing spec but touches disjoint regions
 - **[NEVER] NG1:** Rust implementation. This spec is TS-only foundation. Rust port is the sister spec's scope.
 - **[NEVER] NG2:** Changing the dual-CRDT model (Y.XmlFragment + Y.Text).
 - **[NEVER] NG3:** Pipeline architectural changes beyond what's listed (handler reorganization, Astro bridge pattern, etc.). That's the Rust spec's Phase 11 refactor.
-- **[NOT NOW] NG4:** I11 invariant test (rawMdxFallback coverage). Introduced by tolerant parsing spec; this spec lands in parallel.
+- **[NOT NOW] NG4:** I11 invariant test (rawMdxFallback coverage). Introduced by tolerant parsing spec; this spec lands in parallel. <br>_[Corrected 2026-04-16 post-ship: I11 ships as "R23 guard precision PBT" per tolerant-parsing SPEC §M4/§D2 — not rawMdxFallback coverage. Authoritative fix in AGENTS.md and `specs/2026-04-16-post-ship-docs-polish/`.]_
 - **[NOT NOW] NG5:** NG7 and NG8 byte-identity tests. MDX-specific; defer to tolerant parsing.
 - **[NOT NOW] NG6:** Fixture sharing between `bun test` and `cargo test`. Fixtures get externalized (G6) but symlink configuration waits for Rust port Phase 0.
 - **[NOT NOW] NG7:** Upstream issue filing (micromark super-linearity, remark-gfm table super-linearity). Documented in Future Work. No code change in our tree.
