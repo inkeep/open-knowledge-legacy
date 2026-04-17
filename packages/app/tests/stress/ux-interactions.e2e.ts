@@ -95,9 +95,20 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Switch back to WYSIWYG
   await visualToggle(page).click();
 
-  // Wait for ProseMirror to render the synced content
+  // Wait for ProseMirror to render the FULL synced content. Checking only
+  // for 'Source Heading' is too permissive: y-prosemirror applies XmlFragment
+  // → PM mutations incrementally over ~50-100ms under CPU contention, so PM
+  // transiently shows a partial render like "Source HeadingParagraph fro"
+  // where the heading substring is already present but the paragraph is
+  // truncated mid-word. The wait condition must match every substring the
+  // subsequent assertion will read — otherwise waitForFunction resolves on
+  // the partial state and the `textContent()` read below catches PM
+  // mid-render. Mirrors the round-trip test's pattern at line 144-148.
   await page.waitForFunction(
-    () => document.querySelector('.ProseMirror')?.textContent?.includes('Source Heading'),
+    () => {
+      const content = document.querySelector('.ProseMirror')?.textContent ?? '';
+      return content.includes('Source Heading') && content.includes('Paragraph from source');
+    },
     { timeout: 10_000 },
   );
 
