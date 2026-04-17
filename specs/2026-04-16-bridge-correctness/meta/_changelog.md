@@ -184,3 +184,32 @@ Stories US-001, US-002, US-003, US-004, US-005, US-006, US-007, US-008, US-013, 
 - US-009 (afterAllTransactions dispatch), US-010 (awaitDocQuiescence), US-011 (client observer audit), US-012 (setTimeout grep gate). STOP_IF risk and test-harness semantics change were judged too large for this iteration — the 50 ms `setTimeout` debounce via injected Scheduler is still the observer dispatch mechanism. Paired-write short-circuits (US-001) already cancel debounces synchronously on the hot paths that caused seed-1776325179241. Bucket B will land in a follow-up story when the test harness is prepared to migrate off ManualScheduler.flush() semantics.
 
 **Regression:** bun run check green at ship. 541 unit tests, 159 integration tests pass.
+
+## 2026-04-17 — Bucket B shipped: settlement-based observer dispatch (phase 3 complete)
+
+Stories US-009, US-010, US-011, US-012 landed on `spec/bridge-correctness` (commits `5d919d35` → `0d623b09`). All 15 user stories now pass; phase 3 implementation complete.
+
+**Bucket B (architectural cleanup — settlement-based dispatch):**
+- US-009: Server observer dispatch migrated from 50 ms `setTimeout` debounce via injected `Scheduler` to `doc.on('afterAllTransactions', ...)`. Observer callbacks flag `xmlDirty` / `textDirty`; the settlement handler runs Observer A's sync work first so its `Y.Text` write is visible to Observer B's read, then Observer B's. One outermost `doc.transact()` call = one drain = one settlement fire. Observer B canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `ytext === serialize(fragment)` holds at every settlement point — replaces the debounce-era reliance on Observer A's subsequent Path B firing to close the gap. Test-only `onDispatch?: (kind: 'none' | 'a' | 'b') => void` hook added for unit-level drain assertions (T8/T9/T10 regression tests).
+- US-010: `awaitDocQuiescence(doc, opts?)` structural gate added to `test-harness.ts` — resolves once the doc has been quiet on `afterAllTransactions` for N consecutive microtasks (default 2). Replaces fuzz-harness `wait(1500)` / `wait(800)` gates that measured wall-clock instead of observer settlement. Combined with `assertAllConverged` for inter-client WebSocket propagation.
+- US-011: Client observer (`packages/app/src/editor/observers.ts`) simplified to a shell per D14-DELEGATED outcome = option (a) DELETE. Removed: `DEBOUNCE_MS`, `TYPING_DEFER_MS`, `REMOTE_TREE_SYNC_GRACE_MS`, four `sched.setTimeout` sites, per-doc `TypingState`, `lastSyncedXmlMd` baseline, client-side cross-CRDT write paths. ~300 LOC retired. The client shell retains only (a) the `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object identities needed by `BRIDGE_ENFORCING_ORIGINS`, (b) `onSyncError` for non-transient parse failures, and (c) `markUserTyping` for the agent-focus typing guard consumer.
+- US-012: Precedent #13(b) enforcement grep gate at `packages/server/src/bridge-no-wallclock.test.ts` — scans both bridge observer files on every PR and fails CI on `setTimeout(` / `setInterval(` / `sched.setTimeout(` / `sched.clearTimeout(` / `new Scheduler(` / `: Scheduler` / `<Scheduler>` call sites. Comments and JSDoc referencing the retired machinery are allowed (comment-and-string stripper preserves line numbers for reporting). Dropped `Scheduler` / `defaultScheduler` re-export from `observers.ts`; removed `scheduler?: Scheduler` from `ObserverDeps` and `CreateTestClientOptions`; deleted `ManualScheduler` + `createManualScheduler` from `test-harness.ts` (no remaining consumers).
+
+**Cross-cutting amendments (US-015):**
+- CLAUDE.md precedent #13(b) rewritten as "Settlement-based propagation, not wall-clock debounce"; propagation matrix W1/W2 rows reference settlement dispatch; origin-guard truth table reflects paired-write symmetric short-circuit; STOP rules added for Bucket B (no wall-clock `setTimeout` in bridge code; `awaitDocQuiescence` over `wait(ms)` in new bridge tests).
+- `docs/content/internals/agent-write-path.mdx` lines 36 + 55 updated to reference `afterAllTransactions` + the paired-write marker (commit `c691380c`).
+
+**Spec §11 Q4/Q7/Q8/Q9 resolution:**
+- Q7 / Q8 RESOLVED empirically during US-004.
+- Q9 RESOLVED: ref namespace locked to `refs/checkpoints/<branch>/<sha>`.
+- Q4 PARTIALLY RESOLVED: reproduction command + D7 framing committed to `evidence/seed-1776386718697-post-bucket-0-rate.md`; full 100× rate characterization is a post-merge observation against R9 telemetry.
+- Q6 remains active (30-day post-ship observation window).
+
+**Docs phase (this commit batch):**
+- `docs/content/internals/architecture.mdx`: Source-toggle section updated for dual-editor concurrent-mount + server-authoritative bridge; stale "Typing coordination" paragraph (markUserTyping typing-defer) removed; content-preservation post-condition noted with pointer to SPEC §6 R1/R7.
+- `docs/content/internals/agent-write-path.mdx`: frontmatter description + opening paragraph de-referenced from the removed `three-way-merge.ts`; "Source mode live injection" rewritten for `y-codemirror.next` binding; obsolete "Three-way merge on toggle-back" section replaced with "Mode toggle (no merge)" explaining the dual-editor concurrent-mount + server bridge model.
+- `packages/server/README.md`: new "Server-authoritative bridge" section — settlement dispatch, paired-write marker, content-preservation post-condition + silent recovery, `saveInMemoryCheckpoint` primitive, `/api/rescue` reader merge, telemetry counters.
+- `packages/core/src/bridge/README.md` (new): public API reference + post-condition policy + STOP rules for the single authorized catch site.
+- Orphaned `packages/core/src/bridge/scheduler.ts` deleted (unreferenced post-US-012); exports removed from `packages/core/src/bridge/index.ts` and `packages/core/src/index.ts`.
+
+**Regression:** `bun run check` green (lint + typecheck + unit + integration + conversion + fidelity). All 15 stories pass the ship gate.

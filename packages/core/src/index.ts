@@ -74,12 +74,10 @@ export {
   type BridgeMergeContentLossSide,
   type BridgeMergeContentLossWhich,
   type DiffChange,
-  defaultScheduler,
   diffLinesFast,
   getFrontmatter,
   mergeThreeWay,
   normalizeBridge,
-  type Scheduler,
 } from './bridge/index.ts';
 // Types
 export type {

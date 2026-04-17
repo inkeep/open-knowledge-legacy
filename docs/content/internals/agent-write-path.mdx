@@ -1,9 +1,9 @@
 ---
 title: Agent Write Path
-description: How external agents write into the CRDT via markdown, and how the source toggle preserves those writes through three-way merge.
+description: How external agents write into the CRDT via markdown, and how the server-authoritative bridge keeps WYSIWYG and source mode views in sync.
 ---
 
-External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints and a three-way merge to ensure agent writes survive source mode editing.
+External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints; the server-authoritative cross-CRDT bridge then propagates the write to both `Y.XmlFragment` (TipTap) and `Y.Text` (CodeMirror) so the result is visible in either editor mode without any client-side merge.
 
 ## Write endpoints
 
@@ -45,43 +45,25 @@ V0-14's future `applyAgentUndo` handler must follow the same pattern — see `ev
 
 ## Source mode live injection
 
-When the user is in source mode (CodeMirror), agent writes are still visible in real-time:
+Source mode (CodeMirror) binds `Y.Text('source')` directly via `y-codemirror.next`. Agent writes are visible in real time without any application-level observer:
 
-1. `App.tsx` subscribes to Y.XmlFragment changes via `onContentChange()` when entering source mode
-2. When an agent write modifies the Y.Doc, the observer fires and serializes the updated content to markdown
-3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
-4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
+1. `applyAgentMarkdownWrite` updates `Y.XmlFragment` and mirrors the canonical markdown to `Y.Text` inside one server-side `doc.transact()` block under `AGENT_WRITE_ORIGIN` (a paired-write origin per AGENTS.md precedent #1).
+2. The Y.Text mutation propagates to every connected client through the standard CRDT sync.
+3. `y-codemirror.next` applies the incoming delta to the CodeMirror buffer with character-level precision — cursor and selection on the local keystroke side are preserved by the binding.
 
-The bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). The server's Observer B (Y.Text → XmlFragment) is ordered after Observer A within each drain and canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `ytext === serialize(fragment)` holds at every settlement point — no debounce window or wall-clock timing is involved. Client-side keystroke protection is not needed on the bridge layer because the client shell does not write the derived CRDT.
+The server's bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). One outermost `doc.transact()` call produces exactly one settlement fire; Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment) within each drain, and Observer B canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` holds at every settlement point. There is no debounce window, no injected `Scheduler`, and no wall-clock timing in either bridge observer file (enforced by the grep gate at `packages/server/src/bridge-no-wallclock.test.ts`).
 
-Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
+Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`) declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent).
 
-## Three-way merge on toggle-back
+Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
 
-When the user toggles back from source to WYSIWYG, a three-way merge (`three-way-merge.ts`) reconciles the user's edits with any concurrent agent writes.
+## Mode toggle (no merge)
 
-### Three versions compared
+The WYSIWYG/source mode toggle is a UI visibility flip, not a serialize-and-merge operation. `EditorActivityPool` mounts both `TiptapEditor` and `SourceEditor` concurrently per active document and uses `display:none` to swap between them. Each editor stays bound to its Y type (`Y.XmlFragment('default')` for TipTap via `Collaboration`; `Y.Text('source')` for CodeMirror via `y-codemirror.next`) for the lifetime of the mount.
 
-- **Base (snapshot):** The markdown captured when entering source mode
-- **Theirs (current Y.Doc):** The Y.Doc's current state, which may include agent writes
-- **Ours (user edits):** The markdown the user edited in CodeMirror
+The server's bidirectional bridge keeps the two Y types continuously in sync, so toggling back from source mode reveals a TipTap view that already reflects every Y.Text edit the user made — no client-side three-way merge runs on toggle. Concurrent agent writes that arrived during a source-mode session are visible to TipTap on toggle-back for the same reason.
 
-### Merge strategy
-
-1. **No user changes:** If the user didn't edit anything, the Y.Doc is left as-is (agent writes fully preserved)
-2. **No agent changes:** If the Y.Doc hasn't changed since the snapshot, the user's edits apply directly
-3. **Both changed (selective merge):**
-   - Agent-added blocks (those beyond the snapshot's paragraph count) are appended to the user's edits
-   - Blocks within the snapshot range that both user and agent modified are conflicts -- user wins
-   - The merged result is applied via `updateYFragment()`
-
-### Conflict resolution
-
-When both the user and an agent modify the same paragraph:
-
-- The user's version wins
-- A warning is logged to the console: `[three-way-merge] Conflict at paragraph N: both user and agent modified. User version wins.`
-- Agent additions to *other* paragraphs are still preserved
+Three-way merge for content preservation has moved to the bridge layer itself: when an inbound CRDT update arrives during local Y.XmlFragment editing, Observer A's Path B uses the hybrid diff3+DMP `mergeThreeWay` algorithm (`@inkeep/open-knowledge-core/bridge`) with a content-preservation post-condition (`assertContentPreservation`). On post-condition violation, the production policy is to (a) emit a structured `bridge-merge-content-loss` log, (b) write a silent named version-history checkpoint via `saveInMemoryCheckpoint` (rendered in `TimelinePanel` so users can recover via the existing Restore UI), and (c) apply the merge as-computed so the editor keeps responding. Dev/test re-throws so integration and fuzz suites fail loudly. See `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R1/R7 for the full contract and `packages/server/src/server-observers.ts` for the wiring.
 
 ## Agent simulator
 

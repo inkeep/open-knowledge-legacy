@@ -116,8 +116,13 @@ exploration as the urgency-calibration signal.
 
 ## 3) Non-goals
 
-- **Collapse to single CRDT** (D4-LOCKED). Moving Y.XmlFragment + Y.Text
-  into a single Yjs type (Peritext via Yjs 14, Automerge `Text`, Loro, or the
+- **Collapse to single CRDT** (D4-LOCKED, evidence-strengthened 2026-04-16 —
+  see Decision Log §D4 update citing `reports/yjs-14-ecosystem-adoption/REPORT.md`:
+  Yjs 14 + Hocuspocus structurally incompatible today; TipTap + Hocuspocus
+  not migrating; BlockNote "design partner" has zero public code progress;
+  dual-view binding gap is ecosystem-universal across Yjs 14 + Loro).
+  Moving Y.XmlFragment + Y.Text into a single Yjs type (Peritext via Yjs 14,
+  Automerge `Text`, Loro, or the
   Rust-spec direction) is the only structurally-correct long-term answer
   per `reports/three-way-merge-content-preservation/REPORT.md` §D3
   (impossibility) + §D5 (single-CRDT as escape mechanism) + Recommendation 4.
@@ -710,6 +715,68 @@ export async function awaitDocQuiescence(doc: Y.Doc, opts?: { timeoutMs?: number
   production data that calibrates urgency of the collapse. Not "deferred
   debt" — it's the next spec, separable by design.
 
+  **D4 evidence update (2026-04-16):** Deep source-traced research published
+  at `reports/yjs-14-ecosystem-adoption/REPORT.md` materially strengthens the
+  LOCKED posture. Key findings that shift the calculus AWAY from near-term
+  collapse:
+
+  - **Yjs 14 + Hocuspocus is structurally incompatible at the import layer.**
+    `lib0` major version split (Hocuspocus ^0.2.x vs @y/* ^1.0.0-rc.x) +
+    different npm package identifiers (`yjs` vs `@y/y`) cannot be resolved
+    via `npm overrides`. Either stay on Hocuspocus + force `yjs@14` via
+    unsupported overrides, OR swap Hocuspocus entirely (~2,000-LOC framework
+    rewrite on `@y/websocket-server@0.1.5`'s 281-LOC starter, which is
+    missing 13 of 17 Hocuspocus features we use).
+  - **TipTap + Hocuspocus are not migrating.** `@tiptap/y-tiptap@3.0.3`
+    shipped 2026-04-08 STILL pinning `yjs ^13.5.38`; `@hocuspocus/server@4.0.0-rc.5`
+    shipped 2026-04-16 STILL pinning `yjs ^13.6.8`. Hocuspocus v4 invented
+    its own typed-origin solution (parallel-implementation signal — they
+    don't plan to wait for v14). Production migration would require forking
+    5 packages (`@tiptap/y-tiptap`, `@tiptap/extension-collaboration`,
+    `@tiptap/extension-collaboration-cursor`, `@tiptap/extension-drag-handle`,
+    `@hocuspocus/server`).
+  - **BlockNote "design partner" has zero public code progress.** Sharpened
+    from the prior "committed design partner" framing via Path C update:
+    `@blocknote/core@0.48.1` published 2026-04-16 still pins `yjs@^13.6.27`,
+    imports no `@y/*` packages, has zero branches named v14/yjs-14/attribution/
+    track-changes/versioning, and zero commits in the last 30 days mention
+    Yjs 14. 2.5 months after the FOSDEM 2026 talk, public code progress = zero.
+    Consequence: "wait 6 months for BlockNote to ship and the ecosystem follows"
+    is no longer a defensible near-term bet.
+  - **Dual-view binding gap is ecosystem-universal, not Yjs-specific.** Both
+    `@y/codemirror@0.0.0-3` (`y-sync.js:209` string cast) AND
+    `loro-codemirror@0.3.3` (`sync.ts:64` non-text filter) bind flat-text
+    only. `loro-prosemirror@0.4.3` requires disjoint `LoroMap<{nodeName,
+    attrs, children}>` shape. SchoolAI/loro-extended has no CM adapter.
+    **Choosing Loro instead of Yjs 14 does NOT unlock single-YType dual-view
+    — it relocates the bridge to different primitives.** Swapping CRDTs
+    doesn't eliminate the architectural work Buckets 0/A/B/C are doing.
+  - **Wire-format interop empirically CONFIRMED** (reduces one migration
+    risk). Harness at `reports/yjs-14-ecosystem-adoption/evidence/wire-format-interop-harness.md`
+    exercised 28 cross-version decode directions (yjs@13.6.30 ↔ @y/y@14.0.0-rc.13),
+    all passed with byte-for-byte round-trip equivalence. Persistence-migration
+    (481-byte doc) loads identical. Sync protocol interop both ways.
+    When collapse time comes, user data on disk is NOT a blocker.
+  - **Maintainer himself flags v14 as broken alpha.** dmonad on issue #751
+    (2025-11-30): "please don't open bug reports against alpha software
+    (x.x.x-*) yet. I know that these releases are broken." `@y/y` at 9,822
+    weekly downloads vs `yjs` at 3.566M (0.275%). Zero of ~60 surveyed
+    production users are on Yjs 14.
+
+  **Net implication for D4:** The collapse is even more clearly a SEPARATE
+  SPEC that should wait until (a) Yjs 14 stable ships (best-guess Q3-Q4 2026),
+  (b) Hocuspocus or a structural equivalent publishes `yjs ^14` peer-dep,
+  (c) BlockNote or another production user ships to npm with `@y/*` deps.
+  Bucket A's post-condition + telemetry remain the right calibration signal.
+  Tactical surprise: an unrelated production bug surfaced during this
+  research — `patches/y-prosemirror@1.3.7.patch` only patches the y-prosemirror
+  node_modules, but our production code imports from `@tiptap/y-tiptap` (a
+  vendored fork, 2250 LOC, unpatched) — the destructive-delete safety net is
+  currently bypassed. Worth a separate story to fix on Yjs 13 today,
+  independent of any migration decision. See
+  `reports/yjs-14-ecosystem-adoption/evidence/y-prosemirror-v1-vs-y-prosemirror-v2-source-diff.md`
+  "patch coverage gap" finding.
+
 - **D5 (LOCKED, evidence-based, HIGH confidence)** — Bucket B Yjs hook:
   **`doc.on('afterAllTransactions', ...)`** (per-drain), not `afterTransaction`
   (per-transaction). Rationale: one Hocuspocus WebSocket message = one
@@ -822,34 +889,36 @@ export async function awaitDocQuiescence(doc: Y.Doc, opts?: { timeoutMs?: number
   = single-CRDT collapse (FW-1). Evidence:
   `reports/three-way-merge-content-preservation/REPORT.md` §D3.
 
+### Resolved during implementation
+
+- **Q4 (PARTIALLY RESOLVED).** US-014 committed the empirical reproduction
+  command + D7 framing preservation to
+  `evidence/seed-1776386718697-post-bucket-0-rate.md`. The full 100× rate
+  characterization is a post-merge observation the user collects from the
+  R9 telemetry feed; D7's residual-framing prediction stands. If
+  post-merge residual is unexpectedly zero, update D7 framing.
+- **Q7 (RESOLVED).** US-004 verified empirically: `parseContributors`
+  (`packages/core/src/shadow-repo-layout.ts`) silently skips unknown
+  body-line prefixes, so `ok-contributors:` and `ok-checkpoint-v1:` coexist
+  on the same commit body. Regression test asserts this in
+  `shadow-repo-layout.test.ts`. Body-line metadata channel locked (D13).
+- **Q8 (RESOLVED).** US-004 verified empirically: 5 concurrent
+  `saveInMemoryCheckpoint` calls each produce a distinct ref. Per-call
+  `randomUUID`-suffixed tmp-index files (`shadow-repo.ts`) isolate index
+  builds; git's ref-update CAS on `update-ref` handles the ref write under
+  contention. No in-process mutex needed.
+- **Q9 (RESOLVED).** Ref namespace locked to `refs/checkpoints/<branch>/<sha>`
+  per US-004 / US-007 — reuses the existing timeline enumeration. R7c's
+  kind-aware TimelinePanel rendering (US-006) provides the visual
+  distinction between `'save'`, `'bridge-merge-loss'`, and
+  `'external-change-rescue'` entries.
+
 ### Active
 
-- **Q4.** Does Bucket 0 close seed `1776386718697`, or does residual RGA-level
-  corruption still produce failures? **Expected answer: residual, per D7**
-  (Bucket 0 is harm reduction). Resolution plan: post-Bucket-0, run
-  `STRESS_FUZZ_SEED=1776386718697` 100× and characterize rate + residual
-  mechanism. Residual characterization feeds SS-1 urgency signal. If the
-  residual is unexpectedly zero: update D7 framing (we were wrong about
-  mechanism).
-- **Q6.** Production rate of `bridge-merge-content-loss` + silent-checkpoint
-  creation post-ship. Answers SS-1 urgency. Resolved by 30-day post-launch
-  observation window.
-- **Q7.** Does `parseContributors` (`packages/core/src/shadow-repo-layout.ts`)
-  tolerate unknown sibling body lines? If yes: `ok-checkpoint-v1:` body-line
-  approach for R7a metadata works (piggyback). If no: use `git notes` or
-  a separate namespace. **Resolution plan**: read the function during R7a
-  implementation; ~5 min verification. Captured as D13.
-- **Q8.** Is `commitWip` safe under concurrent same-process invocation?
-  Separate `tmpIndex` filenames (`shadow-repo.ts:127`) suggest yes at the
-  index level, but git ref-update under contention needs confirmation.
-  **Resolution plan**: verify during R7a implementation; add in-process
-  mutex if unsafe.
-- **Q9.** Ref namespace for in-memory checkpoints:
-  `refs/checkpoints/<branch>/<sha>` (reuses existing timeline enumeration,
-  renders generically until R7c adds distinction), OR `refs/rescue/<branch>/*`
-  (new namespace, requires timeline-query.ts enumeration change). Recommend
-  former — simpler; R7c covers visual distinction. Lock during R7a
-  implementation.
+- **Q6.** Production rate of `bridge-merge-content-loss` +
+  `bridge-merge-checkpoint-created` post-ship. Answers SS-1 urgency.
+  Resolved by 30-day post-launch observation window against the US-013
+  counters (`GET /api/metrics/reconciliation`).
 
 ---
 
