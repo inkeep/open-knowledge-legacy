@@ -168,7 +168,10 @@ describe('R13 @tiptap/y-tiptap schema.text() throw substitution', () => {
     const before = readCounters();
 
     // Act: should not throw; inline catch handles it silently.
-    expect(() => initProseMirrorDoc(fragment, schema)).not.toThrow();
+    let doc: PmNode | undefined;
+    expect(() => {
+      doc = initProseMirrorDoc(fragment, schema).doc;
+    }).not.toThrow();
 
     // Y.Item identity preserved on both the paragraph AND its text child.
     expect(text._item?.deleted).toBe(false);
@@ -179,5 +182,17 @@ describe('R13 @tiptap/y-tiptap schema.text() throw substitution', () => {
     // Inline-context counter bumped by at least 1.
     const after = readCounters();
     expect(after.inline - before.inline).toBeGreaterThanOrEqual(1);
+
+    // Document the inline-skip output shape. When createTextNodesFromYText
+    // returns null (R13 inline catch), createChildren in initProseMirrorDoc
+    // (dist/y-tiptap.js:792-836) skips pushing to the paragraph's children
+    // array — so the paragraph materializes with empty content rather than
+    // with garbage, a failed node, or a tombstoned text. This is the
+    // inline-context equivalent of the block-context shape assertions above.
+    expect(doc).toBeDefined();
+    expect(doc?.childCount).toBe(1);
+    expect(doc?.child(0).type.name).toBe('paragraph');
+    expect(doc?.child(0).childCount).toBe(0);
+    expect(doc?.child(0).textContent).toBe('');
   });
 });
