@@ -332,6 +332,44 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
+export type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
+
+/**
+ * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.
+ *
+ * Used by the `clone` auto-init path: when we scaffold OK into a repo that
+ * wasn't already using it, the local `.open-knowledge/` is per-user editor
+ * config and shouldn't be committed back upstream. This is deliberately NOT
+ * called by `ok init` — there the user is opting into OK for their own
+ * project and config.yml / AGENTS.md are meant to be tracked.
+ *
+ * Idempotent: recognizes the common variants (`.open-knowledge`,
+ * `.open-knowledge/`, leading-slash rooted forms) and only appends when
+ * none are present. Creates the file if missing.
+ */
+export function ensureOkGitignoredAtRoot(projectDir: string): GitignoreEntryAction {
+  const gitignorePath = join(projectDir, '.gitignore');
+  const block = `# Open Knowledge — local editor config (not tracked upstream)\n${OK_DIR}/\n`;
+
+  if (!existsSync(gitignorePath)) {
+    writeFileSync(gitignorePath, block, 'utf-8');
+    return 'created';
+  }
+
+  const existing = readFileSync(gitignorePath, 'utf-8');
+  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
+  const alreadyPresent = existing
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => variants.has(line));
+  if (alreadyPresent) return 'already-present';
+
+  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  const leadingBlank = existing.length > 0 && !existing.endsWith('\n\n') ? '\n' : '';
+  writeFileSync(gitignorePath, `${existing}${separator}${leadingBlank}${block}`, 'utf-8');
+  return 'appended';
+}
+
 /** Static files scaffolded into the open-knowledge directory. */
 const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
   { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },

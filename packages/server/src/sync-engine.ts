@@ -391,6 +391,29 @@ export class SyncEngine {
       this.pausedReason = undefined;
       this.error = undefined;
     }
+    // Log why a trigger is a no-op so "Sync now returns OK but nothing happens"
+    // is diagnosable from the server terminal. The cycle guards at lines 520-525
+    // and 626-633 silently early-return in these states; surface them here.
+    if (
+      this.state === 'dormant' ||
+      this.state === 'disabled' ||
+      this.state === 'conflict' ||
+      this.state === 'auth-error'
+    ) {
+      log.warn(
+        {
+          op,
+          state: this.state,
+          syncEnabled: this.syncEnabled,
+          hasRemote: this.hasRemote,
+          pausedReason: this.pausedReason,
+          conflictCount: this.conflictCount,
+        },
+        `[sync] trigger(${op}) ignored — state=${this.state}`,
+      );
+    } else {
+      log.info({ op, state: this.state }, `[sync] trigger(${op}) running`);
+    }
     if (op === 'push') {
       await this.runPushCycle();
     } else if (op === 'pull') {
@@ -746,6 +769,13 @@ export class SyncEngine {
         if (headTreeSha && headTreeSha === newTreeSha) {
           // Nothing to commit — mark this cycle's SHA as last-pushed so subsequent
           // no-op cycles short-circuit via the same path and the UI settles.
+          // Logged so "Sync now returns OK but nothing happens" is diagnosable:
+          // user edits still in the persistence debounce (default 2s) haven't
+          // landed on disk yet, or the edited path is filtered out.
+          log.info(
+            { contentFileCount: contentFiles.length, headSha },
+            '[sync] push cycle: nothing to commit (tree unchanged)',
+          );
           this.lastPushedSha = headSha;
           this.transitionTo('idle');
           return;
