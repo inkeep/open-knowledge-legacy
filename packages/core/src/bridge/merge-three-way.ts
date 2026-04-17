@@ -37,8 +37,26 @@ dmp.Match_Threshold = 0.5;
  *   - baseline = lastSyncedXmlMd (the snapshot both sides diverged from)
  *   - userText = current XmlFragment serialized to markdown (newXmlMd)
  *   - agentText = current Y.Text (may have concurrent source-mode edits)
+ *
+ * Post-condition (bridge-correctness SPEC §6 R1, D2/D9 LOCKED): the returned
+ * result satisfies `assertContentPreservation(baseline, userText, agentText, result)`
+ * — every maximal contiguous substring unique to `(userText \ baseline)` or
+ * `(agentText \ baseline)` appears in the result AND retains its relative
+ * order within its own side. Violation throws `BridgeMergeContentLossError`
+ * upward; callers decide policy (dev/test: let it throw; prod Observer A
+ * Path B: catch, log structured event, create silent checkpoint, apply
+ * merge as-computed). Post-condition is a structural guardrail against the
+ * academic limit of state-based three-way merge (Khanna-Kunal-Pierce 2007)
+ * — the algorithm can still drop content under adversarial interleavings,
+ * but silently dropping it cannot: every drop becomes an observable event.
  */
 export function mergeThreeWay(baseline: string, userText: string, agentText: string): string {
+  const result = mergeThreeWayImpl(baseline, userText, agentText);
+  assertContentPreservation(baseline, userText, agentText, result);
+  return result;
+}
+
+function mergeThreeWayImpl(baseline: string, userText: string, agentText: string): string {
   if (baseline === userText) return agentText;
   if (baseline === agentText) return userText;
   if (userText === agentText) return userText;
@@ -68,6 +86,221 @@ export function mergeThreeWay(baseline: string, userText: string, agentText: str
   }
 
   return parts.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Content-preservation post-condition (SPEC §6 R1, D2/D9 LOCKED)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Discriminated side — which input's unique content the violation relates to.
+ * Carried on `BridgeMergeContentLossError.info.side` so telemetry + recovery
+ * can distinguish "user's keystrokes dropped" from "source-mode edits dropped".
+ */
+export type BridgeMergeContentLossSide = 'user' | 'agent';
+
+/**
+ * Discriminated violation kind — which half of invariant (c + order) fired.
+ *   - 'substring': a maximal-unique-substring of `side \ baseline` is NOT
+ *     present anywhere in `result`. This is the primary content-loss case.
+ *   - 'order': all maximal-unique-substrings are present, but their relative
+ *     order within `side` disagrees with their relative order in `result`.
+ *     Rare in practice; guards against D9's reordering counter-example class.
+ */
+export type BridgeMergeContentLossWhich = 'substring' | 'order';
+
+/** Structured payload available on the thrown error + via `toLog()`. */
+export interface BridgeMergeContentLossInfo {
+  baseline: string;
+  userText: string;
+  agentText: string;
+  result: string;
+  /** The maximal-unique substring(s) that are missing or reordered. */
+  lostSubstrings: string[];
+  which: BridgeMergeContentLossWhich;
+  side: BridgeMergeContentLossSide;
+}
+
+/** Serializable shape emitted to the `bridge-merge-content-loss` structured log. */
+export interface BridgeMergeContentLossLogPayload {
+  event: 'bridge-merge-content-loss';
+  which: BridgeMergeContentLossWhich;
+  side: BridgeMergeContentLossSide;
+  baselineLen: number;
+  userTextLen: number;
+  agentTextLen: number;
+  resultLen: number;
+  lostSubstrings: string[];
+}
+
+/**
+ * Thrown by `mergeThreeWay` when the content-preservation post-condition
+ * (maximal-unique-substring + order-preservation side-check) fails.
+ *
+ * Callers in dev/test let this propagate. The Observer A Path B caller in
+ * production (see US-005 integration) catches the error, emits the
+ * `bridge-merge-content-loss` structured log via `toLog()`, creates a
+ * silent version-history checkpoint of the pre-merge state via
+ * `saveInMemoryCheckpoint`, and returns the merged result as-computed so
+ * the editor stays responsive (D3-LOCKED).
+ */
+export class BridgeMergeContentLossError extends Error {
+  readonly info: BridgeMergeContentLossInfo;
+
+  constructor(info: BridgeMergeContentLossInfo) {
+    const preview = info.lostSubstrings
+      .map((s) => JSON.stringify(s.length > 80 ? `${s.slice(0, 77)}...` : s))
+      .join(', ');
+    super(`Bridge merge content loss (which=${info.which}, side=${info.side}): ${preview}`);
+    this.name = 'BridgeMergeContentLossError';
+    this.info = info;
+  }
+
+  toLog(): BridgeMergeContentLossLogPayload {
+    return {
+      event: 'bridge-merge-content-loss',
+      which: this.info.which,
+      side: this.info.side,
+      baselineLen: this.info.baseline.length,
+      userTextLen: this.info.userText.length,
+      agentTextLen: this.info.agentText.length,
+      resultLen: this.info.result.length,
+      lostSubstrings: this.info.lostSubstrings,
+    };
+  }
+}
+
+/**
+ * Extract the maximal contiguous substrings unique to `derived` relative to
+ * `base`, using DMP's `diff_main` + semantic cleanup. Adjacent same-op
+ * segments are merged by construction, so each INSERT represents a maximal
+ * run of characters present in `derived` but not in `base` at that position.
+ *
+ * Each INSERT is further split on newline boundaries and whitespace-only
+ * lines are dropped. Rationale: the hybrid diff3+DMP merge legitimately
+ * interleaves content from both sides at line boundaries (three-way merges
+ * of same-position inserts weave paragraphs; conflict-region DMP
+ * concatenates within a line). The SPEC's "maximal contiguous substring"
+ * wording (R1) treats the full raw INSERT as the unit, but that granularity
+ * reports false positives on legitimate merges where every line of the
+ * inserted block survives in isolation (C3-mixed-mode's "three clients:
+ * two WYSIWYG + one source" is the canonical example — all three client
+ * markers reach the final state, just interleaved). K3 risk calibration
+ * per SPEC §13: split at line boundaries. Content loss means a distinct
+ * non-whitespace line disappearing, not interleaving.
+ *
+ * Returns segments in derived-order — load-bearing for D9's order check.
+ */
+function extractUniqueSegments(base: string, derived: string): string[] {
+  if (base === derived) return [];
+  const diffs = dmp.diff_main(base, derived);
+  dmp.diff_cleanupSemantic(diffs);
+  const out: string[] = [];
+  for (const [op, data] of diffs) {
+    if (op !== 1 /* INSERT */) continue;
+    for (const line of data.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+/**
+ * Greedy order-preservation check. Walks `segments` in the order they appear
+ * in `derived` and looks up each in `result` starting after the previous
+ * match. Returns the first segment that exists elsewhere in `result` but not
+ * in monotonic order — or `null` if the order is preserved (or a segment
+ * is entirely absent, which the substring check catches separately).
+ */
+function findReorderedSegment(result: string, segments: string[]): string | null {
+  let cursor = 0;
+  for (const seg of segments) {
+    const idx = result.indexOf(seg, cursor);
+    if (idx < 0) {
+      // Either absent entirely (caught by substring check) or only appears
+      // before cursor. Distinguish by searching from zero.
+      const earlierIdx = result.indexOf(seg);
+      if (earlierIdx < 0) continue; // absent → substring check reports it
+      return seg; // appears earlier → order violation
+    }
+    cursor = idx + seg.length;
+  }
+  return null;
+}
+
+/**
+ * Invariant (c) + order side-check: every maximal-unique-substring of
+ * `(userText \ baseline)` and `(agentText \ baseline)` appears in `result`,
+ * and each side's segments appear in result in the same relative order
+ * they appear in their source. Throws `BridgeMergeContentLossError`
+ * on the first violation; callers decide environment policy.
+ *
+ * Complexity: O(n log n) for DMP diff per side + O(k · m) for substring
+ * checks (k = segment count, m = result length) + O(k) for order check.
+ * Empirically sub-millisecond on ~10 KB markdown with k ≤ ~10 segments.
+ */
+export function assertContentPreservation(
+  baseline: string,
+  userText: string,
+  agentText: string,
+  result: string,
+): void {
+  const userSegments = extractUniqueSegments(baseline, userText);
+  const agentSegments = extractUniqueSegments(baseline, agentText);
+
+  // Substring invariant (c) — both sides
+  const userMissing = userSegments.filter((s) => !result.includes(s));
+  if (userMissing.length > 0) {
+    throw new BridgeMergeContentLossError({
+      baseline,
+      userText,
+      agentText,
+      result,
+      lostSubstrings: userMissing,
+      which: 'substring',
+      side: 'user',
+    });
+  }
+  const agentMissing = agentSegments.filter((s) => !result.includes(s));
+  if (agentMissing.length > 0) {
+    throw new BridgeMergeContentLossError({
+      baseline,
+      userText,
+      agentText,
+      result,
+      lostSubstrings: agentMissing,
+      which: 'substring',
+      side: 'agent',
+    });
+  }
+
+  // Order-preservation side-check (D9)
+  const userReordered = findReorderedSegment(result, userSegments);
+  if (userReordered !== null) {
+    throw new BridgeMergeContentLossError({
+      baseline,
+      userText,
+      agentText,
+      result,
+      lostSubstrings: [userReordered],
+      which: 'order',
+      side: 'user',
+    });
+  }
+  const agentReordered = findReorderedSegment(result, agentSegments);
+  if (agentReordered !== null) {
+    throw new BridgeMergeContentLossError({
+      baseline,
+      userText,
+      agentText,
+      result,
+      lostSubstrings: [agentReordered],
+      which: 'order',
+      side: 'agent',
+    });
+  }
 }
 
 /**

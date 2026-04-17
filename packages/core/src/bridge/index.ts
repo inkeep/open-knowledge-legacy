@@ -10,6 +10,14 @@
 export { applyFastDiff, applyIncrementalDiff } from './apply-diff.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export { getFrontmatter } from './frontmatter-y.ts';
-export { mergeThreeWay } from './merge-three-way.ts';
+export {
+  assertContentPreservation,
+  BridgeMergeContentLossError,
+  type BridgeMergeContentLossInfo,
+  type BridgeMergeContentLossLogPayload,
+  type BridgeMergeContentLossSide,
+  type BridgeMergeContentLossWhich,
+  mergeThreeWay,
+} from './merge-three-way.ts';
 export { normalizeBridge } from './normalize.ts';
 export { defaultScheduler, type Scheduler } from './scheduler.ts';
