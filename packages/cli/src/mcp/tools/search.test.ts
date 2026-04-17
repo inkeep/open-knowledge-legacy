@@ -3,20 +3,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { Config } from '../../config/schema.ts';
+import simpleGit from 'simple-git';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { buildSearchResult } from './search.ts';
 
-const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-  server: { port: 3000, host: 'localhost', openOnAgentEdit: false },
-  persistence: { debounceMs: 2000, maxDebounceMs: 10000 },
-  mcp: {
-    tools: {
-      read_document: { historyDepth: 5 },
-      search: { maxResults: 50 },
-    },
-  },
-};
+const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
 let tmpDir: string;
 let originalEnv: string | undefined;
@@ -36,6 +27,124 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
+async function bootstrap(): Promise<string> {
+  const project = resolve(tmpDir, 'project');
+  mkdirSync(project, { recursive: true });
+  const git = simpleGit(project);
+  await git.init();
+  await git.raw('config', 'user.name', 'Test');
+  await git.raw('config', 'user.email', 't@t.test');
+  writeFileSync(resolve(project, 'README.md'), '# probe\n');
+  await git.add('README.md');
+  await git.commit('init');
+  return project;
+}
+
+describe('search — folder-rule flow-through (US-005)', () => {
+  test('search results include folder-rule-derived tags', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n\nsearchterm is in the body\n');
+
+    const config: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { tags: ['spec'] } }],
+    });
+
+    const { text: result } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config },
+    );
+
+    expect(result).toContain('specs/foo.md');
+    expect(result).toContain('Tags: spec');
+  });
+
+  test('folder-rule title appears in search result heading when file has no title', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), 'searchterm in body, no frontmatter\n');
+
+    const config: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specifications', description: 'Spec docs' },
+        },
+      ],
+    });
+
+    const { text: result } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config },
+    );
+
+    expect(result).toContain('### Specifications (specs/foo.md)');
+    expect(result).toContain('Spec docs');
+  });
+
+  test('file title wins over folder-rule title for scalar precedence', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '---\ntitle: File Title\n---\n\nsearchterm here\n');
+
+    const config: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { title: 'Folder Title' } }],
+    });
+
+    const { text: result } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config },
+    );
+
+    expect(result).toContain('### File Title (specs/foo.md)');
+    expect(result).not.toContain('Folder Title');
+  });
+
+  test('folder-rule tags concatenate with file tags and dedup', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(
+      resolve(specs, 'foo.md'),
+      '---\ntitle: Foo\ntags:\n  - wip\n  - spec\n---\n\nsearchterm here\n',
+    );
+
+    const config: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { tags: ['spec', 'architecture'] } }],
+    });
+
+    const { text: result } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config },
+    );
+
+    expect(result).toContain('Tags: spec, architecture, wip');
+  });
+
+  test('empty folders config behaves identically to no folders block (backwards compat)', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(
+      resolve(specs, 'foo.md'),
+      '---\ntitle: File Title\ntags:\n  - wip\n---\n\nsearchterm here\n',
+    );
+
+    const { text: result } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    );
+
+    expect(result).toContain('### File Title (specs/foo.md)');
+    expect(result).toContain('Tags: wip');
+    expect(result).not.toContain('Folder');
+    expect(result).not.toContain('spec,');
+  });
+});
+
 describe('search — previewUrl + ui block', () => {
   test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
@@ -45,7 +154,7 @@ describe('search — previewUrl + ui block', () => {
 
     const { structured } = await buildSearchResult(
       { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: BASE_CONFIG, serverUrl: undefined },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
     );
     expect(structured).toBeTruthy();
     expect(structured?.matchCount).toBe(2);
@@ -64,7 +173,7 @@ describe('search — previewUrl + ui block', () => {
 
     const { structured } = await buildSearchResult(
       { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: BASE_CONFIG, serverUrl: undefined },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
     );
     expect(structured?.results[0]?.previewUrl).toBeNull();
     expect(structured?.ui.baseUrl).toBeNull();
@@ -76,7 +185,7 @@ describe('search — previewUrl + ui block', () => {
 
     const { text, structured } = await buildSearchResult(
       { query: 'needle' },
-      { resolveCwd: async () => tmpDir, config: BASE_CONFIG, serverUrl: undefined },
+      { resolveCwd: async () => tmpDir, config: DEFAULT_CONFIG, serverUrl: undefined },
     );
     expect(text).toContain('No matches');
     expect(structured?.matchCount).toBe(0);

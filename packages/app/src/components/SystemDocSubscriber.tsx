@@ -110,6 +110,31 @@ export function SystemDocSubscriber() {
     provider.awareness?.on('change', handleAwarenessChange);
     providerRef.current = provider;
 
+    // DEV-only test hook: inject a fake agent-focus awareness state as if a
+    // remote peer (the "agent") is focusing on a different doc. Fires the
+    // awareness 'change' event which triggers the debounced nav check. The
+    // fake state uses a fixed clientID (999999) that will never collide with
+    // real clients. No encode/decode round-trip needed — we poke the internal
+    // states map directly since this runs in the same JS context.
+    if (import.meta.env.DEV) {
+      window.__test_injectAgentFocus = (docName: string) => {
+        const awareness = provider.awareness;
+        if (!awareness) return false;
+        const fakeClientId = 999999;
+        const fakeState = {
+          agentFocus: {
+            'test-agent': {
+              currentDoc: docName,
+              ts: Date.now(),
+            },
+          },
+        };
+        awareness.states.set(fakeClientId, fakeState);
+        awareness.emit('change', [{ added: [fakeClientId], updated: [], removed: [] }, 'test']);
+        return true;
+      };
+    }
+
     return () => {
       unsubscribe();
       if (debounceTimer !== null) clearTimeout(debounceTimer);
@@ -117,6 +142,9 @@ export function SystemDocSubscriber() {
       provider.destroy();
       doc.destroy();
       providerRef.current = null;
+      if (import.meta.env.DEV) {
+        delete (window as { __test_injectAgentFocus?: unknown }).__test_injectAgentFocus;
+      }
     };
   }, [queryClient, collabUrl]);
 

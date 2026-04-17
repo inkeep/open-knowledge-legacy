@@ -29,7 +29,7 @@ createRoot(root).render(
         <TooltipProvider>
           <App />
         </TooltipProvider>
-        <Toaster />
+        <Toaster richColors />
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,

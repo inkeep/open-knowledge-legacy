@@ -1,5 +1,25 @@
 import { z } from 'zod';
 
+export const FolderFrontmatterSchema = z
+  .object({
+    title: z.string().optional(),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const FolderRuleSchema = z
+  .object({
+    match: z
+      .string()
+      .min(1, "`match` must be a non-empty glob pattern (e.g. 'specs/**' or 'reports/*/**')"),
+    frontmatter: FolderFrontmatterSchema,
+  })
+  .strict();
+
+export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
+export type FolderRule = z.infer<typeof FolderRuleSchema>;
+
 export const ConfigSchema = z.object({
   content: z
     .object({
@@ -36,6 +56,7 @@ export const ConfigSchema = z.object({
       baseUrl: z.url().optional(),
     })
     .default({}),
+  folders: z.array(FolderRuleSchema).default([]),
   mcp: z
     .object({
       // Controls whether `ok mcp` detach-spawns `ok start` when `server.lock`

@@ -54,22 +54,33 @@ describe('Guard self-consistency', () => {
   );
 
   test(
-    'protectFromMdx output has no unmatched literal {',
+    'protectFromMdx output has no unmatched, unescaped literal {',
     () => {
       fc.assert(
         fc.property(nonPuaString, (s) => {
           const protected_ = protectFromMdx(s);
-          // Count literal { and } (not PUA sentinels)
+          // Count literal { and } (not PUA sentinels). US-009 (R6a) widened
+          // the invariant: braces preceded by an odd number of backslashes
+          // are CommonMark-escaped and remark-parse consumes the escape, so
+          // they don't need PUA protection (and must NOT be protected —
+          // protecting defeats the escape and causes safeText cumulation).
+          //
+          // We ignore escaped braces in the depth count: the post-fix
+          // invariant is "no unmatched, UNESCAPED literal { remains."
           let depth = 0;
-          for (const ch of protected_) {
+          for (let i = 0; i < protected_.length; i++) {
+            const ch = protected_[i];
+            if (ch !== '{' && ch !== '}') continue;
+            // Count preceding backslashes; odd = escaped → ignore.
+            let bs = 0;
+            for (let j = i - 1; j >= 0 && protected_[j] === '\\'; j--) bs++;
+            if (bs % 2 === 1) continue;
             if (ch === '{') depth++;
-            else if (ch === '}') {
+            else {
               depth--;
               if (depth < 0) depth = 0;
             }
           }
-          // All remaining { should be matched (depth === 0)
-          // or there shouldn't be any literal { at all
           expect(depth).toBe(0);
         }),
         { numRuns: NUM_RUNS, seed: 42 },

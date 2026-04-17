@@ -130,7 +130,12 @@ export async function buildReadResult(
     readFile(abs, 'utf-8'),
     enrichPath(
       relPath,
-      { projectDir: cwd, serverUrl: resolvedServerUrl, historyDepth },
+      {
+        projectDir: cwd,
+        serverUrl: resolvedServerUrl,
+        historyDepth,
+        folderRules: deps.config.folders,
+      },
       { includeRichFields: true },
     ),
   ]);

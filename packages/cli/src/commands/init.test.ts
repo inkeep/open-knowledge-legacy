@@ -526,6 +526,77 @@ describe('runInit', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Per-editor instruction file injection (from main)
+  // -----------------------------------------------------------------------
+
+  describe('per-editor instruction file injection', () => {
+    it('writes CLAUDE.md when claude editor is selected', () => {
+      const result = runInit({ cwd: testDir, editors: ['claude'] });
+
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
+      expect(readFileSync(join(testDir, 'CLAUDE.md'), 'utf-8')).toContain(
+        '<!-- open-knowledge:begin -->',
+      );
+      const agentsEntry = result.rootInstructions.find((r) => r.file === 'AGENTS.md');
+      const claudeEntry = result.rootInstructions.find((r) => r.file === 'CLAUDE.md');
+      expect(agentsEntry?.action).toBe('created');
+      expect(claudeEntry?.action).toBe('created');
+    });
+
+    it('writes .cursorrules when cursor editor is selected', () => {
+      const result = runInit({ cwd: testDir, mcp: false, editors: ['cursor'] });
+
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
+      expect(readFileSync(join(testDir, '.cursorrules'), 'utf-8')).toContain(
+        '<!-- open-knowledge:begin -->',
+      );
+      expect(result.rootInstructions.find((r) => r.file === '.cursorrules')?.action).toBe(
+        'created',
+      );
+    });
+
+    it('writes .windsurfrules when windsurf editor is selected', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+      const result = runInit({ cwd: testDir, mcp: false, editors: ['windsurf'], home: fakeHome });
+
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
+      expect(readFileSync(join(testDir, '.windsurfrules'), 'utf-8')).toContain(
+        '<!-- open-knowledge:begin -->',
+      );
+      expect(result.rootInstructions.find((r) => r.file === '.windsurfrules')?.action).toBe(
+        'created',
+      );
+    });
+
+    it('writes no extra instruction files for vscode (no instructionsPath)', () => {
+      const result = runInit({ cwd: testDir, mcp: false, editors: ['vscode'] });
+
+      // Only AGENTS.md — vscode has no instructionsPath
+      expect(result.rootInstructions).toHaveLength(1);
+      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
+      expect(existsSync(join(testDir, '.vscoderules'))).toBe(false);
+    });
+
+    it('writes all per-editor files for claude + cursor + windsurf', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+      const result = runInit({
+        cwd: testDir,
+        mcp: false,
+        editors: ['claude', 'cursor', 'windsurf'],
+        home: fakeHome,
+      });
+
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
+      expect(result.rootInstructions).toHaveLength(4); // AGENTS.md + CLAUDE.md + .cursorrules + .windsurfrules
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Content preview integration (US-002)
   // -----------------------------------------------------------------------
 

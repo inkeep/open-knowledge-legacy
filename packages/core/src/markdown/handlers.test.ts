@@ -147,6 +147,79 @@ describe('Tier B fidelity: list markers', () => {
   });
 });
 
+describe('Tier B fidelity: listItem PM-schema artifact stripping (R6d / US-011)', () => {
+  // PM `listItem` content schema is `paragraph block*`. When source mdast has
+  // a non-paragraph first child (e.g. `code`), `nodeType.createAndFill`
+  // synthesizes an empty paragraph so the PM doc validates. The PM→mdast
+  // handler must strip that synthetic paragraph so the listItem round-trips
+  // back to its original mdast shape — otherwise the empty paragraph emits
+  // as `""` between the marker and the first real block, producing
+  // `1. \n\n   ```...` which CommonMark refuses to interpret as list
+  // continuation, escaping the first block from the listItem on re-parse.
+  // Regression: CommonMark Lists section example index 23
+  // (`"1. ```\n   foo\n   ```\n\n   bar\n"`).
+
+  test('listItem with code as first child round-trips byte-identically', () => {
+    const input = '1. ```\n   foo\n   ```\n\n   bar\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+    expect(r1).toBe(input);
+  });
+
+  test('listItem with code as only child round-trips byte-identically', () => {
+    const input = '1. ```\n   foo\n   ```\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+    expect(r1).toBe(input);
+  });
+
+  test('listItem with paragraph first stays unchanged (no spurious strip)', () => {
+    const input = '1. foo\n\n   ```\n   bar\n   ```\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+    expect(r1).toBe(input);
+  });
+
+  test('genuinely empty listItem (single empty para child) is preserved', () => {
+    // `1.\n` parses to a list with one empty listItem. The single-child
+    // empty paragraph is the listItem's own content, not a synthesized
+    // artifact, so the strip rule must NOT fire (children.length === 1).
+    const input = '1.\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+    // Verify the listItem is preserved (with its emptiness)
+    const json = mdManager.parse(input);
+    const listItem = findInJson(json, 'listItem');
+    expect(listItem).toBeDefined();
+  });
+
+  test('listItem with thematicBreak as first child round-trips', () => {
+    // Another non-paragraph block first child to confirm fix is general.
+    const input = '1. ---\n\n   foo\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+  });
+
+  test('listItem with blockquote as first child round-trips', () => {
+    const input = '1. > foo\n   > bar\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+  });
+
+  test('nested listItem with code block round-trips', () => {
+    const input = '1. - ```\n     foo\n     ```\n\n     bar\n';
+    const r1 = mdManager.serialize(mdManager.parse(input));
+    const r2 = mdManager.serialize(mdManager.parse(r1));
+    expect(r1).toBe(r2);
+  });
+});
+
 describe('Tier C: link style', () => {
   test('inline link carries linkStyle = "inline"', () => {
     const json = mdManager.parse('[text](https://example.com)\n');

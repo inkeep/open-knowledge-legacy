@@ -26,7 +26,13 @@ cd your-project
 npx @inkeep/open-knowledge init
 ```
 
-This scaffolds the `.open-knowledge/` directory structure, writes MCP configs for every detected editor, and prints a content preview showing which files the watcher will track.
+When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
+
+1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root).
+2. Registers the MCP server in each editor's config file at the correct per-editor path (table below).
+3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
+4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
+5. Prints a content preview showing which files the watcher will track.
 
 `init` writes to the correct per-editor path for every editor whose config directory exists on your machine:
 
@@ -52,20 +58,25 @@ Each MCP entry looks like this (using `npx` as the runner):
 
 `init` also writes a `.claude/launch.json` so Claude Code's preview pane can spawn the editor via `preview_start("open-knowledge")` — `runtimeArgs` points at `['@inkeep/open-knowledge', 'ui']` with `autoPort: true`.
 
-The command is idempotent -- safe to run again without side effects. Flags:
+The command is idempotent — safe to run again without side effects. Flags:
 
 - `--editor <name1,name2>` or `--editor all` — override the detected set.
-- `--force` — overwrite existing entries in the config files above.
+- `--force` — overwrite existing entries (including the Open Knowledge section in `AGENTS.md` and per-editor instruction files).
 - `--no-mcp` — skip writing MCP config entries entirely.
+
+**Upgrading an existing project:** if you ran `init` before, the `AGENTS.md` marker block is already present and `init` skips it by default. Run `open-knowledge init --force` to refresh the injected section with the latest agent instructions.
 </Step>
 
 </Steps>
 
-## Start the editor
+## The editor starts automatically
+
+You don't need to start the editor manually. When a connected agent is about to make edits, it calls `preview_start("open-knowledge")` — which starts the [[server]] and opens the browser for you. Changes stream live into the editor as the agent writes.
+
+If you want to open the editor yourself:
 
 ```bash
-npx @inkeep/open-knowledge start
-npx @inkeep/open-knowledge start --open  # also opens the editor in your browser
+npx @inkeep/open-knowledge start --open
 ```
 
 `ok start` runs the Hocuspocus collab server on a kernel-allocated port and auto-spawns `ok ui` — a sibling process that serves the React editor at `http://localhost:3000`. The `--open` flag opens that UI in your default browser.
@@ -131,15 +142,17 @@ The agent now has access to three workflow tools:
 
 ```
 .open-knowledge/
-  articles/          — Canonical knowledge articles
-  external-sources/  — Ingested reference material
-  research/          — Exploratory findings
-  cache/             — Derived data (gitignored)
-  catalogs/          — Auto-generated indexes (created when agents connect)
-  AGENTS.md          — Navigation guide for AI agents
-  config.yml         — Workspace configuration overrides
+  AGENTS.md          — Navigation guide for AI agents (tool usage, linking conventions)
+  config.yml         — Workspace config (content dir, include/exclude globs, server port)
   .gitignore         — Excludes cache/
+  cache/             — Derived data (gitignored)
+AGENTS.md            — Root agent instructions with Open Knowledge section injected
+.mcp.json            — MCP server entry for open-knowledge
+.claude/
+  launch.json        — Tells Claude Code how to start the editor via preview_start
 ```
+
+Content directories (`articles/`, `research/`, etc.) are not pre-created — organize your knowledge wherever makes sense for the project. The agent creates files as it works.
 
 ## Preview content scope
 

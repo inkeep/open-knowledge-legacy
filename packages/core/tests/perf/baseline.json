@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-04-16T08:28:01.616Z",
+  "runnerClass": "local-m-series-calibration",
+  "calibrationRuns": 4,
+  "threshold": {
+    "floorPct": 0.1,
+    "varianceMultiplier": 2
+  },
+  "results": [
+    {
+      "blockCount": 100,
+      "docSizeChars": 20293,
+      "parseMs": {
+        "p99": 9.69,
+        "p99StdevMs": 0.89
+      },
+      "serializeMs": {
+        "p99": 2.29,
+        "p99StdevMs": 0.15
+      },
+      "roundTripMs": {
+        "p99": 11,
+        "p99StdevMs": 0.77
+      }
+    },
+    {
+      "blockCount": 1000,
+      "docSizeChars": 194243,
+      "parseMs": {
+        "p99": 99.33,
+        "p99StdevMs": 4.27
+      },
+      "serializeMs": {
+        "p99": 17.4,
+        "p99StdevMs": 0.62
+      },
+      "roundTripMs": {
+        "p99": 120.79,
+        "p99StdevMs": 2.19
+      }
+    },
+    {
+      "blockCount": 5000,
+      "docSizeChars": 952068,
+      "parseMs": {
+        "p99": 572.03,
+        "p99StdevMs": 17.96
+      },
+      "serializeMs": {
+        "p99": 112.43,
+        "p99StdevMs": 1.22
+      },
+      "roundTripMs": {
+        "p99": 679.7,
+        "p99StdevMs": 4.84
+      }
+    },
+    {
+      "blockCount": 10000,
+      "docSizeChars": 1902300,
+      "parseMs": {
+        "p99": 1275.24,
+        "p99StdevMs": 16.05
+      },
+      "serializeMs": {
+        "p99": 254,
+        "p99StdevMs": 4.63
+      },
+      "roundTripMs": {
+        "p99": 1568.6,
+        "p99StdevMs": 18.07
+      }
+    },
+    {
+      "blockCount": 20000,
+      "docSizeChars": 3837177,
+      "parseMs": {
+        "p99": 3525.58,
+        "p99StdevMs": 26.51
+      },
+      "serializeMs": {
+        "p99": 682.36,
+        "p99StdevMs": 17.61
+      },
+      "roundTripMs": {
+        "p99": 4242.75,
+        "p99StdevMs": 57.19
+      }
+    }
+  ]
+}

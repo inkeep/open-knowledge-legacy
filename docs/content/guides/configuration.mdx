@@ -24,7 +24,7 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | --------------------------- | ---------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `content.dir`               | `string`   | `"."`                     | Content directory relative to project root                                                                                                                                                           |
 | `content.include`           | `string[]` | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
-| `content.exclude`           | `string[]` | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore)                                                                                                            |
+| `content.exclude`           | `string[]` | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore). See built-in skips below.                                                                                 |
 | `server.port`               | `number`   | `0`                       | Collab server port. `0` asks the kernel for a free port; the resolved value is written to `server.lock` for MCP discovery. Set an explicit value (e.g. `3000`) to bind a well-known port.            |
 | `server.host`               | `string`   | `"localhost"`             | Server bind address                                                                                                                                                                                  |
 | `server.openOnAgentEdit`    | `boolean`  | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
@@ -32,6 +32,19 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | `persistence.maxDebounceMs` | `number`   | `10000`                   | Maximum wait before forced flush to disk (ms)                                                                                                                                                        |
 | `mcp.autoStart`             | `boolean`  | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
 | `preview.baseUrl`           | `string?`  | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting.                                     |
+
+## Built-in directory skips
+
+The following directories are always excluded from traversal regardless of `.gitignore` or `content.exclude` config. They are never user-authored content, and some (notably `node_modules` with pnpm) contain broken symlinks that would crash the file walker.
+
+| Category | Directories |
+|----------|-------------|
+| Package managers / runtimes | `node_modules`, `.venv`, `venv`, `env`, `__pycache__`, `vendor` |
+| Build output | `dist`, `build`, `out`, `output`, `.next`, `.nuxt`, `.svelte-kit`, `.astro` |
+| Tool caches | `.turbo`, `.cache`, `.parcel-cache`, `coverage` |
+| VCS | `.git` |
+
+These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `content.exclude` patterns.
 
 ## Example configs
 

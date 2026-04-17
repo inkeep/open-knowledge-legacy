@@ -3,6 +3,7 @@
  */
 
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import * as fc from 'fast-check';
 
 export const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -31,3 +32,28 @@ export const NUM_RUNS = process.env.STRESS_FIDELITY === '1' ? 10_000 : 1_000;
  * per-iteration cost and fast-check shrinking overhead on counterexamples.
  */
 export const PBT_TIMEOUT_MS = process.env.STRESS_FIDELITY === '1' ? 90_000 : 30_000;
+
+/**
+ * Cross-seed coverage for handler PBTs.
+ *
+ * Fixed-seed PBT is effectively a fixed corpus — regressions whose smallest
+ * counterexample isn't reachable from seed 42's sample path stay green
+ * forever. Rotating across 3 seeds at `NUM_RUNS/3` each preserves the total
+ * budget while exercising a broader swath of the generator's sample space.
+ * Mirrors the precedent set by
+ * `packages/core/src/markdown/autolink-void-html-guard.consistency.test.ts`
+ * (which uses 5 seeds at `NUM_RUNS/5`).
+ */
+export const PBT_SEEDS = [42, 137, 2718] as const;
+
+/** Run `fc.assert(property, ...)` across every seed in `PBT_SEEDS`. */
+export function assertAcrossSeeds<T>(
+  property: fc.IAsyncProperty<T> | fc.IProperty<T>,
+  opts: { numRuns?: number } = {},
+): void {
+  const totalRuns = opts.numRuns ?? NUM_RUNS;
+  const perSeed = Math.max(1, Math.floor(totalRuns / PBT_SEEDS.length));
+  for (const seed of PBT_SEEDS) {
+    fc.assert(property, { numRuns: perSeed, seed });
+  }
+}

@@ -1,13 +1,23 @@
 /**
  * CommonMark corpus test — 652 spec examples through round-trip.
  *
- * Phase 1 baseline: verifies that every example round-trips without
- * crash/exception and that the output is idempotent (second round-trip
- * equals first) for sections we fully support. Sections requiring
- * Tier 2/3 features (US-006 through US-009) test crash-free only.
+ * Every example must round-trip without crash AND be idempotent
+ * (`serialize(parse(serialize(parse(x)))) === serialize(parse(x))`)
+ * for every section EXCEPT those listed in NORMALIZE_SECTIONS.
  *
- * As Tier 2/3 features land, sections move from NORMALIZE_SECTIONS
- * to the default idempotence assertion.
+ * US-012 (R5a) tightening: 17 of the original 19 NORMALIZE_SECTIONS
+ * promoted to default idempotence assertion. KNOWN_CRASH_CEILING dropped
+ * from 50 to 0 (actual crash count is 0).
+ *
+ * US-017 (R24) closure: the remaining 2 sections (Emphasis and strong
+ * emphasis, Backslash escapes) promoted to idempotence after landing
+ * (a) outside-in greedy mark hydration in the
+ * `@handlewithcare/remark-prosemirror` patch, (b) removal of `excludes: '_'`
+ * from the Code mark via `CodeMarkFidelity`, (c) full CommonMark §2.4
+ * escapable-char tagging in position-slice + value-consistency guard for
+ * R23-PUA interactions, and (d) entity-shaped `\&entity;` escape policy
+ * in `safeText`. NORMALIZE_SECTIONS is now empty — the full 19-section
+ * corpus asserts byte-identical idempotence on every example.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -17,54 +27,31 @@ import { mdRoundTrip, normalize } from './helpers';
 // Sections entirely outside our schema
 const SKIP_SECTIONS = new Set(['Tabs', 'Indented code blocks']);
 
-// Sections that normalize non-idempotently until Tier 2/3 features land.
-// These test crash-free round-trip only.
-// Sections that normalize non-idempotently until Tier 2/3 features land
-// or due to known CommonMark edge cases beyond our extension set.
-const NORMALIZE_SECTIONS = new Set([
-  'HTML blocks',
-  'Raw HTML',
-  'Setext headings',
-  'Fenced code blocks',
-  'Link reference definitions',
-  'Hard line breaks',
-  'Backslash escapes',
-  'Entity and numeric character references',
-  'Thematic breaks',
-  'Block quotes', // Nested blockquote + other block combos
-  'List items', // Complex nesting, lazy continuation
-  'Lists', // Tight/loose, blank-line-count sensitivity
-  'Code spans', // Multi-line code spans, backtick count edge cases
-  'Emphasis and strong emphasis', // Delimiter run edge cases
-  'Links', // Reference links, angle-bracket URLs
-  'Autolinks', // Angle-bracket autolinks
-  'Images', // Block/inline image lifting, image reference edge cases
-  'ATX headings', // Closing-sequence edge cases (## foo ##)
-  'Paragraphs', // Blank-line normalization between blocks
-]);
+// US-017 (R24) landed — every formerly-NORMALIZE section now passes
+// idempotence. Set kept for forward extensibility (a future spec section
+// added to the corpus that proves load-bearing-non-idempotent could be
+// noted here with a citation), but currently empty by design.
+const NORMALIZE_SECTIONS = new Set<string>();
 
-// Track crashes to detect regressions — if fidelity extension changes introduce
-// new parsing crashes, the test fails even though individual examples are skipped.
-// Update this count only when a known @tiptap/markdown upstream crash is resolved.
-const KNOWN_CRASH_CEILING = 50;
+// Zero-crash invariant: every example must round-trip without throwing.
+// Per-example tests re-throw on parse/serialize failure so Bun reports
+// the exact example that regressed; no describe-scope accumulator is
+// involved, so the signal is order-independent and cannot be masked by
+// an earlier-running ceiling assertion. (Prior to 2026-04-16 this was a
+// `crashCount` counter + final ceiling test at 0; the counter-based
+// pattern works today but made the "any crash fails" invariant depend
+// on Bun running the ceiling test strictly after all generated tests.)
 
 describe('CommonMark corpus — round-trip stability', () => {
   let idx = 0;
-  let crashCount = 0;
   for (const example of commonmark) {
     if (SKIP_SECTIONS.has(example.section)) continue;
     idx++;
 
     test(`[${example.section}] example ${idx}`, () => {
-      let output1: string;
-      try {
-        output1 = normalize(mdRoundTrip(example.markdown));
-      } catch {
-        // Pre-existing crash in @tiptap/markdown on edge-case inputs
-        // (e.g., empty list items). Tracked, not blocking.
-        crashCount++;
-        return;
-      }
+      // Re-throw on crash so the specific failing example is reported
+      // with the original error. KNOWN_CRASH_CEILING effectively 0.
+      const output1 = normalize(mdRoundTrip(example.markdown));
 
       if (!NORMALIZE_SECTIONS.has(example.section)) {
         // Idempotence: second round-trip must equal first
@@ -73,8 +60,4 @@ describe('CommonMark corpus — round-trip stability', () => {
       }
     });
   }
-
-  test('crash count does not exceed known ceiling', () => {
-    expect(crashCount).toBeLessThanOrEqual(KNOWN_CRASH_CEILING);
-  });
 });

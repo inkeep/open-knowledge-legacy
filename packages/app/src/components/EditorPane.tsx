@@ -1,11 +1,13 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useDocumentContext } from '@/editor/DocumentContext';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
+import { createNavigationRetryHandler } from '@/editor/navigation-retry';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
+import { NavigationPendingBar } from './NavigationPendingBar';
 import { TimelinePanel } from './TimelinePanel';
 
 /**
@@ -33,7 +35,19 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeTarget, recycleDocument } = useDocumentContext();
+  const { openDocumentTransition, isPending } = useDocumentTransition();
+
+  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
+  // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
+  // handler always targets the currently-displayed doc, not a stale capture.
+  // `recycleDocument` is the one-shot reset — destroys the broken provider
+  // and recreates it before the new transition re-suspends DocumentBoundary.
+  const handleRetry = createNavigationRetryHandler({
+    recycleDocument,
+    openDocumentTransition,
+    getActiveDocName: () => activeDocName,
+  });
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -70,6 +84,15 @@ export function EditorPane() {
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
+
+  useEffect(() => {
+    if (activeTarget?.kind !== 'folder') return;
+    setPreviewEntry(null);
+    setTimelineOpen(false);
+    if (editorMode === 'diff') {
+      setEditorMode(modeBeforeDiffRef.current);
+    }
+  }, [activeTarget, editorMode]);
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);
@@ -134,6 +157,7 @@ export function EditorPane() {
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
       />
+      <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
         editorMode={editorMode}
         previewEntry={previewEntry}

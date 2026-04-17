@@ -1,12 +1,15 @@
 /**
- * New MarkdownManager wrapping a unified + remark pipeline.
+ * MarkdownManager — wraps the unified + remark pipeline with a stable
+ * parse/serialize API (`parse(markdown) → JSONContent`, `serialize(json) → string`).
  *
- * Preserves the public API: parse(markdown) → JSONContent, serialize(json) → string.
- * Constructed with { extensions } (same as @tiptap/markdown's MarkdownManager).
+ * Constructed with `{ extensions }`, the TipTap extension list used to derive
+ * the target ProseMirror schema.
  *
- * Handler table starts with Tier A passthrough + basic Tier B coverage.
- * US-003 adds position-slice walker, US-004 fills full handler table,
- * US-005 adds serialize-side fidelity handlers.
+ * Handler organization:
+ *   - Tier A passthrough + Tier B basic coverage: this file.
+ *   - Position-slice walker for source-form recovery: `position-slice.ts`.
+ *   - Full PM↔mdast handler table: `handlers.ts`.
+ *   - Serialize-side fidelity overrides: `to-markdown-handlers.ts`.
  */
 
 import {
@@ -47,9 +50,15 @@ import type {
   MdxJsxTextElement,
   MdxTextExpression,
 } from 'mdast-util-mdx';
+import type { Processor } from 'unified';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
-import { parseMd, serializeMd } from './pipeline.ts';
+import {
+  createParseProcessor,
+  createSerializeProcessor,
+  parseMd,
+  serializeMd,
+} from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
 // Structural shape of the state object passed to mdast→PM handlers
@@ -71,6 +80,11 @@ export class MarkdownManager {
   private handlers: RemarkProseMirrorOptions['handlers'];
   private pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   private pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
+  // R16: processors are built once per MarkdownManager instance and reused
+  // across every parse()/serialize() call. Eliminates the Docusaurus #4978
+  // anti-pattern (per-parse processor reconstruction).
+  private parseProcessor: Processor;
+  private serializeProcessor: Processor;
 
   constructor(options: MarkdownManagerOptions) {
     this.schema = getSchema(options.extensions);
@@ -78,6 +92,23 @@ export class MarkdownManager {
     const { nodeHandlers, markHandlers } = buildPmToMdastHandlers(this.schema);
     this.pmNodeHandlers = nodeHandlers;
     this.pmMarkHandlers = markHandlers;
+
+    // Pre-build and freeze both processors. After freeze, .parse/.runSync/
+    // .stringify are stateless with respect to the processor, so the cached
+    // instances are safely reusable across concurrent parse/serialize calls.
+    this.parseProcessor = createParseProcessor({
+      schema: this.schema,
+      handlers: this.handlers,
+      pmNodeHandlers: this.pmNodeHandlers,
+      pmMarkHandlers: this.pmMarkHandlers,
+    });
+    this.serializeProcessor = createSerializeProcessor({
+      schema: this.schema,
+      handlers: this.handlers,
+      pmNodeHandlers: this.pmNodeHandlers,
+      pmMarkHandlers: this.pmMarkHandlers,
+      toMarkdownHandlers,
+    });
   }
 
   /**
@@ -96,12 +127,7 @@ export class MarkdownManager {
         content: [{ type: 'paragraph', content: [] }],
       };
     }
-    const doc = parseMd(markdown, {
-      schema: this.schema,
-      handlers: this.handlers,
-      pmNodeHandlers: this.pmNodeHandlers,
-      pmMarkHandlers: this.pmMarkHandlers,
-    });
+    const doc = parseMd(markdown, this.parseProcessor);
     return doc.toJSON() as JSONContent;
   }
 
@@ -149,14 +175,27 @@ export class MarkdownManager {
       const msg = `MarkdownManager.serialize() failed: schema rejected JSONContent (type=${json.type}, childCount=${json.content?.length ?? 0})`;
       throw new Error(msg, { cause: err });
     }
-    return serializeMd(doc, {
+    return serializeMd(doc, this.serializeProcessor, {
       schema: this.schema,
-      handlers: this.handlers,
       pmNodeHandlers: this.pmNodeHandlers,
       pmMarkHandlers: this.pmMarkHandlers,
-      toMarkdownHandlers,
     });
   }
+}
+
+/**
+ * True when an mdast node is a `paragraph` with no rendered text content —
+ * either no children at all, or only `text` children with empty `value`.
+ *
+ * Used by the `listItem` PM→mdast handler to strip a leading empty paragraph
+ * that PM's `nodeType.createAndFill` synthesized to satisfy `paragraph block*`
+ * when the source mdast had a non-paragraph first child. See R6d / US-011.
+ */
+function isEmptyMdastParagraph(node: MdastNodes): boolean {
+  if (node.type !== 'paragraph') return false;
+  const children = node.children ?? [];
+  if (children.length === 0) return true;
+  return children.every((c) => c.type === 'text' && (c as Text).value === '');
 }
 
 // ──────────────────────────── mdast → PM handlers ────────────────────────────
@@ -244,9 +283,16 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   if (m.escapeMark) {
     handlers.text = (node: Text) => {
       const value: string = node.value ?? '';
+      // Mirror the patched library-default text handler's null-on-empty guard
+      // (see `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` hunk 2).
+      // `schema.text('')` throws in recent PM versions; returning `null` lets
+      // upstream filter the node. mdast-from-markdown normally doesn't emit
+      // empty text nodes, but stripping helpers / custom splitters can, so
+      // the guard is parity defense not just hypothetical.
+      if (!value) return null;
       const escapedChars: Array<{ offset: number; char: string }> | undefined =
         node.data?.escapedChars;
-      if (!escapedChars?.length || !value) {
+      if (!escapedChars?.length) {
         return schema.text(value.replaceAll('\u00A0', ' '));
       }
       // Build PM Fragment: split text at escape boundaries, apply escapeMark to escaped chars
@@ -640,10 +686,35 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (n.listItem) {
-    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: PmNode) => ({
-      checked: pmNode.attrs.checked ?? null,
-      spread: pmNode.attrs.spread ?? false,
-    }));
+    // Custom listItem handler: strip a leading empty paragraph that PM's
+    // `createAndFill` synthesized to satisfy the schema's `paragraph block*`
+    // content expression. When the source mdast has a non-paragraph first
+    // child (e.g. `code`, nested `list`, `blockquote`), `toPmNode` calls
+    // `nodeType.createAndFill(attrs, children)` which prepends an empty
+    // paragraph so the PM document validates. On the way back to mdast,
+    // that synthetic paragraph would render as `""` between the marker
+    // and the first real block, and the loose-list separator (`\n\n`)
+    // around it produces "1. \n\n   ```..." — an empty marker line followed
+    // by a blank line, which CommonMark refuses to interpret as list
+    // continuation, so the first real block escapes the listItem on
+    // re-parse (Lists CommonMark example 277 — formerly Lists 25/26).
+    //
+    // Strip when: (1) listItem has more than one child AND (2) the first
+    // child is an empty paragraph (no children OR only empty text nodes).
+    // Don't strip when the listItem is genuinely empty (single empty
+    // paragraph child), because that represents a deliberately empty list
+    // item from input like "1.\n".
+    nodeHandlers.listItem = (pmNode: PmNode, _parent, state) => {
+      const children = state.all(pmNode);
+      const stripped =
+        children.length > 1 && isEmptyMdastParagraph(children[0]) ? children.slice(1) : children;
+      return {
+        type: 'listItem' as const,
+        checked: pmNode.attrs.checked ?? null,
+        spread: pmNode.attrs.spread ?? false,
+        children: stripped,
+      } as ListItem;
+    };
   }
 
   // Table
@@ -683,42 +754,83 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // JSX component → emit raw source as HTML for byte-identical MDX round-trip
+  // JSX component → first-class `mdxJsxFlowElement` mdast type per D7 / US-005.
+  // The raw source is stored in `data.sourceRaw`; the mdast→markdown override
+  // in `to-markdown-handlers.ts:mdxJsxFlowElement` reads it and emits verbatim,
+  // producing bit-exact equivalent output to the former
+  // `{type:'html',value:content}` workaround.
   if (n.jsxComponent) {
     nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.content ?? '',
+      type: 'mdxJsxFlowElement' as const,
+      name: null,
+      attributes: [],
+      children: [],
+      data: { sourceRaw: String(pmNode.attrs.content ?? '') },
     });
   }
 
-  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  // rawMdxFallback → first-class `rawMdxFallback` mdast type per D7 / US-006.
+  // Shape: `{type:'rawMdxFallback', data:{reason, originalSpan}, value:rawSource}`.
+  // The to-markdown handler in to-markdown-handlers.ts emits `value` verbatim
+  // (bit-exact equivalent of the former `{type:'html',value:textContent}`
+  // workaround). US-007 wires the mdast→hast handler that renders the
+  // clipboard-HTML `<!-- Parse error: ... -->` + `<pre class="mdx-fallback">`.
   if (n.rawMdxFallback) {
-    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.textContent ?? '',
-    });
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => {
+      const raw = pmNode.textContent ?? '';
+      const reason = typeof pmNode.attrs.reason === 'string' ? pmNode.attrs.reason : '';
+      const span = pmNode.attrs.originalSpan;
+      const originalSpan =
+        span && typeof span === 'object' && 'start' in span && 'end' in span
+          ? {
+              start: Number((span as { start: unknown }).start) || 0,
+              end: Number((span as { end: unknown }).end) || 0,
+            }
+          : { start: 0, end: 0 };
+      return {
+        type: 'rawMdxFallback' as const,
+        value: raw,
+        data: { reason, originalSpan },
+      } as unknown as MdastNodes;
+    };
   }
 
-  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
-  // reconstructing from structured attributes
+  // jsxInline → first-class `mdxJsxTextElement` mdast type per D7 / US-005.
+  // Same sourceRaw-verbatim strategy as jsxComponent. Preserves the Y.Item
+  // identity invariant: PM-attr-only shape changes on nested text don't
+  // invalidate the parent container.
   if (n.jsxInline) {
-    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
-    });
+    nodeHandlers.jsxInline = (pmNode: PmNode) => {
+      const raw = pmNode.attrs.sourceRaw || pmNode.textContent || '';
+      return {
+        type: 'mdxJsxTextElement' as const,
+        name: null,
+        attributes: [],
+        children: [],
+        data: { sourceRaw: String(raw) },
+      };
+    };
   }
 
-  // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
+  // Wiki-link → first-class `wikiLink` mdast type per D7 / US-004.
+  // - `data.{target,anchor,alias}` drives markdown emission via the
+  //   wikiLinkHandler registered through remarkWikiLink in pipeline.ts.
+  // - `children: [{type:'text',value:label}]` and mirrored `value` drive
+  //   the mdast→hast HTML emission (US-007).
+  // Replaces the earlier `{type:'html',value:'[[...]]'}` passthrough — the
+  // "type lie" D7 is locked to fix under strict greenfield.
   if (n.wikiLink) {
     nodeHandlers.wikiLink = (pmNode: PmNode) => {
-      const target = pmNode.attrs.target ?? '';
-      const anchor = pmNode.attrs.anchor;
-      const alias = pmNode.attrs.alias;
-      let text = `[[${target}`;
-      if (anchor) text += `#${anchor}`;
-      if (alias) text += `|${alias}`;
-      text += ']]';
-      return { type: 'html' as const, value: text };
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLink' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
     };
   }
 
