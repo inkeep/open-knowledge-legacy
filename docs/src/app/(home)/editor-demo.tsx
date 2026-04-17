@@ -102,82 +102,82 @@ export function EditorDemo() {
   }, [mode]);
 
   return (
-    <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-24 md:py-32">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-12 text-center">
-          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
-            Try it
-          </p>
-          <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
-            Two modes, one source of truth
-          </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
-            Switch between rich editing and raw markdown. Edit in either mode — the content stays in
-            sync, just like the real product.
-          </p>
-        </div>
+    <section>
+      <div className="px-6 py-16 text-center md:py-20">
+        <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
+          Try it
+        </p>
+        <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
+          Two modes, one source of truth
+        </h2>
+        <p className="mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
+          Switch between rich editing and raw markdown. Edit in either mode — the content stays in
+          sync, just like the real product.
+        </p>
+      </div>
 
-        <div
-          className="overflow-hidden rounded-xl border shadow-2xl"
-          style={{
-            borderColor: 'var(--slide-border)',
-            backgroundColor: 'var(--slide-bg-elevated)',
-          }}
+      <div
+        className="overflow-hidden"
+        style={{
+          borderColor: 'var(--slide-border)',
+          backgroundColor: 'var(--slide-bg-elevated)',
+        }}
+      >
+        <header
+          className="flex h-12 shrink-0 items-center border-b"
+          style={{ borderColor: 'var(--slide-border)' }}
         >
-          <header
-            className="flex h-12 shrink-0 items-center border-b"
-            style={{ borderColor: 'var(--slide-border)' }}
+          <div className="flex flex-1 items-center gap-2 px-4 sm:px-6">
+            <SidebarIcon />
+            <div className="h-4 w-px shrink-0" style={{ backgroundColor: 'var(--slide-border)' }} />
+            <span className="truncate text-sm text-[var(--slide-muted)]">getting-started.md</span>
+          </div>
+
+          <ModeToggle mode={mode} onChange={handleModeChange} />
+
+          <div className="flex flex-1 items-center justify-end gap-2 px-4 sm:px-6">
+            <MockPresenceBar />
+          </div>
+        </header>
+
+        <div className="relative h-[50vh] min-h-[420px] max-h-[640px] overflow-hidden">
+          {/* Visual mode — real TipTap editor */}
+          <div
+            className="absolute inset-0 overflow-y-auto transition-all duration-400"
+            style={{
+              opacity: mode === 'visual' ? 1 : 0,
+              transform: mode === 'visual' ? 'translateX(0)' : 'translateX(-20px)',
+              pointerEvents: mode === 'visual' ? 'auto' : 'none',
+              transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
+            }}
           >
-            <div className="flex flex-1 items-center gap-2 px-3">
-              <SidebarIcon />
-              <div
-                className="h-4 w-px shrink-0"
-                style={{ backgroundColor: 'var(--slide-border)' }}
-              />
-              <span className="truncate text-sm text-[var(--slide-muted)]">getting-started.md</span>
-            </div>
-
-            <ModeToggle mode={mode} onChange={handleModeChange} />
-
-            <div className="flex flex-1 items-center justify-end gap-2 px-3">
-              <MockPresenceBar />
-            </div>
-          </header>
-
-          <div className="relative h-[420px] overflow-hidden sm:h-[480px]">
-            {/* Visual mode — real TipTap editor */}
-            <div
-              className="absolute inset-0 overflow-y-auto transition-all duration-400"
-              style={{
-                opacity: mode === 'visual' ? 1 : 0,
-                transform: mode === 'visual' ? 'translateX(0)' : 'translateX(-20px)',
-                pointerEvents: mode === 'visual' ? 'auto' : 'none',
-                transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
-              }}
-            >
+            <div className="mx-auto max-w-4xl">
               <EditorContent editor={editor} />
             </div>
+          </div>
 
-            {/* Source mode — editable textarea */}
-            <div
-              className="absolute inset-0 overflow-y-auto transition-all duration-400"
-              style={{
-                opacity: mode === 'source' ? 1 : 0,
-                transform: mode === 'source' ? 'translateX(0)' : 'translateX(20px)',
-                pointerEvents: mode === 'source' ? 'auto' : 'none',
-                transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
-              }}
-            >
+          {/* Source mode — editable textarea */}
+          <div
+            className="absolute inset-0 overflow-y-auto transition-all duration-400"
+            style={{
+              opacity: mode === 'source' ? 1 : 0,
+              transform: mode === 'source' ? 'translateX(0)' : 'translateX(20px)',
+              pointerEvents: mode === 'source' ? 'auto' : 'none',
+              transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
+            }}
+          >
+            <div className="mx-auto max-w-4xl">
               <SourceTextarea ref={textareaRef} value={markdown} onChange={setMarkdown} />
             </div>
-
-            <div
-              className="pointer-events-none absolute right-0 bottom-0 left-0 h-20 z-10"
-              style={{
-                background: 'linear-gradient(to top, var(--slide-bg-elevated), transparent)',
-              }}
-            />
           </div>
+
+          <div
+            className="pointer-events-none absolute right-0 bottom-0 left-0 h-24 z-10"
+            style={{
+              background:
+                'linear-gradient(to top, var(--slide-bg), var(--slide-bg-elevated) 60%, transparent)',
+            }}
+          />
         </div>
       </div>
     </section>

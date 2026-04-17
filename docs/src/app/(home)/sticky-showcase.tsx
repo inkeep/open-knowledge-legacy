@@ -69,7 +69,7 @@ export function StickyShowcase() {
   }, []);
 
   return (
-    <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6">
+    <section className="bg-[var(--slide-bg)] px-6">
       <div ref={containerRef} className="mx-auto max-w-6xl">
         <div className="pt-24 md:pt-32">
           <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
