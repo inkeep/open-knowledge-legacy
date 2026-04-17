@@ -12,10 +12,21 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
+
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
 
 /** Wait for the active provider to be connected and synced */
 async function waitForProvider(page: import('@playwright/test').Page) {
@@ -56,13 +67,11 @@ async function pasteText(page: import('@playwright/test').Page, text: string) {
 
 test.describe('V1 paste baseline — text/plain content through WYSIWYG', () => {
   test.beforeEach(async ({ page }) => {
-    // Reset server state
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-    // Navigate to root and open doc via sidebar (app has no ?doc= URL routing)
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    const docName = `test-paste-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Focus the editor
     await page.click('.ProseMirror');
   });

@@ -11,10 +11,21 @@
  * playwright.config.ts webServer on VITE_PORT.
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
+
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
 
 async function waitForProvider(page: Page) {
   await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
@@ -28,11 +39,11 @@ async function getYText(page: Page): Promise<string> {
 }
 
 /** Seed content via agent-write-md API (replace mode). */
-async function seedContent(markdown: string) {
+async function seedContent(docName: string, markdown: string) {
   const res = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, position: 'replace' }),
+    body: JSON.stringify({ docName, markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
@@ -84,11 +95,12 @@ async function getXmlFragmentText(page: Page): Promise<string> {
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
+let docName: string;
+
 test.beforeEach(async ({ page }) => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+  docName = `test-midtype-${randomUUID().slice(0, 8)}`;
+  await createPage(`${docName}.md`);
+  await page.goto(`${BASE}/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
 });
@@ -98,7 +110,7 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
 }) => {
   // Seed with structured content
   const seedMd = '# Top Heading\n\nParagraph above.\n\n## Bottom Heading\n\nParagraph below.\n';
-  await seedContent(seedMd);
+  await seedContent(docName, seedMd);
 
   // Wait for content to render in WYSIWYG
   await page.waitForFunction(
@@ -171,7 +183,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
 }) => {
   // Seed structured content
   const seedMd = '# Header\n\nAbove paragraph.\n\n## Sub Header\n\nBelow paragraph.\n';
-  await seedContent(seedMd);
+  await seedContent(docName, seedMd);
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Header'),
@@ -227,7 +239,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
 test('mid-type recovery: partial attribute does not collapse document', async ({ page }) => {
   // Seed structured content
   const seedMd = '# Title\n\nContent here.\n';
-  await seedContent(seedMd);
+  await seedContent(docName, seedMd);
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Title'),
