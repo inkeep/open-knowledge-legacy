@@ -438,15 +438,22 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Fire 5 clicks in rapid succession (no waits between them). React's
-    // transition semantics should coalesce — the final click wins and no
-    // nav is left pending indefinitely.
-    await Promise.all([
-      openFromSidebar(page, 'doc-b.md'),
-      openFromSidebar(page, 'doc-c.md'),
-      openFromSidebar(page, 'doc-d.md'),
-      openFromSidebar(page, 'doc-e.md'),
-    ]);
+    // Fire 4 clicks in rapid sequence (no waitForTimeout between them).
+    // React's transition semantics should coalesce — the final click wins
+    // and no nav is left pending indefinitely.
+    //
+    // STOP — do NOT switch this to Promise.all. Playwright's per-click
+    // actionability checks (visible/stable/attached) settle in
+    // non-deterministic order across concurrent invocations, so the click
+    // dispatch order is NOT guaranteed to match array order. Sequential
+    // await guarantees the doc-e click fires last (its order is the test's
+    // load-bearing premise) without injecting any test-side wait — each
+    // click takes ~5-30ms (actionability bound), so the 4 clicks still
+    // dispatch within ~100ms. See evidence/docs-open-f11-triage.md.
+    await openFromSidebar(page, 'doc-b.md');
+    await openFromSidebar(page, 'doc-c.md');
+    await openFromSidebar(page, 'doc-d.md');
+    await openFromSidebar(page, 'doc-e.md');
 
     // Wait for final state: doc E is active and visible.
     await waitForActiveProviderSynced(page);
