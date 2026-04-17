@@ -22,3 +22,7 @@ export {
   mergeThreeWay,
 } from './merge-three-way.ts';
 export { normalizeBridge } from './normalize.ts';
+// Scheduler DI is retained as a shared core primitive for non-bridge consumers
+// (idle-shutdown, ok-ui lifecycle). The dual-CRDT observer bridge does NOT use
+// it (precedent #13(b) — see bridge-no-wallclock.test.ts enforcement).
+export { defaultScheduler, type Scheduler } from './scheduler.ts';
