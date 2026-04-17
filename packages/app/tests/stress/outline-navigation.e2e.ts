@@ -12,6 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
@@ -49,16 +50,6 @@ const DOC = [
   FILLER,
   FILLER,
 ].join('\n');
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
-}
 
 async function seedDoc(page: Page): Promise<string> {
   const docName = `outline-${randomUUID().slice(0, 8)}`;

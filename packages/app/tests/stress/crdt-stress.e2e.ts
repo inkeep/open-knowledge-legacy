@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
+import { filterCriticalErrors } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
@@ -20,8 +21,14 @@ const FIXTURE = loadLargeRealistic();
 
 test('S6: multi-turn stress — large content + user edits', async ({ page }) => {
   // 1. Capture console errors during the full flow
-  const logs: Array<{ type: string; text: string }> = [];
-  page.on('console', (m) => logs.push({ type: m.type(), text: m.text() }));
+  //    US-012 F1: capture message.location() URL + lineNumber so generic
+  //    "Failed to load resource: 404" errors can be triaged by URL pattern,
+  //    not just the opaque text body.
+  const logs: Array<{ type: string; text: string; url?: string; line?: number }> = [];
+  page.on('console', (m) => {
+    const loc = m.location();
+    logs.push({ type: m.type(), text: m.text(), url: loc.url, line: loc.lineNumber });
+  });
   page.on('pageerror', (e) => logs.push({ type: 'uncaught', text: e.message }));
 
   // 2. Create a per-test doc + reset its server state (avoids racing with
@@ -93,30 +100,19 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
     );
   }
 
-  // 5. Final assertions
+  // 5. Final assertions.
+  // `filterCriticalErrors` (from `_helpers/error-filters.ts`) strips known
+  // dev-server noise — favicon/HMR/Vite chatter, WebSocket reconnect race
+  // during /api/test-reset, the by-design /api/config 404. The remaining
+  // entries are genuine failures. See the helper module for the full
+  // predicate list + rationale.
   const errors = logs.filter((l) => l.type === 'error' || l.type === 'uncaught');
-  // Filter out known non-critical errors.
-  // - favicon / HMR / [vite]: dev-server noise unrelated to CRDT behavior.
-  // - WebSocket / ws://.../collab / Firefox can't establish: benign
-  //   race during `/api/test-reset` — the Hocuspocus WebSocket is
-  //   closed by the server mid-handshake as state is torn down and
-  //   reconnected by the client automatically. Chromium logs this at
-  //   `debug` level and it doesn't reach our error stream; WebKit and
-  //   Firefox both log at `error`. Since our multi-browser projects
-  //   were added (QA-046), we see these on the non-Chromium browsers
-  //   too. The subsequent assertions verify actual CRDT convergence —
-  //   if the reconnect didn't heal, ytext/fragment state would be
-  //   wrong, not just the transient log line.
-  const criticalErrors = errors.filter(
-    (e) =>
-      !e.text.includes('favicon') &&
-      !e.text.includes('HMR') &&
-      !e.text.includes('[vite]') &&
-      !e.text.includes('WebSocket') &&
-      !e.text.includes('ws://') &&
-      !e.text.includes("can't establish a connection") &&
-      !e.text.includes('can’t establish a connection'),
-  );
+  const criticalErrors = filterCriticalErrors(errors);
+  if (criticalErrors.length > 0) {
+    // Include full URL + line info in the assertion failure so the flake is
+    // diagnosable from CI logs alone.
+    console.error('[Layer C] Critical errors detected:', JSON.stringify(criticalErrors, null, 2));
+  }
   expect(criticalErrors).toEqual([]);
 
   const finalState = await page.evaluate(() => {

@@ -14,15 +14,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
-
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
 
 /** Seed content via agent-write-md API (replace mode). */
 async function seedMarkdown(docName: string, markdown: string) {
@@ -32,16 +29,6 @@ async function seedMarkdown(docName: string, markdown: string) {
     body: JSON.stringify({ docName, markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
-}
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
 }
 
 /** Switch to source mode and wait for CodeMirror to render. CM6 paints decorations
@@ -197,7 +184,7 @@ test.describe('§6.1 Broken link-ref', () => {
     // Playwright's expect().toHaveCount() auto-retries until the assertion passes
     // or the timeout expires — no manual waitForTimeout needed.
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
 
     // The [click here][missing] should be marked broken — StateField rescans
@@ -207,7 +194,7 @@ test.describe('§6.1 Broken link-ref', () => {
 
     // Now add the missing definition — the broken mark should clear as soon
     // as the StateField's next docChanged run sees the new definition.
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
 
     const brokenAfter = page.locator('.cm-link-ref-broken');
@@ -403,8 +390,8 @@ test.describe('§6.7 Cross-cutting', () => {
 
     // Select all and copy
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+a');
-    await page.keyboard.press('Meta+c');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('ControlOrMeta+c');
 
     // Read clipboard
     const clipboard = await page.evaluate(() => navigator.clipboard.readText());

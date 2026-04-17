@@ -371,7 +371,7 @@ See Part 3 §D21, D22 of the research report for detailed per-source flows.
 | Concern | Approach | Verify |
 |---|---|---|
 | Bundle size | Measure before/after via `bun build` output + size-limit tool | No >50KB regression on `packages/app` bundle |
-| Cross-browser | Chrome, Safari, Firefox tested via Playwright (desktop) + BrowserStack (optional) | paste-fidelity.e2e runs on all three |
+| Cross-browser | **Chromium-only** (Playwright). Originally planned for Chrome/Safari/Firefox; reversed 2026-04-17 — see `specs/2026-04-17-e2e-observability-determinism/SPEC.md` D-Q33. Clipboard tests use programmatic `ClipboardEvent` injection that bypasses browser clipboard APIs; cross-browser parity preserved at the code level. iOS real-device deferred (BrowserStack). | paste-fidelity.e2e runs on chromium only |
 | CRDT bridge invariants | Run full `bun run check` (bridge-matrix, stress, fuzz) pre-merge | All tiers green |
 | Observer bridge typing-defer on large paste | Benchmark 1MB paste; verify <1s visible lag | A4 verification |
 | Rollback | Feature-flagged? | Not needed — additive; clipboard only triggered by user action |
@@ -384,7 +384,7 @@ See Part 3 §D21, D22 of the research report for detailed per-source flows.
 | rehype-remark converts some GFM constructs (tables with complex colspan) unexpectedly | MEDIUM | LOW | Day-one tests cover basic GFM; complex Word-style tables deferred to NG3 | Nick |
 | Ambiguous paste markdown-first default (D8) occasionally misfires on benign text | LOW-MED | LOW | isMarkdown heuristic (3+ signal threshold) tuned in research; Cmd+Shift+V always available as escape | Nick |
 | Bundle size regression from 4 new unified plugins | LOW | LOW | Measure; if >50KB, investigate lazy-loading paths | Nick |
-| Cross-browser differences in sync event preventDefault semantics | LOW | MEDIUM | Test on all three browsers day-one; return-true pattern matches CM6's own handlers | Nick |
+| Cross-browser differences in sync event preventDefault semantics | LOW | MEDIUM | **Accepted risk** (post-2026-04-17): chromium-only CI per `specs/2026-04-17-e2e-observability-determinism/SPEC.md` D-Q33. `return-true` pattern matches CM6's own handlers (same semantics as Playwright-tested cross-browser default). If a webkit or firefox preventDefault regression reaches customers, revisit by adding cross-browser to nightly Tier 2. | Nick |
 | Observer-B re-parse latency on 1MB+ paste causes visible lag | LOW | MEDIUM | Proactive: FR-21 ships chunked Y.Text insertion (rAF-yielded) day-one. Final Observer B re-parse on completed doc is a documented known tradeoff; incremental re-parse is Future Work: Identified | Nick |
 | Large-paste UI freeze on iOS Safari (low-throughput JSC) | MEDIUM | MEDIUM | Proactive: FR-21 chunked insertion keeps frame times <16ms during input phase; A7 retired (superseded) | Nick |
 | rehype pipeline throws on malformed HTML | MED | LOW | Three-layer fallback (D12); test with fuzz-generated malformed HTML | Nick |

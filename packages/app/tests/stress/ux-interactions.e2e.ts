@@ -10,14 +10,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-/** Wait for the active provider to be connected and synced */
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
 
 /** Get the current Y.Text content from the provider */
 async function getYText(page: Page): Promise<string> {
@@ -25,16 +21,6 @@ async function getYText(page: Page): Promise<string> {
     const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
-}
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
 }
 
 function uniqueDocName(label: string): string {
@@ -216,6 +202,14 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   // at this path and was failing post-merge (two main commits red before the
   // rewrite) until it was updated to the new contract here.
   //
+  // Ancestor-priority UX (US-011): while a doc inside sidebar-folder is
+  // active, the folder is unconditionally expanded — clicking the collapse
+  // chevron is a no-op for the derived state because `ancestors` takes
+  // priority over `userCollapsed`. The test exercises the toggle BEFORE
+  // navigating into the folder (where toggle IS honored) and asserts the
+  // ancestor-priority behavior after navigation. See reveal-on-activate.e2e.ts
+  // for Model A semantics coverage.
+  //
   // This test relies only on the pre-seeded sidebar-folder/nested-doc.md
   // fixture (see playwright.config.ts). It does not write content, so no
   // per-test doc is required.
@@ -234,26 +228,37 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   await expect(chevron).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 
-  // Chevron click toggles expand/collapse and flips aria-expanded. The chevron
-  // is intentionally the toggle affordance (keyboard-reachable, state-bearing);
-  // the row itself is the navigation affordance.
+  // Chevron click toggles expand/collapse when folder is NOT an active-doc
+  // ancestor (pre-nav state). The chevron is intentionally the toggle
+  // affordance (keyboard-reachable, state-bearing); the row itself is the
+  // navigation affordance.
   await chevron.click();
   // After expand, the chevron's accessible name flips to "Collapse sidebar-folder"
   const chevronCollapse = page.getByRole('button', { name: 'Collapse sidebar-folder' });
   await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
-  // Nested file click navigates to the doc
+  // Pre-nav toggle: clicking collapse BEFORE navigating into the folder IS
+  // honored (not an active-doc ancestor yet).
+  await chevronCollapse.click();
+  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  await expect(nestedFile).toHaveCount(0);
+
+  // Re-expand so we can navigate to the nested doc.
+  await chevron.click();
+  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
+  await expect(nestedFile).toBeVisible();
+
+  // Nested file click navigates to the doc — the folder becomes an ancestor.
   await nestedFile.click();
   await expect(page).toHaveURL(/#\/sidebar-folder\/nested-doc$/);
 
-  // Re-collapse via chevron
+  // Ancestor priority: clicking the collapse chevron does NOT collapse the
+  // folder because it's an active-doc ancestor. aria-expanded stays true;
+  // nested-doc.md stays visible in the sidebar.
   await chevronCollapse.click();
-  await expect(page.getByRole('button', { name: 'Expand sidebar-folder' })).toHaveAttribute(
-    'aria-expanded',
-    'false',
-  );
-  await expect(nestedFile).toHaveCount(0);
+  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
+  await expect(nestedFile).toBeVisible();
 
   // Row click navigates to the folder's resolved target (overview URL shape is
   // `#/<folderPath>`, same as a doc URL — folder vs doc resolution happens in

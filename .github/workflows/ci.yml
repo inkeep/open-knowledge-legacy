@@ -75,12 +75,21 @@ jobs:
       - run: bunx turbo run ${{ matrix.task }}
 
   playwright:
-    runs-on: ubuntu-latest
+    # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`
+    # free tier was the limiting factor for D-Q7: workers>1 × retries=2
+    # oversubscribed the runner enough that runs cancelled at the 15-min
+    # timeout (PR #193's first two CI runs). On `ubuntu-64gb` we can restore
+    # workers=4 safely; see playwright.config.ts for the parallel config and
+    # `specs/2026-04-17-e2e-observability-determinism/evidence/workers-calibration.md`
+    # for the D-Q7 calibration history.
+    runs-on: ubuntu-64gb
     # Chromium only — all E2E tests use programmatic clipboard injection
     # (dispatchEvent + synthetic ClipboardEvent), not real browser clipboard
     # APIs. Cross-browser differences are not exercised. See
     # playwright.config.ts comment for the full rationale.
-    # Empirical runtime: ~5-8 min. Budget 15 min for headroom.
+    # Expected runtime on ubuntu-64gb: ~3-5 min at workers=4 + retries=2
+    # (main baseline was 7m41s on 2-vCPU at retries=0 workers=default=1).
+    # 15-min budget covers cold-start + retry tax + headroom.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -118,3 +127,24 @@ jobs:
       - env:
           VITE_PORT: "13579"
         run: bunx turbo run test:e2e
+      # Always upload the HTML report (even on success) so any run can be
+      # browsed; upload the raw test-results (traces, videos, screenshots)
+      # only on failure to bound storage growth. Retention 14 days per D-Q6
+      # LOCKED. `if: always()` on the upload steps so artifact upload failures
+      # don't mask the test outcome (D-Q35).
+      - name: Upload Playwright HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: packages/app/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Upload Playwright test-results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ github.sha }}
+          path: packages/app/test-results/
+          retention-days: 14
+          if-no-files-found: ignore

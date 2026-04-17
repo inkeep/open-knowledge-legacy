@@ -13,23 +13,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
-}
-
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
 
 async function getYText(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -141,8 +128,24 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
     { timeout: 10_000 },
   );
 
-  // Wait for Observer B to settle after typing completes
-  await page.waitForTimeout(1000);
+  // Wait for Observer B (50ms scheduler debounce + ~300ms typing-defer) to
+  // settle on the server, mirror back to the client, and reach a stable
+  // fragment length. We can't tell freeze-vs-parse-success from outside, so
+  // length stability across 3 consecutive 100ms ticks is the signal.
+  let lastFragLen = -1;
+  let stableTicks = 0;
+  await expect
+    .poll(
+      async () => {
+        const len = (await getXmlFragmentText(page)).length;
+        if (len > 0 && len === lastFragLen) stableTicks += 1;
+        else stableTicks = 0;
+        lastFragLen = len;
+        return stableTicks;
+      },
+      { intervals: [100], timeout: 5_000 },
+    )
+    .toBeGreaterThanOrEqual(3);
 
   // Check XmlFragment state (works in any mode — no DOM rendering dependency).
   // Observer B either froze (preserving last valid state with headings) or parsed

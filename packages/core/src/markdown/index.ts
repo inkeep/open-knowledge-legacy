@@ -198,6 +198,60 @@ function isEmptyMdastParagraph(node: MdastNodes): boolean {
   return children.every((c) => c.type === 'text' && (c as Text).value === '');
 }
 
+/**
+ * PM→mdast serialization of a text run that carried the `code` mark.
+ *
+ * mdast `inlineCode` is a leaf (no children, only a `value` string). When a
+ * PM text has marks `[code, link]` or similar, the library's outside-in mark
+ * hydration processes the outer mark first and passes already-wrapped
+ * children (e.g. a `link` mdast node) into the code handler. A naive
+ * `children.map(c => c.type === 'text' ? c.value : '').join('')` then
+ * flattens everything to an empty string — the link wrapper is lost AND the
+ * inner text disappears.
+ *
+ * Correct behavior: preserve the outer wrapping structure (`link`, `strong`,
+ * etc.) but replace its deepest text payload with a single `inlineCode`
+ * carrying the concatenated text. `[`abc123`](url)` round-trips through
+ * `text[code,link]` → `link(inlineCode('abc123'))`.
+ */
+export function wrapAsInlineCode(children: MdastNodes[]): MdastNodes {
+  if (children.length === 0) {
+    return { type: 'inlineCode', value: '' } as unknown as MdastNodes;
+  }
+  if (children.every((c) => c.type === 'text')) {
+    const val = children.map((c) => (c as Text).value).join('');
+    return { type: 'inlineCode', value: val } as unknown as MdastNodes;
+  }
+  // Single wrapping node (link, strong, emphasis, delete, …) — preserve its
+  // shape and replace its descendant text with a single inlineCode.
+  if (children.length === 1 && 'children' in children[0]) {
+    const wrapper = children[0] as MdastNodes & { children: MdastNodes[] };
+    return {
+      ...wrapper,
+      children: [wrapAsInlineCode(wrapper.children)],
+    } as MdastNodes;
+  }
+  // Heterogeneous / multi-child input: concatenate all text recursively.
+  return {
+    type: 'inlineCode',
+    value: extractTextFromMdastNodes(children),
+  } as unknown as MdastNodes;
+}
+
+function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
+  let out = '';
+  for (const node of nodes) {
+    if (node.type === 'text') {
+      out += (node as Text).value;
+    } else if ('children' in node && Array.isArray((node as { children?: unknown }).children)) {
+      out += extractTextFromMdastNodes((node as { children: MdastNodes[] }).children);
+    } else if ('value' in node && typeof (node as { value?: unknown }).value === 'string') {
+      out += (node as { value: string }).value;
+    }
+  }
+  return out;
+}
+
 // ──────────────────────────── mdast → PM handlers ────────────────────────────
 //
 // Tier A passthrough + basic Tier B (enough for plain markdown).
@@ -848,9 +902,15 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.code) {
+    // `wrapAsInlineCode` is unique to the `code` mark because `inlineCode` is a
+    // leaf mdast type (holds `value: string`, not `children`). Other mark
+    // handlers (emphasis, strong, delete, link) pass children through
+    // `fromPmMark` to structured nodes with `children` arrays — no flatten
+    // needed. `fromPmMark` implementation (the pass-through contract —
+    // `{ type, ...getAttrs?.(mark), children: mdastChildren }`) is at
+    // `@handlewithcare/remark-prosemirror/lib/mdast-util-from-prosemirror.js:201-210`.
     markHandlers.code = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
-      const val = children.map((c) => (c.type === 'text' ? c.value : '')).join('');
-      return { type: 'inlineCode' as const, value: val };
+      return wrapAsInlineCode(children);
     };
   }
 
