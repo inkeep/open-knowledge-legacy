@@ -45,7 +45,7 @@
     },
     "packages/app": {
       "name": "open-knowledge-app",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@codemirror/autocomplete": "^6.20.1",
         "@codemirror/lang-css": "^6.3.1",
@@ -132,7 +132,7 @@
     },
     "packages/cli": {
       "name": "@inkeep/open-knowledge",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "bin": {
         "open-knowledge": "./dist/cli.mjs",
       },
@@ -174,7 +174,7 @@
     },
     "packages/core": {
       "name": "@inkeep/open-knowledge-core",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": {
         "@handlewithcare/remark-prosemirror": "0.1.5",
         "@tiptap/core": "^3.22.3",
@@ -227,7 +227,7 @@
     },
     "packages/server": {
       "name": "@inkeep/open-knowledge-server",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": {
         "@hocuspocus/server": "4.0.0-rc.1",
         "@inkeep/open-knowledge-core": "workspace:*",
