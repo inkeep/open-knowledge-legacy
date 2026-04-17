@@ -104,7 +104,11 @@ export function EditorDemo() {
 
   return (
     <section>
-      <div className="relative overflow-hidden border-t bg-[var(--slide-bg)] px-6 pt-16 pb-28 text-center md:pt-20 md:pb-36">
+      <div className="relative overflow-hidden bg-[var(--slide-bg)] px-6 pt-16 pb-28 text-center md:pt-20 md:pb-36">
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 md:h-32"
+          style={{ background: 'linear-gradient(to bottom, var(--slide-bg), transparent)' }}
+        />
         <Image
           src="/Wide.png"
           alt=""
