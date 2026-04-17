@@ -102,8 +102,15 @@ export const TypedChildrenGuard = Extension.create({
                     break; // Only check the nearest jsxComponent ancestor
                   }
                 }
-              } catch {
-                // Position resolution can fail during complex transforms
+              } catch (err) {
+                // Position resolution can fail during complex transforms (e.g.,
+                // the inserted range is no longer resolvable in the mapped doc
+                // after concurrent edits). Expected during multi-transform
+                // bursts — log at dev-only debug level so unexpected failures
+                // surface without spamming production.
+                if (process.env.NODE_ENV === 'development') {
+                  console.debug('[TypedChildrenGuard] position resolution failed', err);
+                }
               }
             });
           });

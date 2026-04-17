@@ -9,10 +9,24 @@
  */
 
 import type { Editor } from '@tiptap/react';
-import { Box } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
+import { Box, type LucideIcon } from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
+
+/**
+ * Resolve a descriptor icon name (e.g., `'MessageSquareWarning'`) to the
+ * corresponding lucide-react component. Falls back to `Box` for unknown
+ * names or descriptors without an icon (wildcard). Descriptor icon names
+ * are authored in `built-ins.ts` as strings to keep the registry
+ * React-free (`packages/core/` has no React dep).
+ */
+function resolveIcon(iconName: string | undefined): LucideIcon {
+  if (!iconName) return Box;
+  const icon = (LucideIcons as unknown as Record<string, LucideIcon>)[iconName];
+  return icon ?? Box;
+}
 
 /**
  * FR-14a: compute default props for slash-inserted components.
@@ -126,7 +140,7 @@ export function getComponentItems(): SlashCommandItem[] {
   return descriptors.map((desc) => ({
     name: `component-${desc.name}`,
     label: desc.displayName ?? desc.name,
-    icon: Box,
+    icon: resolveIcon(desc.icon),
     category: desc.category ?? 'content',
     command: createInsertCommand(desc),
     aliases: desc.searchTerms,

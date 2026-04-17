@@ -162,6 +162,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     cmViewRef.current = cmView;
 
     // FR-32: forward markUserTyping for Observer B typing-defer
+    let teardownTypingListeners: (() => void) | undefined;
     try {
       if (ydoc) {
         const mark = () => markUserTyping(ydoc);
@@ -170,12 +171,19 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
         dom.addEventListener('paste', mark);
         dom.addEventListener('drop', mark);
         dom.addEventListener('cut', mark);
+        teardownTypingListeners = () => {
+          dom.removeEventListener('keydown', mark);
+          dom.removeEventListener('paste', mark);
+          dom.removeEventListener('drop', mark);
+          dom.removeEventListener('cut', mark);
+        };
       }
     } catch {
       // No collaboration extension — typing-defer not wired
     }
 
     return () => {
+      teardownTypingListeners?.();
       cmView.destroy();
       cmViewRef.current = null;
     };

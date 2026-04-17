@@ -161,7 +161,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       setPopoverOpen(true);
     }
     wasSelected.current = selected;
-  });
+  }, [selected, hasEditableProps]);
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
   const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
@@ -195,8 +195,10 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       node.type.schema.text(source),
     );
 
-    // Defer to next frame to avoid dispatching during render
-    requestAnimationFrame(() => {
+    // Defer to next frame to avoid dispatching during render. Tracked + cancelled
+    // on cleanup so an unmount between schedule and fire (e.g., parent tree
+    // replaced by a remote peer edit) does not dispatch against a stale view.
+    const frameId = requestAnimationFrame(() => {
       try {
         editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
       } catch (err) {
@@ -214,7 +216,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         );
       }
     });
-  });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [needsConversion, node, editor, getPos, descriptor, renderError]);
 
   // Show placeholder while conversion is pending
   if (needsConversion) {
