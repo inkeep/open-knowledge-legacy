@@ -273,12 +273,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
     /** Imperative DOM update — bypasses React re-render to avoid disrupting typing. */
     const applyFlashStateToDom = (state: AgentFlashState) => {
+      // `flashStateRef` is the authoritative source in production — the
+      // count-monotonicity logic in `triggerFlash` below derives the next
+      // count from `flashStateRef.current?.count ?? 0`, not from the
+      // window hook. The `window.__agentFlashState` write is a DEV-only
+      // test observation channel (US-006 / AGENTS.md precedent #20); Vite
+      // statically replaces `import.meta.env.DEV` at build time so the
+      // branch tree-shakes out of production bundles.
       flashStateRef.current = state;
-      // DEV-gated test-only hook (US-006 / AGENTS.md precedent #20). Vite
-      // statically replaces `import.meta.env.DEV` at build time, so the
-      // write is tree-shaken from production bundles. The read below at
-      // `window.__agentFlashState?.count ?? 0` stays ungated — `undefined`
-      // in prod collapses to `0` which is the correct starting count.
       if (import.meta.env.DEV) {
         window.__agentFlashState = state;
       }

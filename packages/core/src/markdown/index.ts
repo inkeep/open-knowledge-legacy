@@ -906,8 +906,9 @@ function buildPmToMdastHandlers(schema: Schema): {
     // leaf mdast type (holds `value: string`, not `children`). Other mark
     // handlers (emphasis, strong, delete, link) pass children through
     // `fromPmMark` to structured nodes with `children` arrays — no flatten
-    // needed. See `@handlewithcare/remark-prosemirror/.../mdast-util-from-prosemirror.js:108-117`
-    // for the pass-through contract.
+    // needed. `fromPmMark` implementation (the pass-through contract —
+    // `{ type, ...getAttrs?.(mark), children: mdastChildren }`) is at
+    // `@handlewithcare/remark-prosemirror/lib/mdast-util-from-prosemirror.js:201-210`.
     markHandlers.code = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
       return wrapAsInlineCode(children);
     };

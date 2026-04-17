@@ -50,8 +50,20 @@ const BENIGN_PREDICATES: Array<(e: LogEntry) => boolean> = [
   // WebKit/Firefox log at `error`. The subsequent assertions verify actual
   // CRDT convergence — if the reconnect didn't heal, ytext/fragment state
   // would be wrong, not just the transient log line.
-  (e) => e.text.includes('WebSocket'),
-  (e) => e.text.includes('ws://'),
+  //
+  // Narrow fingerprints (not a bare `text.includes('WebSocket')`) so a
+  // genuine "WebSocket handshake auth failed" / Hocuspocus-specific error
+  // whose text happens to name "WebSocket" still surfaces. Chromium emits
+  // `"WebSocket connection to 'ws://.../collab' failed: WebSocket is
+  // closed before the connection is established."`; WebKit / Firefox
+  // emit similar shapes. Match against the concrete reconnect
+  // signatures, not a generic substring.
+  (e) => e.text.includes('WebSocket is closed before the connection is established'),
+  (e) =>
+    (e.text.includes("WebSocket connection to 'ws://") ||
+      e.text.includes('WebSocket connection to "ws://')) &&
+    e.text.includes('/collab'),
+  (e) => !!e.url?.includes('/collab') && e.url.startsWith('ws://'),
   (e) => e.text.includes("can't establish a connection"),
   (e) => e.text.includes('can’t establish a connection'),
 
@@ -59,7 +71,13 @@ const BENIGN_PREDICATES: Array<(e: LogEntry) => boolean> = [
   // `src/lib/api-config.ts` header). The app classifies the 404 as
   // `{status: 'absent'}` and falls back to same-origin WebSocket — the
   // network 404 is a by-design signal, not a failure mode.
-  (e) => !!e.url?.endsWith('/api/config'),
+  //
+  // Match the 404 specifically (not every URL-matching entry): a 500 /
+  // CORS / network-level regression from the same endpoint should still
+  // reach the critical-errors set. `LogEntry` has no `status` field, so
+  // we key on the Chrome / WebKit / Firefox error-message shape which all
+  // embed the literal "404".
+  (e) => e.text.includes('404') && !!e.url?.endsWith('/api/config'),
 ];
 
 /**

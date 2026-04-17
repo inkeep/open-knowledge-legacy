@@ -36,7 +36,13 @@ export async function simulateCopyAndRead(
   await selectAllAndWaitForSelection(page, selector);
   return page.evaluate((sel) => {
     const editor = document.querySelector(sel) as HTMLElement | null;
-    if (!editor) throw new Error(`editor ${sel} not found`);
+    if (!editor) {
+      const editorCount = document.querySelectorAll('.ProseMirror, .cm-content').length;
+      const rootPreview = (document.body?.outerHTML ?? '').slice(0, 400);
+      throw new Error(
+        `simulateCopyAndRead: editor "${sel}" not found — editor views on page: ${editorCount}. document.body head:\n${rootPreview}`,
+      );
+    }
     const captured: Record<string, string> = {};
     const dt = new DataTransfer();
     const origSetData = dt.setData.bind(dt);
@@ -74,7 +80,13 @@ export async function simulateCutAndRead(
   await selectAllAndWaitForSelection(page, selector);
   return page.evaluate((sel) => {
     const editor = document.querySelector(sel) as HTMLElement | null;
-    if (!editor) throw new Error(`editor ${sel} not found`);
+    if (!editor) {
+      const editorCount = document.querySelectorAll('.ProseMirror, .cm-content').length;
+      const rootPreview = (document.body?.outerHTML ?? '').slice(0, 400);
+      throw new Error(
+        `simulateCutAndRead: editor "${sel}" not found — editor views on page: ${editorCount}. document.body head:\n${rootPreview}`,
+      );
+    }
     const captured: Record<string, string> = {};
     const dt = new DataTransfer();
     const origSetData = dt.setData.bind(dt);

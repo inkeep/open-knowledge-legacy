@@ -55,6 +55,7 @@ documented choice.
 
 ```json
 {
+  "schemaVersion": 1,
   "qa022": {
     "p50Ms": <number>,
     "capturedAt": "<YYYY-MM-DD>",
@@ -68,3 +69,18 @@ Future perf tests add their own top-level keys (`qaXXX`) following the
 same shape. The schema is intentionally minimal — anything more (p95,
 percentile sweeps, env metadata) is YAGNI until a second perf test
 demands it.
+
+### Key naming: `qa022` vs `QA-022`
+
+The JSON key is lowercase with no dash (`qa022`); the spec
+acceptance-criterion ID, the test name, and the reviewer-facing
+documentation use dashed-uppercase (`QA-022`). The split is
+deliberate — lowercase-no-dash keys play nicely with shell quoting and
+with `jq '.qa022'` patterns, and the test-side TypeScript narrowing
+(`PERF_BASELINE.qa022.p50Ms`) reads cleanly. When adding a new perf
+test, follow the same mapping: `QA-NNN` in SPEC / docs / test names,
+`qaNNN` as the JSON key.
+
+Matches the existing schema at `packages/core/tests/perf/baseline.json`
+(`schemaVersion: 1` + domain-scoped result entries) so cross-file
+tooling can share baseline validators.

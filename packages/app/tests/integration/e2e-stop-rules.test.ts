@@ -166,20 +166,28 @@ describe('E2E STOP rule — zero allowlist', () => {
     const writePattern = /window\.__[A-Za-z_][A-Za-z0-9_]*\s*=/;
     // Exclude pure equality / comparison usages by requiring no `==` or `===` immediately after.
     const equalityPattern = /window\.__[A-Za-z_][A-Za-z0-9_]*\s*===?/;
+    // Match the `Object.defineProperty(window, '__name', …)` publication
+    // shape used by `DocumentContext.tsx` for `window.__activeProvider`.
+    // Without this, a new contributor adding a second
+    // `Object.defineProperty(window, '__x', …)` writer outside the
+    // allowlist would slip past the assignment-only regex above.
+    const definePropertyPattern =
+      /Object\.defineProperty\s*\(\s*window\s*,\s*['"]__[A-Za-z_][A-Za-z0-9_]*['"]/;
 
     const violations: string[] = [];
     for (const file of srcFiles) {
       if (DEV_GATED_WINDOW_WRITERS.includes(file.path)) continue;
       for (let i = 0; i < file.lines.length; i++) {
         const line = file.lines[i] ?? '';
-        if (!writePattern.test(line)) continue;
-        if (equalityPattern.test(line)) continue;
+        const isAssignWrite = writePattern.test(line) && !equalityPattern.test(line);
+        const isDefinePropertyWrite = definePropertyPattern.test(line);
+        if (!isAssignWrite && !isDefinePropertyWrite) continue;
         violations.push(`  ${file.path}:${i + 1}    ${line.trim()}`);
       }
     }
     if (violations.length > 0) {
       throw new Error(
-        `Ungated window.__ assignment outside the dev-gate allowlist — wrap in if (import.meta.env.DEV) and add to dev-gate-allowlist.ts:\n${violations.join('\n')}`,
+        `Ungated window.__ write outside the dev-gate allowlist — wrap in if (import.meta.env.DEV) and add to dev-gate-allowlist.ts:\n${violations.join('\n')}`,
       );
     }
   });

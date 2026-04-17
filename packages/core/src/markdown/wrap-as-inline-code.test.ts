@@ -96,10 +96,32 @@ describe('wrapAsInlineCode — children-shape coverage', () => {
   });
 });
 
-describe('wrapAsInlineCode — property: output type is always in allowed set', () => {
+describe('wrapAsInlineCode — properties: shape + content preservation', () => {
   const ALLOWED = new Set(['inlineCode', 'link', 'strong', 'emphasis', 'delete']);
 
-  test('random inline children → output.type ∈ {inlineCode, link, strong, emphasis, delete}', () => {
+  /**
+   * Recursively collect every text leaf value from an mdast input-children
+   * array OR a single mdast output node. Order-preserving so we can assert
+   * that `wrapAsInlineCode` neither drops nor reorders characters — an
+   * implementation that loses content would pass a type-only check but
+   * fail this.
+   */
+  function collectText(nodeOrArray: MdastNodes | MdastNodes[]): string {
+    const arr = Array.isArray(nodeOrArray) ? nodeOrArray : [nodeOrArray];
+    let out = '';
+    for (const n of arr) {
+      if (n.type === 'text') {
+        out += n.value;
+      } else if (n.type === 'inlineCode') {
+        out += n.value;
+      } else if ('children' in n && Array.isArray(n.children)) {
+        out += collectText(n.children as MdastNodes[]);
+      }
+    }
+    return out;
+  }
+
+  test('random inline children → output.type ∈ allowed set AND input text is preserved', () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -116,7 +138,14 @@ describe('wrapAsInlineCode — property: output type is always in allowed set', 
         ),
         (children) => {
           const out = wrapAsInlineCode(children as MdastNodes[]);
+          // Type property: output must be inlineCode or a structural wrapper.
           expect(ALLOWED.has(out.type)).toBe(true);
+          // Content-preservation property: every character the input carried
+          // must appear in the output, in order. A regression that dropped
+          // `lang`, dropped children, or zeroed out `value` would fail this.
+          const inputText = collectText(children as MdastNodes[]);
+          const outputText = collectText(out);
+          expect(outputText).toBe(inputText);
         },
       ),
       { numRuns: 100 },

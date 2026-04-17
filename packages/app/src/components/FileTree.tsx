@@ -719,11 +719,15 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   /**
-   * Collapse a folder and all its descendant folders. Because the global
-   * derivation is `expanded = (ancestors ∪ userExpanded) \ userCollapsed`,
-   * adding the subtree paths to `userCollapsed` correctly overrides both
-   * prior user expansions and the active-doc-ancestor auto-expansion inside
-   * this scope, while leaving unrelated folders untouched.
+   * Collapse a folder and all its descendant folders. The global derivation
+   * is `expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
+   * ancestors unconditionally expanded (see the `expandedPaths` loop below
+   * and AGENTS.md precedent #21). So adding subtree paths to `userCollapsed`
+   * collapses every non-ancestor folder in the subtree; ancestors of the
+   * active doc stay visible (matches VS Code / Finder semantics) — their
+   * chevron is a visual no-op. See US-011 in
+   * `specs/2026-04-17-e2e-observability-determinism/` for the empirical
+   * triage that landed this invariant.
    */
   function collapseSubtree(folder: TreeNode) {
     const subtreePaths = collectFolderPaths([folder]);
@@ -764,9 +768,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       });
     },
     collapseAll() {
-      // `userCollapsed` must include ancestors of the active doc to override the
-      // derivation `expanded = (ancestors ∪ userExpanded) \ userCollapsed`;
-      // otherwise "collapse all" would leave the active file's chain open.
+      // Under the ancestor-priority derivation
+      // (`expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
+      // ancestors exempt from userCollapsed — see the `expandedPaths` loop
+      // below and AGENTS.md precedent #21), ancestors of the active doc
+      // stay expanded regardless of what we put in `userCollapsed`. So
+      // "collapse all" collapses every non-ancestor folder and leaves the
+      // active file's chain open — which matches VS Code / Finder UX and is
+      // the intended contract for this button.
       const paths = collectFolderPaths(buildTree(documents));
       startTransition(() => {
         setUserCollapsed(paths);
@@ -1020,6 +1029,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   function handleToggle(path: string) {
+    // Ancestors of the active doc are unconditionally expanded by the
+    // derivation above — the chevron is already a visual no-op on them.
+    // Skip the `userCollapsed` write so a former-ancestor path doesn't
+    // become a "surprise collapse" the moment the user navigates away.
+    // Precedent #21 (AGENTS.md) + `packages/app/tests/stress/reveal-on-activate.e2e.ts`.
+    if (ancestorSet.has(path)) {
+      return;
+    }
     if (expandedPaths.has(path)) {
       setUserCollapsed((prev) => new Set(prev).add(path));
       setUserExpanded((prev) => {
