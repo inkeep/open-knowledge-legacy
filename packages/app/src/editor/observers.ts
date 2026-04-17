@@ -36,19 +36,9 @@
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import {
-  defaultScheduler,
-  type Scheduler,
-  stripFrontmatter,
-  VFileMessage,
-} from '@inkeep/open-knowledge-core';
+import { stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
-
-// Re-export `Scheduler` and `defaultScheduler` for back-compat callers —
-// test-harness.ts exposes a `ManualScheduler` based on these. The types
-// are no longer consumed inside this file's hot path.
-export { defaultScheduler, type Scheduler };
 
 /**
  * Transaction origin for Observer A (historical tree → text direction).
@@ -127,12 +117,6 @@ export interface ObserverDeps {
    */
   schema?: Schema;
   onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
-  /**
-   * Scheduler DI — retained in the interface for call-site compatibility.
-   * No longer consumed by the observer body; bridge dispatch is
-   * settlement-based on the server (precedent #13(b), SPEC §6 R4).
-   */
-  scheduler?: Scheduler;
 }
 
 /**
