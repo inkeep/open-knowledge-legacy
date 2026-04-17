@@ -11,6 +11,8 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
+  title: 'Open Knowledge',
+  description: 'An agent-native knowledge platform where humans and AI co-create.',
   icons: {
     icon: '/ok-logo.png',
     apple: '/ok-logo.png',
