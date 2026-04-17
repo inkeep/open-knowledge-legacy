@@ -1,37 +1,27 @@
 /**
  * Client-side observer shell for Y.XmlFragment and Y.Text.
  *
- * Under the server-authoritative architecture (precedent #14), cross-CRDT
- * sync writes are performed exclusively by the server observer module at
- * `packages/server/src/server-observers.ts`. This client module does NOT
- * write the derived CRDT — the write paths (Observer A → Y.Text via
- * `applyByPrefixSuffix`, Observer B → XmlFragment via `updateYFragment`)
- * were deleted per FR-7 of the server-authoritative observer bridge spec.
+ * Cross-CRDT sync writes run exclusively on the server observer module at
+ * `packages/server/src/server-observers.ts` (precedent #14). The
+ * historical client-side debounce + per-doc `TypingState` machinery was
+ * removed under bridge-correctness SPEC §6 R5b / D14 DELEGATED = option
+ * (a) DELETE. Precedent #13(b) — no wall-clock `setTimeout` in bridge
+ * observer files; the grep gate at
+ * `packages/server/src/bridge-no-wallclock.test.ts` pins this.
  *
- * Under the settlement-based observer bridge (SPEC 2026-04-16
- * bridge-correctness §6 R5b, D14 DELEGATED outcome = option (a) DELETE),
- * the historical client-side debounce machinery (`DEBOUNCE_MS`,
- * `TYPING_DEFER_MS`, `REMOTE_TREE_SYNC_GRACE_MS`, four `sched.setTimeout`
- * sites, per-doc `TypingState`, `lastSyncedXmlMd` baseline) coalesced
- * side-effect-free baseline refreshes only — so it's deleted, not
- * relocated. The client observer's real jobs reduce to:
- *
- *   1. Own the `ORIGIN_TREE_TO_TEXT` and `ORIGIN_TEXT_TO_TREE` object
- *      identities (still required by the bridge-invariant watcher's
- *      enforcing set — precedent #1 identity match).
+ * The shell's surface reduces to:
+ *   1. Own the `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object
+ *      identities required by the bridge-invariant watcher's enforcing
+ *      set (precedent #1 identity match).
  *   2. Fire `onSyncError` for non-transient parse failures on Y.Text so
  *      the editor surfaces real diagnostics (transient mid-edit MDX
- *      syntax errors are swallowed).
+ *      syntax errors are swallowed at debug log).
  *   3. Record keystroke timestamps via `markUserTyping` for the
- *      `SystemDocSubscriber` agent-focus typing guard.
- *
- * Every cross-CRDT write concern lives on the server (`server-observers.ts`
- * under `doc.on('afterAllTransactions', ...)`, SPEC §6 R4). Precedent
- * #13(b): no wall-clock `setTimeout` in bridge code; US-012's grep gate
- * enforces this file is `setTimeout`-free.
+ *      `SystemDocSubscriber` agent-focus typing guard (global wall-clock
+ *      timestamp, not per-doc state).
  *
  * See `specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md` and
- * `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R5b + D14.
+ * `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R4-R5b.
  */
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';

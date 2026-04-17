@@ -332,7 +332,12 @@ export function wait(ms: number): Promise<void> {
  *
  * The `idleTicks` count (default 2) must be >= 2 so the first tick can
  * observe an in-flight drain and the second confirms the drain finished
- * without a follow-up. Raise it for particularly-nested observer cascades.
+ * without a follow-up. `idleTicks: 1` is INSUFFICIENT for the seed-class
+ * races this helper exists to catch: Observer A's inner
+ * `OBSERVER_SYNC_ORIGIN` write scheduled via `queueMicrotask` can land on
+ * a later tick than the outer drain, so a single idle observation can
+ * return before the cascade completes. Raise `idleTicks` for particularly
+ * nested observer cascades; lower is unsafe.
  *
  * `timeoutMs` (default 2000) guards against hangs; throws a clear error
  * pointing at the doc if quiescence is never reached.

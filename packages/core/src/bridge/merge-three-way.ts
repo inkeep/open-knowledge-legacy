@@ -121,6 +121,17 @@ export interface BridgeMergeContentLossInfo {
   side: BridgeMergeContentLossSide;
 }
 
+/**
+ * One lost substring in redacted telemetry form: its byte length plus a
+ * short non-cryptographic digest. Preserves the "something was lost" +
+ * "how much" + "is it the same substring across events" signals for rate
+ * charting + deduplication without leaking raw user content into logs.
+ */
+export interface RedactedLostSubstring {
+  len: number;
+  digest: string;
+}
+
 /** Serializable shape emitted to the `bridge-merge-content-loss` structured log. */
 export interface BridgeMergeContentLossLogPayload {
   event: 'bridge-merge-content-loss';
@@ -130,7 +141,30 @@ export interface BridgeMergeContentLossLogPayload {
   userTextLen: number;
   agentTextLen: number;
   resultLen: number;
-  lostSubstrings: string[];
+  /**
+   * Redacted-by-default (length + short FNV-1a digest). Gate raw strings on
+   * `OK_TELEMETRY_VERBOSE=1` via `toLog({ verbose: true })` — opt-in because
+   * the raw content can contain user paragraphs that would otherwise flow
+   * into log aggregators with weaker data-handling posture than the
+   * application store itself.
+   */
+  lostSubstrings: RedactedLostSubstring[] | string[];
+  /** `true` when `lostSubstrings` carries `RedactedLostSubstring[]`. */
+  redacted: boolean;
+}
+
+/** Small FNV-1a 32-bit digest, hex-encoded. Non-cryptographic — stable-across-runs identity only. */
+function fnv1aDigest(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function redactLostSubstrings(lost: string[]): RedactedLostSubstring[] {
+  return lost.map((s) => ({ len: s.length, digest: fnv1aDigest(s) }));
 }
 
 /**
@@ -156,7 +190,17 @@ export class BridgeMergeContentLossError extends Error {
     this.info = info;
   }
 
-  toLog(): BridgeMergeContentLossLogPayload {
+  /**
+   * Serialize the error for the `bridge-merge-content-loss` structured log.
+   *
+   * Default: `lostSubstrings` carries redacted `{ len, digest }` entries so
+   * verbatim user content never reaches log aggregators. Callers that need
+   * the raw strings (debug-replay harnesses, local spike scripts) opt in
+   * via `{ verbose: true }`. The Observer A Path B caller reads the
+   * `OK_TELEMETRY_VERBOSE` env var once to decide.
+   */
+  toLog(opts?: { verbose?: boolean }): BridgeMergeContentLossLogPayload {
+    const verbose = opts?.verbose === true;
     return {
       event: 'bridge-merge-content-loss',
       which: this.info.which,
@@ -165,7 +209,10 @@ export class BridgeMergeContentLossError extends Error {
       userTextLen: this.info.userText.length,
       agentTextLen: this.info.agentText.length,
       resultLen: this.info.result.length,
-      lostSubstrings: this.info.lostSubstrings,
+      lostSubstrings: verbose
+        ? this.info.lostSubstrings
+        : redactLostSubstrings(this.info.lostSubstrings),
+      redacted: !verbose,
     };
   }
 }

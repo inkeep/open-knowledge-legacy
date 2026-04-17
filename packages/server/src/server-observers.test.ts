@@ -34,6 +34,7 @@ import {
   type ObserverDispatchKind,
   type SetupServerObserversOpts,
   setupServerObservers,
+  shouldRethrowBridgeMergeLoss,
 } from './server-observers.ts';
 
 // ─── Test helpers ────────────────────────────────────────────
@@ -519,6 +520,50 @@ describe('Origin-guard truth table (§7d)', () => {
     expect(ytext.toString()).toContain('Remote edit');
 
     cleanup();
+  });
+});
+
+describe('shouldRethrowBridgeMergeLoss (D3-LOCKED polarity)', () => {
+  // Regression guard for bridge-correctness review iteration 4. The gate
+  // used to be `process.env.NODE_ENV !== 'production'`, which inverted
+  // D3-LOCKED under Bun because `bun run` / `open-knowledge start` leave
+  // NODE_ENV undefined — production users would have seen the loud-throw
+  // path at the exact moment a merge dropped content. These tests pin the
+  // affirmative contract: only `NODE_ENV=test` or the explicit
+  // `OK_RETHROW_BRIDGE_LOSS=1` opt-in trigger a rethrow.
+  test('undefined NODE_ENV falls through to silent-checkpoint path (Bun prod default)', () => {
+    expect(shouldRethrowBridgeMergeLoss({} as NodeJS.ProcessEnv)).toBe(false);
+  });
+
+  test('NODE_ENV=production falls through to silent-checkpoint path', () => {
+    expect(shouldRethrowBridgeMergeLoss({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe(
+      false,
+    );
+  });
+
+  test('NODE_ENV=development falls through to silent-checkpoint path', () => {
+    expect(shouldRethrowBridgeMergeLoss({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBe(
+      false,
+    );
+  });
+
+  test('NODE_ENV=test triggers rethrow (bun test default)', () => {
+    expect(shouldRethrowBridgeMergeLoss({ NODE_ENV: 'test' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  test('OK_RETHROW_BRIDGE_LOSS=1 triggers rethrow regardless of NODE_ENV', () => {
+    expect(
+      shouldRethrowBridgeMergeLoss({
+        NODE_ENV: 'production',
+        OK_RETHROW_BRIDGE_LOSS: '1',
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+  });
+
+  test('OK_RETHROW_BRIDGE_LOSS=0 does not trigger rethrow', () => {
+    expect(shouldRethrowBridgeMergeLoss({ OK_RETHROW_BRIDGE_LOSS: '0' } as NodeJS.ProcessEnv)).toBe(
+      false,
+    );
   });
 });
 

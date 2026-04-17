@@ -475,27 +475,51 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 
 // ─── Main fuzzer ───
 
-// Seed count calibration (bridge-correctness SPEC §6 R2, §10 D11 DELEGATED).
+// Seed count calibration (bridge-correctness SPEC §6 R2, §10 D11 DELEGATED,
+// review iteration 4 recalibration).
 //
 //   - Seed-replay mode (`STRESS_FUZZ_SEED=<n>`): exactly 1 seed, for
 //     deterministic reproduction.
 //   - Explicit override (`BRIDGE_FUZZ_SEEDS=<n>`): exact count, for local
 //     scaling / bisection runs.
-//   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): elevated to 10000 seeds (tier 2
-//     in CLAUDE.md CI tier structure; runtime budget ≈ 30 min).
-//   - PR mode (`STRESS_FUZZ_PR=1`): elevated to 1000 seeds (SPEC §6 R2
-//     target; gated on CI time budget — see D11).
+//   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): 10000 seeds (tier 2; 30-min
+//     budget). Split across `nightly.yml` + `weekly.yml` as needed.
+//   - PR mode (`STRESS_FUZZ_PR=1`): 200 seeds. The SPEC §6 R2 draft target
+//     was 1000, but per-seed convergence under turbo parallel contention
+//     (60s tail + macOS/Linux scheduler jitter) put 1000 over the 15-min
+//     tier-1 budget. 200 seeds ~8×'s the default-mode coverage while
+//     fitting the budget; the tail comes out in nightly + weekly runs
+//     (D11 resolution: split-by-tier, not matrix-shard).
 //   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
 //     and keeps local developer runs cheap.
+const SEED_COUNT_PR = 200;
+const SEED_COUNT_NIGHTLY = 10_000;
+const SEED_COUNT_DEFAULT = 25;
 function resolveSeedCount(): number {
   if (process.env.STRESS_FUZZ_SEED) return 1;
   if (process.env.BRIDGE_FUZZ_SEEDS) return Number(process.env.BRIDGE_FUZZ_SEEDS);
-  if (process.env.STRESS_FUZZ_NIGHTLY === '1') return 10_000;
-  if (process.env.STRESS_FUZZ_PR === '1') return 1_000;
-  return 25;
+  if (process.env.STRESS_FUZZ_NIGHTLY === '1') return SEED_COUNT_NIGHTLY;
+  if (process.env.STRESS_FUZZ_PR === '1') return SEED_COUNT_PR;
+  return SEED_COUNT_DEFAULT;
 }
 const SEED_COUNT = resolveSeedCount();
 const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
+
+// Surface the resolved seed count in CI logs so reviewers can confirm the
+// PR-tier gate is actually running at its calibrated coverage, not the
+// 25-seed default (bridge-correctness review iteration 4 regression guard).
+// Skipped when only 1 seed is requested (replay runs print the seed itself).
+if (FIXED_SEED === undefined) {
+  const mode =
+    process.env.STRESS_FUZZ_NIGHTLY === '1'
+      ? 'nightly'
+      : process.env.STRESS_FUZZ_PR === '1'
+        ? 'pr'
+        : process.env.BRIDGE_FUZZ_SEEDS
+          ? 'custom'
+          : 'default';
+  console.log(`[bridge-convergence fuzzer] mode=${mode} seeds=${SEED_COUNT}`);
+}
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
   let server: TestServer;

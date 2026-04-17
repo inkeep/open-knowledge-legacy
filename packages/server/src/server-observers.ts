@@ -99,6 +99,27 @@ const isPairedWriteOrigin = (origin: unknown): boolean => {
   return ctx?.paired === true;
 };
 
+/**
+ * Affirmative throw gate for `BridgeMergeContentLossError` inside Observer A
+ * Path B. SPEC §10 D3-LOCKED commits production to the silent-checkpoint
+ * recovery path (log + queue checkpoint + apply merge as-computed) so the
+ * editor keeps responding; tests want the error loud so regressions surface.
+ *
+ * The check is affirmative rather than `NODE_ENV !== 'production'` because
+ * Bun leaves `NODE_ENV` undefined when the runtime is `bun run` or
+ * `open-knowledge start` — the negative form inverted the contract and
+ * re-threw in production (bridge-correctness review iteration 4). `bun test`
+ * auto-populates `NODE_ENV=test`, which is the primary signal; callers that
+ * want loud failures outside `bun test` (integration harnesses launched via
+ * `bun run`, spike scripts) opt in with `OK_RETHROW_BRIDGE_LOSS=1`.
+ *
+ * Exported for the unit-test regression guard — the gate decision is a
+ * first-class concern, not an implementation detail.
+ */
+export function shouldRethrowBridgeMergeLoss(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === 'test' || env.OK_RETHROW_BRIDGE_LOSS === '1';
+}
+
 // Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
 // diffLinesFast, getFrontmatter, normalizeBridge) are imported from
 // `@inkeep/open-knowledge-core` so they live in one place shared with the
@@ -215,9 +236,15 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // can chart rate-per-doc over time. See CLAUDE.md "Logging conventions"
     // — JSON.stringify for machine-read events, bracket-prefix for ad-hoc
     // operational warnings.
+    //
+    // `lostSubstrings` is redacted by default (length + FNV-1a digest) so
+    // verbatim user content doesn't flow into log aggregators. Operators
+    // running a single-tenant local deployment can opt in to raw strings
+    // via `OK_TELEMETRY_VERBOSE=1`.
+    const verbose = process.env.OK_TELEMETRY_VERBOSE === '1';
     console.warn(
       JSON.stringify({
-        ...err.toLog(),
+        ...err.toLog({ verbose }),
         docName: opts.docName ?? null,
         timestamp: new Date().toISOString(),
       }),
@@ -322,7 +349,10 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
           } catch (mergeErr) {
             if (!(mergeErr instanceof BridgeMergeContentLossError)) throw mergeErr;
             handleBridgeMergeLoss(mergeErr, preMergeBaseline);
-            if (process.env.NODE_ENV !== 'production') throw mergeErr;
+            // D3-LOCKED polarity: throw only when the runtime affirmatively
+            // identifies itself as a test (see `shouldRethrowBridgeMergeLoss`
+            // JSDoc for why the gate is affirmative, not `!== 'production'`).
+            if (shouldRethrowBridgeMergeLoss()) throw mergeErr;
             // Apply the merge's as-computed result so the editor progresses.
             applyFastDiff(ytext, currentText, mergeErr.info.result);
           }

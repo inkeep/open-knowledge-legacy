@@ -72,7 +72,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
-      - run: bunx turbo run ${{ matrix.task }}
+      # STRESS_FUZZ_PR=1 elevates the bridge-convergence fuzzer from 25 default
+      # seeds to 200 (calibrated PR tier coverage — see
+      # `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`
+      # `resolveSeedCount`). Exported for every matrix entry; all other tasks
+      # ignore the env. Nightly runs at 10000 via nightly.yml's explicit
+      # STRESS_FUZZ_NIGHTLY=1.
+      - env:
+          STRESS_FUZZ_PR: "1"
+        run: bunx turbo run ${{ matrix.task }}
 
   playwright:
     # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`

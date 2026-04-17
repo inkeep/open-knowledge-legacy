@@ -451,9 +451,14 @@ describe('Post-condition: assertContentPreservation', () => {
     expect(() => assertContentPreservation('same\n', 'same\n', 'same\n', 'same\n')).not.toThrow();
   });
 
-  test('toLog() emits structured payload with expected fields', () => {
+  test('toLog() emits structured payload with expected fields; redacted by default', () => {
     try {
-      assertContentPreservation('base\n', 'base\nMINE\n', 'base\nTHEIRS\n', 'base\nTHEIRS\n');
+      assertContentPreservation(
+        'base\n',
+        'base\nSENSITIVE-CONTENT\n',
+        'base\nTHEIRS\n',
+        'base\nTHEIRS\n',
+      );
       expect(false).toBe(true);
     } catch (err) {
       if (!(err instanceof BridgeMergeContentLossError)) throw err;
@@ -462,10 +467,41 @@ describe('Post-condition: assertContentPreservation', () => {
       expect(payload.which).toBe('substring');
       expect(payload.side).toBe('user');
       expect(payload.baselineLen).toBe('base\n'.length);
-      expect(payload.userTextLen).toBe('base\nMINE\n'.length);
+      expect(payload.userTextLen).toBe('base\nSENSITIVE-CONTENT\n'.length);
       expect(payload.agentTextLen).toBe('base\nTHEIRS\n'.length);
       expect(payload.resultLen).toBe('base\nTHEIRS\n'.length);
+      expect(payload.redacted).toBe(true);
       expect(Array.isArray(payload.lostSubstrings)).toBe(true);
+      // Redacted form carries len+digest, never the raw substring.
+      for (const entry of payload.lostSubstrings) {
+        if (typeof entry === 'string') throw new Error('default log must not leak raw substrings');
+        expect(entry).toHaveProperty('len');
+        expect(entry).toHaveProperty('digest');
+        expect(entry.digest).toMatch(/^[0-9a-f]{8}$/);
+      }
+      // Digests are stable — same substring → same digest across calls.
+      const again = err.toLog();
+      expect(again.lostSubstrings).toEqual(payload.lostSubstrings);
+    }
+  });
+
+  test('toLog({ verbose: true }) surfaces raw substrings for opt-in verbose telemetry', () => {
+    try {
+      assertContentPreservation(
+        'base\n',
+        'base\nUSER-UNIQUE-MARKER\n',
+        'base\nAGENT-MARKER\n',
+        'base\nAGENT-MARKER\n',
+      );
+      expect(false).toBe(true);
+    } catch (err) {
+      if (!(err instanceof BridgeMergeContentLossError)) throw err;
+      const payload = err.toLog({ verbose: true });
+      expect(payload.redacted).toBe(false);
+      const hasRawMarker = payload.lostSubstrings.some(
+        (s) => typeof s === 'string' && s.includes('USER-UNIQUE-MARKER'),
+      );
+      expect(hasRawMarker).toBe(true);
     }
   });
 
