@@ -215,7 +215,7 @@ export function EditorHeader({
 
     // Validation
     if (!isValidNodeName(normalized)) {
-      setRenameError('Name can’t be empty or contain / or \\');
+      setRenameError('Name can’t be empty, ".", "..", or contain / or \\');
       return;
     }
 
@@ -262,13 +262,14 @@ export function EditorHeader({
         return;
       }
 
-      if (!isRenameResponse(raw)) {
-        console.warn('[EditorHeader] rename response shape invalid', {
+      if (!res.ok || !isRenameResponse(raw)) {
+        const errorBody = raw as { error?: string } | null;
+        console.warn('[EditorHeader] rename failed', {
           status: res.status,
           docName,
           newDocName,
         });
-        setRenameError(`Server error (HTTP ${res.status})`);
+        setRenameError(errorBody?.error || `Server error (HTTP ${res.status})`);
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
@@ -277,13 +278,6 @@ export function EditorHeader({
 
       if (!raw.ok) {
         setRenameError(raw.error || 'Failed to rename path');
-        setIsRenameLoading(false);
-        commitInProgressRef.current = false;
-        lastFailedValueRef.current = normalized;
-        return;
-      }
-      if (!res.ok) {
-        setRenameError(`Server error (HTTP ${res.status})`);
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;

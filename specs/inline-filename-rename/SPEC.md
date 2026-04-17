@@ -12,7 +12,7 @@ Make the filename in the editor header clickable. On click, it becomes an inline
 
 **In scope:**
 - Click-to-edit the filename text in `EditorHeader.tsx`
-- Inline input with Enter to commit, Escape/blur to cancel
+- Inline input with Enter to commit, Escape to cancel, blur to commit
 - Call `POST /api/rename` with `{ docName, newDocName }`
 - After successful rename: navigate to the new docName via hash, close old provider, update sidebar
 - Validation: reject empty names, names with `/` or `\`, `.`, `..`
