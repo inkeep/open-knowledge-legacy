@@ -38,6 +38,27 @@ const RECYCLE_DEBOUNCE_MS = 4_000;
 /**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
+ *
+ * **Contract — `wsUrl` is frozen at construction ("first-URL wins").**
+ * `DocumentContext` instantiates the module-level singleton the first time
+ * `useCollabUrl()` resolves a non-null URL. If `/api/config` later reports a
+ * different URL (e.g. `ok start` crashed and was respawned on a different
+ * kernel-allocated port, OR the user clicks the ConnectingBanner's Retry
+ * after a terminal-state transition and `/api/config` now returns a new
+ * port), this pool continues targeting the original URL.
+ *
+ * Why we accept this today: the built-in HocuspocusProvider exponential
+ * backoff + our 4s recycle debounce handle server-restart-on-same-port
+ * transparently, which is the common case. Port-change-on-restart is rare
+ * enough that a full page reload is an acceptable recovery path — and
+ * tearing down live providers mid-session would require deciding about
+ * unsaved-CRDT-state preservation, which is out of scope for the
+ * Zero-Ceremony Resume bet.
+ *
+ * The next maintainer who wants dynamic `wsUrl` updates must: (a) add a
+ * tear-down + rebuild step keyed on `wsUrl` changes, (b) decide how to
+ * reconcile any pending CRDT ops buffered during the disconnect, and (c)
+ * extend the multi-client test harness with a port-change scenario.
  */
 export class ProviderPool {
   readonly entries = new Map<string, PoolEntry>();

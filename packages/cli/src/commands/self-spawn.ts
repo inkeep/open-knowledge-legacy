@@ -30,8 +30,18 @@ export function resolveSelfSpawn(): { command: string; prefixArgs: readonly stri
   const command = process.execPath;
   const entry = process.argv[1];
   if (!entry) {
-    // Should never happen for a CLI process, but guard defensively. Fall back
-    // to `npx` with the same pinned coordinates we used to ship with.
+    // Should never happen for a normal CLI process — `process.argv[1]` is
+    // populated whenever a script is executed via node/bun/npx/bin-shim. If
+    // we hit this path, some unusual install shape (embedded runtime?
+    // ExecSnapshot bundle?) has stripped argv[1]. Fall back to `npx` — the
+    // pre-fix behavior — but WARN so operators notice the regression to
+    // version-drift + registry-fetch semantics rather than getting a silent
+    // downgrade.
+    console.warn(
+      '[self-spawn] process.argv[1] is empty — falling back to `npx @inkeep/open-knowledge`. ' +
+        'This re-introduces the version-drift surface that re-exec was fixing. ' +
+        `Observed argv: ${JSON.stringify(process.argv)}`,
+    );
     return { command: 'npx', prefixArgs: ['@inkeep/open-knowledge'] };
   }
   return { command, prefixArgs: [entry] };
