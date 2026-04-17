@@ -14,11 +14,13 @@
  * Uses a synthetic Y.Doc (no Hocuspocus) with ManualScheduler for deterministic flush.
  */
 import { describe, expect, test } from 'bun:test';
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
+import { MANAGED_RENAME_ORIGIN, ROLLBACK_ORIGIN } from './api-extension.ts';
 import { FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { getMetrics } from './metrics.ts';
 import {
@@ -513,6 +515,95 @@ describe('Origin-guard truth table (§7d)', () => {
     expect(finalText).toContain('M1-golf hotel');
 
     cleanup();
+  });
+
+  // ── Bucket 0 paired-write regression tests (SPEC.md §6 R0e/R0f/R0g) ──
+  //
+  // Each of T8/T9/T10 reproduces the seed-1776386718697 class at the observer
+  // layer for one paired-write origin, asserting that Observer B's symmetric
+  // short-circuit branch (US-001) cancels `debounceB` immediately when a
+  // paired transaction fires. Mutation H in
+  // `specs/2026-04-16-bridge-correctness/meta/mutation-validation.md` —
+  // reverting the Observer B branch — fails these tests because a timer remains
+  // in `scheduler.pending()` after the paired transaction.
+  //
+  // The stronger convergence assertion (downstream race with a concurrent
+  // non-paired mutation) also holds: the content marker from the paired write
+  // appears exactly once in the final state, and the concurrent WYSIWYG edit
+  // is preserved alongside it.
+
+  function runPairedWriteShortCircuitTest(origin: LocalTransactionOrigin, marker: string): void {
+    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+    scheduler.flush();
+
+    // Seed doc with baseline content so Observer A has a non-empty baseline.
+    const seedContent = 'seed paragraph\n';
+    const seedJson = mdManager.parse(seedContent);
+    const seedNode = schema.nodeFromJSON(seedJson);
+    doc.transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, xmlFragment, seedNode, meta);
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, mdManager.serialize(seedJson));
+    }, AGENT_WRITE_ORIGIN);
+    scheduler.flush();
+
+    // Paired write under the target origin — atomically writes BOTH
+    // XmlFragment and Y.Text in a single transact (mirrors the production
+    // call sites: applyExternalChange, rollback, managed-rename).
+    const afterPaired = `seed paragraph\n\n${marker}\n`;
+    const pairedJson = mdManager.parse(afterPaired);
+    const pairedNode = schema.nodeFromJSON(pairedJson);
+    const pairedCanonical = mdManager.serialize(pairedJson);
+    doc.transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, xmlFragment, pairedNode, meta);
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, pairedCanonical);
+    }, origin);
+
+    // Observer B's symmetric short-circuit (US-001) cancels debounceB
+    // synchronously during the paired transaction. Observer A's existing
+    // branch cancels debounceA. Both should be clear here.
+    // Mutation H (revert Observer B branch) leaves debounceB pending.
+    expect(scheduler.pending()).toEqual([]);
+
+    // Now simulate a concurrent non-paired XmlFragment mutation arriving
+    // before any debounce fires — mimics a remote WYSIWYG keystroke that
+    // lands in the same tick as the paired write.
+    doc.transact(() => {
+      const cur = ytext.toString();
+      const nextContent = `${cur}\nconcurrent-edit\n`;
+      const nextJson = mdManager.parse(nextContent);
+      const nextNode = schema.nodeFromJSON(nextJson);
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, xmlFragment, nextNode, meta);
+    });
+
+    scheduler.flush();
+
+    const finalText = ytext.toString();
+    // Paired-write marker must appear exactly once — no duplication from a
+    // stale-baseline Path B merge.
+    expect(finalText.split(marker).length - 1).toBe(1);
+    // Concurrent WYSIWYG edit must survive — Observer A should propagate it
+    // to Y.Text through the newly-scheduled debounce.
+    expect(finalText).toContain('concurrent-edit');
+
+    cleanup();
+  }
+
+  test('T8 — FILE_WATCHER paired-write: Observer B short-circuits debounceB symmetrically', () => {
+    runPairedWriteShortCircuitTest(FILE_WATCHER_ORIGIN, 'T8-file-watcher marker');
+  });
+
+  test('T9 — ROLLBACK paired-write: Observer B short-circuits debounceB symmetrically', () => {
+    runPairedWriteShortCircuitTest(ROLLBACK_ORIGIN, 'T9-rollback marker');
+  });
+
+  test('T10 — MANAGED_RENAME paired-write: Observer B short-circuits debounceB symmetrically', () => {
+    runPairedWriteShortCircuitTest(MANAGED_RENAME_ORIGIN, 'T10-managed-rename marker');
   });
 
   test('remote-arrived (no origin, local=false equivalent) triggers Observer A sync', () => {
