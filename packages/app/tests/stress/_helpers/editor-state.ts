@@ -58,10 +58,18 @@ export async function seedDocs(docs: Array<{ name: string; markdown: string }>):
 }
 
 /**
- * Press Meta+A in the focused editor view and yield to the browser so PM /
- * CM6 sync their internal selection state before the caller dispatches the
- * next event. Uses a page-level double-rAF — a deterministic signal that the
- * browser has completed at least two paint frames since Meta+A fired.
+ * Press the platform select-all chord in the focused editor view and yield
+ * to the browser so PM / CM6 sync their internal selection state before the
+ * caller dispatches the next event. Uses a page-level double-rAF — a
+ * deterministic signal that the browser has completed at least two paint
+ * frames since the select-all fired.
+ *
+ * Uses Playwright's `ControlOrMeta` pseudo-modifier (v1.37+), which maps to
+ * Meta on macOS and Control elsewhere. This matches `prosemirror-keymap`'s
+ * `Mod-a` resolution — without it, CI chromium (Linux) would send Super+a,
+ * which doesn't trigger PM's `selectAll` command, so `simulateCopyAndRead`
+ * would return an empty MIME map (verified on PR #193 CI runs where every
+ * `simulateCopyAndRead` assertion failed with `Received string: ""`).
  *
  * Replaces the ad-hoc `page.waitForTimeout(50)` frame-yield idiom; the
  * double-rAF wait is bounded (~32ms at 60fps), deterministic, and tolerates
@@ -72,7 +80,7 @@ export async function seedDocs(docs: Array<{ name: string; markdown: string }>):
  */
 export async function selectAllAndWaitForSelection(page: Page, selector: string): Promise<void> {
   await page.focus(selector);
-  await page.keyboard.press('Meta+a');
+  await page.keyboard.press('ControlOrMeta+a');
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {

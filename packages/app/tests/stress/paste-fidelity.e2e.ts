@@ -1044,7 +1044,7 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
     const before = (await getYText(page)).length;
     await page.focus('.cm-content');
     // Position cursor at end of existing buffer.
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.evaluate((shiftKey) => {
       const editor = document.querySelector('.cm-content');
       if (!editor) throw new Error('no cm-content');
@@ -1088,7 +1088,7 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
   test('QA-016-source empty-selection copy is a no-op (FR-15)', async ({ page }) => {
     // Place cursor at a specific position with no range selection.
     await page.focus('.cm-content');
-    await page.keyboard.press('Meta+End'); // move cursor to end, no range
+    await page.keyboard.press('ControlOrMeta+End'); // move cursor to end, no range
     // Fire the raw synthetic copy WITHOUT the Meta+A select-all dance, so
     // the Source handler sees from === to and must return false.
     const out = await page.evaluate(() => {

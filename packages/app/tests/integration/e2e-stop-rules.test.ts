@@ -147,6 +147,27 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
+  test("no keyboard.press('Meta+X') — use ControlOrMeta+X for cross-platform CI (D-Q10)", () => {
+    // Chromium on Linux CI treats `Meta` as the Super / Windows key. PM's
+    // `Mod-a` keymap resolves to `Ctrl+a` on Linux, so `keyboard.press('Meta+a')`
+    // on CI does not trigger PM's selectAll command — `simulateCopyAndRead`
+    // then returns an empty MIME map. `ControlOrMeta+X` (Playwright v1.37+)
+    // maps to `Meta+X` on macOS and `Control+X` elsewhere, matching
+    // `prosemirror-keymap`'s `Mod-` resolution.
+    //
+    // Scope: only keyboard shortcuts where the chord is meant to match a
+    // platform-aware key binding (select-all, copy, cut, paste, end-of-doc,
+    // start-of-doc, select-all-up, select-word-left/right). Plain `Meta`
+    // key references in prose / identifiers are not banned.
+    const pattern = /keyboard\.press\(\s*['"`]Meta\+[A-Za-z][A-Za-z]*['"`]/;
+    const violations = collectMatches(e2eFiles, (line) => pattern.test(line));
+    if (violations.length > 0) {
+      throw new Error(
+        `keyboard.press('Meta+X') — replace with 'ControlOrMeta+X' so CI (Linux chromium) maps to Ctrl+X:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
   test('no inner-file helper imports — must use barrel ./_helpers (D-Q11)', () => {
     // Banned: `from './_helpers/sidebar'`, `from './_helpers/provider'`, etc.
     // Allowed: `from './_helpers'` (resolves to ./_helpers/index.ts).

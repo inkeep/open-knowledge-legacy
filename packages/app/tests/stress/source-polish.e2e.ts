@@ -184,7 +184,7 @@ test.describe('§6.1 Broken link-ref', () => {
     // Playwright's expect().toHaveCount() auto-retries until the assertion passes
     // or the timeout expires — no manual waitForTimeout needed.
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
 
     // The [click here][missing] should be marked broken — StateField rescans
@@ -194,7 +194,7 @@ test.describe('§6.1 Broken link-ref', () => {
 
     // Now add the missing definition — the broken mark should clear as soon
     // as the StateField's next docChanged run sees the new definition.
-    await page.keyboard.press('Meta+End');
+    await page.keyboard.press('ControlOrMeta+End');
     await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
 
     const brokenAfter = page.locator('.cm-link-ref-broken');
@@ -390,8 +390,8 @@ test.describe('§6.7 Cross-cutting', () => {
 
     // Select all and copy
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+a');
-    await page.keyboard.press('Meta+c');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('ControlOrMeta+c');
 
     // Read clipboard
     const clipboard = await page.evaluate(() => navigator.clipboard.readText());
