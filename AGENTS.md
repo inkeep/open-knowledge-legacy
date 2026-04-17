@@ -44,7 +44,7 @@ Three CI tiers, calibrated against measured baselines (US-016 / SPEC R9). Turbo 
 
 | Tier | Cadence | Workflow | Scope | Budget |
 | ---- | ------- | -------- | ----- | ------ |
-| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative), bridge fuzz (`STRESS_FUZZ_PR=1` → 75 seeds; wired in `ci.yml`, env declared in `turbo.json` `test:fuzz:bridge`; recalibrated from 200 after 15-min timeout on PR #192 run 24577509123 — CI is ~9-10s/seed vs ~4.7s/seed local) | 15 min (p95 warm local baseline ≈ 2m30s; runners ≈ 2× slower; 1.5× headroom) |
+| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative) on `ubuntu-latest`; bridge fuzz (`STRESS_FUZZ_PR=1` → 200 seeds) on a dedicated `fuzz` job pinned to `ubuntu-64gb` (mirrors the `playwright` job's large-runner pattern from PR #193) — env declared in `turbo.json` `test:fuzz:bridge`; 200-seed target restored after PR #192 moved the fuzz off the 2-vCPU runner that had timed out at 14m56s | 15 min (p95 warm local baseline ≈ 2m30s; 64gb runner matches local; 1.5× headroom) |
 | 2    | On demand (`workflow_dispatch`) | `.github/workflows/nightly.yml` | deep fuzz (`STRESS_FUZZ_NIGHTLY=1`), full stress, perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`) | 30 min per job |
 | 3    | On demand (`workflow_dispatch`) | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), elevated-seed bridge fuzz, perf-trend benchmark artifact upload | 60 min |
 
