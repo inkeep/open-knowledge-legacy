@@ -22,7 +22,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
-import { selectAllAndWaitForSelection, simulateCopyAndRead, simulateCutAndRead } from './_helpers';
+import {
+  createPage,
+  selectAllAndWaitForSelection,
+  simulateCopyAndRead,
+  simulateCutAndRead,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 const PERF_BASELINE: { qa022: { p50Ms: number } } = JSON.parse(
   readFileSync(join(fileURLToPath(import.meta.url), '..', 'perf-baseline.json'), 'utf-8'),
@@ -40,22 +46,6 @@ const _dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURE_ROOT = join(_dirname, '../../../core/src/markdown/rehype-plugins/fixtures');
 function fixture(name: string): string {
   return readFileSync(join(FIXTURE_ROOT, name), 'utf-8');
-}
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
-}
-
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
-    timeout: 15_000,
-  });
 }
 
 async function getYText(page: Page): Promise<string> {

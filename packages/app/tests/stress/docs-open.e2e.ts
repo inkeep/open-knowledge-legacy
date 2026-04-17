@@ -10,34 +10,10 @@
  */
 
 import { expect, type Page, test } from '@playwright/test';
+import { seedDocs, waitForActiveProviderSynced } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
-}
-
-async function replaceDoc(docName: string, markdown: string) {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown, position: 'replace' }),
-  });
-  if (!res.ok) throw new Error(`agent-write-md failed for ${docName}: ${res.status}`);
-}
-
-async function waitForActiveProviderSynced(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
-    timeout: 15_000,
-  });
-}
 
 async function openFromSidebar(page: Page, filename: string) {
   // Scope to sidebar to avoid strict-mode violations when the EditorHeader
@@ -45,17 +21,6 @@ async function openFromSidebar(page: Page, filename: string) {
   // has `data-slot="sidebar-container"` which scopes the text search.
   const sidebar = page.locator('[data-slot="sidebar-container"]');
   await sidebar.getByText(filename, { exact: true }).click({ timeout: 10_000 });
-}
-
-/**
- * Seed N unique docs and reset the server so every test starts with a clean
- * pool. Each doc gets enough content to be visually distinctive and, for doc A,
- * enough filler to make it scrollable (F1's acceptance criterion).
- */
-async function seedDocs(docs: Array<{ name: string; markdown: string }>) {
-  await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  for (const d of docs) await createPage(`${d.name}.md`);
-  for (const d of docs) await replaceDoc(d.name, d.markdown);
 }
 
 const FILLER_LINE = 'Filler paragraph to force scrollable content. '.repeat(10);

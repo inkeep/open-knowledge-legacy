@@ -7,7 +7,7 @@ name: Nightly E2E stability
 # specifically, slow-burn drift where a test passes 99/100 but the 1%
 # tail accumulates. PR-time CI runs each test once (or twice on retry);
 # this nightly job runs the full Playwright suite with `--repeat-each=3`
-# and `--workers=4`, exposing failure rates that single-shot CI would
+# and `--workers=2`, exposing failure rates that single-shot CI would
 # miss.
 #
 # On failure, appends a comment to the most recent open `e2e-flake`-
@@ -71,11 +71,11 @@ jobs:
         env:
           VITE_PORT: "13580"
         # Run the suite with `--repeat-each=3` to amplify any flake rate.
-        # `--workers=4` matches PR-time concurrency from playwright.config.ts.
+        # `--workers=2` matches PR-time concurrency from playwright.config.ts.
         # Run inside packages/app where playwright.config.ts lives.
         run: |
           cd packages/app
-          bunx playwright test --repeat-each=3 --workers=4 --reporter=list
+          bunx playwright test --repeat-each=3 --workers=2 --reporter=list
       - name: Upload nightly Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -136,7 +136,7 @@ jobs:
             );
 
             const commentBody = [
-              `Another nightly run failed under \`--repeat-each=3 --workers=4\`.`,
+              `Another nightly run failed under \`--repeat-each=3 --workers=2\`.`,
               ``,
               `**Run:** ${runUrl}`,
               `**Trigger:** ${context.eventName}`,
@@ -158,7 +158,7 @@ jobs:
             }
 
             const body = [
-              `The Nightly E2E stability workflow failed under \`--repeat-each=3 --workers=4\`.`,
+              `The Nightly E2E stability workflow failed under \`--repeat-each=3 --workers=2\`.`,
               ``,
               `**Run:** ${runUrl}`,
               `**Trigger:** ${context.eventName}`,

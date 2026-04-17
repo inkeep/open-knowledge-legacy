@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, replaceDoc } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
@@ -34,34 +35,6 @@ interface GraphFixtures {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-
-  if (res.status === 409) {
-    return;
-  }
-
-  if (!res.ok) {
-    throw new Error(`create-page failed for ${path}: ${res.status}`);
-  }
-}
-
-async function replaceDoc(docName: string, markdown: string) {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown, position: 'replace' }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`agent-write-md failed for ${docName}: ${res.status}`);
-  }
 }
 
 /**
