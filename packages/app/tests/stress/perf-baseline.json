@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "qa022": {
+    "p50Ms": 17,
+    "capturedAt": "2026-04-17",
+    "capturedFrom": "local seed (3 consecutive runs, port 22437) — replace with median-of-5 CI runs post-merge per perf-baseline-update.md",
+    "notes": "FR-21 chunked-insertion frame-time p50 during a 1MB Source paste. Local consistently lands at 16.7ms (60fps tick); CI runners are typically 1.5-2x slower. The baseline-relative assertion is `p50 < max(2 * p50Ms, 32)` — 32ms is the absolute floor (one double-budget at 60fps); 2x p50Ms is the regression ceiling. Real regressions trip the ceiling without runner-speed variance tripping the floor."
+  }
+}

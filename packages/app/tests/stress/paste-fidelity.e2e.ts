@@ -24,6 +24,10 @@ import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
 import { selectAllAndWaitForSelection } from './_helpers';
 
+const PERF_BASELINE: { qa022: { p50Ms: number } } = JSON.parse(
+  readFileSync(join(fileURLToPath(import.meta.url), '..', 'perf-baseline.json'), 'utf-8'),
+);
+
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 
@@ -957,9 +961,19 @@ test.describe('FR-21 chunked insertion maintains 60fps frame budget', () => {
     await page.waitForSelector('.cm-content', { timeout: 10_000 });
   });
 
-  test('QA-022 no frame exceeds ~16ms during chunked 1MB paste (oracle = frame-time sampling)', async ({
+  test('QA-022 chunked-paste p50 frame-time stays within baseline-relative budget', async ({
     page,
   }) => {
+    // Baseline-relative perf assertion. Threshold = max(2 × p50Baseline, 32ms):
+    //   - 32ms is the absolute floor (one double-budget at 60fps; honors
+    //     the 16ms target with 2× headroom for headless-Chromium noise).
+    //   - 2 × p50Baseline is the regression ceiling — catches a real
+    //     slowdown without runner-speed variance tripping the floor.
+    // Baseline lives in perf-baseline.json; update protocol is in
+    // perf-baseline-update.md. test.slow() triples the default 120s
+    // timeout to accommodate chunked insertion + flush measurement on
+    // contended CI runners.
+    test.slow();
     // Sampler design: the FR-21 AC scopes the budget to the "chunked
     // insertion phase" — explicitly NOT the synchronous htmlToMdast /
     // mdastToMarkdown conversion that precedes it (a single big string
@@ -1057,13 +1071,16 @@ test.describe('FR-21 chunked insertion maintains 60fps frame budget', () => {
     // chunked-insert.ts §comment is documented Future Work (incremental
     // re-parse). A regression signal is: total blocking time during the
     // chunking window exceeds what a reasonable human tolerates (~1s),
-    // OR p50 grows above one double-budget, OR the rAF loop stops yielding.
-    console.log(`FR-21 frame metrics: ${JSON.stringify(metrics)}`);
+    // OR p50 grows above the baseline-relative ceiling, OR the rAF loop
+    // stops yielding.
+    const p50Threshold = Math.max(2 * PERF_BASELINE.qa022.p50Ms, 32);
+    console.log(
+      `FR-21 frame metrics: ${JSON.stringify(metrics)} (p50 threshold = ${p50Threshold}ms, baseline = ${PERF_BASELINE.qa022.p50Ms}ms)`,
+    );
     // Must have captured a meaningful window (payload exercised chunking).
     expect(metrics.windowFrames).toBeGreaterThan(2);
-    // p50 stays within one double-budget — this is the "typical frame"
-    // target and should NOT regress under normal development.
-    expect(metrics.p50).toBeLessThan(32);
+    // p50 stays within max(2 × baseline, 32ms). See test header for rationale.
+    expect(metrics.p50).toBeLessThan(p50Threshold);
     // Total blocking time: p50 * windowFrames is an approximation of wall
     // time spent waiting for chunked inserts. Stay under a generous 5s
     // envelope for a 1MB paste; a 2x regression here (>10s) indicates a
