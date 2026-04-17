@@ -339,11 +339,23 @@ describe('T-perf: Performance gate', () => {
   }
   const agentText = agentLines.join('\n');
 
-  test('p95 < 20ms over 100 iterations', () => {
-    // Gate: merge on a representative document completes well within the
-    // 50ms debounce budget. Local ~1ms, CI ~5-15ms. The 20ms threshold
-    // catches algorithmic regressions (e.g., O(n^2) char-level diff3)
-    // without flaking on slow CI runners.
+  test('p95 < 150ms over 100 iterations', () => {
+    // Gate: merge on a representative 200-line document stays bounded.
+    // Measured baselines (post bridge-correctness §6 R1 post-condition):
+    //   Local dev laptop (M-series): p50 ~4ms, p95 ~5ms, max ~6ms
+    //   GitHub Actions ubuntu-latest free tier: p50 ~25-35ms, p95 ~65-75ms, max ~100ms
+    //
+    // The R1 `assertContentPreservation` post-condition (maximal-unique-line
+    // substring subset + relative-order side-check, invoked on every
+    // `mergeThreeWay` call per D2/D9-LOCKED) adds a bounded constant-factor
+    // CI cost on top of the hybrid diff3+DMP merge itself. It is
+    // load-bearing in production (D3-LOCKED — the post-condition fires the
+    // silent-checkpoint recovery path) and cannot be skipped.
+    //
+    // 150ms threshold = ~2x measured CI p95 headroom, still an order of
+    // magnitude under any user-perceivable interaction latency. Catches
+    // algorithmic regressions (e.g., O(n²) substring walk, naive String#includes
+    // inside the order side-check) without flaking on CI runner variance.
     const times: number[] = [];
     // Warmup
     mergeThreeWay(baseline, userText, agentText);
@@ -363,7 +375,7 @@ describe('T-perf: Performance gate', () => {
       `[T-perf] mergeThreeWay 200-line doc: p50=${p50.toFixed(2)}ms p95=${p95.toFixed(2)}ms max=${max.toFixed(2)}ms`,
     );
 
-    expect(p95).toBeLessThan(20);
+    expect(p95).toBeLessThan(150);
   });
 });
 
