@@ -150,17 +150,44 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
   useEffect(() => {
     if (!editor) return;
-    const dom = editor.view.dom;
+    // TipTap v3's `editor.view` is a proxy that throws when accessed before
+    // the underlying `editorView` is mounted — e.g. during an Activity
+    // visible→hidden→visible cycle, a DocumentErrorBoundary retry that
+    // recycles the pool entry, or any race where React runs a passive
+    // effect on an editor whose view is mid-creation. We subscribe to the
+    // editor's 'create' event so the listener attachment happens after the
+    // view is guaranteed present. If the editor is already created by the
+    // time this effect runs (common path), we attach immediately.
+    // Regression fixed: QA-002 retry flow + any Activity unhide reconnect.
     const mark = () => markUserTyping(provider.document);
-    dom.addEventListener('keydown', mark);
-    dom.addEventListener('paste', mark);
-    dom.addEventListener('drop', mark);
-    dom.addEventListener('cut', mark);
+    let attachedDom: HTMLElement | null = null;
+    const attach = () => {
+      if (attachedDom || !editor || editor.isDestroyed) return;
+      attachedDom = editor.view.dom;
+      attachedDom.addEventListener('keydown', mark);
+      attachedDom.addEventListener('paste', mark);
+      attachedDom.addEventListener('drop', mark);
+      attachedDom.addEventListener('cut', mark);
+    };
+    const detach = () => {
+      if (!attachedDom) return;
+      attachedDom.removeEventListener('keydown', mark);
+      attachedDom.removeEventListener('paste', mark);
+      attachedDom.removeEventListener('drop', mark);
+      attachedDom.removeEventListener('cut', mark);
+      attachedDom = null;
+    };
+    // Access `editorView` directly (not through the throwing proxy) to check
+    // mount state. The proxy intercepts property access on `editor.view` only.
+    const isMounted = !!(editor as unknown as { editorView?: unknown }).editorView;
+    if (isMounted) {
+      attach();
+    } else {
+      editor.on('create', attach);
+    }
     return () => {
-      dom.removeEventListener('keydown', mark);
-      dom.removeEventListener('paste', mark);
-      dom.removeEventListener('drop', mark);
-      dom.removeEventListener('cut', mark);
+      editor.off('create', attach);
+      detach();
     };
   }, [editor, provider.document]);
 
@@ -359,8 +386,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     if (!editor) return;
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
-      if (!detail || detail.mode !== 'wysiwyg' || !editor) return;
-      const headings = editor.view.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
+      if (!detail || detail.mode !== 'wysiwyg' || !editor || editor.isDestroyed) return;
+      // Access the real editorView directly (not editor.view which is a
+      // throwing proxy pre-mount). Typed as the relevant subset so we don't
+      // need an `any` cast at the call site.
+      const realView = (editor as unknown as { editorView?: { dom: HTMLElement } }).editorView;
+      if (!realView) return;
+      const headings = realView.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const target = headings[detail.index];
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }

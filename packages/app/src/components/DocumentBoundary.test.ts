@@ -1,0 +1,71 @@
+/**
+ * DocumentBoundary — unit tests for the component contract that makes the
+ * `use(syncPromise(...))` body safe under React StrictMode + Suspense.
+ *
+ * We cannot exercise `use()` + Suspense directly here — the repo convention
+ * (and this spec's STOP_IF constraint) rules out adding a DOM test harness.
+ * Component-level rendering is covered end-to-end by Playwright in US-011
+ * (F1, F2, F4 cold-load skeleton) + US-012 (F5 retry path).
+ *
+ * What we CAN verify without a renderer is the invariant DocumentBoundary
+ * depends on: `syncPromise(docName, provider)` returns a stable reference for
+ * repeated same-doc calls, which is what lets `use()` survive StrictMode's
+ * dev-mode double-invoke of the component body.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { HocuspocusProvider } from '@hocuspocus/provider';
+import { __resetSyncPromiseCache, syncPromise } from '@/editor/sync-promise';
+import { DocumentBoundary } from './DocumentBoundary';
+
+const DUMMY_WS = 'ws://localhost:1/collab';
+
+function makeProvider(docName: string): HocuspocusProvider {
+  return new HocuspocusProvider({ url: DUMMY_WS, name: docName });
+}
+
+let providers: HocuspocusProvider[] = [];
+function track<T extends HocuspocusProvider>(p: T): T {
+  providers.push(p);
+  return p;
+}
+
+beforeEach(() => {
+  __resetSyncPromiseCache();
+  providers = [];
+});
+
+afterEach(() => {
+  __resetSyncPromiseCache();
+  for (const p of providers) {
+    try {
+      p.destroy();
+    } catch {
+      // ignore
+    }
+  }
+  providers = [];
+});
+
+describe('DocumentBoundary', () => {
+  test('is a function (React component)', () => {
+    expect(typeof DocumentBoundary).toBe('function');
+  });
+
+  test('syncPromise contract — same (docName, provider) returns stable reference (StrictMode double-invoke safe)', () => {
+    const provider = track(makeProvider('doc-a'));
+    const first = syncPromise('doc-a', provider);
+    const second = syncPromise('doc-a', provider);
+    // `use()` on a stable reference is the invariant that prevents infinite
+    // suspend loops under StrictMode's dev-mode double-invoke.
+    expect(second).toBe(first);
+  });
+
+  test('syncPromise contract — different docNames produce distinct promises', () => {
+    const a = track(makeProvider('doc-a'));
+    const b = track(makeProvider('doc-b'));
+    const pa = syncPromise('doc-a', a);
+    const pb = syncPromise('doc-b', b);
+    expect(pa).not.toBe(pb);
+  });
+});
