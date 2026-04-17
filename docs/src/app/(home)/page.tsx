@@ -6,6 +6,7 @@ import {
   PenToolIcon,
   ZapIcon,
 } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { EditorDemo } from './editor-demo';
 import { StickyShowcase } from './sticky-showcase';
@@ -27,9 +28,13 @@ export default function HomePage() {
 function Hero() {
   return (
     <section className="relative bg-[var(--slide-bg)] px-6 pt-32 pb-28 md:pt-44 md:pb-36">
-      <div
-        className="pointer-events-none absolute top-20 right-8 z-10 size-12 rounded-full md:top-24 md:right-16 md:size-16"
-        style={{ background: 'var(--slide-accent)' }}
+      <Image
+        src="/ok-logo.png"
+        alt=""
+        width={64}
+        height={64}
+        className="pointer-events-none absolute top-20 right-8 z-10 size-12 md:top-24 md:right-16 md:size-16"
+        aria-hidden="true"
       />
 
       <div className="mx-auto max-w-5xl">
