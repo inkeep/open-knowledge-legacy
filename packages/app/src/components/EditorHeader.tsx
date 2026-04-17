@@ -230,7 +230,11 @@ export function EditorHeader({
       // flight, the reset-effect already set cancelRequestedRef. Skip all side
       // effects (close/emit/hash-navigate) so we don't force the user away from
       // the doc they navigated to.
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
+        return;
+      }
 
       let raw: unknown;
       try {
@@ -243,6 +247,8 @@ export function EditorHeader({
           newDocName,
         });
         setRenameError(`Server error (HTTP ${res.status})`);
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
@@ -254,17 +260,23 @@ export function EditorHeader({
           newDocName,
         });
         setRenameError(`Server error (HTTP ${res.status})`);
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
 
       if (!raw.ok) {
         setRenameError(raw.error || 'Failed to rename path');
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
       if (!res.ok) {
         setRenameError(`Server error (HTTP ${res.status})`);
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
