@@ -100,6 +100,15 @@ export function EditorHeader({
     : activeDocName
       ? `${activeDocName}.md`
       : '';
+
+  // Split doc path into prefix (truncatable) and filename (prioritized).
+  // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
+  const pathPrefix = activeDocName?.includes('/')
+    ? `${activeDocName.substring(0, activeDocName.lastIndexOf('/') + 1)}`
+    : '';
+  const fileBaseName = activeDocName
+    ? activeDocName.substring(activeDocName.lastIndexOf('/') + 1)
+    : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -326,57 +335,68 @@ export function EditorHeader({
             <FolderOpen className="size-4 shrink-0" />
             <span className="truncate">{displayName}</span>
           </span>
-        ) : isRenaming && activeDocName ? (
-          <div className="flex min-w-0 flex-col">
-            <div className="flex min-w-0 items-center gap-2">
-              <Input
-                ref={renameInputRef}
-                value={renameValue}
-                disabled={isRenameLoading}
-                aria-label={`Rename ${activeDocName}`}
-                aria-invalid={renameError ? true : undefined}
-                aria-describedby={renameError ? 'editor-header-rename-error' : undefined}
-                aria-busy={isRenameLoading || undefined}
-                onChange={(e) => {
-                  setRenameValue(e.target.value);
-                  setRenameError(null);
-                  lastFailedValueRef.current = null;
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    void commitRename();
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    cancelRename();
-                  }
-                }}
-                onBlur={() => void commitRename()}
-                className="h-7 min-w-0 flex-1 bg-background text-sm"
-              />
-              <span aria-hidden="true" className="shrink-0 text-xs text-muted-foreground/40">
-                .md
-              </span>
-            </div>
-            {renameError && (
-              <span
-                id="editor-header-rename-error"
-                role="alert"
-                className="text-xs text-destructive mt-0.5"
+        ) : activeDocName ? (
+          <div className="flex min-w-0 items-center overflow-hidden">
+            {/* Path prefix — shrinks first so filename stays visible */}
+            <span
+              className="shrink truncate text-sm text-muted-foreground/60 transition-[max-width,opacity] duration-200 ease-in-out"
+              style={isRenaming ? { maxWidth: 0, opacity: 0 } : { maxWidth: '20rem', opacity: 1 }}
+            >
+              {pathPrefix}
+            </span>
+            {isRenaming ? (
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Input
+                    ref={renameInputRef}
+                    value={renameValue}
+                    disabled={isRenameLoading}
+                    aria-label={`Rename ${activeDocName}`}
+                    aria-invalid={renameError ? true : undefined}
+                    aria-describedby={renameError ? 'editor-header-rename-error' : undefined}
+                    aria-busy={isRenameLoading || undefined}
+                    onChange={(e) => {
+                      setRenameValue(e.target.value);
+                      setRenameError(null);
+                      lastFailedValueRef.current = null;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void commitRename();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    onBlur={() => void commitRename()}
+                    className="h-7 min-w-0 flex-1 bg-background text-sm"
+                  />
+                  <span aria-hidden="true" className="shrink-0 text-xs text-muted-foreground/40">
+                    .md
+                  </span>
+                </div>
+                {renameError && (
+                  <span
+                    id="editor-header-rename-error"
+                    role="alert"
+                    className="text-xs text-destructive mt-0.5"
+                  >
+                    {renameError}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={enterRenameMode}
+                className="h-7 shrink-0 px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
               >
-                {renameError}
-              </span>
+                {fileBaseName}.md
+              </Button>
             )}
           </div>
-        ) : activeDocName ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={enterRenameMode}
-            className="h-7 min-w-0 justify-start truncate px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
-          >
-            {displayName}
-          </Button>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
