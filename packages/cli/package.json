@@ -57,7 +57,7 @@
   "devDependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
-    "open-knowledge-app": "workspace:*",
+    "@inkeep/open-knowledge-app": "workspace:*",
     "@types/node": "^22.16.0",
     "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",

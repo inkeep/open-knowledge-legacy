@@ -1,5 +1,5 @@
 {
-  "name": "open-knowledge-app",
+  "name": "@inkeep/open-knowledge-app",
   "version": "0.0.4",
   "private": true,
   "type": "module",

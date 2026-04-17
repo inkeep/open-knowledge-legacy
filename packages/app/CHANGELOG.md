@@ -1,4 +1,4 @@
-# open-knowledge-app
+# @inkeep/open-knowledge-app
 
 ## 0.0.4
 
