@@ -10,7 +10,7 @@
  */
 
 import { expect, type Page, test } from '@playwright/test';
-import { seedDocs, waitForActiveProviderSynced } from './_helpers';
+import { createPage, replaceDoc, seedDocs, waitForActiveProviderSynced } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;

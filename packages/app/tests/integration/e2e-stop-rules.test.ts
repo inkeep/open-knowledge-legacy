@@ -151,7 +151,9 @@ describe('E2E STOP rule — zero allowlist', () => {
     // Banned: `from './_helpers/sidebar'`, `from './_helpers/provider'`, etc.
     // Allowed: `from './_helpers'` (resolves to ./_helpers/index.ts).
     // Also banned: deeper paths like `from '../_helpers/sidebar'`.
-    const innerImport = /from\s+['"]\.\.?(?:\/[^'"]*)?\/_helpers\/[a-z][\w-]*['"]/;
+    // `[a-zA-Z]` (not `[a-z]`) so future PascalCase-named helper files
+    // (e.g., `Clipboard.ts`) can't bypass the STOP rule via direct import.
+    const innerImport = /from\s+['"]\.\.?(?:\/[^'"]*)?\/_helpers\/[a-zA-Z][\w-]*['"]/;
     const violations = collectMatches(e2eFiles, (line) => innerImport.test(line));
     if (violations.length > 0) {
       throw new Error(
