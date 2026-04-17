@@ -8,7 +8,6 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
-import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
