@@ -335,6 +335,64 @@ export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Structural quiescence gate — resolves once the doc has NO in-flight
+ * transactions AND no `afterAllTransactions` listener fires for N
+ * consecutive microtasks. Use instead of wall-clock `wait(ms)` when a test
+ * needs to wait for a local doc's pending observer work (including the
+ * settlement dispatcher's inner OBSERVER_SYNC_ORIGIN writes) to settle.
+ *
+ * Precedent #13(b): settlement-based, NOT wall-clock. Under the
+ * server-authoritative bridge (SPEC §6 R4), observer work fires
+ * synchronously inside `afterAllTransactions` — but some paths kick a
+ * follow-up `doc.transact(..., OBSERVER_SYNC_ORIGIN)` which starts a new
+ * drain. This helper waits until a short quiet window passes with no new
+ * drains to catch that cascade deterministically.
+ *
+ * The `idleTicks` count (default 2) must be >= 2 so the first tick can
+ * observe an in-flight drain and the second confirms the drain finished
+ * without a follow-up. Raise it for particularly-nested observer cascades.
+ *
+ * `timeoutMs` (default 2000) guards against hangs; throws a clear error
+ * pointing at the doc if quiescence is never reached.
+ *
+ * Does NOT cover inter-doc / inter-client WebSocket propagation — for
+ * multi-client convergence, combine with `assertAllConverged` or equivalent
+ * polling gates.
+ */
+export async function awaitDocQuiescence(
+  doc: Y.Doc,
+  opts?: { timeoutMs?: number; idleTicks?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 2000;
+  const idleTicks = Math.max(2, opts?.idleTicks ?? 2);
+
+  let dirty = false;
+  const markDirty = (): void => {
+    dirty = true;
+  };
+  doc.on('afterAllTransactions', markDirty);
+  try {
+    const start = Date.now();
+    let consecutiveIdle = 0;
+    while (Date.now() - start < timeoutMs) {
+      if (dirty) {
+        dirty = false;
+        consecutiveIdle = 0;
+      } else {
+        consecutiveIdle++;
+        if (consecutiveIdle >= idleTicks) return;
+      }
+      // Yield to the microtask queue + one macro tick — lets pending
+      // transacts drain and observer follow-ups fire.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(`awaitDocQuiescence: doc did not settle within ${timeoutMs} ms`);
+  } finally {
+    doc.off('afterAllTransactions', markDirty);
+  }
+}
+
 /** Serialize XmlFragment to markdown string */
 export function serializeFragment(fragment: Y.XmlFragment): string {
   return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));

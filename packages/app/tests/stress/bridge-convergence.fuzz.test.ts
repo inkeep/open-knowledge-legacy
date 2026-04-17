@@ -53,6 +53,7 @@ import {
   agentPatch,
   agentWriteMd,
   assertBridgeInvariant,
+  awaitDocQuiescence,
   createItemOriginProbe,
   createTestClients,
   createTestServer,
@@ -349,8 +350,18 @@ async function applyOp(
 async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Promise<boolean> {
   const start = Date.now();
 
-  // Phase 1: wait for CRDT sync to settle
-  await wait(1500);
+  // Phase 1: wait for each client's pending local observer work to settle.
+  // Under the settlement-based bridge (SPEC §6 R4), this replaces the
+  // debounce-era `wait(1500)` — `awaitDocQuiescence` returns as soon as
+  // each doc's `afterAllTransactions` has been quiet for a couple of
+  // microtasks (including any OBSERVER_SYNC_ORIGIN inner drains). Runs
+  // in parallel across clients so the gate is bounded by the slowest.
+  // We keep a small wall-clock padding between quiescence-and-check to
+  // absorb WebSocket propagation jitter (~20-60 ms typical). Precedent
+  // #13(b): prefer structural gates; wall-clock only where genuine
+  // network timing lives.
+  await Promise.all(clients.map((c) => awaitDocQuiescence(c.doc, { timeoutMs: 3000 })));
+  await wait(100);
 
   // Phase 2: check + tickle loop
   let attempts = 0;
@@ -382,9 +393,16 @@ async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Pro
       text.applyDelta([{ insert: `r${attempts}` }]);
       paragraph.insert(0, [text]);
       target.fragment.push([paragraph]);
+      // Await the tickled client's local settlement before looping —
+      // structural replacement for the debounce-era `wait(800)`. The
+      // tickled doc's `afterAllTransactions` fires and (via the server's
+      // round-trip) propagates updates back to peers. We keep a small
+      // WebSocket-propagation pad so the round-trip can land before the
+      // next converge check.
+      await awaitDocQuiescence(target.doc, { timeoutMs: 2000 });
     }
     attempts++;
-    await wait(800); // Wait for debounce (50ms) + CRDT propagation
+    await wait(200);
   }
   return false;
 }
