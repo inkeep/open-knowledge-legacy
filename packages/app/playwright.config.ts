@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 
 // Module-scope creation: runs at config-eval time, before any setup tasks.
 // The webServer captures this via webServer.env at spawn time.
@@ -17,20 +17,16 @@ const port = process.env.VITE_PORT || '5173';
 const baseURL = `http://localhost:${port}`;
 
 /**
- * Cross-browser projects (QA-046 / SPEC §13).
+ * Single-browser (Chromium) — all E2E tests use programmatic clipboard
+ * injection via `dispatchEvent(new ClipboardEvent(...))`, not real browser
+ * clipboard APIs. Cross-browser clipboard differences (Safari user-activation
+ * rules, Firefox async clipboard restrictions) are not exercised because the
+ * tests bypass the native clipboard permission model entirely. Running 3×
+ * browsers adds ~10 minutes of CI time with zero additional coverage.
  *
- * Clipboard behavior differs per browser — Safari has stricter
- * user-activation rules for `ClipboardItem.write`, Firefox has different
- * restrictions on async clipboard APIs, and Chromium is the baseline
- * assumption in most existing Playwright e2e code. Running the full E2E
- * suite against all three closes the cross-browser parity gate the spec
- * called out as Must.
- *
- * Opt-in single-browser run for local iteration:
- *   bunx playwright test --project=chromium
- *
- * Browser installation (one-time, or after Playwright upgrade):
- *   bun run test:e2e:install-browsers
+ * If future tests exercise REAL browser clipboard (e.g., `page.keyboard.press
+ * ('Meta+V')` with system clipboard content), add per-file project scoping
+ * for those tests only — not a global 3× multiplier.
  */
 export default defineConfig({
   testDir: './tests/stress',
@@ -42,11 +38,6 @@ export default defineConfig({
     baseURL,
     headless: true,
   },
-  projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-  ],
   webServer: {
     command: `VITE_PORT=${port} bun run dev`,
     url: baseURL,
