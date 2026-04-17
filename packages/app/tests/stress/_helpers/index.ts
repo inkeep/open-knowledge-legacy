@@ -9,7 +9,12 @@
  * move files without touching any e2e test's imports.
  */
 
-export { createPage, replaceDoc, seedDocs } from './editor-state.ts';
+export {
+  createPage,
+  replaceDoc,
+  seedDocs,
+  selectAllAndWaitForSelection,
+} from './editor-state.ts';
 export {
   installClockAfterSync,
   type WaitForProviderOptions,

@@ -10,6 +10,8 @@
  * target their own dev server when Playwright's fullyParallel mode is enabled.
  */
 
+import type { Page } from '@playwright/test';
+
 const port = () => process.env.VITE_PORT || '5173';
 const base = () => `http://localhost:${port()}`;
 
@@ -53,4 +55,28 @@ export async function seedDocs(docs: Array<{ name: string; markdown: string }>):
   await fetch(`${base()}/api/test-reset`, { method: 'POST' });
   for (const d of docs) await createPage(`${d.name}.md`);
   for (const d of docs) await replaceDoc(d.name, d.markdown);
+}
+
+/**
+ * Press Meta+A in the focused editor view and yield to the browser so PM /
+ * CM6 sync their internal selection state before the caller dispatches the
+ * next event. Uses a page-level double-rAF — a deterministic signal that the
+ * browser has completed at least two paint frames since Meta+A fired.
+ *
+ * Replaces the ad-hoc `page.waitForTimeout(50)` frame-yield idiom; the
+ * double-rAF wait is bounded (~32ms at 60fps), deterministic, and tolerates
+ * the empty-doc case (FR-15 empty-copy — no selection is expected) without
+ * special-casing.
+ *
+ * Category C (selection / cursor-flush) per D-Q1.
+ */
+export async function selectAllAndWaitForSelection(page: Page, selector: string): Promise<void> {
+  await page.focus(selector);
+  await page.keyboard.press('Meta+a');
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
 }
