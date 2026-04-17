@@ -3,15 +3,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { parseCheckpoint } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
   commitWip,
+  type InMemoryCheckpointParams,
   initShadowRepo,
   type ParkableDoc,
   parkBranch,
   readParkedState,
   type ShadowHandle,
+  saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
   type WriterIdentity,
@@ -562,5 +565,139 @@ describe('saveVersion — standalone mode', () => {
 
     // The ref name must end with the shadow commit's own SHA
     expect(result.checkpointRef).toBe(`refs/checkpoints/main/${actualSha}`);
+  });
+});
+
+describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(resolve(projectRoot, 'content/docs'), { recursive: true });
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('round-trips a bridge-merge-loss checkpoint — ref exists, parseCheckpoint recovers metadata', async () => {
+    const params: InMemoryCheckpointParams = {
+      kind: 'bridge-merge-loss',
+      docName: 'intro.md',
+      contents: '# Pre-merge baseline\n',
+      label: 'Before concurrent merge @ 2026-04-17T08:00:00Z',
+      branch: 'main',
+      metadata: { lostSubstrings: ['user keystroke', 'another lost phrase'] },
+    };
+
+    const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
+
+    // Ref was created and points at the returned sha
+    const sg = shadowGit(shadow);
+    const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
+    expect(refSha).toBe(sha);
+
+    // Commit body contains the label + ok-checkpoint-v1 line
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    expect(body).toContain('checkpoint: Before concurrent merge @ 2026-04-17T08:00:00Z');
+    const parsed = parseCheckpoint(body);
+    expect(parsed).not.toBeNull();
+    if (parsed?.kind !== 'bridge-merge-loss') throw new Error('expected bridge-merge-loss kind');
+    expect(parsed.metadata.lostSubstrings).toEqual(['user keystroke', 'another lost phrase']);
+
+    // Contents blob is stored at content/docs/intro.md
+    const tree = (await sg.raw('ls-tree', '-r', sha)).trim();
+    expect(tree).toContain('content/docs/intro.md');
+  });
+
+  test('round-trips an external-change-rescue checkpoint', async () => {
+    const params: InMemoryCheckpointParams = {
+      kind: 'external-change-rescue',
+      docName: 'intro.md',
+      contents: '# Rescued in-memory content\n',
+      label: 'External change recovered @ 2026-04-17T08:00:00Z',
+      metadata: { incomingDiskSha: 'abc123def456' },
+    };
+
+    const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const parsed = parseCheckpoint(body);
+    expect(parsed).not.toBeNull();
+    if (parsed?.kind !== 'external-change-rescue') {
+      throw new Error('expected external-change-rescue kind');
+    }
+    expect(parsed.metadata.incomingDiskSha).toBe('abc123def456');
+  });
+
+  test('does NOT touch refs/wip/* — distinct from saveVersion', async () => {
+    // Create a WIP ref first via commitWip
+    const writer: WriterIdentity = {
+      id: 'human-nick',
+      name: 'Nick',
+      email: 'n@example.com',
+    };
+    const contentDir = resolve(projectRoot, 'content/docs');
+    writeFileSync(resolve(contentDir, 'intro.md'), '# hello\n');
+    await commitWip(shadow, writer, 'content/docs', 'WIP: setup');
+
+    const sg = shadowGit(shadow);
+    const wipShaBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+
+    await saveInMemoryCheckpoint(shadow, 'content/docs', {
+      kind: 'bridge-merge-loss',
+      docName: 'intro.md',
+      contents: '# pre-merge\n',
+      label: 'silent checkpoint',
+      metadata: { lostSubstrings: ['foo'] },
+    });
+
+    const wipShaAfter = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    expect(wipShaAfter).toBe(wipShaBefore); // unchanged
+  });
+
+  test('concurrent invocations on the same shadow produce distinct refs (Q8)', async () => {
+    const params = (n: number): InMemoryCheckpointParams => ({
+      kind: 'bridge-merge-loss',
+      docName: `doc-${n}.md`,
+      contents: `# contents ${n}\n`,
+      label: `concurrent ${n}`,
+      metadata: { lostSubstrings: [`lost-${n}`] },
+    });
+
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((n) => saveInMemoryCheckpoint(shadow, 'content/docs', params(n))),
+    );
+    const unique = new Set(results);
+    expect(unique.size).toBe(5);
+
+    const sg = shadowGit(shadow);
+    for (const sha of results) {
+      const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
+      expect(refSha).toBe(sha);
+    }
+  });
+
+  test('parseContributors tolerates sibling ok-checkpoint-v1 body lines (Q7)', async () => {
+    // Synthesize a body with BOTH ok-contributors: and ok-checkpoint-v1: lines
+    const body = [
+      'checkpoint: Before concurrent merge @ t',
+      '',
+      'ok-contributors: {"id":"human-a","name":"Alice","docs":["intro.md"]}',
+      'ok-checkpoint-v1: {"kind":"bridge-merge-loss","metadata":{"lostSubstrings":["x"]}}',
+    ].join('\n');
+
+    // parseContributors must still pick up Alice
+    const { parseContributors } = await import('@inkeep/open-knowledge-core/shadow-repo-layout');
+    const contributors = parseContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('human-a');
+
+    // parseCheckpoint picks up the sibling line
+    const checkpoint = parseCheckpoint(body);
+    expect(checkpoint?.kind).toBe('bridge-merge-loss');
   });
 });

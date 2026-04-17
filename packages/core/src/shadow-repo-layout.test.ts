@@ -4,8 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  formatCheckpointBodyLine,
   getShadowRepoPath,
   getWipRefPattern,
+  parseCheckpoint,
   parseContributors,
   parseWriterId,
 } from './shadow-repo-layout.ts';
@@ -210,5 +212,74 @@ describe('getShadowRepoPath', () => {
     writeFileSync(resolve(project, '.git'), 'not a dir');
     // Neither integrated nor standalone exists
     expect(getShadowRepoPath(project)).toBe(null);
+  });
+});
+
+describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §6 R7d)', () => {
+  test('round-trips bridge-merge-loss', () => {
+    const line = formatCheckpointBodyLine({
+      kind: 'bridge-merge-loss',
+      metadata: { lostSubstrings: ['a', 'b', 'c'] },
+    });
+    const body = `checkpoint: X\n\n${line}`;
+    const parsed = parseCheckpoint(body);
+    expect(parsed?.kind).toBe('bridge-merge-loss');
+    if (parsed?.kind === 'bridge-merge-loss') {
+      expect(parsed.metadata.lostSubstrings).toEqual(['a', 'b', 'c']);
+    }
+  });
+
+  test('round-trips external-change-rescue', () => {
+    const line = formatCheckpointBodyLine({
+      kind: 'external-change-rescue',
+      metadata: { incomingDiskSha: 'deadbeef' },
+    });
+    const body = `checkpoint: Y\n\n${line}`;
+    const parsed = parseCheckpoint(body);
+    expect(parsed?.kind).toBe('external-change-rescue');
+    if (parsed?.kind === 'external-change-rescue') {
+      expect(parsed.metadata.incomingDiskSha).toBe('deadbeef');
+    }
+  });
+
+  test('returns null for empty body', () => {
+    expect(parseCheckpoint('')).toBe(null);
+  });
+
+  test('returns null for body without the ok-checkpoint-v1 prefix', () => {
+    expect(parseCheckpoint('checkpoint: Save Version\n\nok-contributors: {...}')).toBe(null);
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseCheckpoint('\nok-checkpoint-v1: {not json')).toBe(null);
+  });
+
+  test('returns null for unknown kind', () => {
+    expect(parseCheckpoint('\nok-checkpoint-v1: {"kind":"something-else","metadata":{}}')).toBe(
+      null,
+    );
+  });
+
+  test('returns null when metadata shape does not match kind', () => {
+    // bridge-merge-loss expects lostSubstrings; missing it → null
+    expect(
+      parseCheckpoint('\nok-checkpoint-v1: {"kind":"bridge-merge-loss","metadata":{"other":"x"}}'),
+    ).toBe(null);
+  });
+
+  test('parseContributors tolerates sibling ok-checkpoint-v1 lines (Q7)', () => {
+    const body = [
+      'checkpoint: some label',
+      '',
+      'ok-contributors: {"id":"human-a","name":"Alice","docs":["a.md"]}',
+      'ok-checkpoint-v1: {"kind":"bridge-merge-loss","metadata":{"lostSubstrings":["x"]}}',
+      'ok-contributors: {"id":"human-b","name":"Bob","docs":["b.md"]}',
+    ].join('\n');
+
+    const contributors = parseContributors(body);
+    expect(contributors.map((c) => c.id)).toEqual(['human-a', 'human-b']);
+
+    const checkpoint = parseCheckpoint(body);
+    expect(checkpoint?.kind).toBe('bridge-merge-loss');
   });
 });

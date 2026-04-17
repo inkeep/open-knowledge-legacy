@@ -10,9 +10,14 @@
  *   Standalone mode: .openknowledge/       (added to .gitignore)
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import {
+  formatCheckpointBodyLine,
+  type ParsedCheckpoint,
+  resolveShadowDir,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 
@@ -259,6 +264,123 @@ export async function safetyCheckpoint(
 ): Promise<string> {
   const message = `safety-checkpoint: pre-${params.action}`;
   return commitWip(shadow, SAFETY_WRITER, contentRoot, message, branch);
+}
+
+// ─── In-memory checkpoint (bridge-correctness SPEC §6 R7a) ──────────────────
+
+/**
+ * Kind-discriminated parameters for {@link saveInMemoryCheckpoint}. Each
+ * kind carries typed metadata that `parseCheckpoint` in
+ * `@inkeep/open-knowledge-core/shadow-repo-layout` can round-trip.
+ *
+ * - `bridge-merge-loss` — Observer A Path B fired `mergeThreeWay`, the
+ *   content-preservation post-condition flagged the result, and we want a
+ *   silent Notion-style restore artifact on the timeline. `contents` is the
+ *   pre-merge baseline (the state the user saw before the conflict merge).
+ * - `external-change-rescue` — an external disk write (reconcile-delete or
+ *   branch-switch path) would otherwise have discarded dirty Y.Doc content.
+ *   `contents` is the rescued in-memory markdown; `incomingDiskSha` names
+ *   the disk SHA we chose over it.
+ */
+export type InMemoryCheckpointParams =
+  | {
+      kind: 'bridge-merge-loss';
+      docName: string;
+      contents: string;
+      label: string;
+      branch?: string;
+      metadata: { lostSubstrings: string[] };
+    }
+  | {
+      kind: 'external-change-rescue';
+      docName: string;
+      contents: string;
+      label: string;
+      branch?: string;
+      metadata: { incomingDiskSha: string };
+    };
+
+/**
+ * Silent in-memory checkpoint — writes `contents` as a blob at
+ * `<docName>.md` in an isolated git tree, commits with body
+ * `checkpoint: ${label}\n\nok-checkpoint-v1: ${JSON}`, and updates the ref
+ * `refs/checkpoints/<branch>/<sha>`. Never touches `refs/wip/*` — this is a
+ * one-shot recovery artifact, not part of the per-writer WIP chain
+ * (contrast `saveVersion` which resets WIP).
+ *
+ * **Concurrent safety (Q8 audit).** Each call uses a unique tmp-index file
+ * name derived from a random UUID so two in-flight calls on the same shadow
+ * do not contend at the index level. The ref-update is atomic at the git
+ * layer. Callers fire-and-forget via `queueMicrotask(() =>
+ * saveInMemoryCheckpoint(...).catch(...))` — the hot bridge-merge path
+ * never awaits the commit.
+ *
+ * @returns the commit sha (which also appears in the ref name).
+ */
+export async function saveInMemoryCheckpoint(
+  shadow: ShadowHandle,
+  contentRoot: string,
+  params: InMemoryCheckpointParams,
+): Promise<string> {
+  const branch = params.branch ?? 'main';
+  const sg = shadowGit(shadow);
+  const token = randomUUID();
+  const tmpIndex = resolve(shadow.gitDir, `index-checkpoint-${token}`);
+  const tmpBlobFile = resolve(shadow.gitDir, `tmp-checkpoint-blob-${token}`);
+
+  // Path inside the tree mirrors the real content layout so TimelinePanel's
+  // existing per-doc view logic (walks the tree at the commit's docName)
+  // resolves identically for silent-checkpoint artifacts.
+  const treePath = contentRoot
+    ? `${contentRoot.replace(/\/$/, '')}/${params.docName}`
+    : params.docName;
+  const parsed: ParsedCheckpoint =
+    params.kind === 'bridge-merge-loss'
+      ? { kind: 'bridge-merge-loss', metadata: params.metadata }
+      : { kind: 'external-change-rescue', metadata: params.metadata };
+  const bodyLine = formatCheckpointBodyLine(parsed);
+  const message = `checkpoint: ${params.label}\n\n${bodyLine}`;
+
+  try {
+    writeFileSync(tmpBlobFile, params.contents, 'utf-8');
+    const blobSha = (
+      await sg
+        .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+        .raw('hash-object', '-w', tmpBlobFile)
+    ).trim();
+    await sg
+      .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+      .raw('update-index', '--add', '--cacheinfo', `100644,${blobSha},${treePath}`);
+    const treeSha = (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+
+    const commitSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_NAME: 'openknowledge',
+          GIT_AUTHOR_EMAIL: 'noreply@openknowledge.local',
+          GIT_COMMITTER_NAME: 'openknowledge',
+          GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+        })
+        .raw('commit-tree', treeSha, '-m', message)
+    ).trim();
+
+    await sg.raw('update-ref', `refs/checkpoints/${branch}/${commitSha}`, commitSha);
+    return commitSha;
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+    try {
+      rmSync(tmpBlobFile);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
 }
 
 // ─── Park / Load / Restore ──────────────────────────────────────────────────

@@ -156,6 +156,86 @@ export function parseContributors(body: string): ShadowContributor[] {
   return contributors;
 }
 
+// ─── In-memory checkpoint body metadata (bridge-correctness SPEC R7d) ────────
+
+/** Prefix for the versioned checkpoint-metadata body line. */
+const OK_CHECKPOINT_PREFIX = 'ok-checkpoint-v1: ';
+
+/**
+ * Kind-discriminated checkpoint metadata parsed from the `ok-checkpoint-v1:`
+ * body line. The body line coexists with `ok-contributors:` lines —
+ * `parseContributors` skips unknown prefixes, so the two channels do not
+ * interfere (Q7 verified).
+ */
+export type ParsedCheckpoint =
+  | { kind: 'bridge-merge-loss'; metadata: { lostSubstrings: string[] } }
+  | { kind: 'external-change-rescue'; metadata: { incomingDiskSha: string } };
+
+/**
+ * Parse the `ok-checkpoint-v1:` metadata line from a commit message body.
+ * Returns `null` when the line is absent, malformed JSON, has an unknown
+ * `kind`, or has a metadata shape that doesn't match the expected kind.
+ *
+ * Parallel to `parseContributors` in spirit — silent fallback, no throws —
+ * so TimelinePanel rendering can gracefully degrade to 'Save Version'
+ * rendering for checkpoints without this body line.
+ */
+export function parseCheckpoint(body: string): ParsedCheckpoint | null {
+  if (!body) return null;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_CHECKPOINT_PREFIX)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed.slice(OK_CHECKPOINT_PREFIX.length));
+    } catch {
+      return null;
+    }
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const obj = parsed as { kind?: unknown; metadata?: unknown };
+    const kind = obj.kind;
+    const metadata = obj.metadata;
+    if (metadata === null || typeof metadata !== 'object') return null;
+    if (kind === 'bridge-merge-loss') {
+      const m = metadata as { lostSubstrings?: unknown };
+      if (Array.isArray(m.lostSubstrings) && m.lostSubstrings.every((s) => typeof s === 'string')) {
+        return {
+          kind: 'bridge-merge-loss',
+          metadata: { lostSubstrings: m.lostSubstrings as string[] },
+        };
+      }
+      return null;
+    }
+    if (kind === 'external-change-rescue') {
+      const m = metadata as { incomingDiskSha?: unknown };
+      if (typeof m.incomingDiskSha === 'string') {
+        return {
+          kind: 'external-change-rescue',
+          metadata: { incomingDiskSha: m.incomingDiskSha },
+        };
+      }
+      return null;
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Format the `ok-checkpoint-v1:` body line for a given kind+metadata. Produces
+ * exactly one line (no trailing newline). Consumers embed it inside a full
+ * commit message body as a sibling to `ok-contributors:` lines.
+ *
+ * Exported so `saveInMemoryCheckpoint` in the server package can share this
+ * serialization rule with the parser — see precedent #4 (shared computation).
+ */
+export function formatCheckpointBodyLine(parsed: ParsedCheckpoint): string {
+  return `${OK_CHECKPOINT_PREFIX}${JSON.stringify({
+    kind: parsed.kind,
+    metadata: parsed.metadata,
+  })}`;
+}
+
 /**
  * Classify a writer id using the documented prefix convention. Unknown
  * prefixes (legacy commits, external git operations) classify as 'unknown'
