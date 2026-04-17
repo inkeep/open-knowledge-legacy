@@ -212,7 +212,7 @@ Scaling 1K → 10K: 17x time for 10x blocks. 10K → 20K: 2.86x for 2x blocks (s
 
 ### Test architecture state
 
-- **Fidelity suite**: 23 test files, ~2,330 LOC. Invariants I1-I10 active (I11 pending tolerant parsing); total planned = 11.
+- **Fidelity suite**: 23 test files, ~2,330 LOC. Invariants I1-I10 active (I11 pending tolerant parsing); total planned = 11.<br>_[Corrected 2026-04-16 post-ship: I11 ships as "R23 guard precision PBT" (active, not pending) per tolerant-parsing SPEC §M4/§D2; same correction as the breadcrumb at line 61 above. Authoritative fix in AGENTS.md and `specs/2026-04-16-post-ship-docs-polish/`.]_
 - **CommonMark corpus**: 652 examples. 19/24 sections NORMALIZE (13/19 actually idempotent). `KNOWN_CRASH_CEILING=50` (actual: 0).
 - **GFM corpus**: 282 examples.
 - **Markdown unit tests**: 15 files, ~2,021 LOC.

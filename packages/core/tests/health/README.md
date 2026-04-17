@@ -154,7 +154,7 @@ Both use `>` comparison (boundary `==` passes). See test `'block-level fallback 
 
 - **R6 block-level fallback regressions.** A refactor that reintroduces a crash where we previously caught + degraded cleanly.
 - **R16 processor-caching state bleed.** Shared `MarkdownManager` accumulates extension state across parses; bleed causes a doc to fail parse on run 2 that passed on run 1. Gated by the "shared instance reused across harvests" test at `parse-health-gate.test.ts:170-184`.
-- **R17 merged-walker ordering drift.** Phase A→B dispatcher passes that re-order silently produce different mdast; R20 validator caught this during the ship; the gate is the ongoing guard.
+- **R17 merged-walker ordering drift.** Phase A→B dispatcher passes that re-order silently produce different mdast; the R20 byte-for-byte mdast diff gate (see `specs/2026-04-16-markdown-pipeline-engineering-health/SPEC.md` R20 — a one-time validator that ran across the full fixture corpus during R17 implementation and was deleted after R17 shipped green per its design) caught this during the ship; the parse-health gate is the ongoing runtime guard.
 - **Latency-invisible regressions.** R4 perf gate catches slowdowns; parse-health catches regressions that are fast *because they skipped doing the work* (degraded to raw text).
 
 ### What the gate does NOT enforce (currently)
@@ -229,8 +229,10 @@ To capture fresh observed counts for a baseline rewrite, edit `baseline.json` wi
 
 | Tier | Task | What it runs | Wall-clock |
 |---|---|---|---|
-| Tier 1 (every PR) | `test:health:unit` | `parse-health-gate.test.ts` — synthetic comparator tests + end-to-end fixture harvest on the 5 pinned crash classes | <1s |
-| Tier 2 (nightly) | `test:health` | Full fidelity-corpus harvest (652 CommonMark + 20 GFM) vs committed baseline | ~10s |
+| Tier 2 (nightly) | `test:health` | Full fidelity-corpus harvest (652 CommonMark + 20 GFM) vs committed baseline. Wired in `.github/workflows/nightly.yml`'s `tier2-gates` matrix. | ~10s |
+| Local-only helper | `test:health:unit` | `parse-health-gate.test.ts` — synthetic comparator tests + end-to-end fixture harvest on the 5 pinned crash classes. Invoked by the `tier2` aggregator script in `package.json`; not wired into any GitHub Actions workflow today. | <1s |
+
+The PR-time `bun run check` (Tier 1, `.github/workflows/ci.yml`) does NOT exercise the parse-health gate. Regressions to the block-level fallback counter or `wholeDoc: 0` pin surface on nightly only. Cross-reference: `AGENTS.md` "CI tier structure" table is the canonical view.
 
 Turbo task definitions at `turbo.json`:
 

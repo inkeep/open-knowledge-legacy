@@ -321,11 +321,13 @@ Seeded Mulberry32 PRNG; same seed ⇒ byte-identical output. **Regeneration inva
 
 | Tier | Turbo task | What it runs | Budget |
 |---|---|---|---|
-| Tier 1 (every PR) | `test:perf:regression:unit` | Synthetic unit tests of the comparator (`regression-gate.test.ts`) + finite-value loader validation. No bench run. | ~1 s |
-| Tier 1 (every PR) | `test:perf:fallback` | `parseWithFallback` ≤ 5× happy-path bound. Fast because the corpus is small. | seconds |
-| Tier 1 (every PR) | `test:perf:r15-guard` | R23-guard perf regression test. Also small corpus. | seconds |
-| Tier 2 (nightly) | `test:perf:bench` | Full bench harness. Writes `results.*.json`. | minutes |
-| Tier 2 (nightly) | `test:perf:regression` | Bench + gate vs baseline (via `run-regression-gate.ts`). | minutes |
+| Tier 2 (nightly) | `test:perf:regression` | Bench + gate vs baseline (via `run-regression-gate.ts`). Wired in `.github/workflows/nightly.yml`'s `tier2-gates` matrix. | minutes |
+| Tier 2 (nightly) | `test:perf:fallback` | `parseWithFallback` ≤ 5× happy-path bound. Same `tier2-gates` matrix. | seconds |
+| Tier 2 (nightly) | `test:perf:r15-guard` | R23-guard perf regression test. Same `tier2-gates` matrix. | seconds |
+| Local-only helper | `test:perf:bench` | Full bench harness. Writes `results.*.json`. Invoked by the `tier2` aggregator in `package.json`; not wired into any GitHub Actions workflow today. | minutes |
+| Local-only helper | `test:perf:regression:unit` | Synthetic unit tests of the comparator (`regression-gate.test.ts`) + finite-value loader validation. Invoked by the `tier2` aggregator; not wired into any GitHub Actions workflow today. | ~1 s |
+
+The PR-time `bun run check` (Tier 1, `.github/workflows/ci.yml`) does NOT exercise any perf gate. Perf regressions surface on nightly only. Cross-reference: `AGENTS.md` "CI tier structure" table is the canonical view.
 
 Turbo task definitions at `turbo.json`:
 

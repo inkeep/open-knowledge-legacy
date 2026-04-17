@@ -68,6 +68,22 @@ bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes
 - TypeScript strict mode, `verbatimModuleSyntax: true`
 - Workspace deps use `"workspace:*"` in package.json
 
+### Post-ship corrigendum annotations on shipped specs
+
+When a shipped spec contains a factual claim that subsequent work proves wrong, do **not** rewrite the original prose — shipped specs are moment-in-time artifacts, and silent prose edits create drift between the spec and its surrounding evidence/changelog. Instead, append a corrigendum breadcrumb on the same line in this exact shape:
+
+```
+<original prose unchanged><br>_[Corrected YYYY-MM-DD post-ship: <one-sentence correction>. Authoritative fix in <pointer>.]_
+```
+
+Rules:
+- The breadcrumb is italicized, bracketed, dated, and points at the canonical fix location (typically `AGENTS.md` plus a follow-up spec directory).
+- Apply the breadcrumb to **every** occurrence of the corrected claim in the same doc — leaving one updated and another stale defeats the purpose. The second and subsequent breadcrumbs may shorten to "same correction as the breadcrumb at line N above" plus the same pointer.
+- The original prose stays intact in front of the `<br>`. Never mix annotation prose into the original line.
+- The follow-up spec carries the full correction rationale; the breadcrumb is a discoverability pointer, not an explanation.
+
+Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
+
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
 These are patterns that ALL work in the repo should follow. Established during the collaboration-capabilities audit (`stories/collaboration-capabilities-audit/STORY.md §13`).
