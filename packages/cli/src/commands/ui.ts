@@ -31,7 +31,7 @@ import type { Server as HttpServer, ServerResponse } from 'node:http';
 import { defaultScheduler, type Scheduler } from '@inkeep/open-knowledge-core';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
-import { type ProxyServerHandle, startProxyServer } from './ui-proxy.ts';
+import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
 
 /** 12 hours — D-025 default safety-net interval. */
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
@@ -137,6 +137,38 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       } else {
         res.end(body);
       }
+      return;
+    }
+
+    // All other /api/* requests: transparently proxy to the collab server
+    // (`ok start`). The React app makes same-origin `fetch('/api/pages')`,
+    // `/api/backlinks`, `/api/history`, etc.; post-lifecycle-split those
+    // endpoints only exist on `ok start`, NOT `ok ui`. Without this proxy
+    // the React app fetches would receive the SPA-fallback HTML and fail to
+    // JSON.parse (QA-040). When the collab server is absent (no server.lock
+    // or port=0), we return a machine-readable 503 so the React app can
+    // distinguish "collab down" from "404 not found" — same envelope shape
+    // as `ok start`'s own API-route-not-found response.
+    if (url?.startsWith('/api/')) {
+      apiConfigNudge?.();
+      const lock = readServerLock(lockDir);
+      if (!lock || lock.port <= 0) {
+        res.writeHead(503, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+        });
+        res.end(
+          JSON.stringify({
+            error: 'Collab server not running. Start `ok start` or run `ok status`.',
+            path: url,
+          }),
+        );
+        return;
+      }
+      proxyRequest(req, res, {
+        upstreamHost: 'localhost',
+        upstreamPort: lock.port,
+      });
       return;
     }
 

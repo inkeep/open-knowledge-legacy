@@ -1,11 +1,18 @@
 /**
- * Minimal reverse HTTP proxy for `ok ui` lock-collision fallback (US-005).
+ * Minimal reverse HTTP proxy for `ok ui` lock-collision fallback (US-005)
+ * and for forwarding `ok ui`'s `/api/*` traffic to the collab server (QA-040).
  *
- * When `ok ui` starts on a port but discovers another `ok ui` already holds
- * `ui.lock` with a different port (e.g. Claude Code's `autoPort:true` picked a
- * free port different from our lock holder's), this module starts a transparent
- * proxy that forwards to the lock-holder's port. Claude Code's preview pane
- * connects to the proxy and sees the live React app behind it.
+ * Two modes:
+ *   1. **Standalone** — `startProxyServer(opts)` spins up an HTTP listener that
+ *      forwards every request to an upstream host:port. Used for Claude
+ *      Code's `autoPort:true` lock-collision scenario (the listener holds the
+ *      autoPort-resolved port; requests get forwarded to the lock-holder's
+ *      port).
+ *   2. **Embedded** — `proxyRequest(req, res, opts)` is called directly from
+ *      an existing `http.Server` request handler to forward a single request
+ *      to an upstream. Used by `ok ui` so that React's same-origin REST
+ *      calls (`/api/pages`, `/api/backlinks`, etc.) transparently reach the
+ *      collab server on a different port without per-caller URL rewriting.
  *
  * Uses only `node:http` — no new 3P dependency (FR-1.1b / D-032).
  */
@@ -64,6 +71,37 @@ export async function startProxyServer(opts: StartProxyOptions): Promise<ProxySe
         httpServer.close(() => done());
       }),
   };
+}
+
+export interface ProxyRequestOptions {
+  upstreamHost: string;
+  upstreamPort: number;
+  /** Per-request upstream timeout in ms. Default 10_000. 0 disables. */
+  upstreamTimeoutMs?: number;
+}
+
+/**
+ * Forward a single incoming request to an upstream. Shared between
+ * `startProxyServer` (which wires it as the request handler) and embedded
+ * callers like `ok ui` that thread a targeted `/api/*` proxy into their
+ * existing request router without running a second HTTP listener.
+ *
+ * Handles: header forwarding (minus Host), request-body piping, response
+ * status/headers/body piping, 504 on upstream timeout, 502 on upstream
+ * error, and client-abort propagation so no upstream sockets leak.
+ */
+export function proxyRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: ProxyRequestOptions,
+): void {
+  forwardRequest(
+    req,
+    res,
+    opts.upstreamHost,
+    opts.upstreamPort,
+    opts.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
+  );
 }
 
 function forwardRequest(

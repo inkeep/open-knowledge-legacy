@@ -67,17 +67,26 @@ export interface SpawnOkUiOptions {
  * Spawn `ok ui` as a detached sibling. Child's stderr is redirected at the
  * kernel layer to `<lockDir>/last-spawn-error.log` — matches the MCP spawn
  * template in SPEC §9 / FR-1.4 so the same log consumer can surface failures.
+ *
+ * **PORT env hygiene (QA-007):** the child `ok ui` resolves its bind port
+ * via `PORT` env > `--port` flag > default 3000. When `ok start` itself was
+ * invoked with `PORT=<X>` (e.g. operator override), we must NOT inherit
+ * that to the child — both processes would try to bind the same port. We
+ * always strip `PORT` from the child env; if the caller needs a specific
+ * UI port, they should invoke `ok ui --port <X>` directly.
  */
 export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   if (!fsExistsSync(opts.lockDir)) fsMkdirSync(opts.lockDir, { recursive: true });
   const stderrPath = join(opts.lockDir, 'last-spawn-error.log');
   const stderrFd = openSync(stderrPath, 'w');
   const spawnFn = opts.spawn ?? nativeSpawn;
+  const { PORT: _strippedPort, ...childEnv } = process.env;
   try {
     const child = spawnFn('npx', ['@inkeep/open-knowledge', ...(opts.args ?? ['ui'])], {
       detached: true,
       stdio: ['ignore', 'ignore', stderrFd],
       cwd: opts.cwd,
+      env: childEnv,
     });
     child.unref();
     return child;

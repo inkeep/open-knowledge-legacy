@@ -181,6 +181,113 @@ describe('startUiServer', () => {
     handle = null;
   });
 
+  test('GET /api/pages is proxied to the collab server when server.lock is live', async () => {
+    // Stand up a surrogate collab server that answers /api/pages with a known
+    // JSON body. The real ok start / Hocuspocus HTTP stack isn't needed for
+    // this contract — we only care that the UI forwards upstream and pipes
+    // the response back verbatim.
+    const upstream = createHttpServer((req, res) => {
+      if (req.url === '/api/pages') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, source: 'collab', pages: [] }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+
+    // Pretend ok start wrote its lock at that port.
+    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateServerLockPort(lockDir, upstreamPort);
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    try {
+      const { status, body, headers } = await get(handle.port, '/api/pages');
+      expect(status).toBe(200);
+      expect(headers.get('content-type')).toContain('application/json');
+      const parsed = JSON.parse(body);
+      expect(parsed).toEqual({ ok: true, source: 'collab', pages: [] });
+    } finally {
+      await new Promise<void>((done) => upstream.close(() => done()));
+    }
+  });
+
+  test('GET /api/anything returns 503 with machine-readable error when server.lock is absent', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, body, headers } = await get(handle.port, '/api/pages');
+    expect(status).toBe(503);
+    expect(headers.get('content-type')).toContain('application/json');
+    const parsed = JSON.parse(body);
+    expect(parsed.error).toContain('Collab server not running');
+    expect(parsed.path).toBe('/api/pages');
+  });
+
+  test('POST /api/create-page forwards method + body to the collab server', async () => {
+    const receivedRequests: Array<{ method: string; body: string; contentType: string }> = [];
+    const upstream = createHttpServer((req, res) => {
+      if (req.url === '/api/create-page' && req.method === 'POST') {
+        let body = '';
+        req.setEncoding('utf-8');
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          receivedRequests.push({
+            method: req.method ?? '',
+            body,
+            contentType: String(req.headers['content-type'] ?? ''),
+          });
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        });
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateServerLockPort(lockDir, upstreamPort);
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    try {
+      const res = await fetch(`http://localhost:${handle.port}/api/create-page`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName: 'notes/test', content: '# hi' }),
+      });
+      expect(res.status).toBe(201);
+      const parsed = (await res.json()) as { ok: boolean };
+      expect(parsed.ok).toBe(true);
+      expect(receivedRequests).toHaveLength(1);
+      expect(receivedRequests[0]?.method).toBe('POST');
+      expect(receivedRequests[0]?.contentType).toContain('application/json');
+      const sent = JSON.parse(receivedRequests[0]?.body ?? '{}');
+      expect(sent).toEqual({ docName: 'notes/test', content: '# hi' });
+    } finally {
+      await new Promise<void>((done) => upstream.close(() => done()));
+    }
+  });
+
+  test('/api/* proxy returns 502 when upstream connection fails', async () => {
+    // Point server.lock at a port nothing listens on — simulates the collab
+    // server crashing between lock write and our proxy attempt.
+    const probe = createHttpServer();
+    await new Promise<void>((done) => probe.listen(0, 'localhost', () => done()));
+    const deadPort = (probe.address() as { port: number }).port;
+    await new Promise<void>((done) => probe.close(() => done()));
+
+    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateServerLockPort(lockDir, deadPort);
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const res = await fetch(`http://localhost:${handle.port}/api/pages`);
+    expect(res.status).toBe(502);
+  });
+
   test('bind failure on an invalid host releases the lock (does not leak)', async () => {
     let caught: unknown;
     try {

@@ -217,6 +217,41 @@ describe('spawnOkUi', () => {
     expect(calls[0]?.args).toEqual(['@inkeep/open-knowledge', 'ui', '--port', '9999']);
   });
 
+  test('strips PORT env from the spawned child (QA-007 — prevents same-port bind race)', () => {
+    const originalPort = process.env.PORT;
+    try {
+      process.env.PORT = '51234';
+      const calls: Array<{ env: NodeJS.ProcessEnv | undefined }> = [];
+      spawnOkUi({
+        lockDir,
+        cwd: tmpDir,
+        spawn: ((_cmd: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+          calls.push({ env: options.env });
+          return {
+            unref: () => {},
+            on: () => {},
+            kill: () => {},
+          } as unknown as ReturnType<typeof spawnOkUi>;
+        }) as never,
+      });
+
+      const childEnv = calls[0]?.env;
+      expect(childEnv).toBeDefined();
+      // PORT must be stripped so the child does NOT inherit the parent's
+      // bind port — otherwise both processes race to bind the same port.
+      expect(childEnv?.PORT).toBeUndefined();
+      // Other env vars propagate normally so the child can locate npx,
+      // node, HOME, etc.
+      expect(typeof childEnv?.PATH).toBe('string');
+    } finally {
+      if (originalPort === undefined) {
+        delete process.env.PORT;
+      } else {
+        process.env.PORT = originalPort;
+      }
+    }
+  });
+
   test('truncates last-spawn-error.log on each invocation', () => {
     const errorLog = join(lockDir, 'last-spawn-error.log');
     mkdirSync(lockDir, { recursive: true });
