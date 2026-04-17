@@ -8,14 +8,6 @@ import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sy
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-function defaultCollabWsUrl(): string {
-  if (typeof location === 'undefined') {
-    return 'ws://localhost/collab';
-  }
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${location.host}/collab`;
-}
-
 export interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
@@ -87,6 +79,27 @@ export const MAX_POOL = 10;
 /**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
+ *
+ * **Contract — `wsUrl` is frozen at construction ("first-URL wins").**
+ * `DocumentContext` instantiates the module-level singleton the first time
+ * `useCollabUrl()` resolves a non-null URL. If `/api/config` later reports a
+ * different URL (e.g. `ok start` crashed and was respawned on a different
+ * kernel-allocated port, OR the user clicks the ConnectingBanner's Retry
+ * after a terminal-state transition and `/api/config` now returns a new
+ * port), this pool continues targeting the original URL.
+ *
+ * Why we accept this today: the built-in HocuspocusProvider exponential
+ * backoff + our 4s recycle debounce handle server-restart-on-same-port
+ * transparently, which is the common case. Port-change-on-restart is rare
+ * enough that a full page reload is an acceptable recovery path — and
+ * tearing down live providers mid-session would require deciding about
+ * unsaved-CRDT-state preservation, which is out of scope for the
+ * Zero-Ceremony Resume bet.
+ *
+ * The next maintainer who wants dynamic `wsUrl` updates must: (a) add a
+ * tear-down + rebuild step keyed on `wsUrl` changes, (b) decide how to
+ * reconcile any pending CRDT ops buffered during the disconnect, and (c)
+ * extend the multi-client test harness with a port-change scenario.
  */
 export class ProviderPool {
   readonly entries = new Map<string, PoolEntry>();
@@ -97,10 +110,12 @@ export class ProviderPool {
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
 
-  constructor(maxSize: number = MAX_POOL, wsUrl?: string, recycleDebounceMs?: number) {
+  constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
-    // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
-    this.wsUrl = wsUrl ?? defaultCollabWsUrl();
+    // wsUrl is REQUIRED post-lifecycle-split (US-014 / FR-1.13) — resolved
+    // asynchronously by `useCollabUrl()` from the `ok ui` /api/config endpoint
+    // before the pool is instantiated. Callers must not pass an empty string.
+    this.wsUrl = wsUrl;
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
   }
 

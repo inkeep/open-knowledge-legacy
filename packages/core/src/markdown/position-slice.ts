@@ -85,7 +85,12 @@ export function applyPositionSliceToNode(
     return;
   }
 
-  node.data = node.data ?? {};
+  // Ensure `node.data` exists before any case writes to it. Using logical
+  // assignment (??=) narrows `node.data` to non-undefined through the
+  // switch cases below — needed because `@types/hast` installed alongside
+  // the rehype deps widened the mdast Data union enough that the old
+  // `node.data = node.data ?? {}` form stopped narrowing.
+  node.data ??= {};
 
   switch (node.type) {
     case 'text': {

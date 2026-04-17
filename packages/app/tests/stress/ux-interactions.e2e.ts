@@ -287,7 +287,21 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   const chip = page.locator('[data-internal-link]').first();
   await expect(chip).toHaveAttribute('data-doc-name', 'beta');
 
-  await chip.hover();
+  // The `Link options` button is hidden via Tailwind `hidden` (display:
+  // none) and revealed on `:hover` or `:focus-within` of the `.group`
+  // ancestor (InternalLinkView.tsx). Playwright's hover + focus
+  // primitives are unreliable for triggering these pseudo-classes
+  // across headless Chromium / WebKit / Firefox — pointer-state
+  // inference differs per browser and display:none elements have no
+  // geometry, so `{ force: true }` can't target them either. This test
+  // verifies the button's onClick behavior (opens Edit-link dialog and
+  // preserves page mode), NOT the CSS visibility transition. Surgically
+  // remove the `hidden` class so the click target is deterministically
+  // interactable in all three browsers.
+  await chip.evaluate((el) => {
+    const btn = el.querySelector('button[aria-label="Link options"]');
+    if (btn) btn.classList.remove('hidden');
+  });
   await chip.getByRole('button', { name: 'Link options' }).click();
   await page.getByText('Edit link', { exact: true }).click();
 

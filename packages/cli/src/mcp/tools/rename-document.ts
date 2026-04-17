@@ -5,6 +5,8 @@
  * inbound wiki-links plus supported internal inline Markdown links.
  */
 import { z } from 'zod';
+import type { Config } from '../../config/schema.ts';
+import { type PreviewUrlSource, resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
@@ -29,6 +31,12 @@ export interface RenameDocumentSuccess {
   ok: true;
   renamed: RenameDocumentMapping[];
   rewrittenDocs: RenameDocumentRewrittenDoc[];
+  /** Preview URL for the NEW (renamed-to) docName. Null when UI is down. */
+  previewUrl: string | null;
+  /** Source of the previewUrl resolver (env / lock / config). Omitted when previewUrl is null. */
+  previewUrlSource?: PreviewUrlSource;
+  /** Preview URL that used to resolve to the now-renamed doc. Present only when the helper resolves. */
+  previousPreviewUrl?: string;
 }
 
 export interface RenameDocumentError {
@@ -71,7 +79,13 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
   return count === 1 ? singular : plural;
 }
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+export interface RenameDocumentDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: RenameDocumentDeps): void {
   server.tool(
     'rename_document',
     DESCRIPTION,
@@ -80,7 +94,7 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
       newDocName: z.string().describe('New document name'),
     },
     async (args: { docName: string; newDocName: string }) => {
-      const url = await resolveServerUrl(serverUrl);
+      const url = await resolveServerUrl(deps.serverUrl);
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalizedDoc = normalizeDocName(args.docName);
       if (!normalizedDoc.ok) return textResult(normalizedDoc.error, true);
@@ -108,10 +122,20 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
           ? 'No inbound links required updates.'
           : `Rewrote ${rewrittenDocs.length} ${pluralize(rewrittenDocs.length, 'document')}.`;
 
+      // previewUrl points at the NEW docName (the renamed-to target) per FR-2.1;
+      // previousPreviewUrl is supplementary for agents that want to close/refocus
+      // the pre-rename tab.
+      const previewDeps = { config: deps.config, resolveCwd: deps.resolveCwd };
+      const newPreview = await resolvePreviewUrlForTool(normalizedNewDoc.docName, previewDeps);
+      const oldPreview = await resolvePreviewUrlForTool(normalizedDoc.docName, previewDeps);
+
       const structured: RenameDocumentSuccess = {
         ok: true,
         renamed,
         rewrittenDocs,
+        previewUrl: newPreview?.url ?? null,
+        ...(newPreview ? { previewUrlSource: newPreview.source } : {}),
+        ...(oldPreview ? { previousPreviewUrl: oldPreview.url } : {}),
       };
 
       return textPlusStructured(`Renamed ${renamedSummary}. ${rewrittenSummary}`, structured);

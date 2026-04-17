@@ -2,8 +2,20 @@
 title: Service topology
 description: How the Hocuspocus server, file watcher, persistence pipeline, and shadow repo work together per project.
 ---
+Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.open-knowledge/{server,ui}.lock`).
 
-Each Open Knowledge project runs its own server instance. There is no global daemon or project registry. Running multiple projects means multiple processes on different ports -- each fully independent with its own persistence pipeline, file watcher, and shadow repo.
+## Dual-process lifecycle
+
+Production runs two sibling processes coordinated via lockfiles:
+
+- `ok start` — Hocuspocus collab server (`/collab` WebSocket + `/api/*` HTTP). Owns `server.lock`; advertises its kernel-allocated port for MCP discovery.
+- `ok ui` — React editor + `GET /api/config`. Owns `ui.lock`; defaults to port 3000 (or `PORT` env / `--port`). Serves the static bundle and reads the live collab URL from `server.lock` on every `/api/config` request.
+
+`ok start` auto-spawns `ok ui` when `ui.lock` is absent or stale. `ok mcp` auto-spawns `ok start` under the same discipline. The spawn is always **detached** (`child_process.spawn` with `detached: true` + `child.unref()`) so the spawned process runs in its own process group — Claude Code's kill-on-session-end model cannot reach it through the MCP stdio.
+
+Teardown: when zero WebSocket clients are connected at `/collab` for 30 minutes, `ok start`'s idle-shutdown SIGTERMs the `ui.lock.pid` sibling, drains its own phases, and releases `server.lock` as the final step. `ok ui` carries a 12h safety-net timer (D-025) that self-terminates independently if `ok start` ever crashes without sending SIGTERM.
+
+In dev (`bun run dev`), a single Vite process serves both surfaces — the production split does **not** apply.
 
 ## Per-project architecture
 
@@ -21,8 +33,7 @@ Each Open Knowledge project runs its own server instance. There is no global dae
   H -->|HTTP /api/*| J[MCP Server / Agents]
   D -->|disk to CRDT| C
   G -->|CRDT to disk| K[Markdown Files]
-  E -->|disk to git| L[WIP Refs]
-`} />
+  E -->|disk to git| L[WIP Refs]`} />
 
 Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The Shadow Repo and HEAD Watcher handle git integration.
 
@@ -97,15 +108,17 @@ This means switching branches in git and switching branches in the editor are th
 
 ## Dev mode vs production
 
-| Aspect | Dev (`bun run dev`) | Production (`open-knowledge start`) |
-|--------|---------------------|--------------------------------------|
-| Server | Embedded in Vite process | Standalone HTTP server |
-| Port | 5173 (Vite default) | 3000 (configurable) |
-| Git integration | No shadow repo, no HEAD watcher | Full shadow repo + HEAD watcher |
-| File watcher | Simplified: create/update only | Full: create/update/delete/rename/conflict |
-| Content filter | Basic .md filtering | Full gitignore + config patterns |
-| Test routes | Enabled (`/api/test-reset`) | Disabled by default |
+| Aspect          | Dev (`bun run dev`)                                   | Production (`ok start` + `ok ui`)                                                      |
+| --------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Process model   | Single Vite process serves both collab + React bundle | Two sibling processes (`ok start` + `ok ui`) coordinated via `server.lock` + `ui.lock` |
+| Collab port     | 5173 (Vite default)                                   | Kernel-allocated, advertised in `server.lock`                                          |
+| UI port         | 5173 (same as collab)                                 | 3000 by default on `ok ui` (or `PORT` env / `--port`)                                  |
+| Git integration | No shadow repo, no HEAD watcher                       | Full shadow repo + HEAD watcher                                                        |
+| File watcher    | Simplified: create/update only                        | Full: create/update/delete/rename/conflict                                             |
+| Content filter  | Basic .md filtering                                   | Full gitignore + config patterns                                                       |
+| Test routes     | Enabled (`/api/test-reset`)                           | Disabled by default                                                                    |
+| Auto-shutdown   | None                                                  | 30-min idle-shutdown on `ok start`; 12h safety-net on `ok ui`                          |
 
 In dev mode, the Vite plugin (`packages/app/src/server/hocuspocus-plugin.ts`) embeds Hocuspocus into the Vite dev server process. A single `bun run dev` starts both the editor frontend and the collab server on port 5173. Git integration features are disabled to keep the dev loop fast and side-effect-free.
 
-In production, `open-knowledge start` runs a standalone HTTP server that serves the built React app as static assets and runs the full persistence pipeline including shadow repo commits and HEAD watching.
+In production, `ok start` runs the collab server only (`/collab` + `/api/*`) and auto-spawns `ok ui` as a detached sibling that serves the React bundle + `GET /api/config` endpoint. The split lets MCP tools auto-spawn the collab server on demand without resurrecting a browser UI nobody asked for, and lets Claude Code's preview pane launch just the UI via `.claude/launch.json` (`runtimeArgs: ['@inkeep/open-knowledge', 'ui']`, `autoPort: true`).

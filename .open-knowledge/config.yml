@@ -19,8 +19,8 @@
 # include/exclude: glob patterns for tracked content files. Relative to the
 # project root.
 #
-content:
-  dir: ./content
+# content:
+#   dir: .
 #   include:
 #     - "**/*.md"
 #   exclude: []

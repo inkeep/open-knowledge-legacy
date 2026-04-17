@@ -3,6 +3,7 @@
   "icon": "LuCpu",
   "pages": [
     "service-topology",
+    "lifecycle",
     "server-lifecycle",
     "architecture",
     "agent-write-path",

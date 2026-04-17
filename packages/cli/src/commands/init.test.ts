@@ -6,7 +6,7 @@ import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
-import { formatInitResult, runInit } from './init.ts';
+import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -369,7 +369,164 @@ describe('runInit', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Per-editor instruction file injection
+  // Claude Code launch.json scaffolding (US-009 / D-020 / D-031)
+  // -----------------------------------------------------------------------
+
+  describe('launch.json scaffolding', () => {
+    it('writes a fresh .claude/launch.json pointing at ok ui with autoPort', () => {
+      const result = runInit({ cwd: testDir });
+
+      expect(result.launchJson).toBeDefined();
+      expect(result.launchJson?.action).toBe('created');
+
+      const configPath = join(testDir, '.claude', 'launch.json');
+      expect(existsSync(configPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.name).toBe('open-knowledge');
+      expect(entry.runtimeExecutable).toBe('npx');
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBe(true);
+    });
+
+    it('flags a stale open-knowledge entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-stale');
+      expect(result.launchJson?.staleFields).toEqual(
+        expect.arrayContaining(['runtimeArgs', 'autoPort']),
+      );
+
+      // Unchanged — still the old shape (user must re-run with --force)
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
+      expect(parsed.configurations[0].autoPort).toBeUndefined();
+    });
+
+    it('skips an up-to-date open-knowledge entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+                port: 3000,
+                autoPort: true,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-existing');
+      expect(result.launchJson?.staleFields).toBeUndefined();
+    });
+
+    it('migrates an existing open-knowledge entry on --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir, force: true });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBe(true);
+    });
+
+    it('merges the new entry into an existing launch.json with other configurations', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'some-other-server',
+                runtimeExecutable: 'node',
+                runtimeArgs: ['./server.js'],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(2);
+      const ok = parsed.configurations.find((c: { name: string }) => c.name === 'open-knowledge');
+      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(ok.autoPort).toBe(true);
+    });
+
+    it('does NOT scaffold launch.json when Claude is not among selected editors', () => {
+      const result = runInit({ cwd: testDir, editors: ['cursor'] });
+      expect(result.launchJson).toBeUndefined();
+      expect(existsSync(join(testDir, '.claude', 'launch.json'))).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Per-editor instruction file injection (from main)
   // -----------------------------------------------------------------------
 
   describe('per-editor instruction file injection', () => {
@@ -516,5 +673,90 @@ describe('runInit', () => {
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectInstalledEditors — US-013 / FR-3.1 / D-013
+// ---------------------------------------------------------------------------
+
+describe('detectInstalledEditors', () => {
+  let testDir: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `detect-editors-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('always detects Claude because its config dir is cwd itself', () => {
+    // No sibling dirs created; Claude's configPath is <cwd>/.mcp.json → dirname is cwd → exists
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('claude');
+  });
+
+  it('detects Cursor when .cursor/ exists', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('cursor');
+  });
+
+  it('does NOT detect Cursor when .cursor/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('cursor');
+  });
+
+  it('detects VS Code when .vscode/ exists', () => {
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('vscode');
+  });
+
+  it('detects Windsurf when ~/.codeium/windsurf/ exists (via home override)', () => {
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('windsurf');
+  });
+
+  it('does NOT detect Windsurf when ~/.codeium/windsurf/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('windsurf');
+  });
+
+  it('returns all four when all editor config dirs exist', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
+    expect(detected).toHaveLength(4);
+  });
+
+  it('preserves EDITOR_TARGETS ordering in return value', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'windsurf']
+    expect(detected).toEqual(['claude', 'cursor', 'vscode']);
+  });
+
+  it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
+    // Synthesizes the "zero detected" non-TTY fallback path that exit 1s.
+    // In real filesystems, cwd always exists (so Claude is always detected),
+    // but with a synthetic nonexistent cwd + home, every editor's dirname
+    // misses → no detections.
+    const missingCwd = join(testDir, 'does-not-exist');
+    const missingHome = join(testDir, 'also-not-here');
+    const detected = detectInstalledEditors(missingCwd, missingHome);
+    expect(detected).toEqual([]);
   });
 });

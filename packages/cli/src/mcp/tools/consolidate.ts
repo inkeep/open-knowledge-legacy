@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import { textPlusStructured } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
   return `Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
@@ -179,10 +179,15 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, config: Config): void {
+  // previewUrl is null per FR-2.1: consolidate is a workflow primer keyed on a
+  // `topic` — the target canonical article's path is chosen by the agent during
+  // the prompt's Step 3. There is no single canonical document to preview at
+  // call time. Uniform with ingest / research / save_version.
   server.tool(
     'consolidate',
     DESCRIPTION,
     { topic: z.string().describe('The topic to consolidate into a canonical article') },
-    (args: { topic: string }) => textResult(buildBody(args.topic, config.content.dir)),
+    (args: { topic: string }) =>
+      textPlusStructured(buildBody(args.topic, config.content.dir), { previewUrl: null }),
   );
 }

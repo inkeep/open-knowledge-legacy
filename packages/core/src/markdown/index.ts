@@ -754,42 +754,83 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // JSX component → emit raw source as HTML for byte-identical MDX round-trip
+  // JSX component → first-class `mdxJsxFlowElement` mdast type per D7 / US-005.
+  // The raw source is stored in `data.sourceRaw`; the mdast→markdown override
+  // in `to-markdown-handlers.ts:mdxJsxFlowElement` reads it and emits verbatim,
+  // producing bit-exact equivalent output to the former
+  // `{type:'html',value:content}` workaround.
   if (n.jsxComponent) {
     nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.content ?? '',
+      type: 'mdxJsxFlowElement' as const,
+      name: null,
+      attributes: [],
+      children: [],
+      data: { sourceRaw: String(pmNode.attrs.content ?? '') },
     });
   }
 
-  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  // rawMdxFallback → first-class `rawMdxFallback` mdast type per D7 / US-006.
+  // Shape: `{type:'rawMdxFallback', data:{reason, originalSpan}, value:rawSource}`.
+  // The to-markdown handler in to-markdown-handlers.ts emits `value` verbatim
+  // (bit-exact equivalent of the former `{type:'html',value:textContent}`
+  // workaround). US-007 wires the mdast→hast handler that renders the
+  // clipboard-HTML `<!-- Parse error: ... -->` + `<pre class="mdx-fallback">`.
   if (n.rawMdxFallback) {
-    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.textContent ?? '',
-    });
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => {
+      const raw = pmNode.textContent ?? '';
+      const reason = typeof pmNode.attrs.reason === 'string' ? pmNode.attrs.reason : '';
+      const span = pmNode.attrs.originalSpan;
+      const originalSpan =
+        span && typeof span === 'object' && 'start' in span && 'end' in span
+          ? {
+              start: Number((span as { start: unknown }).start) || 0,
+              end: Number((span as { end: unknown }).end) || 0,
+            }
+          : { start: 0, end: 0 };
+      return {
+        type: 'rawMdxFallback' as const,
+        value: raw,
+        data: { reason, originalSpan },
+      } as unknown as MdastNodes;
+    };
   }
 
-  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
-  // reconstructing from structured attributes
+  // jsxInline → first-class `mdxJsxTextElement` mdast type per D7 / US-005.
+  // Same sourceRaw-verbatim strategy as jsxComponent. Preserves the Y.Item
+  // identity invariant: PM-attr-only shape changes on nested text don't
+  // invalidate the parent container.
   if (n.jsxInline) {
-    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
-    });
+    nodeHandlers.jsxInline = (pmNode: PmNode) => {
+      const raw = pmNode.attrs.sourceRaw || pmNode.textContent || '';
+      return {
+        type: 'mdxJsxTextElement' as const,
+        name: null,
+        attributes: [],
+        children: [],
+        data: { sourceRaw: String(raw) },
+      };
+    };
   }
 
-  // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
+  // Wiki-link → first-class `wikiLink` mdast type per D7 / US-004.
+  // - `data.{target,anchor,alias}` drives markdown emission via the
+  //   wikiLinkHandler registered through remarkWikiLink in pipeline.ts.
+  // - `children: [{type:'text',value:label}]` and mirrored `value` drive
+  //   the mdast→hast HTML emission (US-007).
+  // Replaces the earlier `{type:'html',value:'[[...]]'}` passthrough — the
+  // "type lie" D7 is locked to fix under strict greenfield.
   if (n.wikiLink) {
     nodeHandlers.wikiLink = (pmNode: PmNode) => {
-      const target = pmNode.attrs.target ?? '';
-      const anchor = pmNode.attrs.anchor;
-      const alias = pmNode.attrs.alias;
-      let text = `[[${target}`;
-      if (anchor) text += `#${anchor}`;
-      if (alias) text += `|${alias}`;
-      text += ']]';
-      return { type: 'html' as const, value: text };
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLink' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
     };
   }
 

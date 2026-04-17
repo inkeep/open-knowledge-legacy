@@ -65,6 +65,11 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  type AttachIdleShutdownOptions,
+  attachIdleShutdown,
+  type IdleShutdownHandle,
+} from './idle-shutdown.ts';
+export {
   createLiveDerivedIndexExtension,
   LIVE_DERIVED_INDEX_DEBOUNCE_MS,
   type LiveDerivedIndexOptions,
@@ -95,6 +100,18 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { isProcessAlive } from './process-alive.ts';
+export {
+  acquireProcessLock,
+  type LockName,
+  lockFilePath,
+  ProcessLockCollisionError,
+  type ProcessLockHandle,
+  type ProcessLockMetadata,
+  readProcessLock,
+  releaseProcessLock,
+  updateProcessLockPort,
+} from './process-lock.ts';
 export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
@@ -131,3 +148,11 @@ export {
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+export {
+  acquireUiLock,
+  readUiLock,
+  releaseUiLock,
+  UiLockCollisionError,
+  type UiLockMetadata,
+  updateUiLockPort,
+} from './ui-lock.ts';

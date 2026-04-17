@@ -677,3 +677,60 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
     expect(s.stdoutTruncated).toBe(true);
   });
 });
+
+describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', () => {
+  test('emits previewUrl per enriched file + ui block when config provided', async () => {
+    const project = await bootstrap();
+    const originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    try {
+      const contentDir = resolve(project, 'articles');
+      mkdirSync(contentDir, { recursive: true });
+      writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+      writeFileSync(resolve(contentDir, 'sso.md'), '---\ntitle: SSO\n---\nBody');
+
+      const result = (await buildExecResult(
+        { command: 'ls articles/' },
+        { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+      )) as ExecResult;
+
+      const s = structured(result);
+      const files = fileEntries(s);
+      expect(files.length).toBe(2);
+      for (const f of files) {
+        const docName = f.path.replace(/\.(md|mdx)$/i, '');
+        expect((f as unknown as { previewUrl: string }).previewUrl).toBe(
+          `https://env.example/#/${docName}`,
+        );
+        expect((f as unknown as { previewUrlSource: string }).previewUrlSource).toBe('env');
+      }
+      expect(s.ui).toEqual({ baseUrl: null, port: null });
+    } finally {
+      if (originalEnv === undefined) delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+      else process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+    }
+  });
+
+  test('previewUrl null when resolver returns null', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const files = fileEntries(s);
+    expect(files.length).toBe(1);
+    expect((files[0] as unknown as { previewUrl: string | null }).previewUrl).toBeNull();
+    expect(s.ui).toEqual({ baseUrl: null, port: null });
+  });
+
+  // Removed after merge: "without config" back-compat test. Post-merge, main's
+  // folder-rule work made `config` required on ExecDeps (it's threaded through
+  // to `enrichPath` for folder-frontmatter resolution), so the optional-config
+  // path no longer exists. Callers always pass config via tools/index.ts.
+});

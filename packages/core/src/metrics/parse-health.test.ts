@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   getParseHealth,
   incrementBlockFallback,
@@ -9,6 +9,15 @@ import {
 } from './parse-health.ts';
 
 describe('parse-health metrics', () => {
+  // Parse-health is module-level singleton state that other test files can
+  // increment as a side-effect (e.g., raw-mdx-fallback-mdast-promotion.test.ts
+  // triggers R6 block-level fallback which calls `incrementBlockFallback`).
+  // Test files run in alphabetical order via bun test; `markdown/` sorts
+  // before `metrics/`, so the "initial state is all zeros" assertion has
+  // already been contaminated by the time this file runs unless we reset
+  // BEFORE each test, not just after. The afterEach stays to protect tests
+  // that run after this file (defensive on both sides).
+  beforeEach(() => resetParseHealth());
   afterEach(() => resetParseHealth());
 
   test('initial state is all zeros', () => {

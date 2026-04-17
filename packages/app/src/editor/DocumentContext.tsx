@@ -2,6 +2,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
+import { useCollabUrl } from '@/lib/use-collab-url';
 import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
@@ -86,6 +87,27 @@ export interface DocumentContextValue {
   pin: (docName: string) => void;
   /** Unpin — resume agent nav on the next focus change. */
   unpin: () => void;
+  /**
+   * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
+   * same-origin fallback). Null while the initial fetch is in flight or
+   * while `server.lock` is absent — consumers that also need the URL
+   * (e.g. `SystemDocSubscriber`) skip wiring until resolved.
+   */
+  collabUrl: string | null;
+  /**
+   * True when the `/api/config` resolver has given up automatic retries
+   * (no resolution within ~30s). Consumer banners surface an actionable
+   * error message + manual-retry button. `retryCollab()` resets to
+   * auto-retry mode.
+   */
+  collabTerminal: boolean;
+  /** Observed last-error shape (only populated when `collabTerminal`). */
+  collabLastError:
+    | { kind: 'error'; code: number | 'network' | 'invalid-body' }
+    | { kind: 'null-collab' }
+    | null;
+  /** Reset retry state — exits terminal mode, resumes polling. */
+  retryCollab: () => void;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -132,15 +154,17 @@ function persistPinToStorage(value: string | null): void {
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
 // Module-level singleton — survives React re-renders and StrictMode double-mount.
-// Same pattern the old singleton HocuspocusProvider used. Under Vite HMR the
-// binding resets on module reload; the `import.meta.hot.dispose` handler at
-// the bottom of this file disposes the previous pool before the new module
-// instance takes over so WebSocket / observer / timer state doesn't leak.
+// Same pattern the old singleton HocuspocusProvider used. Instantiated lazily
+// when `collabUrl` resolves (US-014 / FR-1.13) — not at module load.
+//
+// Under Vite HMR the binding resets on module reload; the `import.meta.hot.dispose`
+// handler at the bottom of this file disposes the previous pool before the new
+// module instance takes over so WebSocket / observer / timer state doesn't leak.
 let pool: ProviderPool | null = null;
 
-function getPool(): ProviderPool {
+function getPool(collabUrl: string): ProviderPool {
   if (!pool) {
-    pool = new ProviderPool(MAX_POOL);
+    pool = new ProviderPool(MAX_POOL, collabUrl);
   }
   return pool;
 }
@@ -185,6 +209,12 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const {
+    collabUrl,
+    terminal: collabTerminal,
+    lastError: collabLastError,
+    retry: retryCollab,
+  } = useCollabUrl();
   // `useTransition` (rather than the module-level `startTransition`) is
   // required so `isPending` is observable to context consumers. The
   // transition stays "pending" through any suspending re-renders triggered
@@ -193,7 +223,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
-    const p = getPool();
+    if (collabUrl === null) return;
+    const p = getPool(collabUrl);
 
     // Sync initial state
     setSnapshot(takeSnapshot(p));
@@ -243,11 +274,12 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     return () => {
       p.setOnChange(null);
     };
-  }, []);
+  }, [collabUrl]);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {
-    const p = getPool();
+    if (collabUrl === null) return;
+    const p = getPool(collabUrl);
     const entry = p.open(docName);
     if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
     p.setActive(docName);
@@ -260,7 +292,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const openDocumentTransition = createOpenDocumentTransition(openDocument, startTransition);
 
   const openTarget = (target: ResolvedNavigationTarget) => {
-    const p = getPool();
+    if (collabUrl === null) return;
+    const p = getPool(collabUrl);
     const docName = docNameForNavigationTarget(target);
     if (docName) {
       p.open(docName);
@@ -285,13 +318,18 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     openTarget,
     openTargetTransition,
     clearTarget: () => {
-      const p = getPool();
+      if (collabUrl === null) {
+        setActiveTarget(null);
+        return;
+      }
+      const p = getPool(collabUrl);
       p.clearActive();
       setActiveTarget(null);
     },
     isPending,
     closeDocument: (docName: string) => {
-      const p = getPool();
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
       p.close(docName);
       setActiveTarget((current) => {
         if (!current) return current;
@@ -299,7 +337,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       });
     },
     recycleDocument: (docName: string) => {
-      const p = getPool();
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
       p.recycle(docName);
     },
     pinnedDoc,
@@ -311,6 +350,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setPinnedDoc(null);
       persistPinToStorage(null);
     },
+    collabUrl,
+    collabTerminal,
+    collabLastError,
+    retryCollab,
   };
 
   return <DocumentContext value={value}>{children}</DocumentContext>;

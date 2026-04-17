@@ -1,21 +1,61 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import simpleGit from 'simple-git';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
-import { buildReadResult } from './read-document.ts';
+import { buildReadResult, type ReadDocumentDeps, register } from './read-document.ts';
+import type { ServerInstance } from './shared.ts';
 
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
+interface ToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: true;
+}
+
+interface RegisteredTool {
+  handler: (args: { path: string; since?: string; cwd?: string }) => Promise<ToolResult>;
+}
+
+function createFakeServer() {
+  let registered: RegisteredTool | undefined;
+  const server = {
+    tool(
+      _name: string,
+      _description: string,
+      _schema: Record<string, unknown>,
+      handler: RegisteredTool['handler'],
+    ) {
+      registered = { handler };
+    },
+  } as unknown as ServerInstance;
+  return {
+    server,
+    getTool(): RegisteredTool {
+      if (!registered) throw new Error('Tool was not registered');
+      return registered;
+    },
+  };
+}
+
 let tmpDir: string;
+let originalEnv: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-read-doc-test-'));
+  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
 
 afterEach(async () => {
+  if (originalEnv === undefined) {
+    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  } else {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+  }
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -30,6 +70,20 @@ async function bootstrap(): Promise<string> {
   await git.add('README.md');
   await git.commit('init');
   return project;
+}
+
+async function writeDoc(relPath: string, content: string): Promise<void> {
+  const abs = resolve(tmpDir, relPath);
+  await mkdir(dirname(abs), { recursive: true });
+  await writeFile(abs, content, 'utf-8');
+}
+
+function makeDeps(): ReadDocumentDeps {
+  return {
+    resolveCwd: async () => tmpDir,
+    config: DEFAULT_CONFIG,
+    serverUrl: undefined,
+  };
 }
 
 describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
@@ -53,11 +107,8 @@ describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
 
-    // Title comes from file frontmatter (file wins)
     expect(result).toContain('## Foo');
-    // Description comes from folder rule (file omitted it)
     expect(result).toContain('**Description:** Specifications');
-    // Tags come from folder rule
     expect(result).toContain('spec');
   });
 
@@ -84,7 +135,6 @@ describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
 
-    // File scalars win — folder values are NOT present
     expect(result).toContain('## File Title');
     expect(result).not.toContain('Folder Title');
     expect(result).toContain('**Description:** File desc');
@@ -109,14 +159,10 @@ describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
       { resolveCwd: async () => project, serverUrl: undefined, config },
     );
 
-    // Expected order: folder rule tags (spec, architecture) + file tags (wip, spec),
-    // then first-occurrence-preserved dedup = [spec, architecture, wip]
     expect(result).toContain('spec');
     expect(result).toContain('architecture');
     expect(result).toContain('wip');
-    // No duplicate 'spec'
     const specOccurrences = (result.match(/spec/g) ?? []).length;
-    // "spec" may appear in other places (e.g. in "Specs"); this checks it shows up
     expect(specOccurrences).toBeGreaterThanOrEqual(1);
   });
 
@@ -126,7 +172,6 @@ describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
     mkdirSync(specs, { recursive: true });
     writeFileSync(resolve(specs, 'foo.md'), '---\ntitle: Foo\ntags:\n  - wip\n---\nBody\n');
 
-    // Rules exist but match a different subtree
     const config: Config = ConfigSchema.parse({
       folders: [
         {
@@ -160,5 +205,49 @@ describe('read_document — folder-rule flow-through (US-005 / QA-002)', () => {
 
     expect(result).toContain('## Foo');
     expect(result).toContain('**Description:** Bar');
+  });
+});
+
+describe('read_document — previewUrl emission', () => {
+  test('emits previewUrl in structuredContent when resolver resolves', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    await writeDoc('docs/article.md', '# Hello\n\nbody');
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: 'docs/article.md' });
+
+    expect(result.structuredContent).toEqual({
+      previewUrl: 'https://env.example/#/docs/article',
+      previewUrlSource: 'env',
+    });
+    expect(result.content[0]?.text).toContain('Hello');
+  });
+
+  test('emits previewUrl null when resolver returns null', async () => {
+    await writeDoc('docs/article.md', '# Hello');
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: 'docs/article.md' });
+
+    expect(result.structuredContent).toEqual({ previewUrl: null });
+  });
+
+  test('strips .mdx extension from path before resolving previewUrl', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    await writeDoc('docs/article.mdx', '# Hello');
+
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({ path: 'docs/article.mdx' });
+
+    expect(result.structuredContent).toEqual({
+      previewUrl: 'https://x.example/#/docs/article',
+      previewUrlSource: 'env',
+    });
   });
 });

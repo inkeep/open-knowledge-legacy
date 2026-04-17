@@ -1,0 +1,107 @@
+---
+title: Lifecycle model
+description: How ok start, ok ui, and ok mcp coordinate — detached sibling spawn, lockfile discovery, idle-shutdown, and safety-net.
+---
+Open Knowledge's production runtime is a pair of sibling processes — `ok start` (collab) and `ok ui` (React editor) — coordinated via lockfiles and managed through three utility commands (`ok status`, `ok stop`, `ok clean`). This page describes the full lifecycle: how the sibling pair comes up, how `ok mcp` resurrects it on demand, how it tears itself down when idle, and how each moving part is recoverable.
+
+The underlying design is in `specs/2026-04-16-zero-ceremony-resume/SPEC.md`. This page is the runtime-behavior reference.
+
+## The sibling pair
+
+```text
+┌──────────────────────────┐        ┌──────────────────────────┐
+│  ok start                │        │  ok ui                   │
+│  (Hocuspocus collab)     │        │  (React editor)          │
+│                          │        │                          │
+│  /collab  (WebSocket)    │        │  /              → bundle │
+│  /api/*   (HTTP)         │        │  /api/config    → {...}  │
+│                          │        │                          │
+│  port: kernel-allocated  │        │  port: 3000 (default)    │
+│  lock: server.lock       │        │  lock: ui.lock           │
+└──────────────────────────┘        └──────────────────────────┘
+```
+
+Both processes live in the same `<contentDir>/.open-knowledge/` directory. Neither is a parent of the other — they're independent siblings coordinated through lockfiles and one SIGTERM signal at shutdown time.
+
+`ok start` serves the collab surface only. On startup it reads `ui.lock`; if absent or stale it detach-spawns `ok ui` as a sibling (`spawn(..., {detached: true, stdio: ['ignore', 'ignore', <stderr-fd>]}) + child.unref()`), with the spawned child's stderr redirected at the kernel layer to `.open-knowledge/last-spawn-error.log`.
+
+`ok ui` serves the static React bundle (`dist/public/`) plus `GET /api/config`, which returns `{collabUrl, previewUrl, port}` read from `server.lock` on every request (no-store). The React app's `fetchApiConfig` hook bootstraps its `HocuspocusProvider` from this endpoint with exponential-backoff retry (2s → 4s → 8s → 15s), falling back to `defaultCollabWsUrl()` on 404 so `bun run dev` still works.
+
+## Zero-ceremony resume via `ok mcp`
+
+When an agent calls its first MCP tool and there is no live `server.lock`, `ok mcp` detach-spawns `ok start` — which then detach-spawns `ok ui`. From nothing to a running pair in one tool call.
+
+```text
+Agent call → ok mcp → decideAutoStart → spawn(ok start) → spawn(ok ui)
+                                               │
+                                          server.lock
+                                               ↓
+                                 MCP polls every 100ms until port > 0
+                                 or 5s timeout (stderr captured in
+                                 last-spawn-error.log is surfaced
+                                 in the first tool-result error)
+```
+
+### Precedence for the startup decision
+
+`decideAutoStart` in `packages/cli/src/commands/mcp.ts` is a pure function whose return value drives the MCP session's mode:
+
+| State                                        | Verdict                                       |
+| -------------------------------------------- | --------------------------------------------- |
+| `--port <n>` CLI override with `n > 0`       | **connect** — `ws://<host>:<port>`            |
+| `--port 0`                                   | **disk-only**                                 |
+| Live `server.lock` with `port > 0`           | **connect** — regardless of auto-start config |
+| No live lock + auto-start allowed            | **spawn**                                     |
+| No live lock + `OK_MCP_AUTOSTART=0` env      | **disk-only**                                 |
+| No live lock + `mcp.autoStart: false` config | **disk-only**                                 |
+
+A live lock always wins over opt-out — `OK_MCP_AUTOSTART=0` only suppresses the spawn path, not connection to a user-started server. Env wins over config.
+
+### Why sibling, not embedded
+
+An earlier research report (`reports/zero-config-bunx-cli-packaging/REPORT.md` §D4 Open Question #1) considered embedding Hocuspocus inside the MCP stdio process. That was rejected: Claude Code's "kill child on session end" model would tear the server down with the MCP stdio. Zero-Ceremony Resume instead detach-spawns a **sibling** — `ok start` runs in its own process group, independently alive when Claude Code signals the MCP stdio. Detachment of an embedded child wouldn't help; it's the sibling-vs-child distinction that matters (SPEC §10 D-003).
+
+## Idle-shutdown
+
+`ok start` attaches `attachIdleShutdown` over its HTTP listener. The primitive counts WebSocket upgrades on paths starting with `/collab`; when the counter stays at zero for the configured threshold (default 30 min, WARN log 5 min before), it fires `onShutdown`.
+
+```text
+30 min no /collab clients  ← idle-shutdown fires
+      │
+      ├─ readUiLock → SIGTERM ui.lock.pid (if alive)
+      └─ await destroy()
+           ├─ Phase 1–5 (watchers, sessions, L1, L2, shadow lock)
+           └─ Phase 6: release server.lock  ← LAST, in try/finally
+```
+
+**Only **`/collab`** WebSocket upgrades count.** DirectConnections opened by the CC1 broadcaster and `AgentSessionManager` are invisible by design (D-017). A stale agent session doesn't keep the server alive overnight — an acceptable trade (NG10) since everything important is already persisted to the shadow repo.
+
+## D-025 safety-net
+
+`ok ui` arms an independent 12-hour timer that self-terminates the UI if `ok start` crashes hard enough to skip its idle-shutdown SIGTERM. The timer starts when `startUiServer` returns and is cancelled by `handle.release()`. It is not a replacement for idle-shutdown — it's a backstop against silent `ok start` crashes that would otherwise leave `ok ui` running indefinitely.
+
+## Lifecycle utility commands
+
+| Command     | Role                                                                                                                                                                             |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok status` | Print the state of both locks: `{pid, port, alive, startedAt, host, state}`. Always exits 0. `--json` for machine-readable output. Foreign-host locks report `alive: 'unknown'`. |
+| `ok stop`   | SIGTERM live `ok start` + `ok ui` processes. Leaves stale, corrupt, or foreign-host locks alone — those belong to `ok clean`. Exits 1 only on EPERM kill failure.                |
+| `ok clean`  | Prune stale (dead-pid or corrupt JSON) lockfiles. Leaves live and foreign-host locks alone.                                                                                      |
+
+The three commands share an `inspectLock` peek helper that, unlike `readProcessLock`, does **not** auto-unlink dead-pid locks — the peek must be non-destructive so `status` and `clean` agree on what the ground truth is.
+
+## Port model
+
+| Process    | Default port           | Selection logic                                                                                                                                                                                      |
+| ---------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok start` | `0` (kernel-allocated) | `--port` flag > `PORT` env > `server.port` config > Zod default (`0`). The resolved port is written to `server.lock` after `http.listen()` resolves.                                                 |
+| `ok ui`    | `3000`                 | `--port` flag > `PORT` env > `3000`. If the requested port clashes with an existing `ui.lock`: same port → silent exit; different port → reverse HTTP proxy onto the lock's port (pure `node:http`). |
+
+The proxy mode exists to make Claude Code's `autoPort: true` work cleanly. When Claude Code's preview pane can't bind port 3000 it picks a free port and passes it via `PORT` env; the `ok ui` lock-collision handler then proxies that port onto whatever port the original `ui.lock` says the real UI is on. Users always reach the UI at the port they asked for.
+
+## Related reading
+
+- [Service Topology](/internals/service-topology) — per-project architecture + dev vs production.
+- [Server Lifecycle](/internals/server-lifecycle) — six-phase `destroy()` teardown inside `ok start`.
+- [Configuration](/guides/configuration) — `server.port`, `mcp.autoStart`, `OK_MCP_AUTOSTART`, `preview.baseUrl`.
+- [MCP Integration](/guides/mcp-integration) — three operating modes + `previewUrl` resolution.
