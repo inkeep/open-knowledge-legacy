@@ -10,6 +10,7 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -60,7 +61,7 @@ async function createPage(path: string) {
 }
 
 async function seedDoc(page: Page): Promise<string> {
-  const docName = `outline-${Date.now().toString(36)}`;
+  const docName = `outline-${randomUUID().slice(0, 8)}`;
   await createPage(`${docName}.md`);
   await page.goto(`${BASE}/#/${docName}`);
   await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {

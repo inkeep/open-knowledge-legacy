@@ -53,6 +53,8 @@
 | F4 | `observer-a-multi-client.e2e.ts` — per-test docName + fix `mode→position` | Same isolation + fix body key |
 | F5 | `reveal-on-activate.e2e.ts` — remove unnecessary `beforeEach` reset | Delete the `test-reset` call from `beforeEach`. Tests that click `test-doc.md` should use a per-test created doc instead. |
 | F6 | `graph-panel-surfaces.e2e.ts` — per-test fixture scoping | `seedGraphFixtures()` should use per-test unique doc names (e.g., `alpha-{uuid}`) and pass them through to all helpers. Remove the `test-reset` call from `seedGraphFixtures()`. |
+| F7 | `source-polish.e2e.ts` — per-test docName isolation | Same isolation pattern. Added under greenfield directive ("no deferred tech debt") after initial 6-file migration — same bug pattern, same fix. |
+| F8 | `outline-navigation.e2e.ts` — per-test docName isolation | Same isolation pattern. Seeds via `createPage` + `replaceDoc` with per-test docName; page-headings poll uses per-test docName. |
 
 ## §4 Out of Scope
 

@@ -12,6 +12,7 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -70,7 +71,7 @@ test.beforeEach(async ({ page }) => {
     if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
   });
 
-  testDocName = `sp-${Date.now().toString(36)}`;
+  testDocName = `sp-${randomUUID().slice(0, 8)}`;
   await createPage(`${testDocName}.md`);
   await page.goto(`${BASE}/#/${testDocName}`);
   await waitForProvider(page);
