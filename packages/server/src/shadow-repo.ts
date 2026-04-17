@@ -16,6 +16,7 @@ import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
   type ParsedCheckpoint,
+  parseCheckpoint,
   resolveShadowDir,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
@@ -381,6 +382,107 @@ export async function saveInMemoryCheckpoint(
       // ignore cleanup failure
     }
   }
+}
+
+/**
+ * A single `kind: 'external-change-rescue'` rescue entry reconstructed from
+ * the shadow repo's `refs/checkpoints/<branch>/*` namespace. Shape mirrors
+ * the flat-file rescue listing at `/api/rescue` so the two sources can be
+ * merged into one unified response (bridge-correctness SPEC §6 R7f).
+ */
+export interface TimelineRescueEntry {
+  docName: string;
+  timestamp: string;
+  size: number;
+  /** Commit SHA of the checkpoint, so the caller can request the raw content. */
+  sha: string;
+  /** Commit message (first line); surfaces the human-readable label. */
+  label: string;
+  /** SHA of the incoming disk content that overrode the in-memory state. */
+  incomingDiskSha: string;
+}
+
+/**
+ * List every `external-change-rescue` checkpoint on `refs/checkpoints/<branch>/*`
+ * by walking the refs, reading each commit's body via `parseCheckpoint`,
+ * and filtering by kind. Does not walk ancestry — each ref is resolved
+ * directly via `git log --no-walk`. Returns an empty array on any git error
+ * to match the graceful-degradation posture of `getDocumentHistory`.
+ */
+export async function listRescueCheckpoints(
+  shadow: ShadowHandle,
+  branch = 'main',
+): Promise<TimelineRescueEntry[]> {
+  const sg = shadowGit(shadow);
+  let refOutput: string;
+  try {
+    refOutput = await sg.raw(
+      'for-each-ref',
+      '--format=%(objectname)',
+      `refs/checkpoints/${branch}/`,
+    );
+  } catch {
+    return [];
+  }
+  const shas = refOutput
+    .trim()
+    .split('\n')
+    .filter((s) => s.length === 40);
+  if (shas.length === 0) return [];
+
+  let logRaw: string;
+  try {
+    logRaw = await sg.raw(
+      'log',
+      '--no-walk',
+      '--author-date-order',
+      '--format=%H%x00%aI%x00%s%x00%B%x1e',
+      ...shas,
+    );
+  } catch {
+    return [];
+  }
+
+  const out: TimelineRescueEntry[] = [];
+  for (const record of logRaw.split('\x1e')) {
+    const trimmed = record.trimStart();
+    if (!trimmed) continue;
+    const [sha = '', timestamp = '', subject = '', body = ''] = trimmed.split('\x00');
+    const parsed = parseCheckpoint(body);
+    if (parsed?.kind !== 'external-change-rescue') continue;
+
+    // Infer docName + blob size from the tree. We expect saveInMemoryCheckpoint
+    // to have placed exactly one blob keyed by `<contentRoot>/<docName>`.
+    let docName = '';
+    let size = 0;
+    try {
+      const tree = (await sg.raw('ls-tree', '-r', '--long', sha)).trim();
+      const line = tree.split('\n')[0];
+      if (line) {
+        const cols = line.split(/\s+/);
+        const pathIdx = 4;
+        const sizeIdx = 3;
+        size = Number(cols[sizeIdx] ?? '0');
+        docName =
+          (cols[pathIdx] ?? '')
+            .replace(/\.mdx?$/, '')
+            .split('/')
+            .slice(-1)[0] ?? '';
+      }
+    } catch {
+      // ignore — docName stays empty; caller treats as unparseable
+    }
+    if (!docName) continue;
+    out.push({
+      docName,
+      timestamp,
+      size,
+      sha,
+      label: subject.replace(/^checkpoint:\s*/, ''),
+      incomingDiskSha: parsed.metadata.incomingDiskSha,
+    });
+  }
+  return out;
 }
 
 // ─── Park / Load / Restore ──────────────────────────────────────────────────

@@ -85,10 +85,12 @@ import {
   setReconciledBase,
 } from './persistence.ts';
 import {
+  listRescueCheckpoints,
   type ShadowRef,
   safetyCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
@@ -2284,40 +2286,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    const now = Date.now();
+    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
+    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
+    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
+    // can treat both as interchangeable unless they need the checkpoint sha.
+    interface RescueRowFlat {
+      docName: string;
+      timestamp: string;
+      size: number;
+      source: 'flat';
+    }
+    interface RescueRowTimeline extends TimelineRescueEntry {
+      source: 'timeline';
+    }
+    const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
+
     const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
-    if (!existsSync(rescueDir)) {
-      json(res, 200, []);
-      return;
+    if (existsSync(rescueDir)) {
+      try {
+        const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
+        for (const file of files) {
+          const filePath = resolve(rescueDir, file);
+          const stat = statSync(filePath);
+          const age = now - stat.mtimeMs;
+
+          if (age > RESCUE_MAX_AGE_MS) {
+            try {
+              unlinkSync(filePath);
+            } catch (e) {
+              console.debug('[rescue] cleanup failed (non-critical):', e);
+            }
+            continue;
+          }
+
+          entries.push({
+            docName: stripDocExtension(file),
+            timestamp: stat.mtime.toISOString(),
+            size: stat.size,
+            source: 'flat',
+          });
+        }
+      } catch (e) {
+        console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+      }
     }
 
-    const now = Date.now();
-    const entries: { docName: string; timestamp: string; size: number }[] = [];
-
+    // Timeline-ref source — merged in so the unified response surfaces all
+    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
-      const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
-      for (const file of files) {
-        const filePath = resolve(rescueDir, file);
-        const stat = statSync(filePath);
-        const age = now - stat.mtimeMs;
-
-        if (age > RESCUE_MAX_AGE_MS) {
-          // Clean up expired rescue buffers
-          try {
-            unlinkSync(filePath);
-          } catch (e) {
-            console.debug('[rescue] cleanup failed (non-critical):', e);
-          }
-          continue;
-        }
-
-        entries.push({
-          docName: stripDocExtension(file),
-          timestamp: stat.mtime.toISOString(),
-          size: stat.size,
-        });
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      for (const t of timelineEntries) {
+        entries.push({ ...t, source: 'timeline' });
       }
     } catch (e) {
-      console.error('[rescue] Failed to list rescue buffers:', e);
+      console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
     }
 
     json(res, 200, entries);
@@ -2339,6 +2363,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
+    // this first — the flat-file path is how shutdown-flush delivers the
+    // most recent unflushed state, which is the most relevant artifact.
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
@@ -2346,31 +2373,59 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Invalid document name');
       return;
     }
-    if (!existsSync(filePath)) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-
-    // Check expiry
-    const stat = statSync(filePath);
-    if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath);
+      if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // ignore
+        }
+      } else {
+        const content = readFileSync(filePath, 'utf-8');
+        res.writeHead(200, {
+          'Content-Type': 'text/markdown',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(content);
+        return;
       }
-      res.writeHead(404);
-      res.end('Not found — rescue buffer expired');
-      return;
     }
 
-    const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, {
-      'Content-Type': 'text/markdown',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(content);
+    // Timeline-ref source — fall back to the most recent
+    // `external-change-rescue` checkpoint for this doc on the current
+    // branch (SPEC §6 R7f). Reads the blob via `git cat-file` so large
+    // docs stream directly from git object storage.
+    try {
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      // Most recent for this doc
+      const match = timelineEntries
+        .filter((e) => e.docName === docName)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+      if (match) {
+        const sg = shadowGit(shadowRef.current);
+        const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
+        // The blob is the single entry; extract its object SHA.
+        const firstLine = tree.split('\n')[0] ?? '';
+        const parts = firstLine.split(/\s+/);
+        const blobSha = parts[2];
+        if (blobSha) {
+          const content = await sg.raw('cat-file', '-p', blobSha);
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          res.end(content);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[rescue] timeline-ref fallback failed:', e);
+    }
+
+    res.writeHead(404);
+    res.end('Not found');
   }
 
   async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {

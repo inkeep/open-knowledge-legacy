@@ -50,6 +50,7 @@ import {
   readParkedState,
   type ShadowHandle,
   type ShadowRef,
+  saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
 
@@ -417,20 +418,34 @@ export function createServer(options: ServerOptions): ServerInstance {
           const isDirty = ours !== base;
 
           if (isDirty && shadowRef.current) {
-            const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-            if (rescuePath) {
-              try {
-                mkdirSync(dirname(rescuePath), { recursive: true });
-                writeFileSync(rescuePath, ours, 'utf-8');
-                incrementRescueBuffer();
-                log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
-              } catch (e) {
-                log.error(
-                  { docName, err: e },
-                  `[reconcile] rescue buffer write failed: ${docName}`,
-                );
-              }
-            }
+            // Silent rescue checkpoint (SPEC §6 R7e) — preserve in-memory
+            // content on a timeline ref so TimelinePanel renders it as an
+            // 'external-change-rescue' row. Fire-and-forget; failures warn
+            // but don't block the delete lifecycle.
+            const shadowForCheckpoint = shadowRef.current;
+            const branch = headWatcher?.getLastKnownBranch() ?? 'main';
+            queueMicrotask(() => {
+              saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                kind: 'external-change-rescue',
+                docName,
+                contents: ours,
+                label: `External change recovered @ ${new Date().toISOString()}`,
+                branch,
+                // Delete event has no incoming disk content — sentinel empty
+                // string so the TimelineRescueEntry shape round-trips.
+                metadata: { incomingDiskSha: '' },
+              })
+                .then(() => {
+                  incrementRescueBuffer();
+                  log.info({ docName }, `[reconcile] rescue checkpoint saved (delete): ${docName}`);
+                })
+                .catch((e: unknown) => {
+                  log.error(
+                    { docName, err: e },
+                    `[reconcile] rescue checkpoint write failed: ${docName}`,
+                  );
+                });
+            });
           }
 
           const lifecycleMap = document.getMap('lifecycle');
@@ -968,23 +983,32 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const isDirty = ours !== base;
 
                   if (isDirty && shadowRef.current) {
-                    const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-                    if (rescuePath) {
-                      try {
-                        mkdirSync(dirname(rescuePath), { recursive: true });
-                        writeFileSync(rescuePath, ours, 'utf-8');
-                        incrementRescueBuffer();
-                        log.info(
-                          { docName },
-                          `[reconcile] rescue buffer saved on branch switch: ${docName}`,
-                        );
-                      } catch (e) {
-                        log.error(
-                          { docName, err: e },
-                          `[reconcile] rescue buffer write failed: ${docName}`,
-                        );
-                      }
-                    }
+                    // Silent rescue checkpoint on branch-switch tombstone
+                    // (SPEC §6 R7e). Same pattern as reconcile-delete above.
+                    const shadowForCheckpoint = shadowRef.current;
+                    queueMicrotask(() => {
+                      saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                        kind: 'external-change-rescue',
+                        docName,
+                        contents: ours,
+                        label: `External change recovered @ ${new Date().toISOString()}`,
+                        branch: newBranch,
+                        metadata: { incomingDiskSha: '' },
+                      })
+                        .then(() => {
+                          incrementRescueBuffer();
+                          log.info(
+                            { docName },
+                            `[reconcile] rescue checkpoint saved on branch switch: ${docName}`,
+                          );
+                        })
+                        .catch((e: unknown) => {
+                          log.error(
+                            { docName, err: e },
+                            `[reconcile] rescue checkpoint write failed: ${docName}`,
+                          );
+                        });
+                    });
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');

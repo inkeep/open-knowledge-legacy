@@ -140,6 +140,7 @@ export {
   commitWip,
   type InMemoryCheckpointParams,
   initShadowRepo,
+  listRescueCheckpoints,
   type SafetyCheckpointParams,
   type SaveVersionResult,
   type ShadowHandle,
@@ -148,6 +149,7 @@ export {
   saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
