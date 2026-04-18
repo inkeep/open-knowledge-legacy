@@ -134,4 +134,28 @@ describe('buildGetPreviewUrlResult', () => {
       expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
     }
   });
+
+  test('supports per-cwd config resolvers', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const seenCwds: string[] = [];
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd,
+        config: async (cwd) => {
+          seenCwds.push(cwd ?? '');
+          return {
+            ...BASE_CONFIG,
+            content: { ...BASE_CONFIG.content, include: ['docs/**/*.md'] },
+          };
+        },
+      },
+    );
+
+    expect(seenCwds).toEqual([tmpDir]);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
 });

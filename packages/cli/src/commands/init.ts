@@ -4,14 +4,15 @@
  * Does two things:
  *   1. Scaffolds `.open-knowledge/` in the current directory via initContent()
  *      (same logic the MCP server's init flow used to call — now factored out).
- *   2. Writes MCP server entries for `open-knowledge` into each selected
- *      editor's config file, preserving any existing entries. Idempotent: skips
- *      if an `open-knowledge` entry is already present, unless `--force`.
+ *   2. Writes Open Knowledge MCP server entries into each selected editor's
+ *      config file, preserving any existing entries. Idempotent: skips when
+ *      the target entry already matches; if an existing entry differs, reports
+ *      that drift and tells the user to re-run with `--force`.
  *
- * Supports Claude Code, Cursor, VS Code, and Windsurf. When run interactively
- * (TTY) without `--editor`, prompts the user to select which editors to
- * configure. When `--editor` is passed or stdin is not a TTY, uses the flag
- * value directly (defaults to `claude`).
+ * Supports Claude Code, Claude Desktop, Cursor, VS Code, and Windsurf. When
+ * run interactively (TTY) without `--editor`, prompts the user to select which
+ * editors to configure. When `--editor` is passed or stdin is not a TTY, uses
+ * the flag value directly (defaults to `claude`).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -78,8 +79,15 @@ function writeMcpConfig(path: string, config: Record<string, unknown>): void {
 export interface EditorMcpResult {
   editorId: EditorId;
   label: string;
-  action: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  action:
+    | 'written'
+    | 'skipped-existing'
+    | 'skipped-conflict'
+    | 'overwritten'
+    | 'skipped-flag'
+    | 'failed';
   configPath: string;
+  serverName: string;
   error?: string;
 }
 
@@ -90,7 +98,7 @@ export interface InitCommandOptions {
   editors?: EditorId[];
   /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
-  /** Override home directory (test-only, for Windsurf global path). */
+  /** Override home directory (test-only, for global editor config paths). */
   home?: string;
 }
 
@@ -106,7 +114,13 @@ export interface InitCommandResult {
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
   launchJson?: LaunchJsonResult;
   // Backward-compat fields (derived from the Claude entry or first editor):
-  mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  mcpAction:
+    | 'written'
+    | 'skipped-existing'
+    | 'skipped-conflict'
+    | 'overwritten'
+    | 'skipped-flag'
+    | 'failed';
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
@@ -136,6 +150,23 @@ export interface LaunchJsonResult {
    * with `--force` to pick up the new defaults.
    */
   staleFields?: string[];
+}
+
+function mcpEntriesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => mcpEntriesEqual(value, b[index]));
+  }
+  if (isObject(a) && isObject(b)) {
+    const aKeys = Object.keys(a).sort();
+    const bKeys = Object.keys(b).sort();
+    return (
+      aKeys.length === bKeys.length &&
+      aKeys.every((key, index) => key === bKeys[index]) &&
+      aKeys.every((key) => mcpEntriesEqual(a[key], b[key]))
+    );
+  }
+  return false;
 }
 
 /**
@@ -257,6 +288,7 @@ function writeEditorMcpConfig(
   home?: string,
 ): EditorMcpResult {
   const configPath = target.configPath(cwd, home);
+  const serverName = target.serverName(cwd);
 
   let config: Record<string, unknown>;
   try {
@@ -267,19 +299,23 @@ function writeEditorMcpConfig(
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
-  const existing = servers[MCP_SERVER_NAME];
+  const existing = servers[serverName];
+  const targetEntry = target.buildEntry(cwd);
 
   if (existing && !force) {
+    const action = mcpEntriesEqual(existing, targetEntry) ? 'skipped-existing' : 'skipped-conflict';
     return {
       editorId: target.id,
       label: target.label,
-      action: 'skipped-existing',
+      action,
       configPath,
+      serverName,
     };
   }
 
@@ -287,7 +323,7 @@ function writeEditorMcpConfig(
     ...config,
     [target.topLevelKey]: {
       ...servers,
-      [MCP_SERVER_NAME]: target.buildEntry(),
+      [serverName]: targetEntry,
     },
   };
 
@@ -299,6 +335,7 @@ function writeEditorMcpConfig(
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -308,6 +345,7 @@ function writeEditorMcpConfig(
     label: target.label,
     action: existing ? 'overwritten' : 'written',
     configPath,
+    serverName,
   };
 }
 
@@ -347,6 +385,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
         label: target.label,
         action: 'skipped-flag',
         configPath: target.configPath(cwd, options.home),
+        serverName: target.serverName(cwd),
       });
       continue;
     }
@@ -434,16 +473,25 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         const displayPath = editor.configPath.startsWith(cwd)
           ? relative(cwd, editor.configPath)
           : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
+        const serverNameNote =
+          editor.serverName === MCP_SERVER_NAME ? '' : ` (${editor.serverName})`;
         const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
         switch (editor.action) {
           case 'written':
-            lines.push(`  ${editor.label}${pad}${displayPath}  registered`);
+            lines.push(`  ${editor.label}${pad}${displayPath}  registered${serverNameNote}`);
             break;
           case 'overwritten':
-            lines.push(`  ${editor.label}${pad}${displayPath}  overwritten (--force)`);
+            lines.push(`  ${editor.label}${pad}${displayPath}  updated${serverNameNote}`);
             break;
           case 'skipped-existing':
-            lines.push(`  ${editor.label}${pad}${displayPath}  already configured`);
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  already configured${serverNameNote}`,
+            );
+            break;
+          case 'skipped-conflict':
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  differs from current defaults${serverNameNote}; re-run with --force to replace`,
+            );
             break;
           case 'failed':
             lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
@@ -571,7 +619,9 @@ function parseEditorFlag(value: string): EditorId[] {
  * directory of each editor's `configPath` is the probe location so an empty
  * editor install (no `mcp.json` yet) still counts as detected. Covers both
  * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
- * Code `.vscode/`) and Windsurf's user-global `~/.codeium/windsurf/`.
+ * Code `.vscode/`) plus user-global editors (Claude Desktop under the
+ * platform-specific app-support dir's `Claude/`, Windsurf under
+ * `~/.codeium/windsurf/`).
  *
  * Used by the Commander action to default to all detected editors in both
  * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
@@ -599,7 +649,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
+      'Target editor(s): claude, claude-desktop, cursor, vscode, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -617,7 +667,7 @@ export function initCommand(): Command {
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
         // Interactive prompt — pre-select every detected editor regardless of
-        // scope. Empty detection set shows all four unselected alongside a
+        // scope. Empty detection set shows all editors unselected alongside a
         // hint (D-019) so the user can still pick manually or cancel and use
         // --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
@@ -625,7 +675,7 @@ export function initCommand(): Command {
         const detected = new Set(detectInstalledEditors(cwd));
         if (detected.size === 0) {
           process.stdout.write(
-            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|cursor|vscode|windsurf>.\n',
+            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|claude-desktop|cursor|vscode|windsurf>.\n',
           );
         }
 
@@ -661,7 +711,7 @@ export function initCommand(): Command {
         editors = detectInstalledEditors(cwd);
         if (editors.length === 0) {
           process.stderr.write(
-            'No MCP-capable editors detected. Use --editor <all|claude|cursor|vscode|windsurf> to force.\n',
+            'No MCP-capable editors detected. Use --editor <all|claude|claude-desktop|cursor|vscode|windsurf> to force.\n',
           );
           process.exitCode = 1;
           return;

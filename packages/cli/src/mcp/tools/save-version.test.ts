@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { ConfigSchema } from '../../config/schema.ts';
 import { register } from './save-version.ts';
 import type { ServerInstance } from './shared.ts';
 
@@ -58,7 +59,7 @@ afterAll(() => {
 describe('save_version — previewUrl emission (workspace-level: always null)', () => {
   test('emits previewUrl: null alongside checkpointRef', async () => {
     const { server, getTool } = createFakeServer();
-    register(server, baseUrl);
+    register(server, ConfigSchema.parse({}), baseUrl, async () => '/tmp/project');
 
     const result = await getTool().handler();
 

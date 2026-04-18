@@ -17,7 +17,6 @@
  * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
  * `register(...)` export, then import and call it from here.
  */
-import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
@@ -80,7 +79,7 @@ import {
   DESCRIPTION as SAVE_VERSION_DESCRIPTION,
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   register as registerSuggestLinks,
   DESCRIPTION as SUGGEST_LINKS_DESCRIPTION,
@@ -122,25 +121,22 @@ export const TOOL_DESCRIPTIONS = {
  * Per-call cwd resolver. Returns the absolute host directory that the
  * current tool call should operate against. Priority:
  *   1. explicit `cwd` arg from the tool call
- *   2. first MCP root advertised by the client
- *   3. server startup cwd (fallback)
+ *   2. the client's only advertised MCP root
+ *   3. otherwise error
  */
 export type ResolveCwd = (explicit?: string) => Promise<string>;
 
 export interface RegisterAllToolsOptions {
   /**
    * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
-   * lazy resolver that re-discovers per-call from the live project root. The
-   * resolver variant is what makes writes work when the MCP process is spawned
-   * before the user starts the Hocuspocus server, or when `cwd` at spawn time
-   * doesn't match the project root (e.g. Claude Desktop launches with `cwd=/`).
+   * lazy resolver that re-discovers per-call from the effective project cwd.
+   * The resolver variant is what lets one MCP stdio process route different
+   * tool calls to different Open Knowledge projects.
    */
   serverUrl?: ServerUrlOrResolver;
   /** Resolves the cwd for a given tool call (see `ResolveCwd` docs). */
   resolveCwd: ResolveCwd;
-  /** Server startup cwd — used only as a test/fallback identity anchor. */
-  startupCwd: string;
-  config: Config;
+  config: ConfigOrResolver;
   identityRef?: { current: AgentIdentity };
 }
 
@@ -157,9 +153,9 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     resolveCwd: opts.resolveCwd,
   });
-  registerIngest(server, opts.config);
-  registerResearch(server, opts.config);
-  registerConsolidate(server, opts.config);
+  registerIngest(server, { config: opts.config, resolveCwd: opts.resolveCwd });
+  registerResearch(server, { config: opts.config, resolveCwd: opts.resolveCwd });
+  registerConsolidate(server, { config: opts.config, resolveCwd: opts.resolveCwd });
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
@@ -201,7 +197,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     resolveCwd: opts.resolveCwd,
   });
-  registerSaveVersion(server, opts.serverUrl, opts.identityRef);
+  registerSaveVersion(server, opts.config, opts.serverUrl, opts.resolveCwd, opts.identityRef);
   registerRollbackToVersion(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,

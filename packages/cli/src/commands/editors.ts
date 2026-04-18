@@ -6,14 +6,54 @@
  * `init.ts` can loop over targets without per-editor branching.
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
+import { MCP_SERVER_NAME } from '../constants.ts';
 
-export type EditorId = 'claude' | 'cursor' | 'vscode' | 'windsurf';
+export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf';
 
-export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'cursor', 'vscode', 'windsurf'];
+export const ALL_EDITOR_IDS: EditorId[] = [
+  'claude',
+  'claude-desktop',
+  'cursor',
+  'vscode',
+  'windsurf',
+];
 
 const MCP_SERVER_COMMAND = 'npx';
 const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+
+interface AppSupportOptions {
+  home?: string;
+  platformName?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+}
+
+function pathApiForPlatform(platformName: NodeJS.Platform) {
+  return platformName === 'win32' ? win32 : posix;
+}
+
+export function resolveAppSupportPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const home = options.home ?? homedir();
+  const env = options.env ?? process.env;
+  const pathApi = pathApiForPlatform(platformName);
+
+  if (platformName === 'darwin') {
+    return pathApi.join(home, 'Library', 'Application Support');
+  }
+
+  if (platformName === 'win32') {
+    return env.APPDATA ?? pathApi.join(home, 'AppData', 'Roaming');
+  }
+
+  return env.XDG_CONFIG_HOME ?? pathApi.join(home, '.config');
+}
+
+export function resolveClaudeDesktopConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const pathApi = pathApiForPlatform(platformName);
+  return pathApi.join(resolveAppSupportPath(options), 'Claude', 'claude_desktop_config.json');
+}
 
 export interface EditorMcpTarget {
   id: EditorId;
@@ -23,8 +63,10 @@ export interface EditorMcpTarget {
   configPath: (cwd: string, home?: string) => string;
   /** Top-level JSON key that holds the server map. */
   topLevelKey: 'mcpServers' | 'servers';
+  /** Config key used for this project's MCP server entry. */
+  serverName: (cwd: string) => string;
   /** Build the server entry object for this editor. */
-  buildEntry: () => Record<string, unknown>;
+  buildEntry: (cwd: string) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
   /**
@@ -42,15 +84,26 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     label: 'Claude Code',
     configPath: (cwd) => join(cwd, '.mcp.json'),
     topLevelKey: 'mcpServers',
+    serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
     instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
+  },
+  'claude-desktop': {
+    id: 'claude-desktop',
+    label: 'Claude Desktop',
+    configPath: (_cwd, home) => resolveClaudeDesktopConfigPath({ home }),
+    topLevelKey: 'mcpServers',
+    serverName: () => MCP_SERVER_NAME,
+    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'global',
   },
   cursor: {
     id: 'cursor',
     label: 'Cursor',
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
     topLevelKey: 'mcpServers',
+    serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
@@ -59,6 +112,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     label: 'VS Code',
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
     topLevelKey: 'servers',
+    serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
@@ -67,6 +121,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     label: 'Windsurf',
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
     topLevelKey: 'mcpServers',
+    serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
   },

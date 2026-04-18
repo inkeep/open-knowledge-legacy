@@ -17,22 +17,106 @@
  */
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { readServerLock } from '@inkeep/open-knowledge-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
 import { PREVIEW_GUIDANCE } from '../content/init.ts';
 import { dim } from '../ui/colors.ts';
+import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import type { AgentIdentity } from './agent-identity.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
+import type { ConfigOrResolver, ServerUrlOrResolver } from './tools/shared.ts';
 
 export interface McpServerOptions {
   projectDir: string;
-  serverUrl?: string;
-  config: Config;
+  serverUrl?: ServerUrlOrResolver;
+  config: ConfigOrResolver;
+  startupConfig: Config;
+  bypassProjectSelection?: boolean;
+}
+
+export const NO_CLIENT_ROOTS_ERROR = 'No client roots available; pass cwd explicitly.';
+export const MULTIPLE_ROOTS_ERROR = 'Multiple roots available; pass cwd explicitly.';
+export const ROOTS_UNAVAILABLE_ERROR = 'Client roots unavailable; pass cwd explicitly.';
+
+export class ProjectRoutingError extends Error {}
+
+interface RootsListResult {
+  roots: Array<{ uri: string }>;
+}
+
+export interface ProjectRoutingResolver {
+  resolveCwd: (explicit?: string) => Promise<string>;
+  invalidateRoots: () => void;
+}
+
+interface CreateProjectRoutingResolverOptions {
+  startupCwd: string;
+  listRoots: () => Promise<RootsListResult>;
+  bypassProjectSelection?: boolean;
+  log?: (msg: string) => void;
+}
+
+export function createProjectRoutingResolver(
+  opts: CreateProjectRoutingResolverOptions,
+): ProjectRoutingResolver {
+  const startupCwdPromise = normalizeCwd(opts.startupCwd);
+  let cachedRoots: string[] | null = null;
+  let pendingRootsLoad: Promise<string[]> | null = null;
+
+  const loadRoots = async (): Promise<string[]> => {
+    if (cachedRoots !== null) return cachedRoots;
+    if (!pendingRootsLoad) {
+      pendingRootsLoad = (async () => {
+        const result = await opts.listRoots();
+        const normalizedRoots = await Promise.all(
+          result.roots.map(async (root) => {
+            if (!root.uri.startsWith('file://')) return null;
+            return await normalizeCwd(fileURLToPath(root.uri));
+          }),
+        );
+        const roots = [...new Set(normalizedRoots.filter((root): root is string => root !== null))];
+        cachedRoots = roots;
+        opts.log?.(roots.length > 0 ? `roots: ${roots.join(', ')}` : 'roots: none');
+        return roots;
+      })().finally(() => {
+        pendingRootsLoad = null;
+      });
+    }
+    return await pendingRootsLoad;
+  };
+
+  return {
+    async resolveCwd(explicit?: string): Promise<string> {
+      if (explicit) return await normalizeCwd(explicit);
+      if (opts.bypassProjectSelection) {
+        return await startupCwdPromise;
+      }
+
+      let roots: string[];
+      try {
+        roots = await loadRoots();
+      } catch (err) {
+        opts.log?.(`roots/list unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        throw new ProjectRoutingError(ROOTS_UNAVAILABLE_ERROR);
+      }
+
+      if (roots.length === 0) {
+        throw new ProjectRoutingError(NO_CLIENT_ROOTS_ERROR);
+      }
+      if (roots.length > 1) {
+        throw new ProjectRoutingError(MULTIPLE_ROOTS_ERROR);
+      }
+      return roots[0];
+    },
+    invalidateRoots(): void {
+      cachedRoots = null;
+      pendingRootsLoad = null;
+      opts.log?.('roots cache invalidated');
+    },
+  };
 }
 
 /** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
@@ -40,19 +124,25 @@ function log(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
-export function buildInstructions(config: Config): string {
+export function buildInstructions(config: Config, opts?: { dynamicConfig?: boolean }): string {
   const { dir, include, exclude } = config.content;
   const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
+  const configScopeHeading = opts?.dynamicConfig
+    ? '## Startup Project Content Layout (Informational)'
+    : "## This project's content layout (live config)";
+  const configScopeNote = opts?.dynamicConfig
+    ? `**Multi-project note:** tool calls resolve \`.open-knowledge/config.yml\` from the **effective cwd** for that invocation (explicit tool \`cwd\` → exactly one client root → error). The values below describe the MCP process startup project only; they are not a routing fallback.`
+    : `**Path contract (\`config.yml\`):** \`.open-knowledge/config.yml\` (plus optional \`~/.open-knowledge/config.yml\`, with CLI/env overrides) owns the \`content\` keys. The table above is **this MCP session's resolved view** of that contract — same rules, no guessing from folder names. A file is an Open Knowledge document iff it lives under **Content directory**, matches at least one **Include glob**, and is not removed by **Exclude globs** or \`.gitignore\`.`;
 
   return `# MCP Instructions v2 — exec-primary (2026-04-13)
 
-## This project's content layout (live config)
+${configScopeHeading}
 
 - **Content directory:** \`${dir}\`
 - **Include globs:** ${include.map((p) => `\`${p}\``).join(', ')}
 - **Exclude globs:** ${excludeLine}
 
-**Path contract (\`config.yml\`):** \`.open-knowledge/config.yml\` (plus optional \`~/.open-knowledge/config.yml\`, with CLI/env overrides) owns the \`content\` keys. The table above is **this MCP session's resolved view** of that contract — same rules, no guessing from folder names. A file is an Open Knowledge document iff it lives under **Content directory**, matches at least one **Include glob**, and is not removed by **Exclude globs** or \`.gitignore\`.
+${configScopeNote}
 
 Paths in \`exec\` commands are resolved relative to the content directory. The sandbox prevents paths escaping it.
 
@@ -164,12 +254,18 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
 // ── Server entrypoint ──────────────────────────────────────────────────
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
-  const { projectDir: startupCwd, serverUrl, config } = options;
+  const {
+    projectDir: startupCwd,
+    serverUrl,
+    config,
+    startupConfig,
+    bypassProjectSelection = false,
+  } = options;
 
-  // Detect Hocuspocus (non-blocking, informational). An explicit `serverUrl`
-  // is probed immediately; when discovery is lazy the log is deferred until
-  // after the client advertises its roots (see below).
-  if (serverUrl) {
+  // Detect Hocuspocus (non-blocking, informational). An explicit string URL is
+  // probed immediately; a lazy resolver means discovery / auto-start happens
+  // per effective cwd on demand.
+  if (typeof serverUrl === 'string') {
     const hocuspocusAvailable = await detectHocuspocus(serverUrl);
     log(
       hocuspocusAvailable
@@ -177,7 +273,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
         : `Hocuspocus not available at ${serverUrl} — using disk-only mode`,
     );
   } else {
-    log('No explicit server URL — will discover lazily from server.lock per call');
+    log('No explicit server URL — will discover/autostart lazily per effective cwd');
   }
 
   const server = new McpServer(
@@ -186,101 +282,46 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       version: PACKAGE_VERSION,
     },
     {
-      instructions: buildInstructions(config),
+      instructions: buildInstructions(startupConfig, {
+        dynamicConfig: typeof config === 'function' && !bypassProjectSelection,
+      }),
     },
   );
 
   // ── Cwd resolution via MCP roots ────────────────────────────────────
   //
-  // The client advertises one or more roots (file:// URIs of directories
-  // it's working in). We fetch those roots and use the first one as the
-  // default cwd for every tool call; agents can override per-call via an
-  // explicit `cwd` arg. Falls back to startup cwd if the client doesn't
-  // advertise roots (non-MCP-roots clients, or clients that leave it empty).
+  // Strict routing contract:
+  //   1. explicit tool `cwd`
+  //   2. exactly one advertised client root (fetched via `roots/list` on first use)
+  //   3. otherwise error
   //
-  // This replaces the previous spawn-time singleton (`setProjectDir`),
-  // which broke whenever the spawner didn't set cwd the way the server
-  // expected (e.g., Claude Desktop not honoring the `cwd` field in
-  // `claude_desktop_config.json`).
-  let cachedRoots: string[] = [];
-  let rootsLoaded = false;
-
-  async function refreshRoots(): Promise<void> {
-    try {
-      const result = await server.server.listRoots();
-      cachedRoots = result.roots
-        .map((r) => r.uri)
-        .filter((u) => u.startsWith('file://'))
-        .map((u) => fileURLToPath(u));
-      log(
-        cachedRoots.length > 0
-          ? `roots: ${cachedRoots.join(', ')}`
-          : 'client advertised no roots — falling back to startup cwd',
-      );
-    } catch (err) {
-      log(
-        `listRoots unsupported by client (using startup cwd): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      rootsLoaded = true;
-    }
-  }
-
-  let warnedNoRoots = false;
-  async function resolveCwd(explicit?: string): Promise<string> {
-    if (explicit) return explicit;
-    if (!rootsLoaded) await refreshRoots();
-    if (cachedRoots.length === 0) {
-      // Observability: the client didn't advertise any file:// roots. Falling
-      // back to the spawn cwd — which is `/` for Claude Desktop and rarely
-      // what the user wants. Log once so operators debugging "wrong project"
-      // issues can see this.
-      if (!warnedNoRoots) {
-        log(`no client roots — falling back to startup cwd: ${startupCwd}`);
-        warnedNoRoots = true;
-      }
-      return startupCwd;
-    }
-    if (warnedNoRoots) {
-      log(`client roots now available — using ${cachedRoots[0]}`);
-      warnedNoRoots = false;
-    }
-    return cachedRoots[0];
-  }
+  // `--port` is the only bypass path: it intentionally pins the session to the
+  // startup project for single-target debugging.
+  const routing = createProjectRoutingResolver({
+    startupCwd,
+    bypassProjectSelection,
+    listRoots: () => server.server.listRoots(),
+    log,
+  });
+  const resolveCwd = routing.resolveCwd;
 
   server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
-    rootsLoaded = false;
-    await refreshRoots();
+    routing.invalidateRoots();
   });
 
   // MCP tools — workflow + document + enriched + exec (V0-24)
   //
-  // Hocuspocus URL resolution is **lazy** when no explicit override is given.
-  // Discovery reads `<contentDir>/.open-knowledge/server.lock` relative to the
-  // client-advertised root, re-resolved on every tool invocation. This is the
-  // difference between "MCP started before `open-knowledge start`" returning
-  // stale `undefined` forever vs. picking the server up as soon as it appears.
-  // An explicit `serverUrl` (e.g. from `--port`) short-circuits discovery.
-  const explicitHttpUrl = serverUrl
-    ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
-    : undefined;
-  // 1-second TTL cache on the lock-file read: agent burst writes (e.g. 5 files
-  // in 600ms) otherwise re-stat the same lock file N times with no new info.
-  // Lock contents change once per `open-knowledge start` lifetime, so this
-  // window is generously short. Keyed by cwd since different projects have
-  // different locks.
-  const SERVER_URL_CACHE_MS = 1000;
-  const serverUrlCache = new Map<string, { url: string | undefined; expiresAt: number }>();
-  const resolveServerUrlForTools = async (): Promise<string | undefined> => {
-    if (explicitHttpUrl) return explicitHttpUrl;
-    const cwd = await resolveCwd();
-    const now = Date.now();
-    const cached = serverUrlCache.get(cwd);
-    if (cached && cached.expiresAt > now) return cached.url;
-    const lock = readServerLock(resolveLockDir(resolveContentDir(config, cwd)));
-    const url = lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
-    serverUrlCache.set(cwd, { url, expiresAt: now + SERVER_URL_CACHE_MS });
-    return url;
+  // Hocuspocus URL resolution is lazy unless the caller passed a concrete
+  // `--port` override string. The lazy resolver is already project-aware; it
+  // accepts the effective cwd of the current tool call and can auto-start the
+  // matching project server on demand.
+  const resolveServerUrlForTools = async (cwd?: string): Promise<string | undefined> => {
+    if (typeof serverUrl === 'string') {
+      return serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+    }
+    const effectiveCwd = cwd ?? (await resolveCwd());
+    const wsUrl = typeof serverUrl === 'function' ? await serverUrl(effectiveCwd) : serverUrl;
+    return wsUrl?.replace('ws://', 'http://').replace('wss://', 'https://');
   };
 
   // --- Agent identity (Ref pattern — tool handlers read .current at call time).
@@ -314,7 +355,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   registerAllTools(server, {
     serverUrl: resolveServerUrlForTools,
     resolveCwd,
-    startupCwd,
     config,
     identityRef,
   });
@@ -322,13 +362,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log('MCP server running (stdio)');
-
-  // Fetch roots opportunistically after the client finishes handshake.
-  // If it fires before the client is ready, `resolveCwd` will retry on
-  // first use (rootsLoaded is reset on failure paths via fallback).
-  refreshRoots().catch(() => {
-    /* logged inside refreshRoots */
-  });
 
   // D-034 — keep-alive WebSocket to `/collab/keepalive`.
   //
@@ -341,7 +374,14 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const { startKeepalive } = await import('./keepalive.ts');
   const keepaliveHandle = startKeepalive({
     resolveWsUrl: async () => {
-      const httpUrl = await resolveServerUrlForTools();
+      let cwd: string;
+      try {
+        cwd = await resolveCwd();
+      } catch (err) {
+        if (err instanceof ProjectRoutingError) return undefined;
+        throw err;
+      }
+      const httpUrl = await resolveServerUrlForTools(cwd);
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },

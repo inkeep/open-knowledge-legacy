@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
-  resolveServerUrl,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -23,6 +23,7 @@ interface HubsPayload {
 
 export interface GetHubsDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetHubsDeps): void {
@@ -33,14 +34,20 @@ export function register(server: ServerInstance, deps: GetHubsDeps): void {
       limit: z.number().int().positive().optional().describe('Maximum number of hubs to return'),
     },
     async (args: { limit?: number }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.limit ? `?limit=${encodeURIComponent(String(args.limit))}` : '';
       const result = await httpGet(url, `/api/hubs${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...rest } = result;
       const data = rest as HubsPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       const hubs = (data.hubs ?? []).map((row) => {
         const docName = typeof row.docName === 'string' ? row.docName : null;
         const resolved = docName ? resolve(docName) : null;

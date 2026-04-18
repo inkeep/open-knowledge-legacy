@@ -16,10 +16,15 @@
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { normalizeDocName, textPlusStructured, textResult } from './shared.ts';
+import {
+  type ConfigOrResolver,
+  normalizeDocName,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   'Return a browser URL for the given wiki docName. Agents should call this IMMEDIATELY BEFORE `write_document` / `edit_document` so they can navigate the preview browser to the doc first and watch the CRDT edit land live.',
@@ -33,7 +38,7 @@ export const DESCRIPTION = [
 export interface GetPreviewUrlDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
-  config: Config;
+  config: ConfigOrResolver;
 }
 
 export interface GetPreviewUrlResult {
@@ -53,15 +58,17 @@ export async function buildGetPreviewUrlResult(
 
   // Content-include check — mirrors search.ts / wiki-write tools. Try both
   // canonical extensions (.md, .mdx) since docNames are extension-less.
-  const cwd = await deps.resolveCwd();
-  const contentDir = resolveContentDir(deps.config, cwd);
+  const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+  if (!context.ok) return context;
+  const { cwd, config } = context;
+  const contentDir = resolveContentDir(config, cwd);
   let filter: ReturnType<typeof createContentFilter>;
   try {
     filter = createContentFilter({
       projectDir: cwd,
       contentDir,
-      includePatterns: deps.config.content.include,
-      excludePatterns: deps.config.content.exclude,
+      includePatterns: config.content.include,
+      excludePatterns: config.content.exclude,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -76,13 +83,13 @@ export async function buildGetPreviewUrlResult(
   if (!included) {
     return {
       ok: false,
-      error: `Error: docName "${docName}" is not inside content.include globs (${deps.config.content.include.join(', ')}). This tool only returns URLs for docs that match those globs.`,
+      error: `Error: docName "${docName}" is not inside content.include globs (${config.content.include.join(', ')}). This tool only returns URLs for docs that match those globs.`,
     };
   }
 
   const lockDir = resolveLockDir(contentDir);
   const resolved = resolvePreviewUrl(docName, {
-    config: deps.config,
+    config,
     lockDir,
   });
   if (!resolved) {

@@ -11,11 +11,11 @@
  * without misleading agents into a nonexistent per-doc preview.
  */
 import type { AgentIdentity } from '../agent-identity.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
-  resolveServerUrl,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -29,12 +29,16 @@ export const DESCRIPTION = [
 
 export function register(
   server: ServerInstance,
+  config: ConfigOrResolver,
   serverUrl: ServerUrlOrResolver,
+  resolveCwd: (explicit?: string) => Promise<string>,
   identityRef?: { current: AgentIdentity },
 ): void {
   server.tool('save_version', DESCRIPTION, {}, async () => {
-    const url = await resolveServerUrl(serverUrl);
-    if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+    const context = await resolveProjectServerContext(resolveCwd, config, serverUrl);
+    if (!context.ok) return textResult(`Error: ${context.error}`, true);
+    if (!context.url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+    const { url } = context;
 
     const identity = identityRef?.current;
     const result = await httpPost(url, '/api/save-version', {

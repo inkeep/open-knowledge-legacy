@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
-import { ALL_EDITOR_IDS } from './editors.ts';
+import { ALL_EDITOR_IDS, resolveClaudeDesktopConfigPath } from './editors.ts';
 import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
@@ -46,7 +46,7 @@ describe('runInit', () => {
 
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
     expect(config.mcpServers).toBeDefined();
-    expect(config.mcpServers['open-knowledge']).toEqual({
+    expect(config.mcpServers[result.editors[0].serverName]).toEqual({
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     });
@@ -82,10 +82,10 @@ describe('runInit', () => {
       command: 'node',
       args: ['./other.js'],
     });
-    expect(config.mcpServers['open-knowledge']).toBeDefined();
+    expect(config.mcpServers[result.editors[0].serverName]).toBeDefined();
   });
 
-  it('skips existing open-knowledge entry by default', () => {
+  it('flags a differing open-knowledge entry by default and leaves it untouched', () => {
     writeFileSync(
       join(testDir, '.mcp.json'),
       JSON.stringify(
@@ -103,8 +103,8 @@ describe('runInit', () => {
     );
 
     const result = runInit({ cwd: testDir });
-    expect(result.mcpAction).toBe('skipped-existing');
-    expect(result.editors[0].action).toBe('skipped-existing');
+    expect(result.mcpAction).toBe('skipped-conflict');
+    expect(result.editors[0].action).toBe('skipped-conflict');
 
     const config = JSON.parse(readFileSync(join(testDir, '.mcp.json'), 'utf-8'));
     expect(config.mcpServers['open-knowledge'].command).toBe('node');
@@ -112,6 +112,28 @@ describe('runInit', () => {
       './packages/cli/dist/cli.mjs',
       'mcp',
     ]);
+  });
+
+  it('skips an identical open-knowledge entry by default', () => {
+    writeFileSync(
+      join(testDir, '.mcp.json'),
+      JSON.stringify(
+        {
+          mcpServers: {
+            'open-knowledge': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp'],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runInit({ cwd: testDir });
+    expect(result.mcpAction).toBe('skipped-existing');
+    expect(result.editors[0].action).toBe('skipped-existing');
   });
 
   it('overwrites existing open-knowledge entry with --force', () => {
@@ -195,7 +217,7 @@ describe('runInit', () => {
       expect(existsSync(configPath)).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.mcpServers['open-knowledge']).toEqual({
+      expect(config.mcpServers[result.editors[0].serverName]).toEqual({
         command: 'npx',
         args: ['@inkeep/open-knowledge', 'mcp'],
       });
@@ -213,7 +235,7 @@ describe('runInit', () => {
 
       const config = JSON.parse(readFileSync(join(testDir, '.cursor', 'mcp.json'), 'utf-8'));
       expect(config.mcpServers.other).toEqual({ command: 'node', args: ['x'] });
-      expect(config.mcpServers['open-knowledge']).toBeDefined();
+      expect(config.mcpServers[result.editors[0].serverName]).toBeDefined();
     });
   });
 
@@ -232,10 +254,76 @@ describe('runInit', () => {
       // VS Code uses 'servers' not 'mcpServers'
       expect(config.servers).toBeDefined();
       expect(config.mcpServers).toBeUndefined();
-      expect(config.servers['open-knowledge']).toEqual({
+      expect(config.servers[result.editors[0].serverName]).toEqual({
         type: 'stdio',
         command: 'npx',
         args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+  });
+
+  describe('Claude Desktop', () => {
+    it('writes the same simple global open-knowledge entry as the local editors', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const result = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('claude-desktop');
+      expect(result.editors[0].action).toBe('written');
+      expect(result.editors[0].serverName).toBe('open-knowledge');
+
+      const configPath = resolveClaudeDesktopConfigPath({ home: fakeHome });
+      expect(existsSync(configPath)).toBe(true);
+
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const entry = config.mcpServers[result.editors[0].serverName];
+
+      expect(entry).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+
+    it('flags existing claude-desktop drift by default and leaves it untouched', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const configPath = resolveClaudeDesktopConfigPath({ home: fakeHome });
+      const configDir = dirname(configPath);
+      mkdirSync(configDir, { recursive: true });
+
+      // First run to create the entry with the correct serverName
+      const firstResult = runInit({
+        cwd: testDir,
+        editors: ['claude-desktop'],
+        home: fakeHome,
+      });
+      const serverName = firstResult.editors[0].serverName;
+      if (!serverName) throw new Error('Expected serverName');
+
+      // Now corrupt it with old data to test upsert
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      config.mcpServers[serverName] = {
+        command: 'npx',
+        args: ['some-old-package', 'mcp'],
+      };
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+      const secondResult = runInit({
+        cwd: testDir,
+        editors: ['claude-desktop'],
+        home: fakeHome,
+      });
+
+      expect(secondResult.editors[0].action).toBe('skipped-conflict');
+
+      const updatedConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const entry = updatedConfig.mcpServers[secondResult.editors[0].serverName];
+      expect(entry).toEqual({
+        command: 'npx',
+        args: ['some-old-package', 'mcp'],
       });
     });
   });
@@ -255,7 +343,7 @@ describe('runInit', () => {
       expect(existsSync(configPath)).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.mcpServers['open-knowledge']).toEqual({
+      expect(config.mcpServers[result.editors[0].serverName]).toEqual({
         command: 'npx',
         args: ['@inkeep/open-knowledge', 'mcp'],
       });
@@ -276,7 +364,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
     });
 
-    it('writes all four editors with editors: all', () => {
+    it('writes all supported editors with editors: all', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
@@ -286,12 +374,13 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
-      expect(result.editors).toHaveLength(4);
+      expect(result.editors).toHaveLength(5);
       for (const editor of result.editors) {
         expect(editor.action).toBe('written');
       }
 
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+      expect(existsSync(resolveClaudeDesktopConfigPath({ home: fakeHome }))).toBe(true);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
       expect(existsSync(join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json'))).toBe(true);
@@ -323,10 +412,10 @@ describe('runInit', () => {
       expect(result.editors[1].action).toBe('overwritten');
 
       const claude = JSON.parse(readFileSync(join(testDir, '.mcp.json'), 'utf-8'));
-      expect(claude.mcpServers['open-knowledge'].command).toBe('npx');
+      expect(claude.mcpServers[result.editors[0].serverName].command).toBe('npx');
 
       const cursor = JSON.parse(readFileSync(join(testDir, '.cursor', 'mcp.json'), 'utf-8'));
-      expect(cursor.mcpServers['open-knowledge'].command).toBe('npx');
+      expect(cursor.mcpServers[result.editors[1].serverName].command).toBe('npx');
     });
 
     it('partial failure — one editor fails, others succeed', () => {
@@ -648,6 +737,30 @@ describe('runInit', () => {
       expect(output).not.toContain('Sample:');
     });
 
+    it('renders rerun-with-force guidance when an MCP entry differs from defaults', () => {
+      writeFileSync(
+        join(testDir, '.mcp.json'),
+        JSON.stringify(
+          {
+            mcpServers: {
+              'open-knowledge': {
+                command: 'node',
+                args: ['./packages/cli/dist/cli.mjs', 'mcp'],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      const output = formatInitResult(result, testDir);
+      expect(result.editors[0].action).toBe('skipped-conflict');
+      expect(output).toContain('differs from current defaults');
+      expect(output).toContain('re-run with --force to replace');
+    });
+
     it('loadConfig + previewContent integration: preview picks up scaffolded config', () => {
       writeFileSync(join(testDir, 'readme.md'), '# Readme');
       mkdirSync(join(testDir, 'docs'));
@@ -720,6 +833,17 @@ describe('detectInstalledEditors', () => {
     expect(detected).toContain('vscode');
   });
 
+  it('detects Claude Desktop when its config directory exists', () => {
+    mkdirSync(join(resolveClaudeDesktopConfigPath({ home: fakeHome }), '..'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('claude-desktop');
+  });
+
+  it('does NOT detect Claude Desktop when its config dir is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('claude-desktop');
+  });
+
   it('detects Windsurf when ~/.codeium/windsurf/ exists (via home override)', () => {
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
@@ -731,21 +855,23 @@ describe('detectInstalledEditors', () => {
     expect(detected).not.toContain('windsurf');
   });
 
-  it('returns all four when all editor config dirs exist', () => {
+  it('returns all supported editors when all editor config dirs exist', () => {
+    mkdirSync(join(resolveClaudeDesktopConfigPath({ home: fakeHome }), '..'), { recursive: true });
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
     expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
-    expect(detected).toHaveLength(4);
+    expect(detected).toHaveLength(5);
   });
 
   it('preserves EDITOR_TARGETS ordering in return value', () => {
+    mkdirSync(join(resolveClaudeDesktopConfigPath({ home: fakeHome }), '..'), { recursive: true });
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
-    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'windsurf']
-    expect(detected).toEqual(['claude', 'cursor', 'vscode']);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'claude-desktop', 'cursor', 'vscode', 'windsurf']
+    expect(detected).toEqual(['claude', 'claude-desktop', 'cursor', 'vscode']);
   });
 
   it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {

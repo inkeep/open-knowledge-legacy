@@ -1,7 +1,32 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, test } from 'bun:test';
+import { mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ConfigSchema } from '../config/schema.ts';
+import { normalizeCwd } from '../utils/normalize-cwd.ts';
+import {
+  createProjectRoutingResolver,
+  MULTIPLE_ROOTS_ERROR,
+  NO_CLIENT_ROOTS_ERROR,
+  ROOTS_UNAVAILABLE_ERROR,
+} from './server.ts';
 import { registerAllTools } from './tools/index.ts';
+
+let tmpRoot: string;
+
+beforeEach(() => {
+  tmpRoot = resolve(
+    tmpdir(),
+    `ok-mcp-routing-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  mkdirSync(tmpRoot, { recursive: true });
+});
+
+afterEach(() => {
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
 
 describe('MCP server module', () => {
   it('server module exports startMcpServer without requiring Hocuspocus', async () => {
@@ -50,7 +75,6 @@ describe('registerAllTools', () => {
 
     registerAllTools(server, {
       resolveCwd: async () => process.cwd(),
-      startupCwd: process.cwd(),
       config,
     });
 
@@ -72,5 +96,134 @@ describe('detectHocuspocus (via module internals)', () => {
   it('handles unreachable server gracefully (does not throw)', async () => {
     const { startMcpServer } = await import('./server.ts');
     expect(typeof startMcpServer).toBe('function');
+  });
+});
+
+describe('createProjectRoutingResolver', () => {
+  test('explicit cwd wins without consulting client roots', async () => {
+    const explicit = join(tmpRoot, 'explicit-project');
+    mkdirSync(explicit, { recursive: true });
+    let listRootsCalls = 0;
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        return { roots: [] };
+      },
+    });
+
+    await expect(resolver.resolveCwd(explicit)).resolves.toBe(await normalizeCwd(explicit));
+    expect(listRootsCalls).toBe(0);
+  });
+
+  test('exactly one advertised root works and loads roots before deciding', async () => {
+    const onlyRoot = join(tmpRoot, 'only-root');
+    mkdirSync(onlyRoot, { recursive: true });
+    let listRootsCalls = 0;
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        return { roots: [{ uri: pathToFileURL(onlyRoot).href }] };
+      },
+    });
+
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(onlyRoot));
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(onlyRoot));
+    expect(listRootsCalls).toBe(1);
+  });
+
+  test('multiple roots without cwd errors clearly', async () => {
+    const rootA = join(tmpRoot, 'root-a');
+    const rootB = join(tmpRoot, 'root-b');
+    mkdirSync(rootA, { recursive: true });
+    mkdirSync(rootB, { recursive: true });
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => ({
+        roots: [{ uri: pathToFileURL(rootA).href }, { uri: pathToFileURL(rootB).href }],
+      }),
+    });
+
+    await expect(resolver.resolveCwd()).rejects.toThrow(MULTIPLE_ROOTS_ERROR);
+  });
+
+  test('no roots without cwd errors clearly', async () => {
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => ({ roots: [] }),
+    });
+
+    await expect(resolver.resolveCwd()).rejects.toThrow(NO_CLIENT_ROOTS_ERROR);
+  });
+
+  test('roots/list failures error unless cwd is provided', async () => {
+    const explicit = join(tmpRoot, 'explicit-project');
+    mkdirSync(explicit, { recursive: true });
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        throw new Error('unsupported');
+      },
+    });
+
+    await expect(resolver.resolveCwd()).rejects.toThrow(ROOTS_UNAVAILABLE_ERROR);
+    await expect(resolver.resolveCwd(explicit)).resolves.toBe(await normalizeCwd(explicit));
+  });
+
+  test('roots/list_changed invalidates cached roots', async () => {
+    const rootA = join(tmpRoot, 'root-a');
+    const rootB = join(tmpRoot, 'root-b');
+    mkdirSync(rootA, { recursive: true });
+    mkdirSync(rootB, { recursive: true });
+    let advertisedRoot = rootA;
+    let listRootsCalls = 0;
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        return { roots: [{ uri: pathToFileURL(advertisedRoot).href }] };
+      },
+    });
+
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(rootA));
+    advertisedRoot = rootB;
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(rootA));
+
+    resolver.invalidateRoots();
+
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(rootB));
+    expect(listRootsCalls).toBe(2);
+  });
+
+  test('--port bypass path skips root selection entirely', async () => {
+    let listRootsCalls = 0;
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      bypassProjectSelection: true,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        throw new Error('should not be called');
+      },
+    });
+
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(tmpRoot));
+    expect(listRootsCalls).toBe(0);
+  });
+
+  test('canonicalizes cwd values and de-duplicates equivalent roots', async () => {
+    const realRoot = join(tmpRoot, 'real-root');
+    const symlinkRoot = join(tmpRoot, 'root-link');
+    mkdirSync(realRoot, { recursive: true });
+    symlinkSync(realRoot, symlinkRoot);
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => ({
+        roots: [{ uri: pathToFileURL(realRoot).href }, { uri: pathToFileURL(symlinkRoot).href }],
+      }),
+    });
+
+    await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(realRoot));
+    await expect(resolver.resolveCwd(symlinkRoot)).resolves.toBe(await normalizeCwd(realRoot));
   });
 });

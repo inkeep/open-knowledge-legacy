@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
-  resolveServerUrl,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -25,6 +25,7 @@ interface ForwardLinksPayload {
 
 export interface GetForwardLinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetForwardLinksDeps): void {
@@ -35,7 +36,13 @@ export function register(server: ServerInstance, deps: GetForwardLinksDeps): voi
       docName: z.string().describe('Source page docName'),
     },
     async (args: { docName: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -46,7 +53,7 @@ export function register(server: ServerInstance, deps: GetForwardLinksDeps): voi
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...rest } = result;
       const data = rest as ForwardLinksPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       // 'doc' kind entries have a resolvable docName; 'external' kind entries
       // point at arbitrary URLs and always emit previewUrl: null.
       const forwardLinks = (data.forwardLinks ?? []).map((row) => {

@@ -11,7 +11,7 @@ import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type PreviewUrlDeps, resolveUiInfo } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { textPlusStructured } from './shared.ts';
+import { resolveProjectConfigContext, textPlusStructured, textResult } from './shared.ts';
 
 function buildBody(contentDir: string): string {
   return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
@@ -134,10 +134,12 @@ export interface InitContentDeps extends PreviewUrlDeps {}
  */
 export function register(server: ServerInstance, deps: InitContentDeps): void {
   server.tool('init-content', DESCRIPTION, async () => {
-    const body = buildBody(deps.config.content.dir);
-    const cwd = await deps.resolveCwd();
-    const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-    const ui = resolveUiInfo({ config: deps.config, lockDir });
+    const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+    if (!context.ok) return textResult(`Error: ${context.error}`, true);
+    const { cwd, config } = context;
+    const body = buildBody(config.content.dir);
+    const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+    const ui = resolveUiInfo({ config, lockDir });
     return textPlusStructured(body, { ui });
   });
 }

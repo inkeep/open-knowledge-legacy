@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
-  resolveServerUrl,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -29,6 +29,7 @@ interface DeadLinksPayload {
 
 export interface GetDeadLinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
@@ -42,7 +43,13 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
         .describe('Referring source docs to narrow the audit with OR semantics'),
     },
     async (args: { sourceDocNames?: string[] }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const params = new URLSearchParams();
@@ -58,7 +65,7 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
 
       const { ok: _ok, ...rest } = result;
       const data = rest as DeadLinksPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       // Target previewUrls point at redlinks (the UI renders unresolved docs
       // as a "page doesn't exist yet" state); sources previewUrls point at
       // the live source doc that contains the broken link.

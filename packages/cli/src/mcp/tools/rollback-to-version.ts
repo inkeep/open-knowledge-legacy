@@ -6,15 +6,14 @@
  * All connected editors see the restored content.
  */
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   httpPost,
   normalizeDocName,
-  resolveServerUrl,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -32,7 +31,7 @@ export const DESCRIPTION = [
 
 export interface RollbackToVersionDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
@@ -49,7 +48,13 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         .describe('40-character commit SHA from the shadow repo timeline'),
     },
     async (args: { docName: string; commitSha: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const normalized = normalizeDocName(args.docName);
@@ -73,10 +78,14 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       const text = `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`;
-      const preview = await resolvePreviewUrlForTool(docName, {
-        config: deps.config,
-        resolveCwd: deps.resolveCwd,
-      });
+      const preview = await resolvePreviewUrlForTool(
+        docName,
+        {
+          config: deps.config,
+          resolveCwd: deps.resolveCwd,
+        },
+        cwd,
+      );
       return textPlusStructured(text, {
         previewUrl: preview?.url ?? null,
         ...(preview ? { previewUrlSource: preview.source } : {}),
