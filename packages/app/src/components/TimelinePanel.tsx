@@ -476,7 +476,7 @@ export function TimelinePanel({
         {/* Restore hint when entry selected */}
         {selectedSha && (
           <div className="border-t p-3 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Viewing historical version</span>
+            <span className="text-xs text-muted-foreground ">Viewing historical version</span>
             <Button
               variant="ghost"
               size="xs"

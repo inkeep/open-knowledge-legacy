@@ -13,7 +13,7 @@ import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
 import { NavigationPendingBar } from './NavigationPendingBar';
-import { TimelinePanel } from './TimelinePanel';
+import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePanel';
 
 /**
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
@@ -201,6 +201,13 @@ export function EditorPane() {
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
         onOpenClone={() => setCloneDialogOpen(true)}
       />
+      {editorMode === 'diff' && previewEntry && (
+        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 justify-center">
+          <span className="truncate text-xs text-muted-foreground">
+            Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
+          </span>
+        </div>
+      )}
       <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
         editorMode={editorMode}
