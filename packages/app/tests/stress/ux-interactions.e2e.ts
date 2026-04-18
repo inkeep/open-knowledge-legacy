@@ -53,8 +53,13 @@ const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual edi
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
   await openFreshDoc(page, 'wysiwyg-to-source');
-  // Type in WYSIWYG mode
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG mode. `.click()` + `toBeFocused()` is load-bearing under
+  // full-suite parallel load: `.focus()` does not await focus-transfer in
+  // Chromium, and keystrokes dispatched before focus lands can be reordered or
+  // misdelivered to the wrong target (the prior active element or body). The
+  // hard sync on `toBeFocused()` eliminates the race.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('Hello from WYSIWYG', { delay: 10 });
 
   // Wait for Observer A to sync to Y.Text
@@ -81,8 +86,13 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
-  // Type markdown in CodeMirror
-  await page.locator('.cm-content').focus();
+  // Type markdown in CodeMirror. See line 57 comment — `click()` + `toBeFocused()`
+  // is the canonical pattern; bare `.focus()` races with `keyboard.type` under
+  // full-suite parallel CI load and produces reordered/misdelivered keystrokes
+  // (evidence at commit 7e0f2c47's successor: CodeMirror rendered
+  // `#\n\nource Heading\n\nParagraph from source.\nS\n` on one CI run).
+  await page.locator('.cm-content').click();
+  await expect(page.locator('.cm-content')).toBeFocused();
   await page.keyboard.type('# Source Heading\n\nParagraph from source.', { delay: 10 });
 
   // Wait for Y.Text to have the content
@@ -120,8 +130,9 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
 
 test('round-trip: edits in both modes survive toggle cycle', async ({ page }) => {
   await openFreshDoc(page, 'round-trip');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('WYSIWYG edit', { delay: 10 });
 
   // Wait for sync
@@ -168,8 +179,9 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 
 test('concurrent agent write: user + agent content coexist', async ({ page }) => {
   const docName = await openFreshDoc(page, 'concurrent-agent');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('User typing', { delay: 10 });
 
   // Wait for user content to sync
