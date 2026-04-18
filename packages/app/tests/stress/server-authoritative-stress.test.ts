@@ -243,8 +243,62 @@ describe('server-authoritative stress (US-013)', () => {
       }
 
       // ── No-duplicates oracle ──
-      for (const c of clients) {
-        const dupes = findDuplicates(c.ytext.toString(), allMarkers);
+      // Diagnostic dump on the rare CI-only flake (~11% main rate, 0/26 local
+      // reproduction despite aggressive parallel load + CPU contention). When
+      // the oracle catches a duplicate, log structured state BEFORE the
+      // assertion fires so the CI artifact is diagnostically complete:
+      //   - seed (run identity; marker format embeds editCount+clientIdx but
+      //     not seed, so this is the only way to correlate re-runs)
+      //   - affected client + duplicate marker(s)
+      //   - byte positions + ±150-char window around each duplicate (shows
+      //     content context; the gap hints at whether both insertions landed
+      //     in the same merge region or across regions)
+      //   - per-client count of the first duplicate marker (shows whether the
+      //     duplicate is on one client only, or propagated to all via CRDT)
+      // No product code touched — this is test-side observation only.
+      for (let i = 0; i < clients.length; i++) {
+        const c = clients[i];
+        const ytextStr = c.ytext.toString();
+        const dupes = findDuplicates(ytextStr, allMarkers);
+        if (dupes.length > 0) {
+          const fragMd = serializeFragment(c.fragment);
+          const perMarkerDetail = dupes.map((dup) => {
+            const first = ytextStr.indexOf(dup);
+            const second = ytextStr.indexOf(dup, first + dup.length);
+            const sliceStart1 = Math.max(0, first - 150);
+            const sliceStart2 = Math.max(0, second - 150);
+            return {
+              marker: dup,
+              firstPos: first,
+              secondPos: second,
+              gap: second - first,
+              firstWindow: ytextStr.slice(sliceStart1, first + dup.length + 150),
+              secondWindow: ytextStr.slice(sliceStart2, second + dup.length + 150),
+            };
+          });
+          const firstDup = dupes[0];
+          const escapedFirst = firstDup.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const dupRegex = new RegExp(escapedFirst, 'g');
+          const allClientDupCounts = clients.map((cc, j) => ({
+            client: j,
+            count: (cc.ytext.toString().match(dupRegex) || []).length,
+          }));
+          console.warn(
+            JSON.stringify({
+              event: 'stress-duplicate-detected',
+              seed,
+              editCount,
+              clientCount,
+              affectedClient: i,
+              duplicateMarkers: dupes,
+              ytextLength: ytextStr.length,
+              fragLength: fragMd.length,
+              perMarkerDetail,
+              allClientDupCountsFor: firstDup,
+              allClientDupCounts,
+            }),
+          );
+        }
         expect(dupes).toEqual([]);
       }
 

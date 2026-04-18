@@ -53,8 +53,13 @@ const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual edi
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
   await openFreshDoc(page, 'wysiwyg-to-source');
-  // Type in WYSIWYG mode
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG mode. `.click()` + `toBeFocused()` is load-bearing under
+  // full-suite parallel load: `.focus()` does not await focus-transfer in
+  // Chromium, and keystrokes dispatched before focus lands can be reordered or
+  // misdelivered to the wrong target (the prior active element or body). The
+  // hard sync on `toBeFocused()` eliminates the race.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('Hello from WYSIWYG', { delay: 10 });
 
   // Wait for Observer A to sync to Y.Text
@@ -81,8 +86,13 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
-  // Type markdown in CodeMirror
-  await page.locator('.cm-content').focus();
+  // Type markdown in CodeMirror. See line 57 comment — `click()` + `toBeFocused()`
+  // is the canonical pattern; bare `.focus()` races with `keyboard.type` under
+  // full-suite parallel CI load and produces reordered/misdelivered keystrokes
+  // (evidence at commit 7e0f2c47's successor: CodeMirror rendered
+  // `#\n\nource Heading\n\nParagraph from source.\nS\n` on one CI run).
+  await page.locator('.cm-content').click();
+  await expect(page.locator('.cm-content')).toBeFocused();
   await page.keyboard.type('# Source Heading\n\nParagraph from source.', { delay: 10 });
 
   // Wait for Y.Text to have the content
@@ -95,9 +105,20 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Switch back to WYSIWYG
   await visualToggle(page).click();
 
-  // Wait for ProseMirror to render the synced content
+  // Wait for ProseMirror to render the FULL synced content. Checking only
+  // for 'Source Heading' is too permissive: y-prosemirror applies XmlFragment
+  // → PM mutations incrementally over ~50-100ms under CPU contention, so PM
+  // transiently shows a partial render like "Source HeadingParagraph fro"
+  // where the heading substring is already present but the paragraph is
+  // truncated mid-word. The wait condition must match every substring the
+  // subsequent assertion will read — otherwise waitForFunction resolves on
+  // the partial state and the `textContent()` read below catches PM
+  // mid-render. Mirrors the round-trip test's pattern at line 144-148.
   await page.waitForFunction(
-    () => document.querySelector('.ProseMirror')?.textContent?.includes('Source Heading'),
+    () => {
+      const content = document.querySelector('.ProseMirror')?.textContent ?? '';
+      return content.includes('Source Heading') && content.includes('Paragraph from source');
+    },
     { timeout: 10_000 },
   );
 
@@ -109,8 +130,9 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
 
 test('round-trip: edits in both modes survive toggle cycle', async ({ page }) => {
   await openFreshDoc(page, 'round-trip');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('WYSIWYG edit', { delay: 10 });
 
   // Wait for sync
@@ -157,8 +179,9 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 
 test('concurrent agent write: user + agent content coexist', async ({ page }) => {
   const docName = await openFreshDoc(page, 'concurrent-agent');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
+  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
   await page.keyboard.type('User typing', { delay: 10 });
 
   // Wait for user content to sync

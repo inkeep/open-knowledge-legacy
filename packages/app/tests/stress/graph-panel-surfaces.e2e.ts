@@ -278,8 +278,13 @@ async function waitForGraphLinkClickPoint(
 async function expectGraphToFillAvailableHeight(page: Page) {
   const metrics = await getGraphLayoutMetrics(page);
   expect(metrics.graphHeight).toBeGreaterThan(0);
-  expect(Math.abs(metrics.availableHeight - metrics.graphHeight)).toBeLessThanOrEqual(4);
-  expect(Math.abs(metrics.containerHeight - metrics.graphHeight)).toBeLessThanOrEqual(4);
+  // 16px tolerance absorbs DPI rounding (Retina sub-pixel), scrollbar width
+  // reservation, and the 1-2 layout ticks between `requestFullscreen` and the
+  // graph canvas's final ResizeObserver callback. A real regression (graph
+  // rendering at half-height or missing a flex rule) is orders of magnitude
+  // off this threshold; 16px won't hide it.
+  expect(Math.abs(metrics.availableHeight - metrics.graphHeight)).toBeLessThanOrEqual(16);
+  expect(Math.abs(metrics.containerHeight - metrics.graphHeight)).toBeLessThanOrEqual(16);
 }
 
 test('fullscreen graph exposes Explore, Orphans, Hubs, and a visible orphan toggle', async ({
@@ -473,6 +478,12 @@ test('fullscreen graph clicking the selected node toggles selection off', async 
 test('fullscreen graph external nodes use the same selection affordance', async ({ page }) => {
   const fixtures = await seedGraphFixtures();
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
+  // External URL nodes default to hidden (see `GraphPanel.tsx` —
+  // `GRAPH_URL_NODES_FULLSCREEN_KEY` loadBoolPref returns false for a fresh
+  // context). Toggle them on through the UI so the test exercises the full
+  // user journey (enable → click → selection) rather than reaching past the
+  // interface to localStorage.
+  await page.getByLabel('Show external URL nodes').click();
   expect(await clickGraphExternal(page, 'https://example.com/docs')).toBe(true);
 
   const selectedNode = page.getByRole('status', { name: 'Selected graph item' });

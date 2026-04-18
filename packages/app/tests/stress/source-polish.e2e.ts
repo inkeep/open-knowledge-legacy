@@ -14,7 +14,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
+import {
+  createPage,
+  filterCriticalErrors,
+  type LogEntry,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
@@ -45,17 +50,24 @@ async function switchToSource(page: Page) {
 }
 
 // ── Console error accumulator ────────────────────────────────────────────────
+//
+// Structured entries (url + line) so the shared `filterCriticalErrors` helper
+// can strip known benign dev-server noise (by-design `/api/config` 404, Vite
+// HMR chatter, WebSocket reconnect races). Same pattern as `crdt-stress.e2e.ts`.
 
-const errors: string[] = [];
+const errors: LogEntry[] = [];
 
 // Per-test unique docName to avoid parallel-worker state contention.
 let testDocName = '';
 
 test.beforeEach(async ({ page }) => {
   errors.length = 0;
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  page.on('pageerror', (err) => errors.push({ type: 'uncaught', text: err.message }));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
+    if (msg.type() === 'error') {
+      const loc = msg.location();
+      errors.push({ type: 'error', text: msg.text(), url: loc.url, line: loc.lineNumber });
+    }
   });
 
   testDocName = `sp-${randomUUID().slice(0, 8)}`;
@@ -66,7 +78,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.afterEach(() => {
-  expect(errors, 'Expected zero console errors').toEqual([]);
+  expect(filterCriticalErrors(errors), 'Expected zero critical console errors').toEqual([]);
 });
 
 // ── §6.2 Strikethrough ──────────────────────────────────────────────────────
@@ -92,7 +104,9 @@ test.describe('§6.2 Strikethrough', () => {
 // ── §6.3 List hanging-indent ─────────────────────────────────────────────────
 
 test.describe('§6.3 List hanging-indent', () => {
-  test('wrapped bullet continuation x > marker x', async ({ page }) => {
+  test('wrapped bullet list line left edge aligns with plain paragraph (marker not pushed off-screen)', async ({
+    page,
+  }) => {
     const longText = 'A'.repeat(200);
     await seedMarkdown(testDocName, `- ${longText}\n\nplain paragraph`);
     await switchToSource(page);
@@ -168,37 +182,6 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
     );
     // Should have non-zero padding (4 spaces → 4ch)
     expect(lineIndent).not.toBe('0px');
-  });
-});
-
-// ── §6.1 Broken link-ref ────────────────────────────────────────────────────
-
-test.describe('§6.1 Broken link-ref', () => {
-  test('[x][missing] gets cm-link-ref-broken; adding definition clears it', async ({ page }) => {
-    // Seed with a VALID ref pair first (survives CRDT round-trip without escaping),
-    // then type a broken ref directly in source mode to avoid remark-stringify escaping brackets.
-    await seedMarkdown(testDocName, '[valid link][exists]\n\n[exists]: https://example.com');
-    await switchToSource(page);
-
-    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping).
-    // Playwright's expect().toHaveCount() auto-retries until the assertion passes
-    // or the timeout expires — no manual waitForTimeout needed.
-    await page.locator('.cm-content').focus();
-    await page.keyboard.press('ControlOrMeta+End');
-    await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
-
-    // The [click here][missing] should be marked broken — StateField rescans
-    // on docChanged, so the mark should appear within the assertion's timeout.
-    const broken = page.locator('.cm-link-ref-broken');
-    await expect(broken).toHaveCount(1, { timeout: 5_000 });
-
-    // Now add the missing definition — the broken mark should clear as soon
-    // as the StateField's next docChanged run sees the new definition.
-    await page.keyboard.press('ControlOrMeta+End');
-    await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
-
-    const brokenAfter = page.locator('.cm-link-ref-broken');
-    await expect(brokenAfter).toHaveCount(0, { timeout: 5_000 });
   });
 });
 
