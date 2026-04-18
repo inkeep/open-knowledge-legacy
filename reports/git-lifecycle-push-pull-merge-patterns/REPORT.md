@@ -1,6 +1,6 @@
 ---
 title: "Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond"
-description: "How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff visualization, and non-developer abstraction patterns. Extended with sync-engine prior art (Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync), error-class taxonomy, recovery UX by failure mode, offline affordances, progress reporting, sustained auth lifecycle, sync-button decomposition, and git-to-user vocabulary mapping. Further extended with auto-sync scheduler dynamics (debounce, queue, idle detection, restart persistence), retry + backoff patterns from workflow automation tools (n8n, Temporal, Prefect, Airflow, Airbyte), and file-sync tool dynamics (Syncthing, Rclone, Nextcloud, git-annex, Dropbox). Source-level analysis of VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, plus docs-level coverage of GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, and others."
+description: "How 50+ tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, non-developer wrappers, headless CMS platforms, bot/CI systems, and file-sync tools — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff visualization, and non-developer abstraction patterns. Extended with sync-engine prior art, error-class taxonomy, recovery UX, offline affordances, progress reporting, sustained auth lifecycle, auto-sync scheduler dynamics, retry + backoff patterns, file-sync tool dynamics, and a comprehensive full-auto git sync prevalence survey (50+ tools across editors, CMS, bot/CI, git clients — finding only 2 tools that default to full-auto bidirectional sync, with 7 root causes explaining the rarity)."
 createdAt: 2026-04-14
 updatedAt: 2026-04-15
 subjects:
@@ -40,6 +40,36 @@ subjects:
   - Nextcloud
   - git-annex
   - OneDrive
+  - git-credential-oauth
+  - Gitea
+  - Forgejo
+  - Codeberg
+  - "@codemirror/merge"
+  - Monaco Editor
+  - Mergely
+  - react-diff-view
+  - Wiki.js
+  - CloudCannon
+  - GitBook
+  - Decap CMS
+  - Sveltia CMS
+  - Static CMS
+  - Keystatic
+  - Mintlify
+  - Statamic
+  - Forestry
+  - Prose.io
+  - Dependabot
+  - Renovate
+  - semantic-release
+  - Dendron
+  - Foam
+  - Gollum
+  - Publii
+  - Front Matter CMS
+  - Netlify Create
+  - SilverBullet
+  - isomorphic-git
 topics:
   - git lifecycle UX
   - staging and commit patterns
@@ -55,10 +85,13 @@ topics:
   - progress reporting
   - failure taxonomy
   - sustained auth lifecycle
+  - credential helper token refresh
   - auto-sync scheduling
   - retry and backoff patterns
   - file sync dynamics
   - workflow automation
+  - embeddable merge controls
+  - full-auto sync prevalence
 ---
 
 # Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond
@@ -95,9 +128,12 @@ The most architecturally consequential dimension is **D8: non-developer abstract
 - **D6 (extended): A five-class error taxonomy emerges from cross-referencing git editors with Stripe, gRPC, and AWS SDK patterns.** Network (transient), auth (non-retryable without re-auth), semantic (requires user decision), structural (requires content/config change), and local (requires local cleanup). No git client implements circuit-breaking, adaptive retry, or error-to-documentation linking — patterns that are standard in API ecosystems.
 - **Sync-engine apps (Linear, Figma, Notion, Google Docs, Obsidian Sync, among others) have solved offline queues, reconnection UX, and conflict avoidance** at a level that git-backed editors have not attempted. Linear persists transactions to IndexedDB with a 4-stage queue pipeline. Figma stores offline edits and reapplies on reconnection. No git editor queues operations when offline or provides retry with backoff.
 - **D5 (extended): Token expiry varies from 1 hour (GitHub App installation) to no scheduled expiry (GitHub OAuth, with 1-year inactivity auto-revoke), yet no editor implements silent token refresh.** All editors surface auth failure as a user-facing error requiring manual re-authentication. No editor proactively checks OAuth scopes or detects external identity switches.
+- **D5 (extended): Git's credential protocol (2.40–2.41) enables helper-driven token refresh, but storage helper support lags.** `password_expiry_utc` (Git 2.40) and `oauth_refresh_token` (Git 2.41) allow chained credential helpers to transparently refresh expired tokens — but macOS `osxkeychain` requires Git 2.45 for both fields, and `credential-store` (plaintext) never gained support. Two implementation patterns exist: GCM's per-provider reactive refresh (API validation → refresh on 401) and git-credential-oauth's protocol-level stateless pattern (~600 LOC, 14 forges). GCM's protocol-level integration (PR #1464) has been open since Nov 2023 without merging.
 - **D8 (extended): Auto-sync scheduler dynamics diverge sharply across git-backed editors.** Obsidian-Git uses chained one-shot setTimeout (not setInterval) with FIFO PromiseQueue serialization, persists last-auto timestamps for restart resumption, but has zero error backoff. SiYuan/dejavu implements counted backoff (7 failures → block auto-sync; 8th failure → 5-min retry; 15 failures → 64-min retry) plus a cloud-level distributed mutex. logseq/git-auto is a stateless shell loop with no retry, debounce, or persistence. No git-backed editor implements idle detection before committing.
 - **D6 (extended): Retry + backoff patterns from workflow automation tools (Temporal, Prefect, Airflow, Airbyte) reveal a maturity gap.** Temporal provides typed non-retryable errors, exponential backoff with configurable coefficients, and 6 named overlap policies. Prefect adds built-in jitter. No git editor implements any of these patterns — the most sophisticated git-side retry is JetBrains' 10-attempt rejected-push loop with no backoff.
 - **Non-editor sync dynamics: File-sync tools and workflow engines have converged on design patterns that the git editor ecosystem has not adopted.** File-sync tools (Syncthing, Rclone) contribute jittered scan intervals, configurable debounce windows, two-level retry (per-pass + per-API-call), and timetable-based rate limiting. Workflow engines (Temporal, Prefect, Airflow) contribute typed non-retryable error classification, exponential backoff with jitter, and formal overlap policies. Both categories use metadata-database-driven state persistence across restart — absent from git editors.
+- **Full-auto bidirectional git sync (auto-pull + auto-push by default) is extremely rare.** A survey of 50+ tools across editors, CMS platforms, and git clients found only 2 tools that ship full-auto bidirectional git sync in their default configuration: [Wiki.js](https://docs.requarks.io/storage/git) (5-min interval) and [CloudCannon](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/) (webhook-driven). [GitBook](https://gitbook.com/docs/getting-started/git-sync) adds a third when its optional Git Sync feature is enabled. All three are server-side CMS/wiki platforms — no desktop editor or note-taking tool defaults to full-auto. Seven root causes recur across issue threads and engineering blogs: merge conflicts requiring human arbitration, push-pull serialization bottleneck, mobile git implementations that cannot merge, credential management incompatibility with headless automation, commit history pollution, index.lock contention, and unit-of-operation mismatch. Sync-engine apps (Linear, Figma, Notion) and several note-taking tools (Joplin, SiYuan) explicitly built custom sync instead of using git.
+- **D3 (extended): Among surveyed embeddable libraries, @codemirror/merge's `mergeControls` is the only production-quality per-hunk accept/reject implementation found.** Source-level analysis of v6.12.1 confirms it renders two buttons ("Accept"/"Reject") per chunk in unified view, with a custom render function `(type, action) => HTMLElement` enabling fully custom controls. MEDIUM fitness for non-developer audiences: the diff engine, chunk model, and `collapseUnchanged` compose cleanly, but 3-way merge is absent (2-way only), buttons render regardless of read-only state, and side-by-side mode uses a structurally different `revertControls` mechanism. No other React-embeddable alternative surveyed provides merge controls — Monaco, react-diff-view, and react-diff-viewer-continued are all read-only diff viewers.
 
 ---
 
@@ -276,6 +312,49 @@ No mainstream editor uses AST or language-aware merge for git conflict resolutio
 
 No editor scans staged files for leftover conflict markers. All rely on git's built-in unmerged-file check, which has a gap: if a user manually edits a file, stages it, but accidentally leaves `<<<<<<<`/`>>>>>>>` markers, git commits it. A pre-commit hook would close this gap but is not built into any editor.
 
+### Merge Control UI Fitness (@codemirror/merge)
+
+**Evidence:** [evidence/codemirror-merge-controls-fitness.md](evidence/codemirror-merge-controls-fitness.md)
+
+**Assessment: MEDIUM fitness — use mergeControls with a thin custom control layer.**
+
+Among surveyed React-embeddable diff/merge libraries, `@codemirror/merge`'s `mergeControls` option is the only production-quality per-hunk accept/reject implementation found. No other React-embeddable alternative provides merge controls: Monaco DiffEditor, react-diff-view, react-diff-viewer-continued, and @git-diff-view/react are all read-only diff viewers. Mergely offers API-driven per-change merge but no visual buttons. Every tool with gold-standard merge UX (VS Code merge editor, GitKraken, Sublime Merge, diffview.nvim) is a non-embeddable standalone application.
+
+**What mergeControls renders (source-level, v6.12.1).** In **unified view** mode, `mergeControls: true` renders two `<button>` elements ("Accept" green #2a2, "Reject" red #d43) inside a `div.cm-chunkButtons` container, positioned absolutely at the top-right of each `div.cm-deletedChunk` block widget. The buttons are localizable via CodeMirror's phrase system (`state.phrase("Accept")`). In **side-by-side** `MergeView`, a structurally different control exists — `revertControls` — which renders arrow buttons (`⇜`/`⇝`) in a narrow 1.6em gutter column between panes. `mergeControls` and `revertControls` are separate options on separate views; they do not share an interaction model.
+
+**Granularity.** Per-chunk (hunk). `acceptChunk` and `rejectChunk` operate on entire `Chunk` objects — contiguous ranges of changed lines. No per-line or per-character accept/reject is built in. For conflict resolution where a hunk contains mixed desirable/undesirable content, users must manually edit before accepting.
+
+**Customization surface.** Three mechanisms:
+1. **CSS class overrides** — default styles are `baseTheme` (lowest priority). Any `EditorView.theme()` overrides them using `.cm-deletedChunk`, `.cm-chunkButtons`, `button[name=accept]`, `button[name=reject]` selectors.
+2. **Custom render function** — `mergeControls` accepts `(type: "reject" | "accept", action: (e: MouseEvent) => void) => HTMLElement`. Called twice per chunk; the returned DOM element is appended directly. Full control over button appearance, labels, icons, and explanatory subtext.
+3. **Localization** — `state.phrase()` allows label translation.
+
+For React integration, the custom render function returns raw HTMLElement — standard CodeMirror widget-to-React bridge pattern applies (`ReactDOM.createRoot` or portal inside the factory function).
+
+**Events.** No dedicated callbacks. Accept dispatches `userEvent: "accept"` (updates the `originalDoc` state field, not the editor document). Reject dispatches `userEvent: "revert"` (replaces the editor document range). Hook via `EditorView.updateListener.of(update => { for (let tr of update.transactions) { ... } })`. Public commands `acceptChunk(view, pos?)` and `rejectChunk(view, pos?)` enable programmatic control.
+
+**3-way merge.** Not supported — strictly 2-way diff. `Chunk.build(a, b)` compares two `Text` documents. For git conflict resolution, the 3-way merge algorithm must run externally; the result is fed as one of the two documents.
+
+**collapseUnchanged interaction.** Orthogonal. `collapseUnchanged` creates replacement widgets for long unchanged regions between chunks. Merge control buttons sit inside chunk widgets. No interference — the features compose cleanly.
+
+**Read-only interaction.** No internal guard hides buttons in read-only mode. `acceptChunk` works regardless (updates state field, not document). `rejectChunk` dispatches document changes — silently rejected by CodeMirror's read-only filter. Products must conditionally pass `mergeControls: false` or disable buttons in the custom render function for review-only views.
+
+**Embeddable merge control landscape.**
+
+| Component | Merge controls | Granularity | Embeddable | 3-way | Non-dev fit |
+|-----------|---------------|-------------|------------|-------|-------------|
+| @codemirror/merge | Per-chunk buttons (unified) / arrows (split) | Per-chunk | Yes (npm) | No | Medium (custom render) |
+| VS Code merge editor | Checkboxes + CodeLens | Per-hunk + editable result | No | Yes | Medium |
+| Monaco DiffEditor | None (read-only) | N/A | Yes | No | Low |
+| react-diff-view | None (read-only) | N/A | Yes (React) | No | Low-Medium |
+| react-diff-viewer-continued | None (read-only) | N/A | Yes (React) | No | Medium |
+| Mergely | API-driven (no visual buttons) | Per-change (cursor) | Yes (GPL/LGPL/MPL) | No | Medium |
+| diffview.nvim | Keybindings (co/ct/cb/ca) | Per-hunk + per-file | No (Neovim) | Yes (3+4 way) | Low |
+| GitKraken | Checkboxes + AI resolve | Per-hunk + per-line | No (Electron) | Yes | Medium-High |
+| Sublime Merge | Gutter buttons | Per-hunk + editable | No (native) | Yes | Medium |
+
+**For non-developer audiences.** The default mergeControls buttons ("Accept"/"Reject" with developer-oriented green/red coding) are insufficient. However, the custom render function enables a fully custom control layer — large "Keep This Version" / "Use Original" buttons with explanatory subtext, prose-friendly labels, and product-specific styling — without forking or patching the library. The underlying diff engine, chunk model, incremental update (`Chunk.updateA`/`updateB`), and `collapseUnchanged` provide a solid foundation. The primary architectural gap is 2-way-only diff, requiring external 3-way merge composition.
+
 ---
 
 ## D4: Branch Management
@@ -355,7 +434,7 @@ Magit's **spinoff/spinout** is unique: `spinoff` creates a new branch, moves unp
 
 ### Token Refresh
 
-GitHub OAuth tokens (`gho_`) don't expire — no refresh flow is exercised anywhere for GitHub. Token refresh is a GitLab-specific concern, where GCM implements proactive polling with refresh tokens stored under an `"oauth-refresh-token."` key prefix.
+GitHub OAuth tokens (`gho_`) don't expire — no refresh flow is exercised anywhere for GitHub. Token refresh is a concern for every non-GitHub forge: GitLab (2h), Bitbucket (1h), Gitea/Forgejo (1h configurable), and Azure DevOps (~1h). GCM implements reactive refresh for GitLab and Bitbucket with refresh tokens stored under provider-specific key prefixes (`"oauth-refresh-token."` for GitLab, `"/refresh_token"` path for Bitbucket). See "Token Refresh Strategy for Credential Helpers" within the Sustained Auth Lifecycle section below for the full protocol-level treatment.
 
 ### Multi-Account
 
@@ -408,7 +487,66 @@ External revocation detection is universally lazy — the next git operation ret
 | `credential-store` | Permanent (plaintext) | No expiry |
 | GCM | Depends on backing store | Evolving: Git 2.40+ `password_expiry_utc`, Git 2.41+ `oauth_refresh_token` |
 
-GCM is evolving toward proactive refresh: Git 2.40 added `password_expiry_utc` (check expiry without network), Git 2.41 added `oauth_refresh_token` (store refresh tokens alongside access tokens). GCM's Bitbucket provider supports automatic refresh; GitHub provider does not yet ([GCM Issue #2059](https://github.com/git-ecosystem/git-credential-manager/issues/2059)). The `git-credential-oauth` helper (hickford) implements full proactive refresh via stored refresh token exchange.
+GCM is evolving toward protocol-level refresh: Git 2.40 added `password_expiry_utc` (check expiry without network round-trip), Git 2.41 added `oauth_refresh_token` (store refresh tokens alongside access tokens). GCM's Bitbucket and GitLab providers already support reactive refresh (on 401); the GitHub provider does not yet ([GCM Issue #2059](https://github.com/git-ecosystem/git-credential-manager/issues/2059)). The `git-credential-oauth` helper (hickford) implements the protocol-level chained-helper refresh pattern via stored refresh token exchange.
+
+#### Token Refresh Strategy for Credential Helpers
+
+**Evidence:** [evidence/credential-helper-token-refresh.md](evidence/credential-helper-token-refresh.md)
+
+The question of whether a credential helper should implement OAuth token refresh — and if so, how — depends on three factors: the git credential protocol's refresh primitives, per-forge token lifetimes, and the minimum git version required for the refresh flow to function.
+
+**Git's credential protocol extensions (Git 2.40–2.41).** Two fields enable helper-driven refresh without Git performing OAuth logic itself:
+
+| Field | Git Version | Behavior |
+|-------|-------------|----------|
+| `password_expiry_utc` | 2.40 (commit `d208bfdfe`, M Hickford) | Checked during `credential_fill()` only — not proactively. When a helper returns an expired password, Git clears `password` and `credential` but **preserves `oauth_refresh_token` and `username`**, then continues to the next helper in the chain. |
+| `oauth_refresh_token` | 2.41 (commit `a5c76569e`, M Hickford) | Pure pass-through. Git docs: "Git itself has no special behaviour for this attribute." On `store`, the refresh token is forwarded to storage helpers. On `get`, stored refresh tokens are forwarded to subsequent helpers. On `erase`, the refresh token is freed. |
+
+The intended architecture chains a **storage** helper (caches credentials including refresh tokens) before a **generating** helper (performs the OAuth exchange). When the storage helper returns an expired access token, Git discards the password but preserves the refresh token, which the generating helper receives and uses to mint a fresh access token via the forge's token endpoint. Git 2.46 added `state[]`, `continue`, and `authtype`/`credential` for multi-stage auth (NTLM, Kerberos, Bearer) — orthogonal to refresh but complementary for non-password auth schemes.
+
+**Storage helper support matrix — the version constraint bottleneck:**
+
+| Storage Helper | `password_expiry_utc` | `oauth_refresh_token` |
+|---|---|---|
+| credential-cache (in-memory daemon) | Git 2.40 | Git 2.41 |
+| credential-store (plaintext `~/.git-credentials`) | **Never** | **Never** |
+| wincred (Windows Credential Manager) | Git 2.41 | Git 2.44 |
+| libsecret (Linux GNOME Keyring / KDE Wallet) | Git 2.43 | Git 2.43 |
+| osxkeychain (macOS Keychain) | **Git 2.45** | **Git 2.45** |
+
+Source: [hickford/git-credential-oauth#20](https://github.com/hickford/git-credential-oauth/issues/20)
+
+The macOS default helper (`osxkeychain`) requires Git 2.45 for both fields. Without storage helper support, refresh tokens cannot be persisted between sessions — every cache expiry forces a full interactive re-auth. `credential-store` (plaintext) never gained support for either field. Ubuntu 22.04 LTS ships Git 2.34 (below the 2.40 threshold); Ubuntu 24.04 LTS ships 2.43 (osxkeychain support still absent). No public source publishes a definitive git version distribution, but estimated Git 2.45+ adoption among developers is substantially below the 2.40+ estimate of >60-70% by mid-2026.
+
+**Per-forge refresh token behavior — every non-GitHub forge requires refresh for sessions exceeding 1–2 hours:**
+
+| Forge | Access TTL | Refresh TTL | Single-Use RT? | Refresh Required? |
+|-------|-----------|-------------|----------------|-------------------|
+| GitHub OAuth App (`gho_`) | No expiry | N/A | N/A | **No** |
+| GitHub App (user token) | 8 hours | 6 months | Yes | Yes (but uncommon for git credential helpers) |
+| GitLab | 2 hours (hardcoded) | No explicit TTL | Yes | **Yes** |
+| Bitbucket | 1 hour | No documented expiry | Yes | **Yes** |
+| Azure DevOps | ~1 hour | 90 days (rolling) | Yes | Yes (but being sunset in 2026 → Entra ID) |
+| Gitea | 1 hour (configurable) | ~30 days (configurable) | Yes | **Yes** |
+| Forgejo/Codeberg | 1 hour (configurable) | ~30 days (inferred) | Yes (inferred) | **Yes** |
+
+Every non-GitHub forge examined uses single-use refresh tokens (token rotation on each exchange; confirmed for GitLab, Bitbucket, Gitea; inferred for Forgejo/Codeberg from shared Gitea codebase). Losing a refresh response — due to crash, network failure, or concurrent refresh race — means falling back to interactive auth. GitLab has a documented race condition: concurrent refresh requests fail because the first request rotates the token before the second arrives ([HashiCorp support article](https://support.hashicorp.com/hc/en-us/articles/1500001457621)).
+
+**Two implementation patterns exist in the ecosystem:**
+
+1. **GCM's per-provider reactive pattern.** Each forge provider (GitLab, Bitbucket, Generic) implements its own refresh flow: stores refresh tokens as separate credential entries with provider-specific key prefixes, validates tokens via API call (not local expiry check), and attempts refresh on 401. The GitHub provider has no refresh (blocked by GitHub's token model — [GCM Issue #789](https://github.com/git-ecosystem/git-credential-manager/issues/789)). Azure DevOps delegates to MSAL, which handles refresh internally. GCM's [PR #1464](https://github.com/git-ecosystem/git-credential-manager/pull/1464) (open since Nov 2023, unmerged) would add protocol-level `password_expiry_utc` + `oauth_refresh_token` support, but [Issue #2059](https://github.com/git-ecosystem/git-credential-manager/issues/2059) (opened Sep 2025) remains open.
+
+2. **git-credential-oauth's protocol-level stateless pattern.** A ~600 LOC Go CLI ([hickford/git-credential-oauth](https://github.com/hickford/git-credential-oauth)) that implements the chained helper design Git's protocol extensions were built for. Entirely stateless — reads `oauth_refresh_token` from stdin (passed by the storage helper), calls the forge's token endpoint with `grant_type=refresh_token`, outputs fresh `password` + `password_expiry_utc` + `oauth_refresh_token` to stdout. Supports 14 forges with pre-configured OAuth endpoints. Falls through to interactive browser auth if refresh fails. The core refresh exchange is ~10 lines; the pattern is directly portable to any language with HTTP capabilities.
+
+**Scoping considerations for credential helper implementors:**
+
+| Factor | Landscape observation |
+|--------|----------------------|
+| GitHub-only usage | `gho_` tokens do not expire. GitHub App user tokens (8h) are uncommon in git credential helper contexts. Refresh adds no value for this forge. |
+| Non-GitHub forges without refresh | Without refresh, a 1–2 hour token cliff occurs during active sessions. Both GCM and git-credential-oauth implement transparent refresh for these forges — this is the current baseline behavior users of multi-forge credential helpers experience. |
+| Protocol-level implementation size | git-credential-oauth's refresh exchange is ~10 LOC (HTTP POST to token endpoint). Full protocol I/O (stdin/stdout parsing, `password_expiry_utc`/`oauth_refresh_token` output) adds ~60 LOC. A forge config table (OAuth endpoints per host) adds ~80 LOC. No dependencies beyond HTTP. Git's protocol stores refresh tokens via the existing storage helper — no keyring schema changes. |
+| Git version requirements | Git 2.41+ for `oauth_refresh_token` in the credential protocol. Git 2.45+ for macOS `osxkeychain` to persist refresh tokens across sessions. Users on older Git versions do not benefit from refresh token persistence and fall back to interactive re-auth on expiry. |
+| Delegation path | GCM and git-credential-oauth both already handle refresh for non-GitHub forges. A credential helper that does not implement native refresh can interoperate with either tool in a chained configuration. |
 
 **Multi-account sustained sessions** remain structurally limited. JetBrains supports multiple GitHub accounts in settings but requires manual per-project assignment. `gh auth switch` changes the active account immediately for API calls but requires a new git operation for the credential helper to serve the updated token. [1Password's SSH agent](https://developer.1password.com/docs/ssh/agent/) provides per-application, per-terminal-tab authorization with configurable session duration. GCM's `credential.useHttpPath=true` enables per-repo credential isolation — without it, a single credential per hostname makes multi-account usage on the same forge impossible.
 
@@ -780,6 +918,26 @@ Four tool categories occupy distinct tiers of scheduling maturity. The gradient 
 
 3. **Mid-operation checkpointing** exists only in Tier 4 (Temporal heartbeats, Airbyte STATE messages). All other tiers lose progress on interruption — an interrupted git clone leaves a partial `.git/` directory, and an interrupted Syncthing transfer restarts from the file level.
 
+### Theme 9: The Full-Auto Sync Abstention
+
+A survey of 50+ tools across editors, CMS platforms, and git clients reveals that full-auto bidirectional git sync (auto-pull + auto-push by default) is a ~4–8% phenomenon. Only [Wiki.js](https://docs.requarks.io/storage/git) and [CloudCannon](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/) ship it as a default; [GitBook](https://gitbook.com/docs/getting-started/git-sync) adds it as an opt-in feature. All three are server-side CMS/wiki platforms — no desktop editor, note-taking tool, or developer IDE defaults to full-auto. Seven root causes recur: merge conflicts requiring human arbitration, push-pull serialization bottleneck, mobile git's inability to merge, credential management incompatibility with headless automation, commit history pollution, index.lock contention, and unit-of-operation mismatch. The abstention is not path dependency — it is a response to structural properties of git's merge and push model. See "Full-Auto Git Sync Prevalence" for the complete survey and root-cause analysis.
+
+**Developer tools explicitly reject auto-push.** GitHub Desktop's old Mac client had "Automatically Sync after Committing" — it was deliberately not carried forward to the Electron rewrite (maintainer @niik: "beyond the scope of our current roadmap," [#2191](https://github.com/desktop/desktop/issues/2191)). VS Code maintainers closed the auto-push request recommending git's own `post-commit` hook ([#14885](https://github.com/microsoft/vscode/issues/14885)), later shipping `git.postCommitCommand` as a per-click manual dropdown — not automatic ([#62058](https://github.com/microsoft/vscode/issues/62058), v1.69). GitKraken has two open feature requests for auto-push; neither has been implemented.
+
+**Bot/CI patterns reinforce the same boundary.** Every dependency bot (Dependabot, Renovate, Snyk, Imgbot), every AI coding agent (GitHub Copilot, Devin, SWE-agent), and every code-quality bot (pre-commit.ci, autofix.ci) defaults to branch + PR — never direct push to main. The four exceptions that push to main (semantic-release, Renovate `automergeType: "branch"`, cron GitHub Actions, Flux Image Automation) all commit derived content — version bumps, lockfile updates, generated data — not user-authored content.
+
+**Seven structural reasons recur across issue threads, engineering blogs, and academic papers:**
+
+1. **Non-fast-forward rejection is load-bearing** — git's push rejection when the remote has diverged prevents silent data loss. Full-auto push must either accept rejection (breaking the loop) or force-push (destroying concurrent writes). [GitDoc](https://github.com/lostintangent/gitdoc) chose force push as its default — the only mechanically coherent choice, at the cost of silent data loss on concurrent devices.
+2. **Two independent auto-committing devices will always eventually diverge** — Obsidian-Git users document this extensively: issues [#803](https://github.com/Vinzent03/obsidian-git/issues/803), [#789](https://github.com/Vinzent03/obsidian-git/issues/789), [#207](https://github.com/Vinzent03/obsidian-git/issues/207). The community-discovered mitigation is asymmetric sync: one device pull-only, the other push-only.
+3. **Metadata file churn** — `.obsidian/workspace.json` and plugin `data.json` mutate on every app launch, creating guaranteed conflicts before any user content edit (Obsidian-Git [#114](https://github.com/Vinzent03/obsidian-git/issues/114), [#74](https://github.com/denolehov/obsidian-git/issues/74), [#78](https://github.com/denolehov/obsidian-git/issues/78)).
+4. **No mobile merge support** — isomorphic-git throws `MergeNotSupportedError` on any conflict ([#340](https://github.com/Vinzent03/obsidian-git/issues/340)), making auto-pull fatal on mobile.
+5. **Push is a public action** — developer tools treat push as requiring explicit intent. [Fowler](https://martinfowler.com/articles/continuousIntegration.html) frames frequent commits as deliberate integrations, not automated saves.
+6. **Git's staging area is an intentional anti-autosave barrier** — "Git does not assume that what the file looks like on disk is necessarily what you want to snapshot" ([Pro Git](https://git-scm.com/book/en/v2/Appendix-C:-Git-Commands-Basic-Snapshotting)). The two-step add→commit enforces deliberate composition over ambient capture.
+7. **History bloat** — frequent auto-commits defeat blame, bisect, and archaeological understanding ([trunk.io](https://trunk.io/blog/git-commit-messages-are-useless), [mrq](https://www.getmrq.com/blog/git-not-built-for-ai)).
+
+**Observation:** Sync-engine apps that need full-auto bidirectional sync — Linear, Figma, Notion, Logseq's proprietary sync — bypass git entirely. [Ink and Switch](https://www.inkandswitch.com/essay/local-first/) (SPLASH 2019, Kleppmann et al.) identifies the structural limitation: "Git has no capability for real-time, fine-grained collaboration." [git-annex](https://git-annex.branchable.com/automatic_conflict_resolution/) represents the maximum git can offer for automated conflict resolution: file duplication with opaque `.variant-XXX` suffixes, requiring human triage after the fact. The boundary is structural: git's merge model assumes a human in the loop. Every surveyed tool that achieves fully automated bidirectional sync without human intervention has done so by replacing git's merge model with an alternative (CRDT, OT, cloud mutex, or file duplication).
+
 ---
 
 ## Sync-Engine Apps as Prior Art
@@ -900,6 +1058,91 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 
 ---
 
+## Full-Auto Git Sync Prevalence
+
+**Evidence:** [evidence/d1-broader-editor-auto-sync-survey.md](evidence/d1-broader-editor-auto-sync-survey.md), [evidence/d2-cms-git-auto-sync.md](evidence/d2-cms-git-auto-sync.md), [evidence/d3-bot-ci-auto-commit-patterns.md](evidence/d3-bot-ci-auto-commit-patterns.md), [evidence/d4-why-full-auto-rare.md](evidence/d4-why-full-auto-rare.md) (also: [evidence/d1-broader-editor-git-sync-survey.md](evidence/d1-broader-editor-git-sync-survey.md), [evidence/d2-cms-git-auto-behavior.md](evidence/d2-cms-git-auto-behavior.md), [evidence/d3-bot-ci-git-patterns.md](evidence/d3-bot-ci-git-patterns.md), [evidence/d4-why-full-auto-is-rare.md](evidence/d4-why-full-auto-is-rare.md))
+
+This section surveys the prevalence of fully automatic bidirectional git sync (both auto-pull AND auto-push, by default, without user intervention) across 50+ tools spanning editors, CMS platforms, git clients, and bot/CI patterns. It sharpens the question: is full-auto git sync a genuine industry pattern to follow, or a relatively novel design — and if rare, why?
+
+### Distribution Across 50+ Tools
+
+A combined survey of 25 note/knowledge editors (D1), 18 headless CMS / content tools (D2), 20 bot/CI tools (D3), and the 15+ editors and git clients from the parent report produces the following distribution:
+
+| Category | Count | Representative tools |
+|----------|-------|---------------------|
+| **(f) No git / non-git sync** | ~25 | RemNote, Craft, Bear, AppFlowy, AnyType, Standard Notes, Trilium, Contentful, Strapi, Sanity, iCloud-based apps |
+| **(a) API-mediated commit on save** | 6 | TinaCMS, [Decap CMS](https://decapcms.org/docs/github-backend/), Sveltia CMS, Static CMS, [Keystatic](https://keystatic.com/docs/github-mode) (GitHub mode), Prose.io |
+| **(g) Auto-fetch only** | 5+ | [GitHub Desktop](https://desktop.github.com/), GitKraken, lazygit, Fork, VS Code (`git.autofetch`) |
+| **(e) All manual** | 8+ | Magit, Zed, Dendron, Quartz, [HackMD](https://hackmd.io/s/link-with-github), Front Matter CMS, NotePlan, iA Writer |
+| **(c) Auto-commit only** | 3 | [Gollum](https://github.com/gollum/gollum), [Statamic](https://statamic.dev/git-automation), Obsidian-Git (auto-commit only by default) |
+| **(b) Auto-push only / one-way** | 3 | [logseq/git-auto](https://github.com/logseq/git-auto) (push-only), Publii (one-directional), Netlify Create (on publish) |
+| **(d) Full-auto bidirectional** | 2–4 | [Wiki.js](https://docs.requarks.io/storage/git), [CloudCannon](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/), GitBook (when Git Sync enabled), Forestry (sunset 2023) |
+
+**Full-auto bidirectional git sync is a ~4–8% phenomenon.** Out of 50+ tools surveyed, only 2 ship it as a default ([Wiki.js](https://docs.requarks.io/storage/git) at 5-min interval, [CloudCannon](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/) via webhook), with 1–2 more offering it as an opt-in feature ([GitBook](https://gitbook.com/docs/getting-started/git-sync) when Git Sync is enabled, [SilverBullet](https://github.com/silverbulletmd/silverbullet-git) when git plug installed + `autoSync: true`). The overwhelming majority either have no git integration, use API-mediated commits that bypass local git entirely, or stop at auto-fetch without auto-push.
+
+### Architectural Patterns of the Full-Auto Tools
+
+The few tools that achieve full-auto bidirectional git sync share a structural characteristic: **server-side execution.** Wiki.js, CloudCannon, and GitBook all run git operations on a server process — not in a user's local environment. This sidesteps three of the seven root causes (credential interruption, index.lock contention, mobile merge impossibility) because the server maintains a persistent, authenticated git context.
+
+[Wiki.js](https://docs.requarks.io/storage/git) runs a bidirectional sync cycle on a configurable timer (default 5 minutes). Each cycle: pull remote changes, push local changes. When git storage is configured, this is enabled by default.
+
+[CloudCannon](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/) uses a persistent webhook subscription to GitHub/GitLab/Bitbucket. Remote commits are ingested automatically; every user save triggers an auto-commit + auto-push. Both directions are continuous and require no user action.
+
+[GitBook](https://gitbook.com/docs/getting-started/git-sync) adds bidirectional sync when Git Sync is explicitly enabled (not the default storage mode). Incoming commits auto-sync into GitBook. Outgoing commits occur per change-request merge, not per keystroke.
+
+### The CMS API-Mediation Pattern
+
+Six tools (Decap CMS, Sveltia CMS, Static CMS, Keystatic GitHub mode, Prose.io, TinaCMS) achieve the semantic equivalent of "always current" without any local git state. They read directly from the GitHub/GitLab/Bitbucket API on every load and commit via the API on every save. There is no local working directory, no index, no pull, no push — the API call IS the commit. This eliminates the pull/push question entirely, at the cost of requiring network connectivity for every operation.
+
+### Bot/CI Patterns: Auto-Commit via Branch Isolation
+
+Dependency bots ([Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates), [Renovate](https://docs.renovatebot.com/key-concepts/automerge/), Snyk) auto-commit and auto-push — but always to isolated side-branches, never directly to main. The PR model provides three safety functions: human review checkpoint, CI gating, and conflict isolation. This is architecturally distinct from full-auto sync: bots create proposals (PRs) rather than committing directly to shared state.
+
+[semantic-release](https://semantic-release.gitbook.io/semantic-release/recipes/ci-configurations/github-actions) is the sharpest exception — it pushes version-bump commits directly to the release branch (often `main`), requiring either a PAT with admin permissions or explicit branch protection bypass. The ecosystem treats this as a hard problem with [documented friction](https://gonzalohirsch.com/blog/semantic-release-and-branch-protection-rules/).
+
+CI auto-fixers (`git-auto-commit-action`, `pre-commit.ci`, `autofix.ci`) push to the branch being built — typically a feature/PR branch, not main. None target the default branch.
+
+### Why Full-Auto Is Rare: Seven Root Causes
+
+Eleven specific failure modes surface across issue threads, engineering blog posts, and the git mailing list. These collapse into seven root causes, ordered by frequency of citation in the surveyed evidence:
+
+**1. Merge conflicts require human arbitration.** Git's three-way merge detects conflicts but cannot resolve them — automated sync must either block or silently discard one side's changes. `isomorphic-git` (used by Obsidian-Git mobile and Logseq) throws [`MergeNotSupportedError`](https://isomorphic-git.org/docs/en/merge.html) by default. Obsidian-Git issues [#340](https://github.com/Vinzent03/obsidian-git/issues/340), [#803](https://github.com/Vinzent03/obsidian-git/issues/803), [#872](https://github.com/Vinzent03/obsidian-git/issues/872), [#906](https://github.com/Vinzent03/obsidian-git/issues/906); Logseq issues [#429](https://github.com/logseq/logseq/issues/429), [#713](https://github.com/logseq/logseq/issues/713); isomorphic-git [#841](https://github.com/isomorphic-git/isomorphic-git/issues/841).
+
+**2. Push-pull serialization bottleneck.** Git's "fast-forward only" push constraint means: before you can push, you must have pulled all remote changes. With two devices auto-syncing, Device A pushes; Device B's push is rejected; B must pull, merge, retry — a serial loop. CRDT-based sync engines (Figma, Linear, Notion) were designed specifically to make concurrent writes commutative. Production race conditions documented on the [git mailing list](https://git.vger.kernel.narkive.com/9Rkrrepp/push-race-condition).
+
+**3. Mobile git cannot merge.** iOS and Android cannot install native git. All mobile git is via `isomorphic-git` (JavaScript), which cannot resolve merge conflicts. Auto-pull on mobile is structurally unsafe when divergence exists.
+
+**4. Credential management is incompatible with headless automation.** HTTPS tokens expire; SSH keys may require passphrase entry. Background auto-push cannot present a UI prompt. GitHub Desktop [#1128](https://github.com/desktop/desktop/issues/1128): auto-fetch triggered 2FA prompts on every cycle. VS Code [#23951](https://github.com/microsoft/vscode/issues/23951): users requested even auto-fetch be opt-in.
+
+**5. Commit history pollution.** Every auto-commit creates a machine-generated message. High-frequency commits clutter `git log`, make `git bisect` unreliable, and obscure meaningful history.
+
+**6. index.lock contention.** Git's `.git/index.lock` provides exclusive write access. Auto-commit and auto-pull timers firing concurrently (or overlapping with user-triggered operations) produce "Another git process seems to be running" errors. Obsidian-Git [#683](https://github.com/Vinzent03/obsidian-git/issues/683).
+
+**7. Unit of operation mismatch.** Git's fundamental unit is the commit — a deliberate named snapshot. Note-taking requires per-keystroke or sub-second granularity. [Joplin's author](https://discourse.joplinapp.org/t/git-for-file-syncing/9474): "The unit of operation for Joplin is a file read or write, and the unit for git is the commit." [VS Live Share](https://dev.to/lostintangent/providing-a-real-time-compliment-for-git-based-collaboration-1aah): "Git wasn't built for short-term, synchronous interactions."
+
+### Specific Auto-Push Rejections in Issue Threads
+
+Auto-push has been explicitly requested and not implemented in multiple major tools:
+
+| Tool | Issue | Outcome |
+|------|-------|---------|
+| GitHub Desktop | [#10995](https://github.com/desktop/desktop/issues/10995), [#9145](https://github.com/desktop/desktop/issues/9145) | Not implemented; fetch-only maintained |
+| VS Code | [#62058](https://github.com/microsoft/vscode/issues/62058), [#14885](https://github.com/microsoft/vscode/issues/14885) | Maintainer recommended post-commit hooks; not built in |
+| lazygit | [#4647](https://github.com/jesseduffield/lazygit/issues/4647) | Not implemented |
+| Dendron | [#2075](https://github.com/dendronhq/dendron/issues/2075), [#3262](https://github.com/dendronhq/dendron/issues/3262) | Not implemented before project deprecation |
+
+### Sync Engines That Explicitly Rejected Git
+
+Five collaboration tools built custom sync backends rather than using git:
+
+- **[Joplin](https://discourse.joplinapp.org/t/git-for-file-syncing/9474):** Unit-of-operation mismatch, mobile bundling impossibility, credential complexity, unresolvable conflicts, rebase fragility. Uses WebDAV/S3/Dropbox.
+- **[SiYuan](https://github.com/siyuan-note/dejavu):** Built DejaVu — content-addressed snapshot engine with chunk-level deduplication, AES-256 encryption, and distributed mutex. README: "data synchronization through third-party synchronization disks is not supported, otherwise data may be corrupted."
+- **[Figma](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/):** CRDT-inspired property-level sync at 33ms ticks. Targets millisecond latency; git's commit-and-push model structurally cannot deliver this.
+- **[Linear](https://linear.app/now/scaling-the-linear-sync-engine):** Event-sourced SyncAction objects + WebSocket deltas + IndexedDB persistence. Sub-second collaborative issue tracking.
+- **[Notion](https://www.notion.com/blog/how-we-made-notion-available-offline):** CRDT-based block-level offline sync + push-based WebSocket updates.
+
+---
+
 ## Comparative Matrices
 
 ### D1–D2: Staging, Commit, Push/Pull
@@ -944,6 +1187,15 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 - Reflog access is absent from most popular editors
 - Stale lock file removal has no UI in any editor
 
+### Dimensions Added in Update Pass (2026-04-15) — Full-Auto Sync Prevalence Gaps
+- **Wiki.js conflict resolution:** Git storage sync interval (5 min) confirmed from docs, but conflict handling behavior when two Wiki.js instances push to the same remote was not documented or tested.
+- **CloudCannon conflict UI completeness:** Webhook-driven bidirectional sync confirmed from docs, but the full range of conflict scenarios (binary files, renamed files, concurrent branch-force-push) was not tested.
+- **Forestry historical behavior:** Inferred from community reports (blogs, Medium overviews), not from Forestry's own docs (service shut down 2023). Conflict handling assessment may be incomplete.
+- **Obsidian-Git auto-pull default rationale:** Auto-pull defaults to 0 (disabled) is documented behavior, but no maintainer statement was found explicitly explaining WHY — the rationale is implicit (avoids triggering merge conflicts for users who haven't configured it intentionally).
+- **GitHub Desktop auto-push rationale:** Issue #10995 requests auto-push but the maintainer response was not fully accessible (GitHub API returned 401). Fetch-only philosophy is inferred from consistent product behavior, not from an explicit design document.
+- **logseq/git-auto push-only rationale:** The README contains no rationale for why git-auto is push-only. The choice is undocumented.
+- **Bot/CI direct-push-to-main frequency:** semantic-release pushes directly to release branches. The total number of GitHub repos using cron-based auto-commit to main was not quantified.
+
 ### Dimensions Added in Update Pass (2026-04-15) — Scheduler Dynamics Gaps
 - **Obsidian-Git mobile background execution:** OS-level timer throttling constraints not verified. Mobile timers fire only while foregrounded, but the exact iOS/Android behavior with Obsidian's mobile app was not tested.
 - **Joplin external scheduler cadence:** "Few seconds / few minutes" not confirmed at source level; external scheduling mechanism not identified.
@@ -953,6 +1205,13 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 - **Syncthing per-file failure retry:** Documented at the scan-cycle level but per-file retry behavior (within a cycle) not fully confirmed.
 - **n8n exponential backoff:** Community reports suggest recent versions may have added native exponential backoff; docs still show fixed delay.
 - **Temporal jitter:** Confirmed absent from RetryPolicy schema — can only be added manually inside Activity code.
+
+### Dimensions Added in Update Pass (2026-04-15) — Credential Helper Token Refresh Gaps
+- **Git version distribution:** No authoritative public data on what percentage of developers have Git 2.40+, 2.41+, or 2.45+. Adoption constraints are estimated from distro package versions, not measured from actual user populations.
+- **GCM PR #1464 merge trajectory:** Open since November 2023 — unclear whether the protocol-level approach will merge or be superseded. The per-provider approach remains the production reality.
+- **GitLab concurrent refresh race:** Single-use refresh tokens under concurrent access (multiple terminals, CI + editor) create a race documented by HashiCorp but with no credential helper workaround identified.
+- **Forgejo/Codeberg token behavior:** Inferred from shared Gitea codebase. Forgejo documentation does not explicitly state refresh token lifetime or single-use behavior. Codeberg does not publish custom `app.ini` overrides.
+- **credential-store support:** Plaintext `~/.git-credentials` format confirmed to never support `password_expiry_utc` or `oauth_refresh_token`. Users relying on this helper cannot benefit from any refresh mechanism.
 
 ### Dimensions Added in Update Pass (2026-04-14) — Remaining Gaps
 - **Linear real-time persistence:** Users report "Unknown Error" when reopening without connectivity; the offline guarantee depends on maintaining a continuous session. The precise failure mode was not source-verified.
@@ -972,11 +1231,20 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 
 ## References
 
+### Evidence Files (Update Pass 2026-04-15 — Full-Auto Sync Prevalence)
+- [evidence/d1-broader-editor-git-sync-survey.md](evidence/d1-broader-editor-git-sync-survey.md) — Broader editor survey (21 tools): Wiki.js (full-auto), Gollum (auto-commit only), Dendron, Quartz, Foam, SilverBullet, Zettlr, HackMD, and 13 non-git tools. Distribution table by auto-sync category
+- [evidence/d2-cms-git-auto-behavior.md](evidence/d2-cms-git-auto-behavior.md) — Headless CMS git-auto survey (16 tools): CloudCannon, GitBook (full-auto bidirectional), Decap CMS, Sveltia CMS, Static CMS, Keystatic, Statamic, Prose.io, Publii, Front Matter CMS, Forestry (sunset). API-mediation pattern analysis
+- [evidence/d3-bot-ci-git-patterns.md](evidence/d3-bot-ci-git-patterns.md) — Bot/CI auto-commit patterns (12 tools): Dependabot, Renovate, Snyk, semantic-release, git-auto-commit-action, pre-commit.ci, autofix.ci, changesets/action. PR model as universal safety gate; semantic-release as sharpest direct-push exception
+- [evidence/d4-why-full-auto-is-rare.md](evidence/d4-why-full-auto-is-rare.md) — Why full-auto is rare: 7 root causes, 11 failure modes, 14+ issue threads (Obsidian-Git #340/#803/#872/#683, GitHub Desktop #10995/#9145, VS Code #62058/#14885, Logseq #429/#713, isomorphic-git #841), 5 sync-engine git rejections (Joplin, SiYuan, Figma, Linear, Notion)
+
 ### Evidence Files (Update Pass 2026-04-15 — Scheduler Dynamics)
 - [evidence/c1-git-editor-sync-dynamics.md](evidence/c1-git-editor-sync-dynamics.md) — Auto-sync scheduling: Obsidian-Git timer chain + PromiseQueue, SiYuan counted backoff + cloud mutex, logseq shell loop, Joplin lock serialization
 - [evidence/c2-sync-engine-dynamics.md](evidence/c2-sync-engine-dynamics.md) — Sync-engine scheduling: Linear microtask batching + 4-stage queue, Figma 33ms tick + WAL journal, Notion push subscriptions + SQLite, Google Docs OT reconciliation
 - [evidence/c3-workflow-automation-retry-patterns.md](evidence/c3-workflow-automation-retry-patterns.md) — Workflow retry policies: n8n fixed 5-try cap, Temporal exponential + typed non-retryable, Prefect jitter, Airflow exponential, Airbyte fixed-step escalation, GitHub Actions community retry
 - [evidence/c4-file-sync-tools-dynamics.md](evidence/c4-file-sync-tools-dynamics.md) — File-sync dynamics: Syncthing jittered rescan + debounce + per-device throttle, Rclone two-level retry + bwlimit timetable, Nextcloud ETag pruning, git-annex 30-min push retry, Dropbox/OneDrive conflict naming
+
+### Evidence Files (Update Pass 2026-04-15 — Merge Control Fitness)
+- [evidence/codemirror-merge-controls-fitness.md](evidence/codemirror-merge-controls-fitness.md) — @codemirror/merge mergeControls source-level analysis, alternative merge/diff UI component survey, embeddable merge control landscape, fitness assessment
 
 ### Evidence Files (Original + Update Pass 2026-04-14)
 - [evidence/d1-staging-commit.md](evidence/d1-staging-commit.md) — Staging tiers, commit message paradigms, AI generation, amend, undo, auto-commit
@@ -985,6 +1253,7 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 - [evidence/d4-branch-management.md](evidence/d4-branch-management.md) — Branch picker, dirty-tree handling, delete, worktree, spinoff/spinout
 - [evidence/d5-remote-auth.md](evidence/d5-remote-auth.md) — Credential storage, GCM architecture, token refresh, multi-account, injection points
 - [evidence/d5-sustained-auth-lifecycle.md](evidence/d5-sustained-auth-lifecycle.md) — Token expiry by forge, re-auth UX, scope drift, identity switches, credential helper TTLs
+- [evidence/credential-helper-token-refresh.md](evidence/credential-helper-token-refresh.md) — Git credential protocol extensions (password_expiry_utc, oauth_refresh_token), GCM per-provider refresh implementation, git-credential-oauth source analysis, per-forge token behavior, storage helper support matrix, scoping assessment
 - [evidence/d6-error-recovery.md](evidence/d6-error-recovery.md) — Rejected push, reflog undo, safety nets, lock files, credential recovery
 - [evidence/d6-failure-taxonomy.md](evidence/d6-failure-taxonomy.md) — Five-class error taxonomy, cross-domain anchors (Stripe/gRPC/AWS/RFC 9457), editor error surfaces
 - [evidence/d6-recovery-ux-by-mode.md](evidence/d6-recovery-ux-by-mode.md) — Recovery UX for 5 failure modes across 7+ editors, sync-engine contrast
@@ -1050,7 +1319,18 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 - [git2-rs RemoteCallbacks](https://docs.rs/git2/latest/git2/struct.RemoteCallbacks.html)
 - [Tower](https://www.git-tower.com/) — Visual git client with Conflict Wizard
 - [desktop/askpass-trampoline](https://github.com/desktop/askpass-trampoline) — GitHub Desktop credential bridge
-- [git-credential-oauth](https://github.com/hickford/git-credential-oauth) — Proactive refresh via stored refresh tokens
+- [git-credential-oauth](https://github.com/hickford/git-credential-oauth) — Proactive refresh via stored refresh tokens (~600 LOC Go, 14 forges)
+- [git-credential-oauth Issue #20](https://github.com/hickford/git-credential-oauth/issues/20) — Storage helper support matrix for `password_expiry_utc` and `oauth_refresh_token`
+- [GCM PR #1464](https://github.com/git-ecosystem/git-credential-manager/pull/1464) — Store PasswordExpiry and OAuthRefreshToken as first-class credential properties (open since Nov 2023)
+- [GCM Issue #789](https://github.com/git-ecosystem/git-credential-manager/issues/789) — Refresh tokens for GitHub (blocked-external-dependency)
+- [git-scm.com/docs/git-credential](https://git-scm.com/docs/git-credential) — Credential helper protocol spec (password_expiry_utc, oauth_refresh_token, state[], authtype)
+- [GitHub Blog — Highlights from Git 2.46](https://github.blog/open-source/git/highlights-from-git-2-46/) — Multi-stage auth, authtype/credential fields
+- [GitHub Docs — Refreshing User Access Tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) — GitHub App user token refresh (8h access, 6mo refresh)
+- [GitLab Doorkeeper config](https://gitlab.com/gitlab-org/gitlab/blob/master/config/initializers/doorkeeper.rb) — Hardcoded 2-hour access token TTL
+- [Bitbucket Cloud OAuth 2.0 docs](https://developer.atlassian.com/cloud/bitbucket/oauth-2/) — 1-hour access, 3-month refresh
+- [Azure DevOps OAuth deprecation](https://devblogs.microsoft.com/devops/no-new-azure-devops-oauth-apps/) — No new registrations Apr 2025; sunset 2026
+- [Gitea OAuth2 Provider docs](https://docs.gitea.com/development/oauth2-provider) — Configurable token lifetimes
+- [Forgejo OAuth2 Provider docs](https://forgejo.org/docs/next/user/oauth2-provider/) — Gitea-forked OAuth implementation
 - [Apple TN2336](https://developer.apple.com/library/archive/technotes/tn2336/_index.html) — iCloud conflict handling
 - [Dropbox conflicted copy](https://help.dropbox.com/organize/conflicted-copy)
 
@@ -1083,3 +1363,59 @@ The parent "Sync-Engine Apps as Prior Art" section above covers offline architec
 - [marknotfound — Reverse Engineering Linear's Sync](https://marknotfound.com/posts/reverse-engineering-linears-sync-magic/) — Independent sync analysis
 - [Making multiplayer more reliable (Figma)](https://www.figma.com/blog/making-multiplayer-more-reliable/) — WAL journal details
 - [Notion offline blog](https://www.notion.com/blog/how-we-made-notion-available-offline) — SQLite + CRDT migration
+
+### External Sources (Update Pass 2026-04-15 — Full-Auto Sync Prevalence)
+- [desktop/desktop #2191](https://github.com/desktop/desktop/issues/2191) — Auto-sync after commit request (closed, `future-proposal`)
+- [desktop/desktop #8551](https://github.com/desktop/desktop/issues/8551) — Auto-fetch interval configurability (declined)
+- [microsoft/vscode #14885](https://github.com/microsoft/vscode/issues/14885) — Auto-push request (closed, use post-commit hook)
+- [microsoft/vscode #62058](https://github.com/microsoft/vscode/issues/62058) — Revisited auto-push; shipped `git.postCommitCommand` (v1.69)
+- [Vinzent03/obsidian-git #114](https://github.com/Vinzent03/obsidian-git/issues/114) — workspace.json conflict on multi-device
+- [Vinzent03/obsidian-git #340](https://github.com/Vinzent03/obsidian-git/issues/340) — Mobile merge unsupported (isomorphic-git)
+- [Vinzent03/obsidian-git #803](https://github.com/Vinzent03/obsidian-git/issues/803) — Conflict handling for multi-device usage
+- [Vinzent03/obsidian-git #789](https://github.com/Vinzent03/obsidian-git/issues/789) — Per-device auto-commit setting request
+- [Vinzent03/obsidian-git #207](https://github.com/Vinzent03/obsidian-git/issues/207) — Push-only-from-specified-machine request
+- [denolehov/obsidian-git #74](https://github.com/denolehov/obsidian-git/issues/74) — Merge conflicts from auto-backup metadata fix
+- [denolehov/obsidian-git #78](https://github.com/denolehov/obsidian-git/issues/78) — .obsidian-git-data conflict issue
+- [tonsky.me — Local, first, forever](https://tonsky.me/blog/crdt-filesync/) — CRDTs guarantee conflict-free merge; git does not
+- [GitDocumentDB blog](https://gitddb.com/blog/) — Git-as-sync-backend structural limitations
+- [Logseq community — Is git reliable for sync?](https://discuss.logseq.com/t/discussion-is-git-the-only-truly-reliable-self-hosted-sync-for-multiple-devices-in-2025/33502)
+- [haydenull/logseq-plugin-git](https://github.com/haydenull/logseq-plugin-git) — Community plugin adding pull support to Logseq git sync
+- [Wiki.js Git storage](https://docs.requarks.io/storage/git) — 5-minute bidirectional sync interval
+- [CloudCannon syncing](https://cloudcannon.com/documentation/developer-articles/introduction-to-syncing/) — Webhook pull + per-save push
+- [CloudCannon save your changes](https://cloudcannon.com/documentation/user-articles/save-your-changes/) — Auto-commit + push on save
+- [GitBook Git Sync](https://gitbook.com/docs/getting-started/git-sync) — Bidirectional when Git Sync enabled
+- [SilverBullet git plug](https://github.com/silverbulletmd/silverbullet-git) — Opt-in full-auto (plug + autoSync: true)
+- [Decap CMS GitHub backend](https://decapcms.org/docs/github-backend/) — Browser SPA → GitHub API
+- [Keystatic GitHub mode](https://keystatic.com/docs/github-mode) — GraphQL `createCommitOnBranch`
+- [Statamic git automation](https://statamic.dev/git-automation) — Auto-commit on content events, push opt-in
+- [Front Matter CMS git integration](https://frontmatter.codes/docs/git-integration) — Manual trigger
+- [Publii git docs](https://getpublii.com/docs/host-static-website-git-repository.html) — isomorphic-git, PushRejectedError
+- [Dendron #2075](https://github.com/dendronhq/dendron/issues/2075) — Auto-sync feature request (confirms not implemented)
+- [Foam auto-sync recipe](https://foamnotes.com/user/recipes/automatic-git-syncing.html) — Delegates to GitDoc
+- [lostintangent/gitdoc](https://github.com/lostintangent/gitdoc) — Force push as default for auto-sync
+- [Dependabot PR docs](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates) — Branch+PR model, 30-day auto-rebase
+- [Renovate automerge](https://docs.renovatebot.com/key-concepts/automerge/) — `automergeType: "branch"` direct push (opt-in)
+- [git-auto-commit-action](https://github.com/stefanzweifel/git-auto-commit-action) — No pull before push
+- [semantic-release git plugin](https://github.com/semantic-release/git) — Direct push to main (derived content)
+- [kubernetes/git-sync](https://github.com/kubernetes/git-sync) — Read-only pull, never writes
+- [GitHub Copilot coding agent](https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-coding-agent) — Draft PR model
+- [Ink and Switch — Local-first software](https://www.inkandswitch.com/essay/local-first/) — SPLASH 2019, git's structural sync limitations
+- [git-annex automatic conflict resolution](https://git-annex.branchable.com/automatic_conflict_resolution/) — File duplication as maximum automated resolution
+- [Martin Fowler — Continuous Integration](https://martinfowler.com/articles/continuousIntegration.html) — Deliberate integration, not automated save
+- [Pro Git — Basic Snapshotting](https://git-scm.com/book/en/v2/Appendix-C:-Git-Commands-Basic-Snapshotting) — Staging area as intentional barrier
+- [trunk.io — Git commit messages are useless](https://trunk.io/blog/git-commit-messages-are-useless) — History bloat from automated commits
+- [mrq — Git not built for AI](https://www.getmrq.com/blog/git-not-built-for-ai) — Git's deliberate-change design assumption
+- [git mailing list — push race condition](https://git.vger.kernel.narkive.com/9Rkrrepp/git-push-race-condition) — Protocol-level race on concurrent pushes
+- [GitHub non-fast-forward docs](https://docs.github.com/en/get-started/using-git/dealing-with-non-fast-forward-errors) — Push rejection as safety mechanism
+
+### External Sources (Update Pass 2026-04-15 — Merge Control Fitness)
+- [@codemirror/merge](https://github.com/codemirror/merge) — Source-level analysis of v6.12.1 (`mergeControls`, `revertControls`, `Chunk` model, `collapseUnchanged`)
+- [Monaco Editor — IDiffEditorConstructionOptions](https://microsoft.github.io/monaco-editor/typedoc/interfaces/editor.IDiffEditorConstructionOptions.html) — DiffEditor API (read-only, no merge controls)
+- [Monaco merge controls issue #2269](https://github.com/microsoft/monaco-editor/issues/2269) — Feature request for merge controls (not implemented)
+- [VS Code merge conflict docs](https://code.visualstudio.com/docs/sourcecontrol/merge-conflicts) — 3-way merge editor UX, checkbox model
+- [react-diff-view](https://github.com/otakustay/react-diff-view) — Read-only diff viewer with widget system
+- [react-diff-viewer-continued](https://github.com/Aeolun/react-diff-viewer-continued) — Read-only diff viewer (v4.2.0)
+- [Mergely docs](https://www.mergely.com/doc) — `mergeCurrentChange(side)` API, LGPL license
+- [diffview.nvim](https://github.com/sindrets/diffview.nvim) — 3/4-way merge, per-hunk keybindings
+- [GitKraken merge conflict resolution tool](https://www.gitkraken.com/features/merge-conflict-resolution-tool) — Checkbox model + AI resolve
+- [GitKraken v11.2 blog](https://www.gitkraken.com/blog/gitkraken-desktop-11-2-merge-conflicts-meet-ai-and-more-dev-quality-of-life-wins) — Per-hunk revert button, AI auto-resolve

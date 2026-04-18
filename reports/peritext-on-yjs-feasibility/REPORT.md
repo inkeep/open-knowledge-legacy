@@ -2,7 +2,7 @@
 title: "Peritext-on-Yjs Feasibility: Can the Peritext Rich Text Model Be Implemented on Y.Text with a ProseMirror Binding?"
 description: "Deep source-code-level assessment of whether the Peritext rich text model (flat text + formatting annotations) can be implemented on top of Yjs's Y.Text type with a ProseMirror binding. Covers Y.Text formatting internals, block-level encoding, boundary semantics, void nodes, existing bindings, TipTap/Hocuspocus blast radius, and three implementation architectures with effort estimates."
 createdAt: 2026-04-07
-updatedAt: 2026-04-16
+updatedAt: 2026-04-07
 subjects:
   - Yjs
   - Peritext
@@ -41,7 +41,7 @@ The Peritext model on Yjs is feasible but splits into two distinct questions wit
 
 **Key Findings:**
 
-- **Yjs 14 unified YType is the game-changer (type-system only).** There is no longer a separate Y.Text class -- all types are YType<DeltaConf>. y-prosemirror operates through the generic delta interface. The type-system incompatibility that made the source-toggle problem intractable in Yjs 13 is architecturally resolved. This does NOT make Yjs Peritext-compliant — `ContentFormat` marker-item storage is unchanged between v13 and v14 (see D1). **npm availability (verified 2026-04-07; UPDATED 2026-04-16):** The v14 line has RE-SCOPED on npm from `yjs` to `@y/y`. Latest v14: `@y/y@14.0.0-rc.13` (2026-04-14), still release-candidate. The `y-prosemirror@2.0.0-2` tag exists in git but was published only to `@y/prosemirror` (scoped rename) on npm, and the underlying rewrite PR #208 was **closed without merge on 2026-03-19**. Stable latest remains `yjs@13.6.30`. **Ecosystem readiness caveat (UPDATED 2026-04-16):** `@tiptap/y-tiptap@3.0.3`, `@tiptap/extension-collaboration@3.22.3`, and `@hocuspocus/server@4.0.0-rc.5` (latest, shipped 2026-04-16) all peer-pin `yjs: ^13`. No upstream PR for Yjs 14 support exists on either. Peer-dep conflicts for the TipTap/Hocuspocus stack are immediate, not theoretical. See [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) for the full deep-dive.
+- **Yjs 14 unified YType is the game-changer.** There is no longer a separate Y.Text class -- all types are YType<DeltaConf>. y-prosemirror operates through the generic delta interface. The type-system incompatibility that made the source-toggle problem intractable in Yjs 13 is architecturally resolved. **npm availability (verified 2026-04-07):** `yjs@14.0.0-16` (beta tag), `yjs@14.0.0-8` (next tag), `y-prosemirror@2.0.0-2` (pre-release). Stable latest remains `yjs@13.6.30`. **Ecosystem readiness caveat:** `@tiptap/y-tiptap` v3.0.2 and `@hocuspocus/server` v3.4.4 likely pin `yjs@^13` — peer dependency conflicts are expected when attempting to use v14 alongside the current TipTap/Hocuspocus stack. This is the primary practical barrier.
 - **Three implementation architectures exist, ranging from 2 weeks to 10 weeks.** Architecture C (delta-protocol dual view) is 2-4 weeks and gives you dual-view behavior immediately. Architecture A (full Peritext with block markers) is 6-10 weeks and gives you the complete model.
 - **Hocuspocus, providers, cursors, undo -- zero blast radius.** All sync infrastructure operates at the Y.Doc level, not the type level.
 - **No one has built a Y.Text-to-ProseMirror binding.** The closest prior art is automerge-prosemirror (3,272 lines) which maps flat text + spans to ProseMirror's tree. y-quill (363 lines) maps Y.Text to Quill including block-level formatting via newline attributes.
@@ -190,8 +190,6 @@ Use y-prosemirror v14 as-is. Add serialization layer for source view. Estimated 
 
 ## Recommendation
 
-> **2026-04-16 update.** This section's "2-4 weeks" timeline has been challenged by fresh ecosystem evidence. The `y-prosemirror` v2 rewrite was closed without merge; Yjs 14 is still actively release-candidating under a new npm scope; and the Architecture C "non-collaborative source view" is a product regression for Open Knowledge specifically. The recalibrated estimate for Open Knowledge's migration surface is **12-19 weeks**, not 2-4. The paragraph below remains as originally written — but readers considering it as input to a decision should read [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) first.
-
 The three architectures form a progression, not a choice:
 
 1. **Ship Architecture C now (2-4 weeks).** Dual-view toggle with non-collaborative source view. Same trade-off as Option I from the source-toggle report, but cleaner via the delta protocol.
@@ -204,25 +202,137 @@ The three architectures form a progression, not a choice:
 
 ---
 
+## 2026-04-16 Refresh — Source-Verified Update (Path C)
+
+**Context.** This section refreshes the original 2026-04-07 findings with source-traced evidence captured today. Four parallel Opus subagents verified npm registry state, GitHub source code, and ecosystem signals. Two prior-report claims are sharpened, two are materially refuted, and one entirely new finding reframes the practical adoption path.
+
+**Evidence files:** `evidence/refresh-2026-04-16-yjs14-ecosystem.md`, `evidence/refresh-2026-04-16-bindings-architecture-c.md`, `evidence/refresh-2026-04-16-peritext-implementations.md`, `evidence/refresh-2026-04-16-adjacent-crdts-and-server-alternatives.md`.
+
+### What changed since 2026-04-07
+
+#### NEW — `@y/*` npm scope rebrand (the missing piece)
+
+**The single biggest fact this refresh surfaces, missed entirely by the prior report.** Yjs 14's active publish stream lives on a new npm scope — `@y/*` — not on the legacy `yjs` package. Confirmed via npm registry probes (2026-04-16):
+
+| New package | Version | Peer-deps |
+|---|---|---|
+| `@y/y` | `14.0.0-rc.13` (2026-04-14) | engines: Node ≥22 |
+| `@y/prosemirror` | `2.0.0-2` (2025-12-16) | `@y/y@^14.0.0-rc.13` |
+| `@y/codemirror` | `0.0.0-3` | `@y/y@^14.0.0-22` (older scheme — peer mismatch with prosemirror v2 today) |
+| `@y/websocket` | `4.0.0-rc.2` (2026-04-15) | `@y/y@^14.0.0-6` |
+| `@y/protocols` | `1.0.6-rc.1` (2026-02-13) | `yjs: 14.0.0-* \|\| ^14` |
+
+Source: `src/index.js` of `@y/y` includes a runtime guard `__$YJS14$__` confirming this is the v14 source tree. Engines field requires Node ≥22.
+
+**Reframing implication:** "Adopt Yjs 14" is NOT "wait for Hocuspocus + TipTap to bump their `yjs@^13` peer-deps." It IS "switch from `Hocuspocus + @tiptap/y-tiptap + y-codemirror.next` to `@y/websocket + @y/prosemirror + @y/codemirror`." That's a bigger architectural decision than the prior report framed it as — but it is *unblocked at the package level today*.
+
+#### REFUTED — "@tiptap/y-tiptap and Hocuspocus likely pin yjs ^13 — peer dep conflicts expected"
+
+Prior report flagged peer-dep pinning as the practical barrier. Verified today:
+
+- **`@hocuspocus/server@4.0.0-rc.5` published 2026-04-16 (TODAY)** — STILL pins `yjs: ^13.6.8` and `lib0: ^0.2.47`. The v4 RC release notes mention Yjs 14 nowhere; v4 is a runtime-modernization release (cross-runtime via `crossws`, structured transaction origins), not a Yjs 14 migration. Zero PRs or issues mention Yjs 14 migration.
+- **`@tiptap/y-tiptap@3.0.3` published 2026-04-08 (8 days ago)** — STILL pins `yjs: ^13.5.38`. If TipTap intended to migrate, this fresh release would have been the natural moment. They didn't.
+- **`@tiptap/extension-collaboration@3.22.3`** pins `yjs: ^13`. **`@tiptap/extension-collaboration-cursor`** still on v2.26.2 (deprecated → caret).
+
+**The refutation:** prior framed peer-dep pinning as "the primary practical barrier" implying "wait for them to fix it." Today's evidence: they're not fixing it — they're shipping new releases on Yjs 13. The practical barrier is REAL but the solution isn't waiting; it's switching to `@y/*`.
+
+**Forking-Hocuspocus alternative (cross-cutting finding from D13):** verified across npm — y-websocket@3.0.0, y-partykit@0.0.33, @liveblocks/yjs@3.18.2, @lexical/yjs@0.43.0, @platejs/yjs@52.3.10 ALL pin yjs@^13.x. The Yjs ecosystem cliff is fleet-wide. **`openDirectConnection` is load-bearing** for our server-authoritative architecture (`setupServerObservers` and `applyAgentMarkdownWrite` depend on it) — y-partykit covers ~half the lifecycle hooks; y-sweet is intentionally less extensible; Liveblocks is SaaS-only; bare y-websocket lacks the lifecycle. **Forking Hocuspocus to bump yjs peerDep (1-2 days + retest) is strictly cheaper than swapping server libraries** — IF you stay on the `yjs` legacy package. Switching to `@y/websocket` is a different shape entirely.
+
+#### CONFIRMED + SHARPENED — Unified `YType<DConf>` is real
+
+Prior claim ("there is no longer a separate Y.Text class — all types are YType<DeltaConf>") is **structurally correct** with one cosmetic correction:
+- The class is `YType<DConf>` where `DConf extends delta.DeltaConf` (not `YType<DeltaConf>` as prior report wrote).
+- Source: `@y/y/src/ytype.js` defines a single `export class YType`. `@y/y/src/index.js:23` exports ONLY `YType as Type` — no YText/YMap/YArray/YXmlFragment exports anywhere.
+- The same instance has BOTH `_map` (KV/tree storage) AND `_start` (sequence/text linked-list head), and exposes BOTH method families: `insert/format/push/slice/get` (sequence) AND `deleteAttr` + module-level `typeMapSet/typeMapGet` (map).
+- `Doc.get(key, name)` replaces `getText/getXmlFragment/getArray/getMap` — the `name` parameter discriminates the delta-schema flavor.
+- `applyDelta(d, am)` accepts a generic `delta.Delta<DC>`, dispatching to internal storage via the unified delta.
+
+**A single YType instance can structurally serve both flat-sequence and tree-structured projections.** This is real, not a typing convenience.
+
+#### REFUTED — "Architecture C (delta-protocol dual view) ships in 2-4 weeks"
+
+Prior report's flagship claim. Materially optimistic given today's evidence:
+
+- **No public dual-view binding exists.** Not in demos, not in `@y/prosemirror` issues, not in lib0 examples. The `lib0/src/delta/binding.js` `Binding<DeltaA, DeltaB>` primitive exists but ships with `// @ts-nocheck` and multiple `@todo` markers. **The first user in production will be doing original work.**
+- **Schema gap is load-bearing.** `@y/prosemirror@2.0.0-2` uses `$prosemirrorDelta = delta.$delta({ name: s.$string, attrs: ..., text: true, recursiveChildren: true })` (tree). `@y/codemirror@0.0.0-3` `YSyncConfig` constructor takes `Y.Type<{ text: true }>` — and at `y-sync.js:209` does a hard cast `/** @type {string} */ (op.insert)` — **it CANNOT consume a tree delta**. Two shapes to bridge:
+  - Shape 1 — custom CM-from-tree fork with a tree→string flattener
+  - Shape 2 — two YTypes + lib0 Binding + transformer (which is morally what we have today, just relocated to a different layer)
+- **Pre-release churn risk.** `@y/y@14.0.0-rc.13` published 2026-04-14 (yesterday). Peer mismatch today between `@y/prosemirror` (peers rc.13) and `@y/codemirror` (peers older `^14.0.0-22` scheme). `syncPlugin` v2 re-runs full `d.diff(ycontent, pcontent)` on every PM transaction — commented-out `appendTransaction` block signals in-flight optimization work.
+
+**Sharpened framing:**
+- Architecture C is **architecturally sound** (HIGH confidence).
+- Architecture C is **buildable as a SPIKE in 2-4 weeks** (MEDIUM confidence).
+- Architecture C is **NOT buildable in 2-4 weeks as a production-grade replacement for the current bridge with all existing invariants intact** (HIGH confidence against this).
+
+#### CONFIRMED + UNADDRESSED — Boundary anomaly persists in Yjs 14
+
+- **Yjs v14 has not added per-mark expand semantics.** Source-verified: `src/structs/Item.js` line 1093+ `ContentFormat` is byte-identical to v13.6.30's — only `key` + `value`, zero `expand` field. v14's restructure into `ytype.js` did NOT touch formatting semantics.
+- **Zero PRs and zero issues in `yjs/yjs` mention "peritext".** Issue #291 (canonical reproducer) still open since April 2021.
+- For markdown editor use case (rich-text formatting uncommon, agent writes go through `applyAgentMarkdownWrite` at markdown-level not at format-mark-level), the anomaly is unlikely to bite.
+- **Loro DOES solve it** via documented `configTextStyle({ <mark>: { expand: 'before'|'after'|'both'|'none' } })` API — mirrors Automerge 2.2's ExpandMark.
+
+#### CONFIRMED — Zero production users on Yjs 14
+
+Verified package.json forensics on production Yjs editors:
+- AFFiNE: `yjs@13.6.21` (patched)
+- BlockSuite: `yjs@^13.6.18`
+- Outline: `yjs@^13.6.30`
+- Hocuspocus self: `yjs@^13.6.8`
+
+**Zero production users on Yjs 14 identified.** Strongest negative signal: TipTap's freshest release (8 days ago) chose to stay on Yjs 13.
+
+### NEW dimension — Loro now concretely competitive
+
+Prior report touched Loro briefly via the `loro-ecosystem-readiness-assessment` cross-reference. Refreshed today:
+
+- **`loro-prosemirror@0.4.3`** (Feb 2026) provides `LoroSyncPlugin` + `LoroUndoPlugin` + `LoroEphemeralCursorPlugin` — full parity with y-prosemirror's plugin model.
+- **Loro has correct Peritext semantics** — solves the boundary anomaly Yjs 14 doesn't.
+- **Pre-1.0 with active data-loss issue #77** from 2026-03-28 — material risk. Failure shape is an `init()`-race in `LoroSyncPlugin` (empty-mapping + early `docChanged` → all Loro content replaced with default empty PM doc), not a dual-view / tree-flat bug. See [evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md](evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md).
+- **No canonical Loro server** — would have to build server-authoritative document-lifecycle from scratch (no `openDirectConnection` equivalent).
+- **No Loro CodeMirror binding for dual-view — structurally confirmed 2026-04-16.** Source trace: `loro-codemirror@0.3.3` binds exclusively to `LoroText` (`utils.ts:6-8`), filters non-text diffs at observer entry (`sync.ts:64`: `if (diff.type !== "text") return`), and the sibling `loro-prosemirror@0.4.3` requires a disjoint `LoroMap<{nodeName, attributes, children: LoroList}>` shape (`lib.ts:19-37`) that `loro-codemirror` cannot consume. Same "bridge problem relocates" outcome as `@y/*`. SchoolAI's `loro-extended` wrapper (53⭐) has not built a tree-aware CM binding either. See [evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md](evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md).
+
+**One more option in the field, with a different cost shape: better semantics + worse server tooling vs Yjs 14's mediocre semantics + (relatively) better tooling.** The dual-view binding gap is ecosystem-universal — not a Yjs-specific deficit — so the CRDT choice does not determine whether dual-view is solvable. Only greenfield binding work does.
+
+### NEW dimension — MDX-on-Peritext is greenfield
+
+- **No production MDX-Peritext editor exists in 2026.** MDX-Editor (mdxeditor.dev) uses Lexical 0.35.0 with no CRDT — single-user. BlockSuite/AFFiNE uses Y.Text-per-block (Yjs delta format, not Peritext) — no MDX semantics. Loro has Peritext + ProseMirror binding but no MDX-aware production user.
+- **The architectural sketch is plausible but unvalidated.** Loro Rich Text + custom container types for void MDX nodes is the closest path. No reference implementation.
+- **Open Knowledge has a moat opportunity** — gluing MDX semantics + Peritext CRDT semantics has no published prior art.
+
+### Adjacent CRDTs ruled out
+
+| CRDT | Status | Why ruled out |
+|---|---|---|
+| Diamond Types | Research-grade plain-text only | "Doesn't support … editor bindings" per Joseph Gentle |
+| Cola | Plain-text Rust | No JS bindings published |
+| y-octo | Production-grade YATA Rust impl (AFFiNE Cloud + Electron) | Yjs binary protocol compat — does NOT add Peritext. Performance/native story, not semantic upgrade. No npm package |
+| Earthstar | Distributed sync | Wrong category (document database) |
+| Tribles | Knowledge graph | Wrong category |
+
+### Net practical implication
+
+The prior report's strategic recommendation ("Architecture C in 2-4 weeks") **survives the framing change** but with materially different costs:
+
+- **The package switch is bigger than implied.** `Hocuspocus + @tiptap/y-tiptap + y-codemirror.next` → `@y/websocket + @y/prosemirror + @y/codemirror` is a whole-stack swap, not a peer-dep bump.
+- **2-4 weeks is the SPIKE estimate, not the production estimate.** No public dual-view dual-editor binding exists; this would be original work.
+- **Pre-release churn is fresh.** `@y/y@rc.13` is yesterday's release; peer-dep mismatches between `@y/prosemirror` and `@y/codemirror` exist TODAY.
+- **The Hocuspocus alternative is now: stay on `yjs@13` + fork to bump peerDep (1-2 days)** — but this gives up Yjs 14's unification entirely.
+- **Loro is genuinely competitive** for the Peritext-correctness axis; weaker for the production-server axis.
+
+The decision shape is:
+- **Architecture C TODAY:** spike on `@y/*` stack, accept original-binding-work risk, accept rc churn. Zero production users to copy from.
+- **Wait 6-12 months:** ecosystem stabilizes, production users appear, churn reduces.
+- **Loro path:** swap entire CRDT, get correct Peritext semantics, build server tooling.
+- **Stay on Yjs 13:** the dual-CRDT bridge is well-understood; correctness can be improved within the current architecture (per the active `bridge-correctness` spec).
+
+---
+
 ## Limitations & Open Questions
 
-> **2026-04-16 update.** This section has been revised with fresh ecosystem evidence. See the dedicated deep-dive for the bridge-correctness spec: [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md).
-
-### Resolved by 2026-04-16 evidence
-
-- **Yjs 14 production readiness: NOT ready.** The v14 line has moved from `yjs` (npm) to a new scoped package `@y/y` (npm). As of 2026-04-16, latest is `@y/y@14.0.0-rc.13` (published 2026-04-14), with RC cadence of ~1/day. Pre-release phase has lasted ~12 months. No discovered production deployment. Adjacent-library ecosystem (`@hocuspocus/server@4.0.0-rc.5`, `@tiptap/extension-collaboration@3.22.3`, `@tiptap/y-tiptap@3.0.3`, `y-codemirror.next@0.3.5`) all still peer-pin `yjs: ^13`. See [evidence/2026-04-16-updates/yjs-14-release-status.md](evidence/2026-04-16-updates/yjs-14-release-status.md).
-
-- **y-prosemirror v2 empirical validation: NEGATIVE.** PR #208 (the v2 rewrite) was closed without merge on 2026-03-19 by dmonad as too ambitious. `@y/prosemirror@2.0.0-2` on npm is 4-month-stale and pins a now-stale `@y/y@14.0.0-16`. No stable v2 release committed. The "y-prosemirror v14 delta protocol works as-is" assumption in the original Architecture C estimate is not supportable today. See [evidence/2026-04-16-updates/adjacent-library-compat.md](evidence/2026-04-16-updates/adjacent-library-compat.md).
-
-- **"Yjs 14 == Peritext" was a category error.** Yjs 14 refactored the type system (unified YType, delta protocol, content renderer API). It did NOT change the storage model for formatting marks (`ContentFormat` marker items are unchanged between `yjs 13.6.30` and `@y/y 14.0.0-rc.13`). The Peritext boundary anomaly documented in D1 is PRESERVED in Yjs 14. See [evidence/2026-04-16-updates/peritext-ecosystem-state.md](evidence/2026-04-16-updates/peritext-ecosystem-state.md).
-
-- **"2-4 weeks for Architecture C" is a greenfield-prototype estimate, not an Open-Knowledge-migration estimate.** Recalibrated order-of-magnitude for the concrete Open Knowledge stack (yjs ^13 pinned across 4 workspace packages, `y-prosemirror@1.3.7` safety patch per CLAUDE.md precedent #9, C1-C10 convergence tests, I1-I7 fidelity invariants, collaborative CodeMirror source mode): **12-19 weeks**. See [evidence/2026-04-16-updates/effort-recalibration.md](evidence/2026-04-16-updates/effort-recalibration.md).
-
-- **Architecture C's "non-collaborative source view" is a product regression.** Open Knowledge today supports concurrent WYSIWYG + source-mode CodeMirror editing with CRDT convergence (C1-C10 integration tests). Architecture C's "source view non-collaborative" means source-mode becomes read-only, OR local-only edits that overwrite peers on switch-back. Neither was priced in the prior estimate.
-
-### Still not confirmed (deferred to prototype work)
-
-- Whether the Peritext boundary anomaly manifests in realistic editing patterns at a product-visible rate (this report's D1). The bridge-correctness spec's Bucket A (R1 content-preservation post-condition + R2 elevated fuzz) generates production signal that informs this — see SPEC §7 M4 / §11 Q6.
+### Not Fully Confirmed
+- Whether y-prosemirror v14's delta protocol actually works when given a flat YType (no named children) -- requires empirical testing
+- Whether Yjs 14's unified YType is stable enough for production (currently RC)
+- Whether the boundary anomaly manifests in realistic editing patterns
 
 ### Out of Scope
 - Designing the ProseMirror schema for the product
@@ -234,9 +344,6 @@ The three architectures form a progression, not a choice:
 
 ## References
 
-### Updates
-- [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) -- Fresh (2026-04-16) re-assessment of whether Peritext-on-Yjs-14 can be pulled into the bridge-correctness spec's scope today. Answers: no, because four load-bearing assumptions of the original 2-4-week estimate have become false.
-
 ### Evidence Files
 - [evidence/ytext-formatting-api.md](evidence/ytext-formatting-api.md) -- Y.Text formatting internals, ContentFormat, boundary semantics
 - [evidence/block-level-structure.md](evidence/block-level-structure.md) -- Quill Delta model, Automerge block markers, BlockSuite
@@ -245,11 +352,11 @@ The three architectures form a progression, not a choice:
 - [evidence/tiptap-hocuspocus-blast-radius.md](evidence/tiptap-hocuspocus-blast-radius.md) -- Component-by-component blast radius
 - [evidence/void-nodes.md](evidence/void-nodes.md) -- ContentEmbed, ContentType, void nodes
 - [evidence/implementation-effort.md](evidence/implementation-effort.md) -- Three architecture estimates
-- [evidence/2026-04-16-updates/yjs-14-release-status.md](evidence/2026-04-16-updates/yjs-14-release-status.md) -- Yjs 14 release-candidate status as of 2026-04-16, `@y/y` npm scope rename
-- [evidence/2026-04-16-updates/adjacent-library-compat.md](evidence/2026-04-16-updates/adjacent-library-compat.md) -- Full library compat matrix: y-prosemirror / y-codemirror / Tiptap / Hocuspocus all pin yjs ^13
-- [evidence/2026-04-16-updates/peritext-ecosystem-state.md](evidence/2026-04-16-updates/peritext-ecosystem-state.md) -- Yjs 14 is a type-system refactor, not a Peritext-semantic one
-- [evidence/2026-04-16-updates/file-by-file-migration-scope.md](evidence/2026-04-16-updates/file-by-file-migration-scope.md) -- Bridge surface deletion + replacement LOC breakdown
-- [evidence/2026-04-16-updates/effort-recalibration.md](evidence/2026-04-16-updates/effort-recalibration.md) -- 12-19 weeks recalibrated estimate for Open Knowledge migration
+- [evidence/refresh-2026-04-16-yjs14-ecosystem.md](evidence/refresh-2026-04-16-yjs14-ecosystem.md) -- Yjs 14 RC.13 status, @y/* npm rebrand, Hocuspocus 4.0.0-rc.5 still pinning yjs@^13
+- [evidence/refresh-2026-04-16-bindings-architecture-c.md](evidence/refresh-2026-04-16-bindings-architecture-c.md) -- @y/prosemirror v2 + @y/codemirror source-trace; Architecture C dual-view gap
+- [evidence/refresh-2026-04-16-peritext-implementations.md](evidence/refresh-2026-04-16-peritext-implementations.md) -- Yjs 14 ContentFormat unchanged; Loro is only TipTap-compatible Peritext binding shipping today
+- [evidence/refresh-2026-04-16-adjacent-crdts-and-server-alternatives.md](evidence/refresh-2026-04-16-adjacent-crdts-and-server-alternatives.md) -- Diamond Types/Cola/y-octo/Loro/Hocuspocus alternatives mapped
+- [evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md](evidence/refresh-2026-04-16-loro-codemirror-tree-aware-check.md) -- Loro CodeMirror binding is flat-string-only (same limitation as `@y/codemirror`); dual-view binding gap is ecosystem-universal, not Yjs-specific. Cross-report: shared with `reports/yjs-14-ecosystem-adoption` D3
 
 ### External Sources
 - [Peritext: A CRDT for Rich-Text Collaboration](https://www.inkandswitch.com/peritext/)
