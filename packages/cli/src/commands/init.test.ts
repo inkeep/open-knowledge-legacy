@@ -262,6 +262,44 @@ describe('runInit', () => {
     });
   });
 
+  describe('Codex', () => {
+    it('writes .codex/config.toml with mcp_servers table', () => {
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('codex');
+      expect(result.editors[0].action).toBe('written');
+
+      const configPath = join(testDir, '.codex', 'config.toml');
+      expect(existsSync(configPath)).toBe(true);
+
+      const config = Bun.TOML.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.mcp_servers).toBeDefined();
+      expect(config.mcp_servers['open-knowledge']).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+
+    it('preserves existing Codex MCP entries', () => {
+      mkdirSync(join(testDir, '.codex'), { recursive: true });
+      writeFileSync(
+        join(testDir, '.codex', 'config.toml'),
+        ['[mcp_servers.other]', 'command = "node"', 'args = ["x"]', ''].join('\n'),
+      );
+
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+      expect(result.editors[0].action).toBe('written');
+
+      const config = Bun.TOML.parse(readFileSync(join(testDir, '.codex', 'config.toml'), 'utf-8'));
+      expect(config.mcp_servers.other).toEqual({ command: 'node', args: ['x'] });
+      expect(config.mcp_servers['open-knowledge']).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+  });
+
   describe('multi-editor', () => {
     it('writes Claude + Cursor configs in a single run', () => {
       const result = runInit({ cwd: testDir, editors: ['claude', 'cursor'] });
@@ -276,7 +314,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
     });
 
-    it('writes all four editors with editors: all', () => {
+    it('writes all supported editors with editors: all', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
@@ -286,7 +324,7 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
-      expect(result.editors).toHaveLength(4);
+      expect(result.editors).toHaveLength(5);
       for (const editor of result.editors) {
         expect(editor.action).toBe('written');
       }
@@ -294,6 +332,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(true);
       expect(existsSync(join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json'))).toBe(true);
     });
 
@@ -354,17 +393,18 @@ describe('runInit', () => {
     it('--no-mcp skips all editors', () => {
       const result = runInit({
         cwd: testDir,
-        editors: ['claude', 'cursor', 'vscode'],
+        editors: ['claude', 'cursor', 'vscode', 'codex'],
         mcp: false,
       });
 
-      expect(result.editors).toHaveLength(3);
+      expect(result.editors).toHaveLength(4);
       for (const editor of result.editors) {
         expect(editor.action).toBe('skipped-flag');
       }
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(false);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(false);
     });
   });
 
@@ -720,6 +760,12 @@ describe('detectInstalledEditors', () => {
     expect(detected).toContain('vscode');
   });
 
+  it('detects Codex when .codex/ exists', () => {
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('codex');
+  });
+
   it('detects Windsurf when ~/.codeium/windsurf/ exists (via home override)', () => {
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
@@ -731,21 +777,23 @@ describe('detectInstalledEditors', () => {
     expect(detected).not.toContain('windsurf');
   });
 
-  it('returns all four when all editor config dirs exist', () => {
+  it('returns all supported editors when all editor config dirs exist', () => {
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
     expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
-    expect(detected).toHaveLength(4);
+    expect(detected).toHaveLength(5);
   });
 
   it('preserves EDITOR_TARGETS ordering in return value', () => {
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
-    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'windsurf']
-    expect(detected).toEqual(['claude', 'cursor', 'vscode']);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'codex', 'windsurf']
+    expect(detected).toEqual(['claude', 'cursor', 'vscode', 'codex']);
   });
 
   it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {

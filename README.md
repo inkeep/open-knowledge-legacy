@@ -22,6 +22,7 @@ bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok 
 | Claude Code | `<project>/.mcp.json`                 | Project     |
 | Cursor      | `<project>/.cursor/mcp.json`          | Project     |
 | VS Code     | `<project>/.vscode/mcp.json`          | Project     |
+| Codex       | `<project>/.codex/config.toml`        | Project     |
 | Windsurf    | `~/.codeium/windsurf/mcp_config.json` | User-global |
 
 Override with `--editor <name1,name2>` or `--editor all`. AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
