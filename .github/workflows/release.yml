@@ -33,6 +33,11 @@ jobs:
           # to treat the push as GITHUB_TOKEN and skip triggering downstream workflows.
           persist-credentials: false
 
+      # npm trusted publishing requires npm 11.5.1+ and Node 22.14.0+:
+      # https://docs.npmjs.com/trusted-publishers#github-actions-configuration
+      # We pin Node 24 to satisfy that baseline directly while still covering
+      # the repo's build needs.
+      #
       # Node 22+ is required because turbo's `^build` pulls in
       # `@inkeep/open-knowledge-app#build` (vite build) transitively. Vite's config
       # loader evaluates the bundled config with native `import()`, and externalized
@@ -43,21 +48,8 @@ jobs:
       - name: Setup npm for OIDC publishing
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Ensure npm 11.5.1+ for OIDC support
-        run: |
-          if npm install -g npm@latest 2>/dev/null; then
-            echo "npm upgraded via bundled npm"
-          else
-            echo "::warning::Bundled npm broken, bootstrapping from tarball"
-            NPM_VER=$(node -e "fetch('https://registry.npmjs.org/npm/latest').then(r=>r.json()).then(d=>console.log(d.version))")
-            curl -fsSL "https://registry.npmjs.org/npm/-/npm-${NPM_VER}.tgz" | tar xz -C /tmp
-            node /tmp/package/bin/npm-cli.js install -g "npm@${NPM_VER}"
-            rm -rf /tmp/package
-          fi
-          echo "npm $(npm --version)"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
