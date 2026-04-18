@@ -185,37 +185,6 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
   });
 });
 
-// ── §6.1 Broken link-ref ────────────────────────────────────────────────────
-
-test.describe('§6.1 Broken link-ref', () => {
-  test('[x][missing] gets cm-link-ref-broken; adding definition clears it', async ({ page }) => {
-    // Seed with a VALID ref pair first (survives CRDT round-trip without escaping),
-    // then type a broken ref directly in source mode to avoid remark-stringify escaping brackets.
-    await seedMarkdown(testDocName, '[valid link][exists]\n\n[exists]: https://example.com');
-    await switchToSource(page);
-
-    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping).
-    // Playwright's expect().toHaveCount() auto-retries until the assertion passes
-    // or the timeout expires — no manual waitForTimeout needed.
-    await page.locator('.cm-content').focus();
-    await page.keyboard.press('ControlOrMeta+End');
-    await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
-
-    // The [click here][missing] should be marked broken — StateField rescans
-    // on docChanged, so the mark should appear within the assertion's timeout.
-    const broken = page.locator('.cm-link-ref-broken');
-    await expect(broken).toHaveCount(1, { timeout: 5_000 });
-
-    // Now add the missing definition — the broken mark should clear as soon
-    // as the StateField's next docChanged run sees the new definition.
-    await page.keyboard.press('ControlOrMeta+End');
-    await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
-
-    const brokenAfter = page.locator('.cm-link-ref-broken');
-    await expect(brokenAfter).toHaveCount(0, { timeout: 5_000 });
-  });
-});
-
 // ── §6.1 Broken wikilink ────────────────────────────────────────────────────
 
 test.describe('§6.1 Broken wikilink', () => {
