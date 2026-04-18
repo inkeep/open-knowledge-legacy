@@ -12,6 +12,11 @@
   "bin": {
     "open-knowledge": "./dist/cli.mjs"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inkeep/open-knowledge.git",
+    "directory": "packages/cli"
+  },
   "files": [
     "dist",
     "!dist/**/*.map"
