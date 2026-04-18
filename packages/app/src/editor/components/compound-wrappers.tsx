@@ -160,7 +160,7 @@ export function EditorTabs({
 // ─── EditorTab ────────────────────────────────────────────────────────────────
 // Child wrapper for <Tab> blocks. Reads active state from parent DOM.
 // Inactive panels use data-[state=inactive]:hidden (display:none) — this is a
-// documented exemption from Precedent #22: standard tab UX hides inactive panels;
+// documented exemption from Precedent #24: standard tab UX hides inactive panels;
 // content is accessible by clicking the tab trigger, not permanently hidden.
 
 export function EditorTab({ value, children }: { value?: string; children?: ReactNode }) {

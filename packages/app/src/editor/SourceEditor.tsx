@@ -96,7 +96,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
 
     // Mirror the TiptapEditor DOM listeners so Observer B's typing-defer
     // window applies uniformly regardless of which editor has focus (R7 fix).
-    const mark = () => markUserTyping(provider.document);
+    const mark = () => markUserTyping();
     const dom = view.contentDOM;
     dom.addEventListener('keydown', mark);
     dom.addEventListener('paste', mark);

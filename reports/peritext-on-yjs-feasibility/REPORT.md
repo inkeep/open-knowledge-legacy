@@ -2,7 +2,7 @@
 title: "Peritext-on-Yjs Feasibility: Can the Peritext Rich Text Model Be Implemented on Y.Text with a ProseMirror Binding?"
 description: "Deep source-code-level assessment of whether the Peritext rich text model (flat text + formatting annotations) can be implemented on top of Yjs's Y.Text type with a ProseMirror binding. Covers Y.Text formatting internals, block-level encoding, boundary semantics, void nodes, existing bindings, TipTap/Hocuspocus blast radius, and three implementation architectures with effort estimates."
 createdAt: 2026-04-07
-updatedAt: 2026-04-07
+updatedAt: 2026-04-16
 subjects:
   - Yjs
   - Peritext
@@ -41,7 +41,7 @@ The Peritext model on Yjs is feasible but splits into two distinct questions wit
 
 **Key Findings:**
 
-- **Yjs 14 unified YType is the game-changer.** There is no longer a separate Y.Text class -- all types are YType<DeltaConf>. y-prosemirror operates through the generic delta interface. The type-system incompatibility that made the source-toggle problem intractable in Yjs 13 is architecturally resolved. **npm availability (verified 2026-04-07):** `yjs@14.0.0-16` (beta tag), `yjs@14.0.0-8` (next tag), `y-prosemirror@2.0.0-2` (pre-release). Stable latest remains `yjs@13.6.30`. **Ecosystem readiness caveat:** `@tiptap/y-tiptap` v3.0.2 and `@hocuspocus/server` v3.4.4 likely pin `yjs@^13` — peer dependency conflicts are expected when attempting to use v14 alongside the current TipTap/Hocuspocus stack. This is the primary practical barrier.
+- **Yjs 14 unified YType is the game-changer (type-system only).** There is no longer a separate Y.Text class -- all types are YType<DeltaConf>. y-prosemirror operates through the generic delta interface. The type-system incompatibility that made the source-toggle problem intractable in Yjs 13 is architecturally resolved. This does NOT make Yjs Peritext-compliant — `ContentFormat` marker-item storage is unchanged between v13 and v14 (see D1). **npm availability (verified 2026-04-07; UPDATED 2026-04-16):** The v14 line has RE-SCOPED on npm from `yjs` to `@y/y`. Latest v14: `@y/y@14.0.0-rc.13` (2026-04-14), still release-candidate. The `y-prosemirror@2.0.0-2` tag exists in git but was published only to `@y/prosemirror` (scoped rename) on npm, and the underlying rewrite PR #208 was **closed without merge on 2026-03-19**. Stable latest remains `yjs@13.6.30`. **Ecosystem readiness caveat (UPDATED 2026-04-16):** `@tiptap/y-tiptap@3.0.3`, `@tiptap/extension-collaboration@3.22.3`, and `@hocuspocus/server@4.0.0-rc.5` (latest, shipped 2026-04-16) all peer-pin `yjs: ^13`. No upstream PR for Yjs 14 support exists on either. Peer-dep conflicts for the TipTap/Hocuspocus stack are immediate, not theoretical. See [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) for the full deep-dive.
 - **Three implementation architectures exist, ranging from 2 weeks to 10 weeks.** Architecture C (delta-protocol dual view) is 2-4 weeks and gives you dual-view behavior immediately. Architecture A (full Peritext with block markers) is 6-10 weeks and gives you the complete model.
 - **Hocuspocus, providers, cursors, undo -- zero blast radius.** All sync infrastructure operates at the Y.Doc level, not the type level.
 - **No one has built a Y.Text-to-ProseMirror binding.** The closest prior art is automerge-prosemirror (3,272 lines) which maps flat text + spans to ProseMirror's tree. y-quill (363 lines) maps Y.Text to Quill including block-level formatting via newline attributes.
@@ -190,6 +190,8 @@ Use y-prosemirror v14 as-is. Add serialization layer for source view. Estimated 
 
 ## Recommendation
 
+> **2026-04-16 update.** This section's "2-4 weeks" timeline has been challenged by fresh ecosystem evidence. The `y-prosemirror` v2 rewrite was closed without merge; Yjs 14 is still actively release-candidating under a new npm scope; and the Architecture C "non-collaborative source view" is a product regression for Open Knowledge specifically. The recalibrated estimate for Open Knowledge's migration surface is **12-19 weeks**, not 2-4. The paragraph below remains as originally written — but readers considering it as input to a decision should read [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) first.
+
 The three architectures form a progression, not a choice:
 
 1. **Ship Architecture C now (2-4 weeks).** Dual-view toggle with non-collaborative source view. Same trade-off as Option I from the source-toggle report, but cleaner via the delta protocol.
@@ -204,10 +206,23 @@ The three architectures form a progression, not a choice:
 
 ## Limitations & Open Questions
 
-### Not Fully Confirmed
-- Whether y-prosemirror v14's delta protocol actually works when given a flat YType (no named children) -- requires empirical testing
-- Whether Yjs 14's unified YType is stable enough for production (currently RC)
-- Whether the boundary anomaly manifests in realistic editing patterns
+> **2026-04-16 update.** This section has been revised with fresh ecosystem evidence. See the dedicated deep-dive for the bridge-correctness spec: [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md).
+
+### Resolved by 2026-04-16 evidence
+
+- **Yjs 14 production readiness: NOT ready.** The v14 line has moved from `yjs` (npm) to a new scoped package `@y/y` (npm). As of 2026-04-16, latest is `@y/y@14.0.0-rc.13` (published 2026-04-14), with RC cadence of ~1/day. Pre-release phase has lasted ~12 months. No discovered production deployment. Adjacent-library ecosystem (`@hocuspocus/server@4.0.0-rc.5`, `@tiptap/extension-collaboration@3.22.3`, `@tiptap/y-tiptap@3.0.3`, `y-codemirror.next@0.3.5`) all still peer-pin `yjs: ^13`. See [evidence/2026-04-16-updates/yjs-14-release-status.md](evidence/2026-04-16-updates/yjs-14-release-status.md).
+
+- **y-prosemirror v2 empirical validation: NEGATIVE.** PR #208 (the v2 rewrite) was closed without merge on 2026-03-19 by dmonad as too ambitious. `@y/prosemirror@2.0.0-2` on npm is 4-month-stale and pins a now-stale `@y/y@14.0.0-16`. No stable v2 release committed. The "y-prosemirror v14 delta protocol works as-is" assumption in the original Architecture C estimate is not supportable today. See [evidence/2026-04-16-updates/adjacent-library-compat.md](evidence/2026-04-16-updates/adjacent-library-compat.md).
+
+- **"Yjs 14 == Peritext" was a category error.** Yjs 14 refactored the type system (unified YType, delta protocol, content renderer API). It did NOT change the storage model for formatting marks (`ContentFormat` marker items are unchanged between `yjs 13.6.30` and `@y/y 14.0.0-rc.13`). The Peritext boundary anomaly documented in D1 is PRESERVED in Yjs 14. See [evidence/2026-04-16-updates/peritext-ecosystem-state.md](evidence/2026-04-16-updates/peritext-ecosystem-state.md).
+
+- **"2-4 weeks for Architecture C" is a greenfield-prototype estimate, not an Open-Knowledge-migration estimate.** Recalibrated order-of-magnitude for the concrete Open Knowledge stack (yjs ^13 pinned across 4 workspace packages, `y-prosemirror@1.3.7` safety patch per CLAUDE.md precedent #9, C1-C10 convergence tests, I1-I7 fidelity invariants, collaborative CodeMirror source mode): **12-19 weeks**. See [evidence/2026-04-16-updates/effort-recalibration.md](evidence/2026-04-16-updates/effort-recalibration.md).
+
+- **Architecture C's "non-collaborative source view" is a product regression.** Open Knowledge today supports concurrent WYSIWYG + source-mode CodeMirror editing with CRDT convergence (C1-C10 integration tests). Architecture C's "source view non-collaborative" means source-mode becomes read-only, OR local-only edits that overwrite peers on switch-back. Neither was priced in the prior estimate.
+
+### Still not confirmed (deferred to prototype work)
+
+- Whether the Peritext boundary anomaly manifests in realistic editing patterns at a product-visible rate (this report's D1). The bridge-correctness spec's Bucket A (R1 content-preservation post-condition + R2 elevated fuzz) generates production signal that informs this — see SPEC §7 M4 / §11 Q6.
 
 ### Out of Scope
 - Designing the ProseMirror schema for the product
@@ -219,6 +234,9 @@ The three architectures form a progression, not a choice:
 
 ## References
 
+### Updates
+- [updates/2026-04-16-bridge-correctness-pullin-assessment.md](updates/2026-04-16-bridge-correctness-pullin-assessment.md) -- Fresh (2026-04-16) re-assessment of whether Peritext-on-Yjs-14 can be pulled into the bridge-correctness spec's scope today. Answers: no, because four load-bearing assumptions of the original 2-4-week estimate have become false.
+
 ### Evidence Files
 - [evidence/ytext-formatting-api.md](evidence/ytext-formatting-api.md) -- Y.Text formatting internals, ContentFormat, boundary semantics
 - [evidence/block-level-structure.md](evidence/block-level-structure.md) -- Quill Delta model, Automerge block markers, BlockSuite
@@ -227,6 +245,11 @@ The three architectures form a progression, not a choice:
 - [evidence/tiptap-hocuspocus-blast-radius.md](evidence/tiptap-hocuspocus-blast-radius.md) -- Component-by-component blast radius
 - [evidence/void-nodes.md](evidence/void-nodes.md) -- ContentEmbed, ContentType, void nodes
 - [evidence/implementation-effort.md](evidence/implementation-effort.md) -- Three architecture estimates
+- [evidence/2026-04-16-updates/yjs-14-release-status.md](evidence/2026-04-16-updates/yjs-14-release-status.md) -- Yjs 14 release-candidate status as of 2026-04-16, `@y/y` npm scope rename
+- [evidence/2026-04-16-updates/adjacent-library-compat.md](evidence/2026-04-16-updates/adjacent-library-compat.md) -- Full library compat matrix: y-prosemirror / y-codemirror / Tiptap / Hocuspocus all pin yjs ^13
+- [evidence/2026-04-16-updates/peritext-ecosystem-state.md](evidence/2026-04-16-updates/peritext-ecosystem-state.md) -- Yjs 14 is a type-system refactor, not a Peritext-semantic one
+- [evidence/2026-04-16-updates/file-by-file-migration-scope.md](evidence/2026-04-16-updates/file-by-file-migration-scope.md) -- Bridge surface deletion + replacement LOC breakdown
+- [evidence/2026-04-16-updates/effort-recalibration.md](evidence/2026-04-16-updates/effort-recalibration.md) -- 12-19 weeks recalibrated estimate for Open Knowledge migration
 
 ### External Sources
 - [Peritext: A CRDT for Rich-Text Collaboration](https://www.inkandswitch.com/peritext/)

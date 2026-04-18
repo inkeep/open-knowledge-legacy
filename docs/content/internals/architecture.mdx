@@ -59,20 +59,20 @@ Hocuspocus embeds in Vite via `configureServer()` plugin hook with a standalone 
 Two agent write endpoints use `hocuspocus.openDirectConnection()`:
 
 - **`POST /api/agent-write`** -- raw Y.XmlElement write (appends a paragraph with `applyDelta()`)
-- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10): reads the current `Y.XmlFragment` (reflects all CRDT-synced content including concurrent client WYSIWYG typing), composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`), applies to XmlFragment via `updateYFragment()` (structural diff preserves user-content Items), then mirrors `Y.Text` via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins). Replaces the deleted `syncTextToFragment` which used `Y.Text` as the authoritative input and destroyed concurrent user XmlFragment content — Bug-A in the `2026-04-14-bridge-convergence-under-concurrent-writes` spec.
+- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10): reads the current `Y.XmlFragment` (reflects all CRDT-synced content including concurrent client WYSIWYG typing), composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`), applies to XmlFragment via `updateYFragment()` (structural diff preserves user-content Items), then mirrors `Y.Text` via `applyFastDiff` (character-level DMP write from `@inkeep/open-knowledge-core/bridge`; minimal mutation, preserves non-agent Y.Text Items and their origins). Replaces the deleted `syncTextToFragment` which used `Y.Text` as the authoritative input and destroyed concurrent user XmlFragment content — Bug-A in the `2026-04-14-bridge-convergence-under-concurrent-writes` spec.
 
 ## Source toggle
 
-Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
+Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6). Both editors mount concurrently per active document via `EditorActivityPool` (`display:none` swap), each bound to its Y type for the lifetime of the mount:
 
-- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror. A snapshot of the markdown is stored for the three-way merge.
-- **From source:** Three-way merge (`three-way-merge.ts`) compares the snapshot, the user's edits, and the current Y.Doc. Agent-added paragraphs (those beyond the snapshot's block count) are appended to the user's edits. The merged result applies via `updateYFragment()`.
+- **TipTap → `Y.XmlFragment('default')`** via `@tiptap/extension-collaboration`
+- **CodeMirror → `Y.Text('source')`** via `y-codemirror.next`
 
-**Live agent writes in source mode:** When source mode is active, a Y.XmlFragment observer detects changes to the Y.Doc (from agent writes via `/api/agent-write-md`) and serializes the updated content into CodeMirror via React state. The observer is unsubscribed before toggle-back to prevent interference with the merge.
+Toggling between modes is a CSS visibility flip — no `MarkdownManager.serialize`, no client-side three-way merge, no snapshot. The server's bidirectional bridge keeps the two Y types in continuous sync, so each editor view is always current when revealed. (The init-spike V4b implementation used a `three-way-merge.ts` reconciler on toggle-back; that module was retired alongside the move to a server-authoritative bridge — see [Service Topology](/internals/service-topology) and the agent-write-path page for the current model.)
 
-**Typing coordination:** Both editors register DOM listeners (keydown, paste, drop, cut) that signal the observer system to defer background sync while the user is actively typing. This applies symmetrically -- source-mode typing receives the same protection from observer-driven tree replacement as WYSIWYG typing.
+**Bridge dispatch:** Cross-CRDT sync between `Y.XmlFragment` and `Y.Text` is server-authoritative (precedent #14) and runs under `doc.on('afterAllTransactions', ...)` — one settlement fire per outermost `doc.transact()` drain (precedent #13(b)). Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment) within each drain, so any Y.Text write from A is visible to B's read; no wall-clock debounce is involved. The client observer is a baseline-tracking shell that does not write the derived CRDT — keystroke-level "typing-defer" coordination is no longer needed because the only path that previously needed protection was the deleted client-side cross-CRDT write.
 
-**Conflict handling:** If both the user and an agent modified the same paragraph, the user's version wins. Conflicts are logged to the console with the paragraph index.
+**Content preservation under concurrent edits:** Observer A's Path B (used when local Y.Text has diverged from the last-synced XmlFragment baseline) runs the hybrid diff3+DMP `mergeThreeWay` algorithm with a content-preservation post-condition. Post-condition violations throw `BridgeMergeContentLossError`; in production the bridge logs a structured event, queues a silent named checkpoint via `saveInMemoryCheckpoint` (recoverable via TimelinePanel), and applies the merge as-computed. See `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R1/R7 for the full contract.
 
 ## Persistence pipeline
 

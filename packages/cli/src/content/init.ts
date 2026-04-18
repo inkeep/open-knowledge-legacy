@@ -191,7 +191,7 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
  */
 export const PREVIEW_GUIDANCE = `**Preview before edit (REQUIRED).** You MUST follow this sequence every time you call \`write_document\` or \`edit_document\`:
 1. Call \`get_preview_url\` to obtain the browser URL for the target doc.
-   - If it returns \`null\`, the server is not running. Start it with \`open-knowledge start\` (or \`preview_start\`), then call \`get_preview_url\` again — the server writes a lock file that this tool reads.
+   - If it returns \`null\`, the UI isn't running yet. Start it with \`open-knowledge ui\` from a terminal — or in Claude Code, call \`preview_start("open-knowledge-ui")\` (the \`open-knowledge init\` command scaffolds this \`.claude/launch.json\` entry, so it's ready to go). \`open-knowledge ui\` auto-spawns the collab server in the background; you don't need to run \`open-knowledge start\` separately. Then call \`get_preview_url\` again — the UI writes a lock file that this tool reads.
    - NEVER guess or manually construct the preview URL — always use the URL returned by \`get_preview_url\`.
 2. Open that URL in your preview browser so the user can see the document.
 3. Only then call \`write_document\` / \`edit_document\` — the CRDT edit will stream live into the already-open editor.
@@ -238,9 +238,13 @@ ${PREVIEW_GUIDANCE}
 
 **No screenshots after edits.** Do NOT take \`preview_screenshot\` after every \`edit_document\` / \`write_document\`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
 
-**Linking.** When authoring, link liberally with \`[[Page Title]]\` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
+**Linking.** Link liberally with \`[[wiki-links]]\` — every noun-phrase naming another document should be a link; redlinks are fine and signal "this should exist." Backlink density is how this knowledge base stays navigable for the next agent.
 
-**Cadence — maintain hubs as you go.** When you create or edit a child doc in a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before the next child. Interleaved child → hub → child → hub makes the hub the live progress bar and the browser-based editor follows your focus cleanly. Orphan writes get a soft hint in the \`write_document\` response pointing to the likely hub.
+- **What goes in the brackets:** the target's **docName** — folder path + filename without \`.md\` / \`.mdx\` (e.g. the file \`guides/auth-setup.md\` is linked as \`[[guides/auth-setup]]\`). NOT the human-readable title, NOT \`title:\` frontmatter, NOT \`aliases:\`. Wiki-links are absolute from the content root, never relative — \`[[foo]]\` means root-level \`foo.md\`, never \`guides/foo.md\` from inside \`guides/\`. Cross-folder links always need the full path.
+- **Display text different from the key:** \`[[guides/auth-setup|Auth Setup]]\` — pipe separator, target on the left, rendered label on the right. Anchors work the same way: \`[[guides/auth-setup#quickstart]]\`, or combined: \`[[guides/auth-setup#quickstart|see the quickstart]]\`.
+- **Verify before walking away:** after writing a doc, call \`get_dead_links({ sourceDocNames: ['your/doc/name'] })\` — every unresolved bracket-target in that doc is listed. Fix or accept the redlinks deliberately. The editor's red-underline visual tolerates a slug fallback (\`[[Auth Setup]]\` may look resolved if \`auth-setup.md\` exists at root), but the backlink graph is strict-exact — trust \`get_dead_links\`, not the visual.
+
+**Organize by folders, not hub files.** Folders are the organizational unit — group related docs in a shared folder and let the directory listing do the cataloging. Per-folder metadata (title, description, tags) lives in \`.open-knowledge/config.yml\` under the \`folders:\` key (glob \`match:\` + frontmatter defaults that merge with each file's own frontmatter at read time). Don't maintain an \`INDEX.md\` / \`README.md\` hub file inside a folder solely to catalog its children — \`exec("ls <folder>")\` returns the same view live, with per-file frontmatter + backlink counts.
 
 **Server must be running.** If \`write_document\` or \`edit_document\` returns a "Hocuspocus server is not running" error, start it with \`open-knowledge start\` (via Bash) and retry. NEVER fall back to native \`Edit\` / \`Write\` for in-scope markdown — always use the MCP write tools so edits go through the CRDT layer with proper attribution.
 
@@ -262,7 +266,8 @@ export interface RootInstructionResult {
 
 /**
  * Append (or replace, with --force) the Open Knowledge section in the
- * root AGENTS.md — the tool-agnostic agent instruction file.
+ * root AGENTS.md — the tool-agnostic agent instruction file — plus any
+ * extra editor-specific root files (e.g. CLAUDE.md).
  *
  * Behavior per file:
  *   - file missing            -> create it containing just the section
@@ -327,10 +332,48 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
+export type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
+
+/**
+ * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.
+ *
+ * Used by the `clone` auto-init path: when we scaffold OK into a repo that
+ * wasn't already using it, the local `.open-knowledge/` is per-user editor
+ * config and shouldn't be committed back upstream. This is deliberately NOT
+ * called by `ok init` — there the user is opting into OK for their own
+ * project and config.yml / AGENTS.md are meant to be tracked.
+ *
+ * Idempotent: recognizes the common variants (`.open-knowledge`,
+ * `.open-knowledge/`, leading-slash rooted forms) and only appends when
+ * none are present. Creates the file if missing.
+ */
+export function ensureOkGitignoredAtRoot(projectDir: string): GitignoreEntryAction {
+  const gitignorePath = join(projectDir, '.gitignore');
+  const block = `# Open Knowledge — local editor config (not tracked upstream)\n${OK_DIR}/\n`;
+
+  if (!existsSync(gitignorePath)) {
+    writeFileSync(gitignorePath, block, 'utf-8');
+    return 'created';
+  }
+
+  const existing = readFileSync(gitignorePath, 'utf-8');
+  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
+  const alreadyPresent = existing
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => variants.has(line));
+  if (alreadyPresent) return 'already-present';
+
+  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  const leadingBlank = existing.length > 0 && !existing.endsWith('\n\n') ? '\n' : '';
+  writeFileSync(gitignorePath, `${existing}${separator}${leadingBlank}${block}`, 'utf-8');
+  return 'appended';
+}
+
 /** Static files scaffolded into the open-knowledge directory. */
 const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
   { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },
-  { name: '.gitignore', content: `${CACHE_DIR}/\n` },
+  { name: '.gitignore', content: `${CACHE_DIR}/\nserver.lock\nui.lock\nsync-state.json\n` },
   { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
 ];
 

@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
   resolveServerUrl,
+  textPlusStructured,
   textResult,
 } from './shared.ts';
 
@@ -16,7 +18,20 @@ export const DESCRIPTION = [
   '- `sourceDocNames` (optional) — Referring source docs to narrow the audit with OR semantics',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+interface DeadLinksPayload {
+  deadLinks?: Array<
+    Record<string, unknown> & {
+      target?: string;
+      sources?: Array<Record<string, unknown> & { source?: string }>;
+    }
+  >;
+}
+
+export interface GetDeadLinksDeps extends PreviewUrlDeps {
+  serverUrl: ServerUrlOrResolver;
+}
+
+export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
   server.tool(
     'get_dead_links',
     DESCRIPTION,
@@ -27,7 +42,7 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
         .describe('Referring source docs to narrow the audit with OR semantics'),
     },
     async (args: { sourceDocNames?: string[] }) => {
-      const url = await resolveServerUrl(serverUrl);
+      const url = await resolveServerUrl(deps.serverUrl);
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const params = new URLSearchParams();
@@ -41,8 +56,33 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
       const result = await httpGet(url, `/api/dead-links${query ? `?${query}` : ''}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const { ok: _ok, ...data } = result;
-      return textResult(JSON.stringify(data, null, 2));
+      const { ok: _ok, ...rest } = result;
+      const data = rest as DeadLinksPayload;
+      const { resolve, ui } = await buildListResolver(deps);
+      // Target previewUrls point at redlinks (the UI renders unresolved docs
+      // as a "page doesn't exist yet" state); sources previewUrls point at
+      // the live source doc that contains the broken link.
+      const deadLinks = (data.deadLinks ?? []).map((row) => {
+        const target = typeof row.target === 'string' ? row.target : null;
+        const resolvedTarget = target ? resolve(target) : null;
+        const sources = (row.sources ?? []).map((sourceRow) => {
+          const source = typeof sourceRow.source === 'string' ? sourceRow.source : null;
+          const resolvedSource = source ? resolve(source) : null;
+          return {
+            ...sourceRow,
+            previewUrl: resolvedSource?.url ?? null,
+            ...(resolvedSource ? { previewUrlSource: resolvedSource.source } : {}),
+          };
+        });
+        return {
+          ...row,
+          sources,
+          previewUrl: resolvedTarget?.url ?? null,
+          ...(resolvedTarget ? { previewUrlSource: resolvedTarget.source } : {}),
+        };
+      });
+      const structured = { ...data, deadLinks, ui };
+      return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );
 }

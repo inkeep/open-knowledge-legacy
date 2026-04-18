@@ -1,8 +1,15 @@
-import { Dialog } from 'radix-ui';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 
@@ -194,101 +201,103 @@ export function NewItemDialog({
   const title = kind === 'file' ? 'New file' : 'New folder';
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-          <Dialog.Title className="mb-1 text-base font-semibold">{title}</Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-muted-foreground">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
             {description ?? (
               <>
                 Create in <span className="font-medium text-foreground">{dirDisplay}</span>
               </>
             )}
-          </Dialog.Description>
+          </DialogDescription>
+        </DialogHeader>
 
-          <div className="mb-4 space-y-3">
-            {kind === 'folder' && (
-              <div>
-                <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
-                  Folder name
-                </label>
-                <Input
-                  ref={folderInputRef}
-                  id={folderInputId}
-                  value={folderName}
-                  onChange={(e) => {
-                    setFolderName(e.target.value);
-                    setError(null);
-                  }}
-                  placeholder="folder-name"
-                  autoFocus
-                  aria-describedby={
-                    error && (errorField === 'folder' || errorField === 'form')
-                      ? errorId
-                      : undefined
-                  }
-                  aria-invalid={
-                    error && (errorField === 'folder' || errorField === 'form') ? true : undefined
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const folderErr = validatePath(folderName.trim());
-                      if (folderErr) {
-                        setError(`Folder name: ${folderErr}`);
-                        setErrorField('folder');
-                        return;
-                      }
-                      fileInputRef.current?.focus();
-                    }
-                  }}
-                />
-              </div>
-            )}
+        <div className="space-y-3">
+          {kind === 'folder' && (
             <div>
-              <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
-                {kind === 'folder' ? 'First file name' : 'File name'}
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
+                Folder name
               </label>
               <Input
-                ref={fileInputRef}
-                id={fileInputId}
-                value={fileName}
+                ref={folderInputRef}
+                id={folderInputId}
+                value={folderName}
                 onChange={(e) => {
-                  setFileName(e.target.value);
+                  setFolderName(e.target.value);
                   setError(null);
                 }}
-                placeholder="my-note.md"
-                autoFocus={kind === 'file'}
+                placeholder="folder-name"
+                autoFocus
                 aria-describedby={
-                  error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
+                  error && (errorField === 'folder' || errorField === 'form') ? errorId : undefined
                 }
                 aria-invalid={
-                  error && (errorField === 'file' || errorField === 'form') ? true : undefined
+                  error && (errorField === 'folder' || errorField === 'form') ? true : undefined
                 }
-                onFocus={(e) => selectBasename(e.currentTarget)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const folderErr = validatePath(folderName.trim());
+                    if (folderErr) {
+                      setError(`Folder name: ${folderErr}`);
+                      setErrorField('folder');
+                      return;
+                    }
+                    fileInputRef.current?.focus();
+                  }
                 }}
               />
             </div>
-            {error && (
-              <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
-                {error}
-              </p>
-            )}
+          )}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
+              {kind === 'folder' ? 'First file name' : 'File name'}
+            </label>
+            <Input
+              ref={fileInputRef}
+              id={fileInputId}
+              value={fileName}
+              onChange={(e) => {
+                setFileName(e.target.value);
+                setError(null);
+              }}
+              placeholder="my-note.md"
+              autoFocus={kind === 'file'}
+              aria-describedby={
+                error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
+              }
+              aria-invalid={
+                error && (errorField === 'file' || errorField === 'form') ? true : undefined
+              }
+              onFocus={(e) => selectBasename(e.currentTarget)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
+              }}
+            />
           </div>
+          {error && (
+            <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {error}
+            </p>
+          )}
+        </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreate} disabled={isSubmitDisabled}>
-              {busy ? 'Creating…' : 'Create'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            className="font-mono uppercase"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleCreate} disabled={isSubmitDisabled}>
+            {busy ? 'Creating...' : 'Create'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -7,10 +7,11 @@
  * agent's native tools, not through the MCP server. The server only provides
  * the instructions.
  */
-import type { Config } from '../../config/schema.ts';
+import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import { OK_DIR } from '../../constants.ts';
+import { type PreviewUrlDeps, resolveUiInfo } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import { textPlusStructured } from './shared.ts';
 
 function buildBody(contentDir: string): string {
   return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
@@ -124,6 +125,19 @@ export const DESCRIPTION = [
   '- User asks to document or catalog the codebase',
 ].join('\n');
 
-export function register(server: ServerInstance, config: Config): void {
-  server.tool('init-content', DESCRIPTION, () => textResult(buildBody(config.content.dir)));
+export interface InitContentDeps extends PreviewUrlDeps {}
+
+/**
+ * Register the init-content tool. Emits structuredContent with a top-level
+ * `ui: {baseUrl, port}` block per FR-2.6. init-content is instructional
+ * (no docName list) so it has no per-row previewUrl — only the ui block.
+ */
+export function register(server: ServerInstance, deps: InitContentDeps): void {
+  server.tool('init-content', DESCRIPTION, async () => {
+    const body = buildBody(deps.config.content.dir);
+    const cwd = await deps.resolveCwd();
+    const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
+    const ui = resolveUiInfo({ config: deps.config, lockDir });
+    return textPlusStructured(body, { ui });
+  });
 }

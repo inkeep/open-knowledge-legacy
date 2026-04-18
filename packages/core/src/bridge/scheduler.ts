@@ -1,38 +1,36 @@
 /**
- * Scheduler interface for bridge observer debounces, typing-defer timers,
- * and the clock reference used by elapsed-time comparisons.
+ * Scheduler interface — test-deterministic DI around `setTimeout`,
+ * `clearTimeout`, and the clock reference used by elapsed-time comparisons.
  *
  * Production: arrow-wrapped passthrough to `globalThis.setTimeout` /
  * `clearTimeout` / `Date.now()`. Tests inject a manual scheduler for
- * synchronous deterministic flush AND a virtual clock so that `now()`
+ * synchronous deterministic flush plus a virtual clock so that `now()`
  * advances in lockstep with `setTimeout` dueAt calculations.
  *
- * The `now()` method is essential: observer callbacks use elapsed-time
- * comparisons (typing defer, remote-tree grace window) to decide whether
- * to reschedule their debounce. Under ManualScheduler, those comparisons
- * must use the same virtual clock as `setTimeout` — mixing `Date.now()`
- * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
- * breaks the deterministic timing model.
+ * **Non-bridge primitive.** Under bridge-correctness SPEC §6 R4/R5b +
+ * precedent #13(b), the dual-CRDT server observer bridge MUST NOT
+ * consume this — `packages/server/src/bridge-no-wallclock.test.ts` fails
+ * CI on any `Scheduler` / `setTimeout` / `sched.*` call-site in
+ * `server-observers.ts` or `observers.ts`. The primitive lives in
+ * `@inkeep/open-knowledge-core` for consumers outside the bridge
+ * (idle-shutdown, ok-ui lifecycle, future time-coupled machinery that
+ * needs deterministic test control) — they depend on it legitimately.
  *
- * Shared between client (`packages/app/src/editor/observers.ts`) and
- * server (`packages/server/src/server-observers.ts`). Extracted here
- * per precedent #4 ("Shared computation, per-surface rendering") so the
- * interface is declared once and all bridge consumers satisfy the same
- * type. Identity matching is structural — a locally-declared interface
- * with identical shape satisfies it.
+ * Identity matching is structural — a locally-declared interface with
+ * identical shape satisfies this one.
  */
 export interface Scheduler {
   setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
   /** Current clock reading in milliseconds. Production: `Date.now()`.
-   *  Tests with ManualScheduler: virtual time advanced by `advanceTime`. */
+   *  Tests with a manual scheduler: virtual time advanced by `advanceTime`. */
   now: () => number;
 }
 
 /**
  * Real-clock scheduler — wraps `globalThis.setTimeout` / `clearTimeout` /
- * `Date.now()`. Used by both client and server observers when no test
- * scheduler is injected.
+ * `Date.now()`. Used by non-bridge consumers when no test scheduler is
+ * injected.
  */
 export const defaultScheduler: Scheduler = {
   setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),

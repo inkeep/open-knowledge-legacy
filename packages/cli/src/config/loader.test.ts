@@ -39,22 +39,26 @@ describe('loadConfig', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
 
-    // server
-    expect(config.server.port).toBe(3000);
+    // server — default 0 means kernel-allocated port
+    expect(config.server.port).toBe(0);
     expect(config.server.host).toBe('localhost');
 
     // persistence
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
+
+    // mcp auto-spawn enabled by default
+    expect(config.mcp.autoStart).toBe(true);
   });
 
   test('empty YAML file → all defaults resolve', () => {
     writeWorkspaceConfig('');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
+    expect(config.mcp.autoStart).toBe(true);
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {
@@ -72,8 +76,20 @@ describe('loadConfig', () => {
 
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+  });
+
+  test('explicit server.port: 3000 in config.yml → 3000 (backward compat)', () => {
+    writeWorkspaceConfig('server:\n  port: 3000\n');
+    const { config } = loadConfig(testDir);
+    expect(config.server.port).toBe(3000);
+  });
+
+  test('mcp.autoStart: false disables auto-spawn', () => {
+    writeWorkspaceConfig('mcp:\n  autoStart: false\n');
+    const { config } = loadConfig(testDir);
+    expect(config.mcp.autoStart).toBe(false);
   });
 
   // ── Workspace overrides ─────────────────────────────────────────────
@@ -162,7 +178,7 @@ content:
     const { config } = loadConfig(testDir);
 
     // Still resolves defaults — no crash
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
   });
 
   test('unknown nested keys within known sections are silently ignored', () => {
@@ -176,6 +192,6 @@ content:
     writeWorkspaceConfig('server:\n  port: [invalid yaml');
     // Malformed YAML is caught by the loader and warned, falls back to defaults
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
   });
 });

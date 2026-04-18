@@ -17,14 +17,12 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
 
 async function getYText(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -34,29 +32,40 @@ async function getYText(page: Page): Promise<string> {
 }
 
 /** Seed Y.Text via the agent-write-md API (bypasses keystroke timing). */
-async function seedMarkdown(page: Page, markdown: string) {
+async function seedMarkdown(page: Page, docName: string, markdown: string) {
   const res = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName: 'test-doc', markdown, mode: 'replace' }),
+    body: JSON.stringify({ docName, markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
-  // Wait for Observer B (text→tree) to settle
-  await page.waitForTimeout(600);
+  // Wait for both bridge directions: Y.Text reflects the write (CRDT propagation)
+  // AND the XmlFragment has been mirrored by Observer B (text→tree, ~300ms typing-defer
+  // does not apply for AGENT_WRITE_ORIGIN — settles via 50ms Observer B debounce).
+  await expect.poll(() => getYText(page)).toContain(markdown.split('\n')[0]?.trim() || '');
+  await expect(page.locator('.ProseMirror')).not.toBeEmpty();
 }
 
-test.beforeEach(async ({ page }) => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+async function openDoc(page: Page, docName: string) {
+  await createPage(`${docName}.md`);
+  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
+  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  await page.goto(`${BASE}/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
-});
+}
+
+function uniqueDocName(label: string): string {
+  return `test-listkeymap-${label}-${randomUUID().slice(0, 8)}`;
+}
 
 test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   test('Tab inside a listItem increases list depth', async ({ page }) => {
-    await seedMarkdown(page, '- first\n- second\n');
+    const docName = uniqueDocName('tab-listitem');
+    await openDoc(page, docName);
+    await seedMarkdown(page, docName, '- first\n- second\n');
 
     // Focus the ProseMirror editor and place cursor in the second list item
     await page.locator('.ProseMirror').focus();
@@ -68,18 +77,18 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     // Press Tab — should indent the second item under the first
     await page.keyboard.press('Tab');
 
-    // Give Observer A time to sync the structural change to Y.Text
-    await page.waitForTimeout(400);
+    // Observer A (XmlFragment→Y.Text) mirrors the structural change. Poll
+    // until the indented form lands in Y.Text (Category D — CRDT propagation).
+    await expect.poll(() => getYText(page)).toMatch(/ {2}[-*+] second/);
     const ytext = await getYText(page);
-
-    // Indented second item appears with leading whitespace in markdown source
     expect(ytext).toContain('- first');
-    expect(ytext).toMatch(/ {2}[-*+] second/);
   });
 
   test('Shift-Tab inside a nested listItem lifts it one level', async ({ page }) => {
+    const docName = uniqueDocName('shifttab-nested');
+    await openDoc(page, docName);
     // Seed an already-nested list
-    await seedMarkdown(page, '- top\n  - nested\n');
+    await seedMarkdown(page, docName, '- top\n  - nested\n');
 
     await page.locator('.ProseMirror').focus();
     // Click on the nested "nested" text
@@ -89,18 +98,18 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
 
     await page.keyboard.press('Shift+Tab');
 
-    await page.waitForTimeout(400);
-    const ytext = await getYText(page);
-
-    // After lifting, nested is back at top-level
-    expect(ytext).toMatch(/^- top\n- nested/m);
+    // Observer A mirrors the lift to Y.Text — poll until the nested item is
+    // back at the top level (Category D).
+    await expect.poll(() => getYText(page)).toMatch(/^- top\n- nested/m);
   });
 
   test('Tab inside a tableCell advances to the next cell (list keymap does NOT hijack)', async ({
     page,
   }) => {
+    const docName = uniqueDocName('tab-tablecell');
+    await openDoc(page, docName);
     // Seed a 2x2 table
-    await seedMarkdown(page, '| a | b |\n| - | - |\n| 1 | 2 |\n');
+    await seedMarkdown(page, docName, '| a | b |\n| - | - |\n| 1 | 2 |\n');
 
     await page.locator('.ProseMirror').focus();
     // Click into the first body cell (content '1')
@@ -121,9 +130,26 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     });
     expect(inTableBefore).toBe(true);
 
-    // Press Tab — table extension should advance to the next cell
+    // Press Tab — table extension should advance to the next cell. Poll for
+    // the cursor to land inside the second body cell (textContent '2'),
+    // confirming Tab moved AND we are still inside a cell (Category C).
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(200);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sel = window.getSelection();
+          if (!sel || sel.rangeCount === 0) return null;
+          let el: Node | null = sel.anchorNode;
+          while (el) {
+            if (el.nodeType === 1 && (el as Element).matches('td,th')) {
+              return (el as Element).textContent?.trim() ?? '';
+            }
+            el = el.parentNode;
+          }
+          return null;
+        }),
+      )
+      .toBe('2');
 
     // After Tab, cursor should still be inside a table cell (second body cell, content '2')
     const stillInTable = await page.evaluate(() => {
@@ -145,7 +171,9 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   });
 
   test('Tab inside a codeBlock inserts a literal tab character', async ({ page }) => {
-    await seedMarkdown(page, '```\nfirst\n```\n');
+    const docName = uniqueDocName('tab-codeblock');
+    await openDoc(page, docName);
+    await seedMarkdown(page, docName, '```\nfirst\n```\n');
 
     await page.locator('.ProseMirror').focus();
     // Click into the code block
@@ -153,8 +181,10 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     await page.keyboard.press('End');
 
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(400);
 
+    // Observer A mirrors the inserted tab character to Y.Text — poll until
+    // it lands inside the code block (Category D).
+    await expect.poll(() => getYText(page)).toMatch(/first\t/);
     const ytext = await getYText(page);
     // The tab character should be emitted into the code block content
     expect(ytext).toMatch(/first\t/);

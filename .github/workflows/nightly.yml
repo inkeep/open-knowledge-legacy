@@ -5,10 +5,16 @@ name: Nightly deep tests
 # total per job (see calibration note in turbo.json top-of-file comment).
 
 on:
-  schedule:
-    # 6:17 AM UTC daily (off-minute to avoid GHA scheduling contention)
-    - cron: "17 6 * * *"
-  workflow_dispatch: {} # manual trigger via GitHub Actions UI
+  # On-demand only. The scheduled trigger was retired while this project is
+  # pre-production — nobody is on-call for nightly signal and automated
+  # compute has no consumer. Tier 1 (`ci.yml`) catches regressions at merge
+  # time via the 200-seed fuzz + full stress + fidelity gates. Developers
+  # who want to stress-test a risky change run this workflow from the
+  # GitHub Actions UI ("Run workflow" button on the Nightly deep tests
+  # page), or via `gh workflow run nightly.yml`. If the project reaches a
+  # stage where background regression detection is load-bearing, re-enable
+  # the `schedule:` trigger with a calibrated off-minute cron.
+  workflow_dispatch: {}
 
 permissions:
   contents: read

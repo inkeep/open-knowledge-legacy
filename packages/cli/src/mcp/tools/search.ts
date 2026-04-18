@@ -12,8 +12,14 @@ import { type GrepMatch, grep } from '../../bash/index.ts';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
+import {
+  buildListResolver,
+  docNameFromPath,
+  type PreviewUrlSource,
+  type UiInfo,
+} from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { resolveServerUrl, textResult } from './shared.ts';
+import { resolveServerUrl, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   'Search wiki content with metadata-enriched results. Matches are grouped by file; each file is annotated with its title, description, and tags so you can judge relevance without opening it first.',
@@ -40,6 +46,26 @@ export interface SearchDeps {
   serverUrl?: ServerUrlOrResolver;
 }
 
+export interface SearchResultRow {
+  path: string;
+  docName: string;
+  title: string | null;
+  description: string | null;
+  tags: string[];
+  matches: Array<{ line: number; text: string }>;
+  previewUrl: string | null;
+  previewUrlSource?: PreviewUrlSource;
+}
+
+export interface SearchStructuredResult {
+  query: string;
+  matchCount: number;
+  fileCount: number;
+  truncated: boolean;
+  results: SearchResultRow[];
+  ui: UiInfo;
+}
+
 interface FileGroup {
   path: string;
   matches: GrepMatch[];
@@ -58,10 +84,15 @@ function groupByFile(matches: GrepMatch[]): FileGroup[] {
   return [...byPath.entries()].map(([path, fileMatches]) => ({ path, matches: fileMatches }));
 }
 
+export interface SearchResult {
+  text: string;
+  structured: SearchStructuredResult | null;
+}
+
 export async function buildSearchResult(
   args: { query: string; case_sensitive?: boolean; cwd?: string },
   deps: SearchDeps,
-): Promise<string> {
+): Promise<SearchResult> {
   const cwd = await deps.resolveCwd(args.cwd);
   const maxResults = deps.config.mcp.tools.search.maxResults;
   const include = deps.config.content.include;
@@ -78,8 +109,23 @@ export async function buildSearchResult(
   const truncated = matches.length > maxResults;
   const visible = truncated ? matches.slice(0, maxResults) : matches;
 
+  const { resolve, ui } = await buildListResolver({
+    config: deps.config,
+    resolveCwd: async () => cwd,
+  });
+
   if (visible.length === 0) {
-    return `No matches for "${args.query}".`;
+    return {
+      text: `No matches for "${args.query}".`,
+      structured: {
+        query: args.query,
+        matchCount: 0,
+        fileCount: 0,
+        truncated: false,
+        results: [],
+        ui,
+      },
+    };
   }
 
   const groups = groupByFile(visible);
@@ -111,6 +157,7 @@ export async function buildSearchResult(
     '',
   );
 
+  const results: SearchResultRow[] = [];
   for (const group of groups) {
     const meta = metaByPath.get(group.path);
     const title = meta?.title ?? group.path;
@@ -125,6 +172,19 @@ export async function buildSearchResult(
       lines.push(`- Line ${m.line}: ${m.text}`);
     }
     lines.push('');
+
+    const docName = docNameFromPath(group.path);
+    const resolved = resolve(docName);
+    results.push({
+      path: group.path,
+      docName,
+      title: meta?.title ?? null,
+      description: meta?.description ?? null,
+      tags: meta?.tags ?? [],
+      matches: group.matches.map((m) => ({ line: m.line, text: m.text })),
+      previewUrl: resolved?.url ?? null,
+      ...(resolved ? { previewUrlSource: resolved.source } : {}),
+    });
   }
 
   if (truncated) {
@@ -133,7 +193,17 @@ export async function buildSearchResult(
     );
   }
 
-  return lines.join('\n');
+  return {
+    text: lines.join('\n'),
+    structured: {
+      query: args.query,
+      matchCount: visible.length,
+      fileCount: groups.length,
+      truncated,
+      results,
+      ui,
+    },
+  };
 }
 
 export function register(server: ServerInstance, deps: SearchDeps): void {
@@ -152,8 +222,9 @@ export function register(server: ServerInstance, deps: SearchDeps): void {
     },
     async (args: { query: string; case_sensitive?: boolean; cwd?: string }) => {
       try {
-        const body = await buildSearchResult(args, deps);
-        return textResult(body);
+        const { text, structured } = await buildSearchResult(args, deps);
+        if (!structured) return textResult(text);
+        return textPlusStructured(text, structured);
       } catch (err) {
         return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
       }

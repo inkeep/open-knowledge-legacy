@@ -6,7 +6,7 @@ import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
-import { formatInitResult, runInit } from './init.ts';
+import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -262,6 +262,44 @@ describe('runInit', () => {
     });
   });
 
+  describe('Codex', () => {
+    it('writes .codex/config.toml with mcp_servers table', () => {
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('codex');
+      expect(result.editors[0].action).toBe('written');
+
+      const configPath = join(testDir, '.codex', 'config.toml');
+      expect(existsSync(configPath)).toBe(true);
+
+      const config = Bun.TOML.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.mcp_servers).toBeDefined();
+      expect(config.mcp_servers['open-knowledge']).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+
+    it('preserves existing Codex MCP entries', () => {
+      mkdirSync(join(testDir, '.codex'), { recursive: true });
+      writeFileSync(
+        join(testDir, '.codex', 'config.toml'),
+        ['[mcp_servers.other]', 'command = "node"', 'args = ["x"]', ''].join('\n'),
+      );
+
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+      expect(result.editors[0].action).toBe('written');
+
+      const config = Bun.TOML.parse(readFileSync(join(testDir, '.codex', 'config.toml'), 'utf-8'));
+      expect(config.mcp_servers.other).toEqual({ command: 'node', args: ['x'] });
+      expect(config.mcp_servers['open-knowledge']).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+  });
+
   describe('multi-editor', () => {
     it('writes Claude + Cursor configs in a single run', () => {
       const result = runInit({ cwd: testDir, editors: ['claude', 'cursor'] });
@@ -276,7 +314,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
     });
 
-    it('writes all four editors with editors: all', () => {
+    it('writes all supported editors with editors: all', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
@@ -286,7 +324,7 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
-      expect(result.editors).toHaveLength(4);
+      expect(result.editors).toHaveLength(5);
       for (const editor of result.editors) {
         expect(editor.action).toBe('written');
       }
@@ -294,6 +332,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(true);
       expect(existsSync(join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json'))).toBe(true);
     });
 
@@ -354,22 +393,178 @@ describe('runInit', () => {
     it('--no-mcp skips all editors', () => {
       const result = runInit({
         cwd: testDir,
-        editors: ['claude', 'cursor', 'vscode'],
+        editors: ['claude', 'cursor', 'vscode', 'codex'],
         mcp: false,
       });
 
-      expect(result.editors).toHaveLength(3);
+      expect(result.editors).toHaveLength(4);
       for (const editor of result.editors) {
         expect(editor.action).toBe('skipped-flag');
       }
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(false);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(false);
     });
   });
 
   // -----------------------------------------------------------------------
-  // Per-editor instruction file injection
+  // Claude Code launch.json scaffolding (US-009 / D-020 / D-031)
+  // -----------------------------------------------------------------------
+
+  describe('launch.json scaffolding', () => {
+    it('writes a fresh .claude/launch.json pointing at open-knowledge ui', () => {
+      const result = runInit({ cwd: testDir });
+
+      expect(result.launchJson).toBeDefined();
+      expect(result.launchJson?.action).toBe('created');
+
+      const configPath = join(testDir, '.claude', 'launch.json');
+      expect(existsSync(configPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.name).toBe('open-knowledge-ui');
+      expect(entry.runtimeExecutable).toBe('npx');
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBeUndefined();
+    });
+
+    it('flags a stale open-knowledge-ui entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge-ui',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-stale');
+      expect(result.launchJson?.staleFields).toEqual(expect.arrayContaining(['runtimeArgs']));
+
+      // Unchanged — still the old shape (user must re-run with --force)
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
+    });
+
+    it('skips an up-to-date open-knowledge-ui entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge-ui',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-existing');
+      expect(result.launchJson?.staleFields).toBeUndefined();
+    });
+
+    it('migrates an existing open-knowledge-ui entry on --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge-ui',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir, force: true });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBeUndefined();
+    });
+
+    it('merges the new entry into an existing launch.json with other configurations', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'some-other-server',
+                runtimeExecutable: 'node',
+                runtimeArgs: ['./server.js'],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(2);
+      const ok = parsed.configurations.find(
+        (c: { name: string }) => c.name === 'open-knowledge-ui',
+      );
+      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(ok.autoPort).toBeUndefined();
+    });
+
+    it('does NOT scaffold launch.json when Claude is not among selected editors', () => {
+      const result = runInit({ cwd: testDir, editors: ['cursor'] });
+      expect(result.launchJson).toBeUndefined();
+      expect(existsSync(join(testDir, '.claude', 'launch.json'))).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Per-editor instruction file injection (from main)
   // -----------------------------------------------------------------------
 
   describe('per-editor instruction file injection', () => {
@@ -386,30 +581,27 @@ describe('runInit', () => {
       expect(claudeEntry?.action).toBe('created');
     });
 
-    it('writes .cursorrules when cursor editor is selected', () => {
+    it('writes only AGENTS.md for cursor (no rule-file scaffolding)', () => {
       const result = runInit({ cwd: testDir, mcp: false, editors: ['cursor'] });
 
-      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
-      expect(readFileSync(join(testDir, '.cursorrules'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      expect(result.rootInstructions.find((r) => r.file === '.cursorrules')?.action).toBe(
-        'created',
-      );
+      // AGENTS.md is the tool-agnostic instruction surface; Cursor picks it up natively.
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(1);
+      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes .windsurfrules when windsurf editor is selected', () => {
+    it('writes only AGENTS.md for windsurf (no rule-file scaffolding)', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
       const result = runInit({ cwd: testDir, mcp: false, editors: ['windsurf'], home: fakeHome });
 
-      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
-      expect(readFileSync(join(testDir, '.windsurfrules'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      expect(result.rootInstructions.find((r) => r.file === '.windsurfrules')?.action).toBe(
-        'created',
-      );
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(1);
+      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
     it('writes no extra instruction files for vscode (no instructionsPath)', () => {
@@ -421,7 +613,7 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.vscoderules'))).toBe(false);
     });
 
-    it('writes all per-editor files for claude + cursor + windsurf', () => {
+    it('writes AGENTS.md + CLAUDE.md for claude + cursor + windsurf combined', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
       const result = runInit({
@@ -431,11 +623,15 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
+      // Only Claude has an instructionsPath (CLAUDE.md). Cursor + Windsurf read
+      // the root AGENTS.md natively, so no extra files are scaffolded for them.
       expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
       expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
-      expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
-      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(true);
-      expect(result.rootInstructions).toHaveLength(4); // AGENTS.md + CLAUDE.md + .cursorrules + .windsurfrules
+      expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
+      expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
+      expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
+      expect(result.rootInstructions).toHaveLength(2);
     });
   });
 
@@ -516,5 +712,98 @@ describe('runInit', () => {
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectInstalledEditors — US-013 / FR-3.1 / D-013
+// ---------------------------------------------------------------------------
+
+describe('detectInstalledEditors', () => {
+  let testDir: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `detect-editors-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('always detects Claude because its config dir is cwd itself', () => {
+    // No sibling dirs created; Claude's configPath is <cwd>/.mcp.json → dirname is cwd → exists
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('claude');
+  });
+
+  it('detects Cursor when .cursor/ exists', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('cursor');
+  });
+
+  it('does NOT detect Cursor when .cursor/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('cursor');
+  });
+
+  it('detects VS Code when .vscode/ exists', () => {
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('vscode');
+  });
+
+  it('detects Codex when .codex/ exists', () => {
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('codex');
+  });
+
+  it('detects Windsurf when ~/.codeium/windsurf/ exists (via home override)', () => {
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('windsurf');
+  });
+
+  it('does NOT detect Windsurf when ~/.codeium/windsurf/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('windsurf');
+  });
+
+  it('returns all supported editors when all editor config dirs exist', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
+    expect(detected).toHaveLength(5);
+  });
+
+  it('preserves EDITOR_TARGETS ordering in return value', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'codex', 'windsurf']
+    expect(detected).toEqual(['claude', 'cursor', 'vscode', 'codex']);
+  });
+
+  it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
+    // Synthesizes the "zero detected" non-TTY fallback path that exit 1s.
+    // In real filesystems, cwd always exists (so Claude is always detected),
+    // but with a synthetic nonexistent cwd + home, every editor's dirname
+    // misses → no detections.
+    const missingCwd = join(testDir, 'does-not-exist');
+    const missingHome = join(testDir, 'also-not-here');
+    const detected = detectInstalledEditors(missingCwd, missingHome);
+    expect(detected).toEqual([]);
   });
 });

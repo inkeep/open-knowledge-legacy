@@ -30,6 +30,7 @@
  * Traces to: US-006 (bridge-matrix multi-client), SPEC FR-3, FR-4.
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -41,12 +42,24 @@ const USER_MARKER = 'USER-MARKER-PQR';
 test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients', async ({
   browser,
 }) => {
-  // Reset server state.
-  const resetRes = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  // Per-test unique doc — both browser contexts connect to the same unique
+  // docName, avoiding races with parallel tests on the global `test-doc`.
+  const docName = `test-observer-a-${randomUUID().slice(0, 8)}`;
+  const createRes = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: `${docName}.md` }),
+  });
+  if (!createRes.ok && createRes.status !== 409) {
+    throw new Error(`create-page failed: ${createRes.status}`);
+  }
+  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
   if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
 
   // Two independent browser contexts → two separate WebSocket clients on the
-  // same 'test-doc'. Each context isolates cookies, storage, and network.
+  // same per-test doc. Each context isolates cookies, storage, and network.
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
   const pageA = await ctxA.newPage();
@@ -60,12 +73,8 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     pageB.on('console', (m) => logsB.push({ type: m.type(), text: m.text() }));
     pageB.on('pageerror', (e) => logsB.push({ type: 'uncaught', text: e.message }));
 
-    // Both clients open the test doc.
-    await Promise.all([pageA.goto(BASE), pageB.goto(BASE)]);
-    await Promise.all([
-      pageA.getByText('test-doc.md').click({ timeout: 10_000 }),
-      pageB.getByText('test-doc.md').click({ timeout: 10_000 }),
-    ]);
+    // Both clients open the per-test doc via hash routing.
+    await Promise.all([pageA.goto(`${BASE}/#/${docName}`), pageB.goto(`${BASE}/#/${docName}`)]);
     await Promise.all([
       pageA.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
       pageB.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
@@ -81,7 +90,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     const seedRes = await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markdown: `baseline-line\n` }),
+      body: JSON.stringify({ docName, markdown: `baseline-line\n` }),
     });
     expect(seedRes.ok).toBe(true);
 
@@ -116,7 +125,11 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     const agentWriteRes = await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markdown: `baseline-line ${AGENT_MARKER}\n`, mode: 'replace' }),
+      body: JSON.stringify({
+        docName,
+        markdown: `baseline-line ${AGENT_MARKER}\n`,
+        position: 'replace',
+      }),
     });
     expect(agentWriteRes.ok).toBe(true);
 

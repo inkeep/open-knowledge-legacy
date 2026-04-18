@@ -21,10 +21,19 @@ if (process.argv.includes('--no-color')) {
  * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
  */
 import { Command } from 'commander';
+import { authCommand } from './commands/auth/index.ts';
+import { cleanCommand } from './commands/clean.ts';
+import { cloneCommand } from './commands/clone.ts';
 import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
+import { pullCommand } from './commands/pull.ts';
+import { pushCommand } from './commands/push.ts';
 import { startCommand } from './commands/start.ts';
+import { statusCommand } from './commands/status.ts';
+import { stopCommand } from './commands/stop.ts';
+import { syncCommand } from './commands/sync.ts';
+import { uiCommand } from './commands/ui.ts';
 import { PACKAGE_VERSION } from './constants.ts';
 import { type Config, loadConfig } from './index.ts';
 
@@ -44,6 +53,12 @@ program
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     const cwd = opts.cwd as string | undefined;
+    if (cwd !== undefined) {
+      // Honor --cwd globally so every subcommand (status/stop/clean/start/etc.)
+      // resolves lock dir, content dir, and relative paths against the requested
+      // directory rather than wherever the CLI was invoked from.
+      process.chdir(cwd);
+    }
     const { config } = loadConfig(cwd);
 
     // CLI flags override config
@@ -81,5 +96,25 @@ program.addCommand(initCommand());
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);
 program.addCommand(preview);
+
+// ui command — serves the React editor (sibling of `start`).
+const ui = uiCommand(() => resolvedConfig);
+program.addCommand(ui);
+
+// stop / clean / status — lifecycle utilities (FR-1.7, FR-1.7b, FR-1.14).
+program.addCommand(stopCommand(() => resolvedConfig));
+program.addCommand(cleanCommand(() => resolvedConfig));
+program.addCommand(statusCommand(() => resolvedConfig));
+
+// auth command group — login, status, repos, signout, pat, git-credential
+program.addCommand(authCommand(() => resolvedConfig));
+
+// clone command — git clone + auto-start
+program.addCommand(cloneCommand(() => resolvedConfig));
+
+// sync commands — delegate to server or fall back to simple-git
+program.addCommand(syncCommand(() => resolvedConfig));
+program.addCommand(pushCommand(() => resolvedConfig));
+program.addCommand(pullCommand(() => resolvedConfig));
 
 await program.parseAsync();

@@ -10,34 +10,10 @@
  */
 
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, replaceDoc, seedDocs, waitForActiveProviderSynced } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-async function createPage(path: string) {
-  const res = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
-}
-
-async function replaceDoc(docName: string, markdown: string) {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown, position: 'replace' }),
-  });
-  if (!res.ok) throw new Error(`agent-write-md failed for ${docName}: ${res.status}`);
-}
-
-async function waitForActiveProviderSynced(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
-    timeout: 15_000,
-  });
-}
 
 async function openFromSidebar(page: Page, filename: string) {
   // Scope to sidebar to avoid strict-mode violations when the EditorHeader
@@ -45,17 +21,6 @@ async function openFromSidebar(page: Page, filename: string) {
   // has `data-slot="sidebar-container"` which scopes the text search.
   const sidebar = page.locator('[data-slot="sidebar-container"]');
   await sidebar.getByText(filename, { exact: true }).click({ timeout: 10_000 });
-}
-
-/**
- * Seed N unique docs and reset the server so every test starts with a clean
- * pool. Each doc gets enough content to be visually distinctive and, for doc A,
- * enough filler to make it scrollable (F1's acceptance criterion).
- */
-async function seedDocs(docs: Array<{ name: string; markdown: string }>) {
-  await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  for (const d of docs) await createPage(`${d.name}.md`);
-  for (const d of docs) await replaceDoc(d.name, d.markdown);
 }
 
 const FILLER_LINE = 'Filler paragraph to force scrollable content. '.repeat(10);
@@ -197,17 +162,16 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // Sanity check: bar has role=status + aria-live=polite when mounted.
     // Trigger another nav to exercise the bar's attributes.
     await openFromSidebar(page, 'doc-a.md');
-    // The bar may already be gone by the time we assert; poll briefly.
-    // This assertion is best-effort but catches the attribute contract when
-    // the bar is present during the poll window.
-    await Promise.race([
-      page
-        .locator('[data-slot="navigation-pending-bar"][role="status"][aria-live="polite"]')
-        .first()
-        .waitFor({ timeout: 1_500 })
-        .catch(() => {}),
-      page.waitForTimeout(1_500),
-    ]);
+    // The bar may already be gone by the time we assert; poll briefly for
+    // its attribute contract while it's present, swallowing the timeout if
+    // navigation completed before we observed it. (The Promise.race
+    // wrapping a duplicate fixed sleep was redundant — a single waitFor
+    // with the same timeout has identical semantics.)
+    await page
+      .locator('[data-slot="navigation-pending-bar"][role="status"][aria-live="polite"]')
+      .first()
+      .waitFor({ timeout: 1_500 })
+      .catch(() => {});
   });
 
   test('F4: cold-load skeleton only when there is no prior content', async ({ page }) => {
@@ -439,15 +403,22 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Fire 5 clicks in rapid succession (no waits between them). React's
-    // transition semantics should coalesce — the final click wins and no
-    // nav is left pending indefinitely.
-    await Promise.all([
-      openFromSidebar(page, 'doc-b.md'),
-      openFromSidebar(page, 'doc-c.md'),
-      openFromSidebar(page, 'doc-d.md'),
-      openFromSidebar(page, 'doc-e.md'),
-    ]);
+    // Fire 4 clicks in rapid sequence (no waitForTimeout between them).
+    // React's transition semantics should coalesce — the final click wins
+    // and no nav is left pending indefinitely.
+    //
+    // STOP — do NOT switch this to Promise.all. Playwright's per-click
+    // actionability checks (visible/stable/attached) settle in
+    // non-deterministic order across concurrent invocations, so the click
+    // dispatch order is NOT guaranteed to match array order. Sequential
+    // await guarantees the doc-e click fires last (its order is the test's
+    // load-bearing premise) without injecting any test-side wait — each
+    // click takes ~5-30ms (actionability bound), so the 4 clicks still
+    // dispatch within ~100ms. See evidence/docs-open-f11-triage.md.
+    await openFromSidebar(page, 'doc-b.md');
+    await openFromSidebar(page, 'doc-c.md');
+    await openFromSidebar(page, 'doc-d.md');
+    await openFromSidebar(page, 'doc-e.md');
 
     // Wait for final state: doc E is active and visible.
     await waitForActiveProviderSynced(page);
@@ -879,8 +850,13 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
     await openFromSidebar(page, 'doc-b.md');
 
-    // doc-b is unsynced (WS hung) — verify the pool state reflects this.
-    await page.waitForTimeout(500);
+    // doc-b is unsynced (WS hung) — wait for the pool to register doc-b as
+    // active (Category D — provider lifecycle), then assert isSynced=false
+    // remains stable. activeDoc updates synchronously when the pool's
+    // open() resolves; isSynced stays false because the WS handshake hangs.
+    await expect
+      .poll(() => page.evaluate(() => window.__providerPool?.getActiveDocName() ?? null))
+      .toBe('doc-b');
     const state = await page.evaluate(() => ({
       activeDoc: window.__providerPool?.getActiveDocName() ?? null,
       isSynced: window.__activeProvider?.isSynced ?? null,

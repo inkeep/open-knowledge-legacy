@@ -4,7 +4,7 @@
  * Implements the canonical ProseMirror + CodeMirror pattern
  * (prosemirror.net/examples/codemirror/) adapted for TipTap's React NodeView.
  *
- * Architecture (Precedent #20 — direct PM dispatch, NOT y-codemirror.next):
+ * Architecture (Precedent #22 — direct PM dispatch, NOT y-codemirror.next):
  *   CM keystroke → forwardUpdate → PM transaction → y-prosemirror → CRDT
  *   PM change → NodeView.update(node) → computeChange → CM transaction
  *   Single `updating` boolean prevents feedback loops.
@@ -161,29 +161,24 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
 
     cmViewRef.current = cmView;
 
-    // FR-32: forward markUserTyping for Observer B typing-defer
-    let teardownTypingListeners: (() => void) | undefined;
-    try {
-      if (ydoc) {
-        const mark = () => markUserTyping(ydoc);
-        const dom = cmView.contentDOM;
-        dom.addEventListener('keydown', mark);
-        dom.addEventListener('paste', mark);
-        dom.addEventListener('drop', mark);
-        dom.addEventListener('cut', mark);
-        teardownTypingListeners = () => {
-          dom.removeEventListener('keydown', mark);
-          dom.removeEventListener('paste', mark);
-          dom.removeEventListener('drop', mark);
-          dom.removeEventListener('cut', mark);
-        };
-      }
-    } catch {
-      // No collaboration extension — typing-defer not wired
-    }
+    // FR-32: forward markUserTyping so SystemDocSubscriber's agent-focus
+    // typing guard sees keystrokes originating inside the embedded CM editor
+    // (global wall-clock timestamp; no per-doc state since precedent #14).
+    const mark = () => markUserTyping();
+    const dom = cmView.contentDOM;
+    dom.addEventListener('keydown', mark);
+    dom.addEventListener('paste', mark);
+    dom.addEventListener('drop', mark);
+    dom.addEventListener('cut', mark);
+    const teardownTypingListeners = () => {
+      dom.removeEventListener('keydown', mark);
+      dom.removeEventListener('paste', mark);
+      dom.removeEventListener('drop', mark);
+      dom.removeEventListener('cut', mark);
+    };
 
     return () => {
-      teardownTypingListeners?.();
+      teardownTypingListeners();
       cmView.destroy();
       cmViewRef.current = null;
     };

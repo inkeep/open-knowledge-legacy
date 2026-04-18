@@ -1,0 +1,135 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".changeset/**"
+      - "packages/**"
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          # Do not persist the default GITHUB_TOKEN credentials. actions/checkout
+          # sets http.https://github.com/.extraheader with an AUTHORIZATION header
+          # that overrides URL-embedded tokens. This prevents changesets/action from
+          # pushing with the App token (set via github-token input), causing GitHub
+          # to treat the push as GITHUB_TOKEN and skip triggering downstream workflows.
+          persist-credentials: false
+
+      # npm trusted publishing requires npm 11.5.1+ and Node 22.14.0+:
+      # https://docs.npmjs.com/trusted-publishers#github-actions-configuration
+      # We pin Node 24 to satisfy that baseline directly while still covering
+      # the repo's build needs.
+      #
+      # Node 22+ is required because turbo's `^build` pulls in
+      # `@inkeep/open-knowledge-app#build` (vite build) transitively. Vite's config
+      # loader evaluates the bundled config with native `import()`, and externalized
+      # workspace deps that resolve to `.ts` sources (e.g.,
+      # `@inkeep/open-knowledge-server` which exports `./src/index.ts`) hit Node's
+      # ESM loader. Node 20 throws ERR_UNKNOWN_FILE_EXTENSION; Node 22.6+ strips
+      # TypeScript types natively. Registry URL primes OIDC publishing.
+      - name: Setup npm for OIDC publishing
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+          cache: true
+
+      - name: Setup Turborepo cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-release-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-release-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run quality gate
+        run: bun run check
+
+      - name: Build packages
+        run: bun run build
+
+      # Generate a GitHub App token so that PRs and releases created by this
+      # workflow trigger downstream CI workflows. The default GITHUB_TOKEN
+      # cannot do this (GitHub security restriction).
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.INTERNAL_CI_APP_ID }}
+          private-key: ${{ secrets.INTERNAL_CI_APP_PRIVATE_KEY }}
+
+      # Pass the App token as the github-token INPUT to changesets/action.
+      # The action internally runs `git remote set-url` using its github-token
+      # input before pushing. If only the GITHUB_TOKEN env var is overridden,
+      # the action's input still defaults to github.token (the built-in token),
+      # and GitHub silently ignores pushes from GITHUB_TOKEN for triggering
+      # downstream workflows. Passing the App token as the input ensures the
+      # force-push to changeset-release/main fires pull_request.synchronize.
+      - name: Publish packages
+        id: changesets
+        uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1
+        with:
+          publish: bun run release
+          createGithubReleases: false
+          github-token: ${{ steps.app-token.outputs.token }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          HUSKY: 0
+
+      - name: Release to snapshot tag
+        if: steps.changesets.outputs.published != 'true'
+        run: |
+          echo "Publishing to dev snapshot tag"
+          git checkout main
+          bun run changeset version --snapshot dev
+          bun run changeset publish --tag dev
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          HUSKY: 0
+
+      - name: Create GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        shell: bash
+        run: |
+          VERSION=$(echo '${{ steps.changesets.outputs.publishedPackages }}' | jq -r '.[0].version')
+          RELEASE_DATE=$(date +%Y-%m-%d)
+
+          # Get the most recently merged PR's body
+          PR_BODY=$(gh pr list --state merged --base main --json body,mergedAt --jq 'sort_by(.mergedAt) | last | .body')
+
+          # Extract everything from "# Releases" onward and replace with "# Changelog"
+          CHANGELOG=$(echo "$PR_BODY" | sed -n '/^# Releases/,$p' | sed '1s/^# Releases/# Changelog/')
+
+          # Pin the release tag to the exact commit that was built and published.
+          gh release create "v${VERSION}" \
+            --target "${{ github.sha }}" \
+            --title "${RELEASE_DATE}" \
+            --notes "$CHANGELOG"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

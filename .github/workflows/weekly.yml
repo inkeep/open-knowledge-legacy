@@ -6,14 +6,14 @@ name: Weekly elevated-sample tests
 # uploaded so drift over weeks is reviewable post-hoc. Budget: 60 min (generous
 # — elevated-sample runs are minutes, not sub-minute).
 #
-# Scheduled for Sunday mornings (off-minute). Manual trigger also supported so
-# release branches can fire it on demand.
+# On-demand only. Same rationale as nightly: pre-production project, no
+# consumer for weekly signal, tier-1 catches regressions at merge time.
+# Developers who want elevated-sample coverage or a perf trend snapshot run
+# this workflow from the GitHub Actions UI ("Run workflow") or via
+# `gh workflow run weekly.yml`. Re-enable the `schedule:` trigger when
+# background elevated-sample detection becomes load-bearing.
 
 on:
-  schedule:
-    # 4:23 AM UTC Sundays (off-minute + off-hour to avoid GHA scheduling
-    # contention; separated from nightly's 6:17 slot).
-    - cron: "23 4 * * 0"
   workflow_dispatch: {}
 
 permissions:
@@ -26,8 +26,12 @@ concurrency:
 jobs:
   # Elevated-sample PBT: STRESS_FIDELITY=1 bumps fast-check numRuns from 1K to
   # 10K per `packages/app/tests/fidelity/helpers.ts` + PBT_TIMEOUT_MS from
-  # 30s to 90s. All 10 active invariants (I1-I10) plus the 6 new US-014 PBTs
-  # run at elevated sample depth.
+  # 30s to 90s. Fidelity invariants I1-I10 plus the 6 new US-014 handler PBTs
+  # run at elevated sample depth via `test:fidelity` (scoped to
+  # `packages/app/tests/fidelity/**`). I11 (R23 guard precision, colocated
+  # with the guard at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts`)
+  # has its own STRESS_FIDELITY guard but is NOT re-run by this job — it
+  # executes in the core unit suite at default sampling.
   elevated-fidelity:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -93,7 +97,7 @@ jobs:
       - env:
           RUN_BENCH: "1"
         run: bunx turbo run test:perf:bench
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: perf-trend-${{ github.sha }}

@@ -34,6 +34,7 @@ import {
   AGENT_WRITE_ORIGIN,
   createServer,
   FILE_WATCHER_ORIGIN,
+  MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
   ROLLBACK_ORIGIN,
   type ServerInstance,
@@ -47,7 +48,6 @@ import * as Y from 'yjs';
 import {
   ORIGIN_TEXT_TO_TREE,
   ORIGIN_TREE_TO_TEXT,
-  type Scheduler,
   setupObservers,
 } from '../../src/editor/observers';
 import { ControllableWebSocket } from './network-control';
@@ -213,21 +213,6 @@ export interface CreateTestClientOptions {
   skipInvariantWatcher?: boolean;
   /** Wrap the WebSocket with a ControllableWebSocket for pause/resume sync. */
   syncControl?: boolean;
-  /**
-   * Inject a custom Scheduler for Observer A/B debounce control (FR-15).
-   *
-   * Default (omitted) routes setTimeout/clearTimeout to globalThis (passthrough —
-   * zero behavioral difference from pre-FR-15 code). Multi-client tests
-   * should hold a single `ManualScheduler` instance at test scope and pass
-   * it to every client via `perClientOptions` so `scheduler.flush()` advances
-   * all clients' observers atomically.
-   *
-   * Scheduler only controls Observer A/B internal timers (debounce, typing
-   * defer, remote-tree grace). WebSocket CRDT propagation timing is
-   * unaffected and remains real-clock — ControllableWebSocket does not use
-   * setTimeout and coexists cleanly with the scheduler option.
-   */
-  scheduler?: Scheduler;
 }
 
 export async function createTestClient(
@@ -270,9 +255,6 @@ export async function createTestClient(
     ytext,
     mdManager,
     schema,
-    // FR-15: caller-injected scheduler overrides globalThis.setTimeout.
-    // When undefined, setupObservers falls back to defaultScheduler (passthrough).
-    scheduler: options?.scheduler,
   });
 
   // FR-11: attach bridge invariant watcher by default
@@ -332,6 +314,69 @@ export function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): P
 
 export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Structural quiescence gate — resolves once the doc has NO in-flight
+ * transactions AND no `afterAllTransactions` listener fires for N
+ * consecutive microtasks. Use instead of wall-clock `wait(ms)` when a test
+ * needs to wait for a local doc's pending observer work (including the
+ * settlement dispatcher's inner OBSERVER_SYNC_ORIGIN writes) to settle.
+ *
+ * Precedent #13(b): settlement-based, NOT wall-clock. Under the
+ * server-authoritative bridge (SPEC §6 R4), observer work fires
+ * synchronously inside `afterAllTransactions` — but some paths kick a
+ * follow-up `doc.transact(..., OBSERVER_SYNC_ORIGIN)` which starts a new
+ * drain. This helper waits until a short quiet window passes with no new
+ * drains to catch that cascade deterministically.
+ *
+ * The `idleTicks` count (default 2) must be >= 2 so the first tick can
+ * observe an in-flight drain and the second confirms the drain finished
+ * without a follow-up. `idleTicks: 1` is INSUFFICIENT for the seed-class
+ * races this helper exists to catch: Observer A's inner
+ * `OBSERVER_SYNC_ORIGIN` write scheduled via `queueMicrotask` can land on
+ * a later tick than the outer drain, so a single idle observation can
+ * return before the cascade completes. Raise `idleTicks` for particularly
+ * nested observer cascades; lower is unsafe.
+ *
+ * `timeoutMs` (default 2000) guards against hangs; throws a clear error
+ * pointing at the doc if quiescence is never reached.
+ *
+ * Does NOT cover inter-doc / inter-client WebSocket propagation — for
+ * multi-client convergence, combine with `assertAllConverged` or equivalent
+ * polling gates.
+ */
+export async function awaitDocQuiescence(
+  doc: Y.Doc,
+  opts?: { timeoutMs?: number; idleTicks?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 2000;
+  const idleTicks = Math.max(2, opts?.idleTicks ?? 2);
+
+  let dirty = false;
+  const markDirty = (): void => {
+    dirty = true;
+  };
+  doc.on('afterAllTransactions', markDirty);
+  try {
+    const start = Date.now();
+    let consecutiveIdle = 0;
+    while (Date.now() - start < timeoutMs) {
+      if (dirty) {
+        dirty = false;
+        consecutiveIdle = 0;
+      } else {
+        consecutiveIdle++;
+        if (consecutiveIdle >= idleTicks) return;
+      }
+      // Yield to the microtask queue + one macro tick — lets pending
+      // transacts drain and observer follow-ups fire.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(`awaitDocQuiescence: doc did not settle within ${timeoutMs} ms`);
+  } finally {
+    doc.off('afterAllTransactions', markDirty);
+  }
 }
 
 /** Serialize XmlFragment to markdown string */
@@ -516,9 +561,10 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
  * Every entry is a `LocalTransactionOrigin` OBJECT reference per precedent #1
  * (AGENTS.md): ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE (observers.ts),
  * AGENT_WRITE_ORIGIN (agent-sessions.ts), FILE_WATCHER_ORIGIN (external-change.ts),
- * ROLLBACK_ORIGIN (api-extension.ts). `Set.has()` performs identity matching for
- * objects — a string literal would NEVER match the actual production tx.origin
- * object, silently skipping enforcement.
+ * ROLLBACK_ORIGIN + MANAGED_RENAME_ORIGIN (api-extension.ts), OBSERVER_SYNC_ORIGIN
+ * (server-observers.ts). `Set.has()` performs identity matching for objects —
+ * a string literal would NEVER match the actual production tx.origin object,
+ * silently skipping enforcement.
  *
  * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
  * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
@@ -529,6 +575,7 @@ const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   AGENT_WRITE_ORIGIN,
   FILE_WATCHER_ORIGIN,
   ROLLBACK_ORIGIN,
+  MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
 ]);
 
@@ -607,70 +654,6 @@ export function attachBridgeInvariantWatcher(
   doc.on('afterTransaction', afterTx);
   return () => {
     doc.off('afterTransaction', afterTx);
-  };
-}
-
-// ─── Manual scheduler for deterministic observer testing (FR-15) ───
-
-export interface ManualScheduler extends Scheduler {
-  /** Fire all pending callbacks synchronously, regardless of due-time.
-   *  Cascading: if a fired callback schedules a new timer, that new timer
-   *  also fires in the same flush. Bounded to 100 drain passes. */
-  flush(): void;
-  /** Advance virtual time by `ms`, fire all callbacks whose dueAt ≤ new now.
-   *  Cascading: if a fired callback schedules a new timer at dueAt ≤ new now,
-   *  that new timer also fires in the same advance. Bounded to 100 drain
-   *  passes to prevent runaway chains. */
-  advanceTime(ms: number): void;
-  /** Inspect the pending callback queue (read-only). */
-  pending(): ReadonlyArray<{ id: number; dueAt: number }>;
-}
-
-export function createManualScheduler(): ManualScheduler {
-  type Entry = { id: number; cb: () => void; dueAt: number };
-  const queue: Entry[] = [];
-  let now = 0;
-  let nextId = 1;
-
-  return {
-    setTimeout: (cb, ms) => {
-      const id = nextId++;
-      queue.push({ id, cb, dueAt: now + ms });
-      return id as unknown as ReturnType<typeof globalThis.setTimeout>;
-    },
-    clearTimeout: (handle) => {
-      const id = handle as unknown as number;
-      const idx = queue.findIndex((e) => e.id === id);
-      if (idx >= 0) queue.splice(idx, 1);
-    },
-    now: () => now,
-    advanceTime(ms) {
-      now += ms;
-      // Drain cascading timers: each callback may schedule new timers. Loop
-      // until no more timers are due at the current virtual time. Bounded
-      // to prevent runaway re-scheduling chains.
-      for (let pass = 0; pass < 100; pass++) {
-        const due = queue.filter((e) => e.dueAt <= now);
-        if (due.length === 0) return;
-        for (const e of due) {
-          const idx = queue.indexOf(e);
-          if (idx >= 0) queue.splice(idx, 1);
-          e.cb();
-        }
-      }
-      throw new Error('ManualScheduler.advanceTime: re-scheduling loop exceeded 100 drain passes');
-    },
-    flush() {
-      // Drain cascading timers: callbacks may schedule new ones; keep going
-      // until the queue is empty. Bounded to prevent runaway chains.
-      for (let pass = 0; pass < 100; pass++) {
-        const e = queue.shift();
-        if (!e) return;
-        e.cb();
-      }
-      throw new Error('ManualScheduler.flush: re-scheduling loop exceeded 100 drain passes');
-    },
-    pending: () => queue.map(({ id, dueAt }) => ({ id, dueAt })),
   };
 }
 

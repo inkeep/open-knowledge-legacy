@@ -22,25 +22,23 @@
  * source toggle.
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
+import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
-
-/** Wait for the active provider to be connected and synced */
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
 
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
 test.describe('FR-7a: source-mode toggle disabled during disconnect', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-    if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-    await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    docName = `test-fr7a-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
+    await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
   });

@@ -1,116 +1,438 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import {
-  acquireServerLock,
-  type ServerLockMetadata,
-  updateServerLockPort,
-} from '@inkeep/open-knowledge-server';
-import { OK_DIR } from '../constants.ts';
-import { discoverServerUrl } from './mcp.ts';
+import type { ServerLockMetadata } from '@inkeep/open-knowledge-server';
+import { type AutoStartDecision, decideAutoStart, ensureServerRunning } from './mcp.ts';
 
-let tmpDir: string;
-let lockDir: string;
-let lockPath: string;
+const aliveLock: ServerLockMetadata = {
+  pid: 4242,
+  hostname: 'test-host',
+  port: 5173,
+  startedAt: '2026-04-16T10:00:00Z',
+  worktreeRoot: '/tmp/test',
+};
 
-beforeEach(async () => {
-  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-discovery-'));
-  lockDir = resolve(tmpDir, OK_DIR);
-  lockPath = resolve(lockDir, 'server.lock');
-});
+const bootingLock: ServerLockMetadata = { ...aliveLock, port: 0 };
 
-afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
-});
-
-describe('discoverServerUrl', () => {
-  test('no lock file → disk-only (no serverUrl)', () => {
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBeUndefined();
-    expect(result.message).toContain('no running instance');
-  });
-
-  test('live lock with port > 0 → ws://localhost:<port>', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 5173);
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBe('ws://localhost:5173');
-    expect(result.message).toContain('connected to running instance');
-    expect(result.message).toContain('5173');
-  });
-
-  test('lock with port=0 → disk-only (server still starting)', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBeUndefined();
-    expect(result.message).toContain('still starting');
-  });
-
-  test('stale lock (dead pid) → disk-only, lock is unlinked', () => {
-    const stale: ServerLockMetadata = {
-      pid: 99999999,
-      hostname: hostname(),
-      port: 5173,
-      startedAt: new Date().toISOString(),
-      worktreeRoot: tmpDir,
-    };
-    // Seed lockDir then overwrite with a dead-pid lock
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    writeFileSync(lockPath, JSON.stringify(stale), 'utf-8');
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBeUndefined();
-    expect(result.message).toContain('no running instance');
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  test('cross-host lock → disk-only, lock preserved on disk', () => {
-    const remote: ServerLockMetadata = {
-      pid: 1,
-      hostname: 'some-other-host',
-      port: 5173,
-      startedAt: new Date().toISOString(),
-      worktreeRoot: tmpDir,
-    };
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    writeFileSync(lockPath, JSON.stringify(remote), 'utf-8');
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBeUndefined();
-    expect(existsSync(lockPath)).toBe(true);
-  });
-
-  test('--port override bypasses lock discovery (live lock present)', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 5173);
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: '9999' });
-    expect(result.serverUrl).toBe('ws://localhost:9999');
-    expect(result.message).toContain('--port override');
+describe('decideAutoStart', () => {
+  test('--port override with positive integer → connect', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: '9999',
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result).toEqual<AutoStartDecision>({
+      action: 'connect',
+      url: 'ws://localhost:9999',
+      message: 'using --port override, connecting to ws://localhost:9999',
+    });
   });
 
   test('--port=0 override → disk-only regardless of lock', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 5173);
-
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: '0' });
-    expect(result.serverUrl).toBeUndefined();
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: '0',
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => aliveLock,
+      isAlive: () => true,
+    });
+    expect(result.action).toBe('disk-only');
     expect(result.message).toContain('disk-only');
   });
 
-  test('--port override uses provided host', () => {
-    const result = discoverServerUrl({ lockDir, host: '0.0.0.0', portOverride: '4444' });
-    expect(result.serverUrl).toBe('ws://0.0.0.0:4444');
-  });
-
   test('--port with non-numeric value → disk-only with invalid message', () => {
-    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: 'abc' });
-    expect(result.serverUrl).toBeUndefined();
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: 'abc',
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('disk-only');
     expect(result.message).toContain('invalid');
     expect(result.message).toContain('abc');
+  });
+
+  test('--port override uses provided host', () => {
+    const result = decideAutoStart({
+      host: '0.0.0.0',
+      portOverride: '4444',
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('connect');
+    if (result.action === 'connect') expect(result.url).toBe('ws://0.0.0.0:4444');
+  });
+
+  test('live lock with port > 0 → connect (no spawn)', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => aliveLock,
+      isAlive: (pid) => pid === aliveLock.pid,
+    });
+    expect(result).toMatchObject({
+      action: 'connect',
+      url: `ws://localhost:${aliveLock.port}`,
+    });
+  });
+
+  test('live lock wins over opt-out (running server is resumable regardless)', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: '0',
+      configAutoStart: false,
+      readLock: () => aliveLock,
+      isAlive: () => true,
+    });
+    expect(result.action).toBe('connect');
+  });
+
+  test('no lock + opt-out via env → disk-only', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: '0',
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('disk-only');
+    expect(result.message).toContain('OK_MCP_AUTOSTART=0');
+  });
+
+  test('no lock + opt-out via config → disk-only', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: false,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('disk-only');
+    expect(result.message).toContain('config.mcp.autoStart=false');
+  });
+
+  test('env precedence — env=0 disables even when config=true', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: '0',
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('disk-only');
+    expect(result.message).toContain('OK_MCP_AUTOSTART=0');
+  });
+
+  test('env precedence — env unset defers to config', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: false,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('disk-only');
+    expect(result.message).toContain('config.mcp.autoStart');
+  });
+
+  test('no lock + no opt-out → spawn', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('spawn');
+  });
+
+  test('lock with port=0 (still booting) → spawn when no opt-out', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => bootingLock,
+      isAlive: () => true,
+    });
+    expect(result.action).toBe('spawn');
+    expect(result.message).toContain('port=0');
+  });
+
+  test('lock with dead pid → spawn (readLock side effect would null-out in prod)', () => {
+    const result = decideAutoStart({
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => aliveLock,
+      isAlive: () => false,
+    });
+    expect(result.action).toBe('spawn');
+  });
+});
+
+describe('ensureServerRunning', () => {
+  let tmpDir: string;
+  let lockDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-ensure-'));
+    lockDir = resolve(tmpDir, '.open-knowledge');
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  type SpawnCall = {
+    cmd: string;
+    args: readonly string[];
+    opts: {
+      detached?: boolean;
+      stdio?: readonly unknown[];
+      cwd?: string;
+    };
+  };
+
+  function makeMockSpawn(calls: SpawnCall[]): never {
+    // Typed as never so callers can drop it into the opts.spawn slot without
+    // fighting the full ChildProcess return-type tree in tests.
+    return ((cmd: string, args: readonly string[], opts: unknown) => {
+      calls.push({
+        cmd,
+        args,
+        opts: opts as SpawnCall['opts'],
+      });
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      };
+    }) as never;
+  }
+
+  test('connect fast-path — does not spawn when live lock present', async () => {
+    const calls: SpawnCall[] = [];
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => aliveLock,
+      isAlive: () => true,
+      spawn: makeMockSpawn(calls),
+    });
+    expect(result.serverUrl).toBe(`ws://localhost:${aliveLock.port}`);
+    expect(calls.length).toBe(0);
+  });
+
+  test('disk-only — OK_MCP_AUTOSTART=0 does not spawn', async () => {
+    const calls: SpawnCall[] = [];
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: '0',
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+      spawn: makeMockSpawn(calls),
+    });
+    expect(result.serverUrl).toBeUndefined();
+    expect(calls.length).toBe(0);
+  });
+
+  test('disk-only — config.mcp.autoStart=false does not spawn', async () => {
+    const calls: SpawnCall[] = [];
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: false,
+      readLock: () => null,
+      isAlive: () => false,
+      spawn: makeMockSpawn(calls),
+    });
+    expect(result.serverUrl).toBeUndefined();
+    expect(calls.length).toBe(0);
+  });
+
+  test('spawn success — poll eventually sees port > 0', async () => {
+    const calls: SpawnCall[] = [];
+    let pollCount = 0;
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => {
+        pollCount++;
+        if (pollCount < 3) return null;
+        return aliveLock;
+      },
+      isAlive: () => true,
+      sleep: async () => {},
+      spawn: makeMockSpawn(calls),
+      pollIntervalMs: 1,
+      timeoutMs: 1000,
+    });
+    expect(result.serverUrl).toBe(`ws://localhost:${aliveLock.port}`);
+    expect(calls.length).toBe(1);
+    // Re-exec via the current CLI binary (not npx) to avoid cross-version
+    // lockfile-ABI drift. `cmd` is the current runtime (node/bun), `args[0]` is
+    // the CLI entry script, followed by the `start` subcommand.
+    expect(calls[0]?.cmd).toBe(process.execPath);
+    expect(calls[0]?.args.length).toBe(2);
+    expect(calls[0]?.args[1]).toBe('start');
+    expect(calls[0]?.opts.detached).toBe(true);
+    expect(calls[0]?.opts.cwd).toBe(tmpDir);
+    expect(calls[0]?.opts.stdio?.[0]).toBe('ignore');
+    expect(calls[0]?.opts.stdio?.[1]).toBe('ignore');
+    // stdio[2] is a numeric fd — kernel captures child's stderr.
+    expect(typeof calls[0]?.opts.stdio?.[2]).toBe('number');
+  });
+
+  test('creates lockDir if missing before opening error log', async () => {
+    expect(existsSync(lockDir)).toBe(false);
+    const calls: SpawnCall[] = [];
+    try {
+      await ensureServerRunning({
+        lockDir,
+        contentDir: tmpDir,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {},
+        spawn: makeMockSpawn(calls),
+        pollIntervalMs: 1,
+        timeoutMs: 3,
+      });
+    } catch {
+      // timeout expected
+    }
+    expect(existsSync(lockDir)).toBe(true);
+    expect(existsSync(resolve(lockDir, 'last-spawn-error.log'))).toBe(true);
+  });
+
+  test('poll timeout surfaces stderr content in thrown error', async () => {
+    // Pre-populate error log (simulating what the spawn would have written).
+    const errorLog = resolve(lockDir, 'last-spawn-error.log');
+    const calls: SpawnCall[] = [];
+    // Mock openErrorLog so we can write simulated stderr without truncation
+    // fighting the test. We write the content AFTER the mock "opens" it.
+    const openErrorLog = (path: string) => {
+      // Create dir + empty file so poll-timeout read succeeds below.
+      if (!existsSync(lockDir)) {
+        require('node:fs').mkdirSync(lockDir, { recursive: true });
+      }
+      writeFileSync(path, 'spawn npx ENOENT\n', 'utf-8');
+      // Return a fake fd; ensureServerRunning's closeFd will swallow errors.
+      return 1234567;
+    };
+
+    await expect(
+      ensureServerRunning({
+        lockDir,
+        contentDir: tmpDir,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {},
+        spawn: makeMockSpawn(calls),
+        pollIntervalMs: 1,
+        timeoutMs: 5,
+        openErrorLog,
+        closeFd: () => {},
+      }),
+    ).rejects.toThrow(/did not start within.*stderr:/s);
+
+    // Confirm the content made it to the log.
+    expect(readFileSync(errorLog, 'utf-8')).toContain('ENOENT');
+  });
+
+  test('poll timeout with empty stderr throws a clean timeout message', async () => {
+    const calls: SpawnCall[] = [];
+    await expect(
+      ensureServerRunning({
+        lockDir,
+        contentDir: tmpDir,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {},
+        spawn: makeMockSpawn(calls),
+        pollIntervalMs: 1,
+        timeoutMs: 3,
+      }),
+    ).rejects.toThrow(/did not start within/);
+  });
+
+  test('--port override short-circuits spawn', async () => {
+    const calls: SpawnCall[] = [];
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: '4242',
+      envAutoStart: undefined,
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+      spawn: makeMockSpawn(calls),
+    });
+    expect(result.serverUrl).toBe('ws://localhost:4242');
+    expect(calls.length).toBe(0);
+  });
+
+  test('env precedence — OK_MCP_AUTOSTART=0 + config=true → disk-only', async () => {
+    const calls: SpawnCall[] = [];
+    const result = await ensureServerRunning({
+      lockDir,
+      contentDir: tmpDir,
+      host: 'localhost',
+      portOverride: undefined,
+      envAutoStart: '0',
+      configAutoStart: true,
+      readLock: () => null,
+      isAlive: () => false,
+      spawn: makeMockSpawn(calls),
+    });
+    expect(result.serverUrl).toBeUndefined();
+    expect(result.message).toContain('OK_MCP_AUTOSTART=0');
+    expect(calls.length).toBe(0);
   });
 });

@@ -27,6 +27,14 @@ export interface ReconciliationMetrics {
    *  produces amplified disk I/O. Under skipStoreHooks: true, a single
    *  agent-write produces exactly one persistence disk write. */
   persistenceDiskWrites: number;
+  /** Bridge-correctness SPEC §6 R9 — count of Observer A Path B
+   *  content-preservation post-condition violations. Calibration signal
+   *  for the parallel single-CRDT-collapse exploration. */
+  bridgeMergeContentLoss: number;
+  /** Bridge-correctness SPEC §6 R9 — count of successful silent rescue
+   *  checkpoints written via saveInMemoryCheckpoint. Bounds the rate a user
+   *  might see in TimelinePanel; if high, R7c coalescing becomes worth adding. */
+  bridgeMergeCheckpointCreated: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -47,6 +55,8 @@ const counters: ReconciliationMetrics = {
   serverObserverErrorsA: 0,
   serverObserverErrorsB: 0,
   persistenceDiskWrites: 0,
+  bridgeMergeContentLoss: 0,
+  bridgeMergeCheckpointCreated: 0,
 };
 
 export function incrementReconcile(): void {
@@ -107,6 +117,14 @@ export function incrementServerObserverError(direction: 'a' | 'b'): void {
   else counters.serverObserverErrorsB++;
 }
 
+export function incrementBridgeMergeContentLoss(): void {
+  counters.bridgeMergeContentLoss++;
+}
+
+export function incrementBridgeMergeCheckpointCreated(): void {
+  counters.bridgeMergeCheckpointCreated++;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -133,4 +151,6 @@ export function resetMetrics(): void {
   counters.serverObserverErrorsA = 0;
   counters.serverObserverErrorsB = 0;
   counters.persistenceDiskWrites = 0;
+  counters.bridgeMergeContentLoss = 0;
+  counters.bridgeMergeCheckpointCreated = 0;
 }

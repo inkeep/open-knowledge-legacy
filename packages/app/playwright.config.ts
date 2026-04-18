@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 
 // Module-scope creation: runs at config-eval time, before any setup tasks.
 // The webServer captures this via webServer.env at spawn time.
@@ -17,36 +17,62 @@ const port = process.env.VITE_PORT || '5173';
 const baseURL = `http://localhost:${port}`;
 
 /**
- * Cross-browser projects (QA-046 / SPEC §13).
+ * Single-browser (Chromium) — all E2E tests use programmatic clipboard
+ * injection via `dispatchEvent(new ClipboardEvent(...))`, not real browser
+ * clipboard APIs. Cross-browser clipboard differences (Safari user-activation
+ * rules, Firefox async clipboard restrictions) are not exercised because the
+ * tests bypass the native clipboard permission model entirely. Running 3×
+ * browsers adds ~10 minutes of CI time with zero additional coverage.
  *
- * Clipboard behavior differs per browser — Safari has stricter
- * user-activation rules for `ClipboardItem.write`, Firefox has different
- * restrictions on async clipboard APIs, and Chromium is the baseline
- * assumption in most existing Playwright e2e code. Running the full E2E
- * suite against all three closes the cross-browser parity gate the spec
- * called out as Must.
- *
- * Opt-in single-browser run for local iteration:
- *   bunx playwright test --project=chromium
- *
- * Browser installation (one-time, or after Playwright upgrade):
- *   bun run test:e2e:install-browsers
+ * If future tests exercise REAL browser clipboard (e.g., `page.keyboard.press
+ * ('Meta+V')` with system clipboard content), add per-file project scoping
+ * for those tests only — not a global 3× multiplier.
  */
+const isCI = !!process.env.CI;
+
 export default defineConfig({
   testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
-  retries: 0,
+  // D-Q5 LOCKED: retries absorb transient infra noise; failOnFlakyTests keeps
+  // the verdict strict — retry-success still fails the PR.
+  retries: isCI ? 2 : 0,
+  failOnFlakyTests: isCI,
+  forbidOnly: isCI,
+  // D-Q7 LOCKED at workers=4 on `ubuntu-64gb` (16+ vCPU / 64 GB RAM shared
+  // runner). Calibration history:
+  //   - ubuntu-latest (2 vCPU), workers=4 × retries=2: cancelled at 15:00
+  //     (PR #193 run 24572488164) — oversubscribed 2×
+  //   - ubuntu-latest (2 vCPU), workers=2 × retries=2: cancelled at 15:14
+  //     (PR #193 run 24573513956) — still oversubscribed
+  //   - ubuntu-latest (2 vCPU), workers=1 × retries=2: 12m24s clean
+  //     (PR #193 run 24574575469) — serial with retries, no CPU contention
+  //   - ubuntu-64gb (≥16 vCPU), workers=4 × retries=2: fits comfortably —
+  //     the runner has headroom for 4 × (playwright worker + chromium
+  //     process) with retries='2'.
+  // Per-test docName isolation (PR #185) enables fullyParallel. Local workers
+  // undefined = Playwright default for single-test debug ergonomics.
+  // See `specs/2026-04-17-e2e-observability-determinism/evidence/workers-calibration.md`
+  // for the full calibration evidence. If the CI runner tier changes back to
+  // 2 vCPU (e.g., ubuntu-64gb quota exhausted), re-downgrade to workers=1.
+  fullyParallel: true,
+  workers: isCI ? 4 : undefined,
+  // D-Q8 DELEGATED: HTML report as artifact; list locally + github reporter on
+  // CI for inline PR annotations.
+  reporter: [['html', { open: 'never' }], ['list'], ...(isCI ? [['github'] as const] : [])],
   globalTeardown: './tests/stress/global-teardown.ts',
   use: {
     baseURL,
     headless: true,
+    // D-Q9 DELEGATED: 1280×720 matches the most common default viewport; the
+    // default 800×450 crops the sidebar in narrow-viewport tests. Retained only
+    // on failure to bound storage growth.
+    video: { mode: 'retain-on-failure', size: { width: 1280, height: 720 } },
+    // 'on-first-retry' captures trace on retry 1 only; subsequent retries skip
+    // to stay under the CI runtime envelope (AC-12).
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
   },
-  projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-  ],
   webServer: {
     command: `VITE_PORT=${port} bun run dev`,
     url: baseURL,

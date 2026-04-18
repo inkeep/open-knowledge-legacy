@@ -4,6 +4,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
 import './globals.css';
 import { App } from './App';
 

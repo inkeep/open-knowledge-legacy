@@ -10,6 +10,7 @@ export {
 export {
   type ApiExtensionOptions,
   createApiExtension,
+  MANAGED_RENAME_ORIGIN,
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
@@ -65,6 +66,11 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  type AttachIdleShutdownOptions,
+  attachIdleShutdown,
+  type IdleShutdownHandle,
+} from './idle-shutdown.ts';
+export {
   createLiveDerivedIndexExtension,
   LIVE_DERIVED_INDEX_DEBOUNCE_MS,
   type LiveDerivedIndexOptions,
@@ -95,6 +101,18 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { isProcessAlive } from './process-alive.ts';
+export {
+  acquireProcessLock,
+  type LockName,
+  lockFilePath,
+  ProcessLockCollisionError,
+  type ProcessLockHandle,
+  type ProcessLockMetadata,
+  readProcessLock,
+  releaseProcessLock,
+  updateProcessLockPort,
+} from './process-lock.ts';
 export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
@@ -118,16 +136,32 @@ export {
 } from './server-observer-extension.ts';
 export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 export {
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  DEFAULT_CHECKPOINT_RETENTION,
+  gcCheckpointRefs,
+  type InMemoryCheckpointParams,
   initShadowRepo,
+  listRescueCheckpoints,
   type SafetyCheckpointParams,
   type SaveVersionResult,
   type ShadowHandle,
   type ShadowRef,
   safetyCheckpoint,
+  saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+export {
+  acquireUiLock,
+  readUiLock,
+  releaseUiLock,
+  UiLockCollisionError,
+  type UiLockMetadata,
+  updateUiLockPort,
+} from './ui-lock.ts';

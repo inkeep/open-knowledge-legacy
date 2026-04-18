@@ -193,7 +193,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     // view is guaranteed present. If the editor is already created by the
     // time this effect runs (common path), we attach immediately.
     // Regression fixed: QA-002 retry flow + any Activity unhide reconnect.
-    const mark = () => markUserTyping(provider.document);
+    const mark = () => markUserTyping();
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
       if (attachedDom || !editor || editor.isDestroyed) return;
@@ -223,7 +223,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       editor.off('create', attach);
       detach();
     };
-  }, [editor, provider.document]);
+  }, [editor]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -274,8 +274,17 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
     /** Imperative DOM update — bypasses React re-render to avoid disrupting typing. */
     const applyFlashStateToDom = (state: AgentFlashState) => {
+      // `flashStateRef` is the authoritative source in production — the
+      // count-monotonicity logic in `triggerFlash` below derives the next
+      // count from `flashStateRef.current?.count ?? 0`, not from the
+      // window hook. The `window.__agentFlashState` write is a DEV-only
+      // test observation channel (US-006 / AGENTS.md precedent #20); Vite
+      // statically replaces `import.meta.env.DEV` at build time so the
+      // branch tree-shakes out of production bundles.
       flashStateRef.current = state;
-      window.__agentFlashState = state;
+      if (import.meta.env.DEV) {
+        window.__agentFlashState = state;
+      }
       const el = wrapperRef.current;
       if (el) {
         el.setAttribute('data-agent-flash-state', state.state);
@@ -293,7 +302,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
       const nextState: AgentFlashState = {
         state: 'editing',
-        count: (window.__agentFlashState?.count ?? 0) + 1,
+        // Read from the ref (prod-safe) rather than `window.__agentFlashState`
+        // — the window write is DEV-gated (US-006) and the ref is the
+        // authoritative source in production. Keeps count monotonic under
+        // rapid re-trigger regardless of whether tests are observing.
+        count: (flashStateRef.current?.count ?? 0) + 1,
         lastFiredAt: Date.now(),
         position,
         lastAgentId: latest?.agentId ?? null,

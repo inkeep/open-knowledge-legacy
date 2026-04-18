@@ -48,11 +48,10 @@ jobs:
           - test:conversion
           - test:fidelity
           - test:stress:server-authoritative
-          - test:fuzz:bridge
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Node 22+ is required because turbo's `^build` pulls in
-      # `open-knowledge-app#build` (vite build) transitively via the cli
+      # `@inkeep/open-knowledge-app#build` (vite build) transitively via the cli
       # package's workspace dep on the app. Vite's config loader evaluates
       # the bundled config with native `import()`, and externalized workspace
       # deps that resolve to `.ts` sources (e.g., `@inkeep/open-knowledge-server`
@@ -74,22 +73,56 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx turbo run ${{ matrix.task }}
 
-  playwright:
+  fuzz:
+    # Dedicated job so the fuzz cadence (75 seeds PR-tier, 10K seeds
+    # nightly via `STRESS_FUZZ_NIGHTLY=1`) is decoupled from the other
+    # `test` matrix entries. Runs on `ubuntu-latest` — the 75-seed target
+    # is calibrated against measured CI per-seed distribution
+    # (mean 8.9 s, p95 24 s; see `resolveSeedCount` in
+    # `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) and
+    # fits the 15-min tier-1 budget with headroom. The large (64gb)
+    # runner was tried for a 200-seed gate and did not absorb the long
+    # tail; split-by-tier (D11) with a calibrated PR-tier seed count is
+    # the cleaner answer.
     runs-on: ubuntu-latest
-    # Three browser projects (chromium + webkit + firefox) × 5 E2E files.
-    # Empirical runtime on ubuntu-latest:
-    #   - playwright install (binaries, cached): ~10s
-    #   - playwright install-deps chromium: ~10s
-    #   - playwright install-deps webkit: ~16s
-    #   - test:e2e: ~24 min (5 `&&`-chained invocations × 3 browsers,
-    #     each invocation spins up a fresh webServer due to
-    #     `reuseExistingServer: false` for state isolation)
-    # Budget 40 min: 25 min observed + ~15 min headroom for slower
-    # runners / coldcache / the occasional stress flake re-run. Single-
-    # browser baseline was ~6 min (pre-Act-5). test:e2e script
-    # consolidation into a single invocation would cut ~5 min by
-    # eliminating per-file webServer startup, but is a separate cleanup.
-    timeout-minutes: 40
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+          cache: true
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-fuzz-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-fuzz-
+      - run: bun install --frozen-lockfile
+      # STRESS_FUZZ_PR=1 elevates the bridge-convergence fuzzer from 25
+      # default seeds to the tier-1 PR target (see `resolveSeedCount`).
+      # Nightly runs at 10000 via nightly.yml's explicit STRESS_FUZZ_NIGHTLY=1.
+      - env:
+          STRESS_FUZZ_PR: "1"
+        run: bunx turbo run test:fuzz:bridge
+
+  playwright:
+    # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`
+    # free tier was the limiting factor for D-Q7: workers>1 × retries=2
+    # oversubscribed the runner enough that runs cancelled at the 15-min
+    # timeout (PR #193's first two CI runs). On `ubuntu-64gb` we can restore
+    # workers=4 safely; see playwright.config.ts for the parallel config and
+    # `specs/2026-04-17-e2e-observability-determinism/evidence/workers-calibration.md`
+    # for the D-Q7 calibration history.
+    runs-on: ubuntu-64gb
+    # Chromium only — all E2E tests use programmatic clipboard injection
+    # (dispatchEvent + synthetic ClipboardEvent), not real browser clipboard
+    # APIs. Cross-browser differences are not exercised. See
+    # playwright.config.ts comment for the full rationale.
+    # Expected runtime on ubuntu-64gb: ~3-5 min at workers=4 + retries=2
+    # (main baseline was 7m41s on 2-vCPU at retries=0 workers=default=1).
+    # 15-min budget covers cold-start + retry tax + headroom.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Node 22+ is required here because Vite's config loader writes the
@@ -117,33 +150,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
       - run: bun install --frozen-lockfile
-      # Install all three browsers for cross-browser parity (SPEC §13, QA-046).
-      # The playwright.config.ts now defines chromium/webkit/firefox projects;
-      # tests fan out across all three automatically.
-      #
-      # Install strategy (three commands, ordered for speed):
-      #   1. `playwright install chromium webkit firefox` — downloads the
-      #      browser binaries only; served from the actions/cache above on hit.
-      #   2. `playwright install-deps chromium` — installs chromium's system
-      #      libs via apt (baseline graphics/audio/X11 stack).
-      #   3. `playwright install-deps webkit` — installs webkit's specific
-      #      libs (GTK4 + GStreamer + audio codecs + libwoff2dec +
-      #      libhyphen + libmanette + libsecret + libflite + libavif). Without
-      #      this step, `browserType.launch` fails with "Host system is
-      #      missing dependencies to run browsers" listing ~20 libs.
-      #   Firefox doesn't need a dedicated install-deps pass on ubuntu-latest
-      #   — its required libs overlap with chromium's baseline.
-      #
-      # Historical footnote: `playwright install --with-deps chromium webkit
-      # firefox` (single command) ran a full apt resolution of ALL browsers'
-      # system packages (gstreamer, libsdl2, libpipewire, timgm6mb-soundfont,
-      # etc.) which took ~25 min on ubuntu-latest mirrors and killed the
-      # job before tests started (commits fddd7ed1 → cancelled at 25-min
-      # timeout). The split approach is cache-friendly and avoids the apt
-      # pathological case.
-      - run: bunx playwright install chromium webkit firefox
-      - run: bunx playwright install-deps chromium
-      - run: bunx playwright install-deps webkit
+      # Chromium only — all E2E tests use programmatic clipboard injection
+      # (dispatchEvent + synthetic ClipboardEvent), not real browser clipboard
+      # APIs. Cross-browser clipboard differences are not exercised. Running
+      # webkit + firefox adds ~10 min CI time with zero additional coverage.
+      # See playwright.config.ts comment for the full rationale.
+      - run: bunx playwright install --with-deps chromium
       - env:
           VITE_PORT: "13579"
         run: bunx turbo run test:e2e
+      # Always upload the HTML report (even on success) so any run can be
+      # browsed; upload the raw test-results (traces, videos, screenshots)
+      # only on failure to bound storage growth. Retention 14 days per D-Q6
+      # LOCKED. `if: always()` on the upload steps so artifact upload failures
+      # don't mask the test outcome (D-Q35).
+      - name: Upload Playwright HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: packages/app/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Upload Playwright test-results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ github.sha }}
+          path: packages/app/test-results/
+          retention-days: 14
+          if-no-files-found: ignore

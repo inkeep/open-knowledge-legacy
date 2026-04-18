@@ -9,9 +9,9 @@
  *   Branch 1 (Wildcard): hover-revealed name badge + editable NodeViewContent.
  *   Branch 2 (Registered healthy): live React component + hover chrome
  *     (badge, gear→Popover PropPanel, add-child pill) + NodeViewContent.
- *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #22).
+ *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #24).
  *
- * Per Precedent #22: NodeViewContent is ALWAYS rendered, never display:none.
+ * Per Precedent #24: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
 import type { NodeViewProps } from '@tiptap/core';
@@ -28,7 +28,6 @@ import {
   createChildNode,
   focusInsertedComponent,
 } from '../slash-command/component-items.ts';
-import { getYDoc } from '../utils/get-ydoc.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
@@ -439,8 +438,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                       sourceDirty: true,
                     }),
                   );
-                  const ydoc = getYDoc(editor);
-                  if (ydoc) markUserTyping(ydoc);
+                  markUserTyping();
                 }}
               />
             </PopoverContent>

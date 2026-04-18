@@ -1,7 +1,14 @@
 import { ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
+import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, resolveServerUrl, textResult } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  resolveServerUrl,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find disconnected pages in the knowledge graph.',
@@ -11,7 +18,15 @@ export const DESCRIPTION = [
   '- `mode` (optional) — Orphan lens: `incoming`, `outgoing`, or `both` (default `both`)',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+interface OrphansPayload {
+  orphans?: Array<Record<string, unknown> & { docName?: string }>;
+}
+
+export interface GetOrphansDeps extends PreviewUrlDeps {
+  serverUrl: ServerUrlOrResolver;
+}
+
+export function register(server: ServerInstance, deps: GetOrphansDeps): void {
   server.tool(
     'get_orphans',
     DESCRIPTION,
@@ -22,13 +37,25 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
         .describe('Filter which type of graph disconnection to surface'),
     },
     async (args: { mode?: OrphanMode }) => {
-      const url = await resolveServerUrl(serverUrl);
+      const url = await resolveServerUrl(deps.serverUrl);
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.mode ? `?mode=${encodeURIComponent(args.mode)}` : '';
       const result = await httpGet(url, `/api/orphans${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      const { ok: _ok, ...data } = result;
-      return textResult(JSON.stringify(data, null, 2));
+      const { ok: _ok, ...rest } = result;
+      const data = rest as OrphansPayload;
+      const { resolve, ui } = await buildListResolver(deps);
+      const orphans = (data.orphans ?? []).map((row) => {
+        const docName = typeof row.docName === 'string' ? row.docName : null;
+        const resolved = docName ? resolve(docName) : null;
+        return {
+          ...row,
+          previewUrl: resolved?.url ?? null,
+          ...(resolved ? { previewUrlSource: resolved.source } : {}),
+        };
+      });
+      const structured = { ...data, orphans, ui };
+      return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );
 }

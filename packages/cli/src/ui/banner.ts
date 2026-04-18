@@ -12,8 +12,16 @@ const box = cliBoxes.round;
 export interface BannerOptions {
   name: string;
   version: string;
+  /** Primary URL — displayed as "Editor:" when set, else "Local:" (API). */
   localUrl: string;
   networkUrl?: string;
+  /**
+   * Secondary URL for the collab/API server. When set, the primary `localUrl`
+   * is labeled "Editor:" (pointing at `ok ui`) and this field is rendered as
+   * "API:" (pointing at `ok start`). Post-lifecycle-split this gives operators
+   * the URL they actually want to click.
+   */
+  apiUrl?: string;
 }
 
 /**
@@ -31,12 +39,22 @@ export function renderBanner(opts: BannerOptions): string {
   // Blank separator
   lines.push({ plain: '', colored: '' });
 
-  // Local URL (clickable via OSC 8 hyperlink)
-  const localLabel = 'Local:   ';
+  // Primary URL (clickable via OSC 8 hyperlink). When both UI + API exist,
+  // label the primary as "Editor:" so operators click the user-facing URL.
+  const localLabel = opts.apiUrl ? 'Editor:  ' : 'Local:   ';
   lines.push({
     plain: `${localLabel}${opts.localUrl}`,
     colored: `${localLabel}${link(info(opts.localUrl), opts.localUrl)}`,
   });
+
+  // Secondary API URL — the collab/HTTP server. Dimmed to de-emphasize.
+  if (opts.apiUrl) {
+    const apiLabel = 'API:     ';
+    lines.push({
+      plain: `${apiLabel}${opts.apiUrl}`,
+      colored: `${apiLabel}${dim(link(opts.apiUrl, opts.apiUrl))}`,
+    });
+  }
 
   // Network URL (optional, clickable)
   if (opts.networkUrl) {

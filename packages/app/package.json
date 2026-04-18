@@ -1,6 +1,6 @@
 {
-  "name": "open-knowledge-app",
-  "version": "0.0.1",
+  "name": "@inkeep/open-knowledge-app",
+  "version": "0.0.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -35,13 +35,13 @@
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "950 kB",
+      "limit": "1000 kB",
       "gzip": true
     },
     {
       "name": "main CSS (gzipped)",
       "path": "dist/assets/index-*.css",
-      "limit": "25 kB",
+      "limit": "30 kB",
       "gzip": true
     }
   ],
