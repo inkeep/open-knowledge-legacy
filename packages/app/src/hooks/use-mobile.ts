@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 
-const MOBILE_BREAKPOINT = 1280;
+/** File sidebar switches to Sheet-mode below this width. */
+const SIDEBAR_SHEET_BREAKPOINT = 1280;
 
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < MOBILE_BREAKPOINT);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < SIDEBAR_SHEET_BREAKPOINT);
 
   useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    const mql = window.matchMedia(`(max-width: ${SIDEBAR_SHEET_BREAKPOINT - 1}px)`);
     const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+      setIsMobile(window.innerWidth < SIDEBAR_SHEET_BREAKPOINT);
     };
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);

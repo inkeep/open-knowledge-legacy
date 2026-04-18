@@ -35,14 +35,19 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   const { layout: docPanelLayout, autoCollapse } = useDocPanelLayout();
   const isSheetMode = docPanelLayout === 'sheet';
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Tracks whether the user manually collapsed the panel via the toggle button.
+  // When true, auto-expand on crossing the 1024px breakpoint upward is suppressed
+  // so the panel respects the user's last manual action.
+  // Reset when the user manually expands, or when entering auto-collapse range
+  // (so that leaving auto-collapse range later triggers a fresh expand).
+  const userCollapsedRef = useRef(false);
 
-  // Auto-collapse/expand when crossing the 1024px breakpoint.
-  // Only fires on breakpoint transitions, so manual collapse on wide screens is respected.
   useEffect(() => {
     if (docPanelLayout === 'panel') {
       if (autoCollapse) {
+        userCollapsedRef.current = false;
         panelRef.current?.collapse();
-      } else {
+      } else if (!userCollapsedRef.current) {
         panelRef.current?.expand();
       }
     }
@@ -161,8 +166,12 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
             onClick={() => {
               if (isSheetMode) {
                 setSheetOpen((prev) => !prev);
+              } else if (isCollapsed) {
+                userCollapsedRef.current = false;
+                panelRef.current?.expand();
               } else {
-                isCollapsed ? panelRef.current?.expand() : panelRef.current?.collapse();
+                userCollapsedRef.current = true;
+                panelRef.current?.collapse();
               }
             }}
             aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
@@ -246,7 +255,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   if (isSheetMode) {
     return (
       <div className="flex min-h-0 flex-1">
-        {editorContent}
+        <div className="min-w-0 flex-1">{editorContent}</div>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent side="right" className="flex w-[300px] flex-col gap-0 p-0 sm:max-w-[300px]">
             <SheetHeader className="sr-only">
