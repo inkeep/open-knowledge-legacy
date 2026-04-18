@@ -490,17 +490,15 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     >
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
-      {/* The drag-handle grip + "+" chrome was previously a `<SideMenu>`
-          React component using `@tiptap/extension-drag-handle-react`.
-          That implementation broke React 19.2 `<Activity>` reconciliation
-          because the React wrapper renders a ref'd `<div>` that the
-          underlying `DragHandlePlugin` externally moves into
-          `editor.view.dom.parentElement` — the subsequent Activity mode
-          flip throws `Failed to execute 'removeChild' on 'Node'`
-          (verified against docs-open F1/F4/F5/F10 regressions, 2026-04-18).
-          Replaced with the imperative `BlockDragHandle` TipTap extension
-          in `sharedExtensions` (bare DOM container, no React involvement,
-          no reconciliation to break). */}
+      {/* Drag handle + "+" chrome is registered as the imperative
+          `BlockDragHandle` TipTap extension in `sharedExtensions` —
+          bare DOM container, no React involvement. A React-wrapper
+          variant (`@tiptap/extension-drag-handle-react`) is
+          incompatible with `<Activity>` because the plugin externally
+          moves its ref'd `<div>` into `editor.view.dom.parentElement`
+          and Activity mode flips then throw `Failed to execute
+          'removeChild' on 'Node'` — regression validated against
+          docs-open F1/F4/F5/F10, 2026-04-18. */}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );

@@ -100,7 +100,7 @@ export function getDefaultProps(descriptor: JsxComponentDescriptor): Record<stri
 
 /**
  * Build the PM content JSON for a component node with default props.
- * Used by: slash-command insertion, SideMenu "+" container child insertion,
+ * Used by: slash-command insertion, BlockDragHandle "+" container child insertion,
  * empty-container placeholder, and "add child" button — single source of truth.
  * Derives everything from the descriptor; zero component-specific logic.
  */

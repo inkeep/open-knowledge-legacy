@@ -677,26 +677,9 @@
   @apply text-muted-foreground/60;
 }
 
-/* SideMenu — drag handle + "+" button container (FR-15, FR-16). Outer
-   positioner for the SideMenu React component. */
-.ok-side-menu {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  transition: opacity 100ms var(--ease-out-strong);
-  opacity: 1;
-  z-index: 10;
-}
-
-.ok-side-menu[style*="visibility: hidden"],
-.ok-side-menu[style*="visibility:hidden"] {
-  opacity: 0;
-}
-
-/* DragHandlePlugin container — absolutely positioned flex row of grip + "+".
-   Distinct from .ok-side-menu: this one is created imperatively by the PM
-   plugin; .ok-side-menu is the React component. Both may coexist. */
+/* DragHandlePlugin container — absolutely positioned flex row of grip + "+"
+   created imperatively by `BlockDragHandle` (see
+   `packages/app/src/editor/extensions/drag-handle.ts`). Per FR-15 / FR-16. */
 .ok-block-controls {
   position: absolute;
   display: flex;
@@ -761,61 +744,6 @@
   color: oklch(0.5 0 0);
 }
 .dark .ok-drag-grip:hover {
-  background-color: oklch(1 0 0 / 8%);
-}
-
-/* SideMenu's inner "+" button (HEAD's React-component side menu). */
-.ok-plus-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-  color: oklch(0.72 0 0);
-  border-radius: 3px;
-  border: none;
-  background: none;
-  padding: 0;
-}
-
-.ok-plus-button:hover {
-  background-color: oklch(0 0 0 / 6%);
-  color: oklch(0.5 0 0);
-}
-
-.dark .ok-plus-button {
-  color: oklch(0.5 0 0);
-}
-
-.dark .ok-plus-button:hover {
-  background-color: oklch(1 0 0 / 8%);
-  color: oklch(0.7 0 0);
-}
-
-/* SideMenu's inner drag grip (HEAD — distinct from DragHandlePlugin's
-   .ok-drag-grip above). Both exist; React component uses .ok-drag-handle,
-   PM plugin uses .ok-drag-grip. */
-.ok-drag-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  cursor: grab;
-  color: oklch(0.72 0 0);
-  border-radius: 3px;
-}
-.ok-drag-handle:active {
-  cursor: grabbing;
-}
-.ok-drag-handle:hover {
-  background-color: oklch(0 0 0 / 6%);
-}
-.dark .ok-drag-handle {
-  color: oklch(0.5 0 0);
-}
-.dark .ok-drag-handle:hover {
   background-color: oklch(1 0 0 / 8%);
 }
 
