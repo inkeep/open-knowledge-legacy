@@ -257,7 +257,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">{editorContent}</div>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-          <SheetContent side="right" className="flex w-[300px] flex-col gap-0 p-0 sm:max-w-[300px]">
+          <SheetContent side="right" className="flex w-80 sm:w-96 flex-col gap-0 p-0">
             <SheetHeader className="sr-only">
               <SheetTitle>Document panel</SheetTitle>
             </SheetHeader>
