@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
-import { stringify as stringifyToml } from 'smol-toml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
   initContent,
@@ -73,7 +73,7 @@ function readTomlConfig(path: string): Record<string, unknown> {
   const trimmed = raw.trim();
   if (trimmed === '') return {};
   try {
-    const parsed = Bun.TOML.parse(trimmed);
+    const parsed = parseToml(trimmed);
     if (isObject(parsed)) {
       return parsed;
     }
