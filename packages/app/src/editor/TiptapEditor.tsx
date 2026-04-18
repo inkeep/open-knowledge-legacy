@@ -16,7 +16,6 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
-import { SideMenu } from './block-ux/SideMenu';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
@@ -491,7 +490,17 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     >
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
-      {editor && <SideMenu editor={editor} />}
+      {/* The drag-handle grip + "+" chrome was previously a `<SideMenu>`
+          React component using `@tiptap/extension-drag-handle-react`.
+          That implementation broke React 19.2 `<Activity>` reconciliation
+          because the React wrapper renders a ref'd `<div>` that the
+          underlying `DragHandlePlugin` externally moves into
+          `editor.view.dom.parentElement` — the subsequent Activity mode
+          flip throws `Failed to execute 'removeChild' on 'Node'`
+          (verified against docs-open F1/F4/F5/F10 regressions, 2026-04-18).
+          Replaced with the imperative `BlockDragHandle` TipTap extension
+          in `sharedExtensions` (bare DOM container, no React involvement,
+          no reconciliation to break). */}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );

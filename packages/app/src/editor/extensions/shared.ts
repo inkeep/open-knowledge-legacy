@@ -7,13 +7,13 @@ import {
   ALLOWED_IMAGE_MIME_TYPES,
   sharedExtensions as coreExtensions,
 } from '@inkeep/open-knowledge-core';
-import { DragHandle } from '@tiptap/extension-drag-handle';
 import FileHandler from '@tiptap/extension-file-handler';
 import { KeyboardNav } from '../block-ux/KeyboardNav';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
+import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
@@ -55,16 +55,14 @@ export const sharedExtensions = [
     },
   }),
   HeadingAnchors,
-  // Commands-only DragHandle — provides lockDragHandle/unlockDragHandle commands
-  // without registering a PM plugin. The actual drag-handle plugin is created by
-  // the React <DragHandle> component in SideMenu.tsx to avoid double-registration.
-  DragHandle.extend({
-    addProseMirrorPlugins() {
-      return [];
-    },
-  }).configure({
-    render: () => document.createElement('div'),
-  }),
+  // BlockDragHandle — drag grip + "+" button in the left margin on block hover.
+  // Registers DragHandlePlugin imperatively (bare DOM container, NOT a React
+  // component) so Activity mode flips don't trigger React's removeChild
+  // reconciliation error. The `lockDragHandle` / `unlockDragHandle` commands
+  // that other surfaces (PropPanel, slash menu) used to get from the stock
+  // `DragHandle.extend({...})` are still available — `DragHandlePlugin`
+  // registers them as part of the plugin.
+  BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,
   TypedChildrenGuard,
