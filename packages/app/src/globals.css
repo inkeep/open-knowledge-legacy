@@ -366,7 +366,7 @@
 /* Editor layout — grid on wrapper; content column max 1024px (lg), side rails minmax(gutter, 1fr) */
 .tiptap-editor {
   --content-max-width: 1024px;
-  --margin-width: 3rem;
+  --margin-width: 4rem;
   display: grid;
   width: 100%;
   grid-template-columns:
