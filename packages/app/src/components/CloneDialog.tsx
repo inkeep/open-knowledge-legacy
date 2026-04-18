@@ -396,12 +396,16 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
 
         <DialogFooter>
           {cloning ? (
-            <Button variant="outline" onClick={handleCancel}>
+            <Button variant="outline" className="font-mono uppercase" onClick={handleCancel}>
               Cancel
             </Button>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => handleClose(false)}>
+              <Button
+                variant="outline"
+                className="font-mono uppercase"
+                onClick={() => handleClose(false)}
+              >
                 Cancel
               </Button>
               <Button onClick={() => void handleClone()} disabled={!urlInput.trim()}>

@@ -155,8 +155,11 @@ export function DiffView({
         : `${chunksRemaining} unresolved hunk${chunksRemaining === 1 ? '' : 's'}`;
 
   return (
-    <div className={conflictMode ? 'flex flex-col h-full' : 'h-full'}>
-      <div ref={containerRef} className="diff-view flex-1 overflow-y-auto subtle-scrollbar" />
+    <div className="flex flex-col h-full">
+      <div
+        ref={containerRef}
+        className="diff-view min-h-0 flex-1 overflow-y-auto subtle-scrollbar"
+      />
       {conflictMode && (
         <div className="flex items-center justify-between gap-2 px-3 py-2 border-t shrink-0">
           <span

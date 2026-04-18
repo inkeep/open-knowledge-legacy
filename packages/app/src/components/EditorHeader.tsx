@@ -1,5 +1,16 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Columns2, FolderOpen, GitFork, History, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import {
+  Columns2,
+  FolderOpen,
+  GitFork,
+  History,
+  Pin,
+  PinOff,
+  RotateCcw,
+  Rows2,
+  Save,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -25,7 +36,6 @@ import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
-import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 import { Badge } from './ui/badge';
 
 type RenameResponse =
@@ -463,10 +473,21 @@ export function EditorHeader({
           className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
           disabled={!activeDocName}
         >
-          <ToggleGroupItem value="visual" aria-label="Visual editor" className="gap-1.5 text-xs">
-            <Textbox className="size-4 text-muted-foreground" />
-            Visual
-          </ToggleGroupItem>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <ToggleGroupItem
+                  value="visual"
+                  aria-label="Visual editor"
+                  className="gap-1.5 text-xs"
+                >
+                  <Textbox className="size-4 text-muted-foreground" />
+                  <span className="hidden md:inline">Visual</span>
+                </ToggleGroupItem>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Visual</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={sourceDisabled ? 0 : undefined}>
@@ -477,7 +498,7 @@ export function EditorHeader({
                   disabled={sourceDisabled}
                 >
                   <Markdown className="size-4 text-muted-foreground" />
-                  Markdown
+                  <span className="hidden md:inline">Markdown</span>
                 </ToggleGroupItem>
               </span>
             </TooltipTrigger>
@@ -486,20 +507,17 @@ export function EditorHeader({
                 Source mode requires a live connection — your edits are saved and will appear when
                 you reconnect.
               </TooltipContent>
-            ) : null}
+            ) : (
+              <TooltipContent className="md:hidden">Markdown</TooltipContent>
+            )}
           </Tooltip>
         </ToggleGroup>
       )}
 
-      {/* Diff mode: version label + layout toggle + controls */}
+      {/* Diff mode: layout toggle + controls (viewing banner is a separate row in EditorPane) */}
       {isDiffMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
-          <span
-            className={`text-xs ${restoreError ? 'text-destructive' : 'text-muted-foreground'}`}
-          >
-            {restoreError ||
-              `Viewing: ${formatRelativeTime(previewEntry.timestamp)} — ${displayAuthor(previewEntry)}`}
-          </span>
+          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
           <ToggleGroup
             type="single"
             value={diffLayout}
@@ -512,25 +530,55 @@ export function EditorHeader({
             spacing={1}
             className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
           >
-            <ToggleGroupItem
-              value="unified"
-              aria-label="Unified diff"
-              className="gap-1 text-xs px-2"
-            >
-              <Rows2 className="size-3.5" />
-              Unified
-            </ToggleGroupItem>
-            <ToggleGroupItem value="split" aria-label="Split diff" className="gap-1 text-xs px-2">
-              <Columns2 className="size-3.5" />
-              Split
-            </ToggleGroupItem>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <ToggleGroupItem
+                    value="unified"
+                    aria-label="Unified diff"
+                    className="gap-1 text-xs px-2"
+                  >
+                    <Rows2 className="size-3.5" />
+                    <span className="hidden md:inline">Unified</span>
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="md:hidden">Unified</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <ToggleGroupItem
+                    value="split"
+                    aria-label="Split diff"
+                    className="gap-1 text-xs px-2"
+                  >
+                    <Columns2 className="size-3.5" />
+                    <span className="hidden md:inline">Split</span>
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="md:hidden">Split</TooltipContent>
+            </Tooltip>
           </ToggleGroup>
-          <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
-            Restore
-          </Button>
-          <Button variant="ghost" size="xs" onClick={onExitPreview}>
-            Exit preview
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
+                <RotateCcw className="size-3.5 md:hidden" />
+                <span className="hidden md:inline">Restore</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Restore</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" onClick={onExitPreview}>
+                <X className="size-3.5 md:hidden" />
+                <span className="hidden md:inline">Exit preview</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Exit preview</TooltipContent>
+          </Tooltip>
         </div>
       )}
 
