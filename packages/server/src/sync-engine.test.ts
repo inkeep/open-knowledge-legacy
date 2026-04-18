@@ -146,7 +146,7 @@ describe('SyncEngine state persistence round-trip', () => {
    */
   async function setupRealMergeConflict(files: string[]): Promise<void> {
     const git = simpleGit(projectDir);
-    await git.init();
+    await git.init(['--initial-branch=main']);
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
     // Base commit with all files
@@ -227,7 +227,7 @@ describe('SyncEngine state persistence round-trip', () => {
   test('clears stale conflicts.json when MERGE_HEAD is gone (user resolved externally)', async () => {
     // Real repo + remote, no merge in progress
     const git = simpleGit(projectDir);
-    await git.init();
+    await git.init(['--initial-branch=main']);
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
     writeFileSync(join(projectDir, 'README.md'), '# Test\n');
@@ -544,7 +544,7 @@ describe('SyncEngine push cycle pushes existing commits when local is ahead of o
   // recorded the merge SHA but origin/main had never received it.
   test('pushes existing HEAD when local is ahead of origin and tree is clean', async () => {
     const git = simpleGit(projectDir);
-    await git.init();
+    await git.init(['--initial-branch=main']);
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
     writeFileSync(join(projectDir, 'README.md'), '# Test\n');
