@@ -230,7 +230,7 @@ and 10 000 seeds nightly (`STRESS_FUZZ_NIGHTLY=1`); any failure produces
 an op-sequence snapshot + a pinned regression test stub in
 `merge-three-way.test.ts`. Post-condition assertion in
 `mergeThreeWay` fires loudly with a `BridgeMergeContentLossError` naming
-the lost substring.
+the lost substring.<br>_[Corrected 2026-04-19 post-ship: same correction as the breadcrumb at §D11 below — bridge fuzz no longer runs in any CI tier. `bun run check` does NOT run the fuzzer; ad-hoc sampling via `bun run measure:fuzz` is the replacement. Post-condition + `BridgeMergeContentLossError` behavior is unchanged. Full rationale in `specs/2026-04-19-ci-signal-quality/SPEC.md`.]_
 
 ---
 
