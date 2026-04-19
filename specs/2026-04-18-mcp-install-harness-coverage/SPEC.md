@@ -1,0 +1,400 @@
+# MCP Install Harness Coverage — Spec
+
+**Status:** Draft
+**Owner(s):** Nick Gomez
+**Last updated:** 2026-04-18
+**Baseline commit:** aced0253
+**Links:**
+- Research report: [reports/mcp-server-auto-install-harnesses/](../../reports/mcp-server-auto-install-harnesses/) (REPORT.md + 14 evidence files)
+- Evidence: [./evidence/](evidence/) (spec-local findings)
+- Changelog: [./meta/_changelog.md](meta/_changelog.md)
+
+---
+
+## 1) Problem statement
+
+**Situation.** Open Knowledge ships `open-knowledge mcp` (a stdio MCP server) and installs it into AI coding harnesses via `open-knowledge init`. Today init covers **5 of 7** target harnesses at project-scope: Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code (`.vscode/mcp.json`), Codex (`.codex/config.toml`), Windsurf (`~/.codeium/windsurf/mcp_config.json` — only user-scope target shipped).
+
+**Complication.** The 7-harness research (`reports/mcp-server-auto-install-harnesses/REPORT.md`) surfaced five concrete coverage gaps that keep users from a clean zero-interaction install:
+
+1. **Claude Desktop + Cowork invisible.** `init` never touches `claude_desktop_config.json` — your MCP cannot be used in Claude Desktop Chat or Cowork at all. This is the fastest-growing Anthropic surface.
+2. **Project-scope only.** Users who expect "install once, use in any project" have to re-run `init` in every directory. No user-scope path exists for Claude Code, Cursor, or Codex.
+3. **Codex Desktop broken by project-scope.** [openai/codex#13025](https://github.com/openai/codex/issues/13025): Codex Desktop ignores `.codex/config.toml` project-scope; users see zero MCP support on desktop even after `init`.
+4. **Missing activation files.** Cursor Desktop requires `~/.cursor/permissions.json` for zero-click tool approval; Cursor CLI requires a post-write `cursor-agent mcp enable` step; Claude Code project scope triggers a TTY trust prompt that's bypassable via `.claude/settings.local.json` pre-stage. Today none of these are written.
+5. **Windows concurrent-write corruption.** Claude Code has 5 documented `.claude.json` corruption bugs ([#28842](https://github.com/anthropics/claude-code/issues/28842), [#28847](https://github.com/anthropics/claude-code/issues/28847), [#29036](https://github.com/anthropics/claude-code/issues/29036), [#29153](https://github.com/anthropics/claude-code/issues/29153), [#29217](https://github.com/anthropics/claude-code/issues/29217)). Our current `writeFileSync` (`init.ts:95,105`) inherits the same class; an atomic tmp+rename primitive fixes it.
+
+**Resolution.** Extend `editors.ts` with new targets for the missing surfaces, add user-scope variants behind a `--global` flag, pre-stage activation sidecar files, implement atomic writes, and support `--yes` for headless/CI install. Document Cowork's transport-agnostic reliability caveats (#24433 closed-"not-planned"; #26259 stdio bridge race open) as known product-level limits not architectural problems to solve.
+
+## 2) Goals
+
+- **G1:** `open-knowledge init` covers all 7 target harnesses with zero-click install on the happy path.
+- **G2:** Writes are atomic (tmp+rename) and safe to run while harnesses are live.
+- **G3:** `init --yes` is non-interactive and scriptable — works in Docker entrypoints, npm `postinstall`, CI pipelines.
+- **G4:** Cowork is "supported with known caveats" — install works; user-facing docs list the Anthropic-side reliability issues so users know what to expect.
+- **G5:** `init --global` opts into user-scope writes for Claude Code, Cursor, and Codex (in addition to project-scope).
+- **G6:** Existing behavior preserved — default `init` matches today's project-scope-first semantics.
+
+## 3) Non-goals
+
+- **[NEVER]** NG1: Fix Cowork's per-tool approval bug (#24433). Anthropic closed as not-planned; not our bug to fix.
+- **[NEVER]** NG2: Fix Cowork's stdio bridge race (#26259). Same — Anthropic upstream.
+- **[NEVER]** NG3: Ship localhost HTTP transport for the MCP. Research concluded (`evidence/localhost-http-per-harness.md`) localhost HTTP worsens 2 of 7 harnesses (Claude Code Desktop rejects `http://`; Cowork VM can't reach host-localhost per #28018). Stdio remains correct primary.
+- **[NEVER]** NG4: Ship a custom deep-link URI scheme. No harness consumes one.
+- **[NOT NOW]** NG5: Runtime MCP self-registration via `/mcp add` or skill-driven install. Only Cursor Desktop has a runtime API (`vscode.cursor.mcp.registerServer()`); every other harness requires session/app restart. — Revisit if: Claude Code #46426 (hot-reload MCP) ships OR Codex #7767 is reopened OR ≥2 vendors add runtime register.
+- **[NOT NOW]** NG6: Ship a signed Cursor extension wrapper for runtime install. — Revisit if: Cowork/Cursor CLI CI become P0 user-blockers that other paths can't serve.
+- **[NOT NOW]** NG7: Windsurf / Zed / Cline / VS Code Copilot / additional harnesses. Windsurf is already shipped (user-global); others not in research scope. — Revisit if: users request or harness growth signals it.
+- **[NOT UNLESS]** NG8: Replace direct file-write with `claude mcp add` / `codex mcp add` CLI delegation. — Only if: atomic tmp+rename proves unreliable across OSes in the wild OR vendors ship significant schema migration that's impractical to track.
+- **[NOT UNLESS]** NG9: Ship a cross-harness installer manifest format (Open Knowledge-specific "mcp.install.json" describing per-harness shapes). — Only if: we ship >1 MCP server AND want shared install logic. Single-product today.
+- **[NOT UNLESS]** NG10: Implement the Cowork supergateway/tunnel fallback in our installer. — Only if: Cowork becomes a P0 user-blocker AND Anthropic's #26259/#24433 show no fix trajectory.
+
+## 4) Personas / consumers
+
+- **P1 — Solo developer (primary):** runs `open-knowledge init` in a project, expects it to work across whatever AI coding harnesses they have installed. Likely wants `--global` for reuse across projects.
+- **P2 — Team lead setting up a repo:** runs init for a team; expects project-scope files to commit to git so the team shares config. Matches current primary persona.
+- **P3 — Downstream agent running inside a harness:** agent wants to invoke `init` for itself (user says "set up open-knowledge"). Needs to work headless / non-interactively via `--yes`.
+
+## 5) User journeys
+
+### P1 — Solo developer
+
+**Happy path:**
+1. `npx @inkeep/open-knowledge init` OR `open-knowledge init --global --yes` (if already installed)
+2. init detects installed harnesses (Claude Code, Claude Desktop, Cursor, Codex — whatever user has)
+3. init writes per-harness MCP config + activation sidecars atomically
+4. User opens their preferred harness → MCP is live with zero clicks on most surfaces, 1 click on Cursor Desktop (per-tool approval pre-staged), Cowork shows caveat notice from docs
+
+**Failure / recovery:**
+- Write conflict on existing Open Knowledge entry → `init --force` documented in output
+- Harness not detected → `init --editor claude-desktop,cursor` explicit override
+- Atomic write fails mid-rename → we log + leave prior file untouched (atomic = all-or-nothing)
+
+**Aha moment:** User opens Claude Code AND Claude Desktop AND Cursor, all three immediately see the same Open Knowledge MCP with the same tools.
+
+**Debug experience:** `init --verbose` (future) shows per-harness write status; `open-knowledge doctor` (exists? check in worldmodel) diagnoses missing pieces.
+
+### P2 — Team lead
+
+**Happy path:**
+1. `open-knowledge init` (no `--global`)
+2. init writes project-scope files only: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `.claude/settings.local.json` (trust-bypass sidecar)
+3. Commit these to git → team clones repo, Open Knowledge works for everyone in the project
+4. `.claude_desktop_config.json` is NOT written (it's host-user-global, not shareable via git — skipped when `--global` not passed)
+
+### P3 — Downstream agent / CI
+
+**Happy path:**
+1. Agent or CI runs `open-knowledge init --yes`
+2. init detects harnesses non-interactively, writes all, prints machine-readable summary
+3. Exit code 0 on success; nonzero on failed writes; one line per harness with action taken
+
+### Interaction state matrix
+
+| Feature / Surface | Loading | Empty | Error | Success | Partial |
+|---|---|---|---|---|---|
+| `init` (TTY interactive) | clack multiselect prompt | "no editors detected" message | error line per failed write | per-editor write summary | mix of success + skipped-existing + failed |
+| `init --yes` | no prompts | exit 1 with hint | nonzero exit code | stdout summary | same as TTY but no prompts |
+| `init --global` | same as above | same | same | user-scope + project-scope written | subset OK |
+| Claude Desktop write | — | (target file absent → create) | write race with Desktop | entry in `mcpServers` | — |
+| Cursor permissions.json write | — | (file absent) | schema error | `mcpAllowlist` entry | merge with existing allowlist |
+| settings.local.json write | — | (file absent) | JSON parse error | `enabledMcpjsonServers` entry | merge with existing |
+
+## 6) Requirements
+
+### Functional requirements
+
+| Priority | Requirement | Acceptance criteria | Notes |
+|---|---|---|---|
+| Must | FR-1: `init` writes `claude_desktop_config.json` on macOS + Windows | File contains `mcpServers.open-knowledge` entry after init; existing entries preserved; idempotent | Linux: no-op (Claude Desktop not supported) |
+| Must | FR-2: `init --global` writes user-scope variants for Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex (`~/.codex/config.toml`) | All three files exist with entry; existing user-scope `mcpServers` preserved | |
+| Must | FR-3: `init` writes `.claude/settings.local.json` with `enabledMcpjsonServers: ["open-knowledge"]` whenever it writes `.mcp.json` project-scope | File exists; user-scope Claude Code session doesn't prompt for trust on first open | [anthropics/claude-code#9189](https://github.com/anthropics/claude-code/issues/9189) |
+| Must | FR-4: `init` writes `~/.cursor/permissions.json` with `mcpAllowlist: ["open-knowledge:*"]` whenever it writes Cursor config | File exists; tool approvals skipped on first Cursor launch | [cursor.com/docs/reference/permissions](https://cursor.com/docs/reference/permissions) |
+| Must | FR-5: All file writes use atomic tmp+rename | Concurrent `init` runs don't corrupt target files; verified by a unit test that runs two concurrent writes and checks file integrity | Fixes Claude Code Windows bug class |
+| Must | FR-6: `init --yes` runs non-interactively | No prompts emitted; exits 0 on success; exits nonzero with hint on "no detected editors" | Matches existing non-TTY fallback at line 700-707; add explicit flag |
+| Must | FR-7: Post-write `cursor-agent mcp enable open-knowledge` when Cursor CLI is installed | If `cursor-agent` binary on PATH, invoke `mcp enable` after file-write; log success/failure; don't fail init on failed enable | Graceful degradation — enable is nice-to-have |
+| Must | FR-8: Cowork caveat block in `init` output when Claude Desktop target written | Output includes: per-tool approval per-session, may need Desktop restart if #26259 drops bridge, Linux unsupported | Truth-in-advertising per D-Intake-2 |
+| Should | FR-9: `--editor` flag accepts new IDs: `claude-desktop`, `claude-user`, `cursor-user`, `codex-user` | Comma-separated list + `all` expands to all 9 IDs | Preserve existing IDs; additive |
+| Should | FR-10: `init --verbose` prints per-file write path + action | Useful for debugging; silent by default | Nice-to-have |
+| Could | FR-11: `open-knowledge uninstall` command | Reverses init — removes `open-knowledge` entries from all config files; idempotent | Out of scope for this spec; tracked in Future Work |
+
+### Non-functional requirements
+
+- **Performance:** `init` completes in <2s on the happy path (5-9 file writes, mostly local disk).
+- **Reliability:** Atomic writes — partial state never observed. Re-runnable — idempotent. Failed write on one harness doesn't abort others.
+- **Security/privacy:** No secrets in any written config. No network calls from `init` itself. All writes to user-owned paths.
+- **Operability:** `init` output is machine-parseable (one line per harness). Nonzero exit on any failure. Debug via `--verbose`. Logs go to stdout not stderr (unless error).
+- **Cost:** No new dependencies. Reuse existing `smol-toml`, `@clack/prompts`, `commander`, node `fs`.
+
+## 7) Success metrics & instrumentation
+
+- **Metric 1:** User-reported install success across 7 harnesses (qualitative; bug reports as negative signal).
+  - Baseline: 5 harnesses covered, project-scope only, no activation files, no atomic writes.
+  - Target: All 7 harnesses write successfully in E2E test on macOS + Linux + Windows.
+  - Instrumentation: new `packages/cli/src/commands/init.test.ts` cases per harness.
+- **Metric 2:** Zero `~/.claude.json` corruption reports when users run `init` concurrently with a live Claude Code session.
+  - Baseline: unknown (no reports today, but we also don't ship atomic writes — latent risk).
+  - Target: atomic tmp+rename verified by concurrent-write unit test.
+  - Instrumentation: unit test — fork two write processes, diff final file state against expected.
+- **What we log:** `init` output already lists per-editor action; extend to cover new targets. Flag warning-level output for Cowork caveats.
+- **How we'll know adoption/value:** E2E test on CI (Linux, macOS) validates all 7 recipes. Windows manual verification initially (no Windows CI today).
+
+## 8) Current state (how it works today)
+
+Summary of current behavior (from `init.ts` + `editors.ts` inspection):
+
+- **Covered today:** 5 editor targets at project scope. Editor IDs: `claude`, `cursor`, `vscode`, `codex`, `windsurf`. Only Windsurf is user-scope (`~/.codeium/windsurf/mcp_config.json`).
+- **File-write pattern already exists:** `readJsonConfig` / `readTomlConfig` / `writeJsonConfig` / `writeTomlConfig` (non-atomic).
+- **Idempotent merge already done:** `writeEditorMcpConfig` preserves existing `mcpServers`, skips if `open-knowledge` present unless `--force`.
+- **Detection already works:** `detectInstalledEditors` probes parent dirs of each target's `configPath`.
+- **Launch.json scaffolding for Claude Code:** sophisticated stale-field detection — precedent for handling config-schema drift.
+- **AGENTS.md injection:** `upsertRootInstructions` writes Open Knowledge section — precedent for multi-file-write orchestration.
+- **TTY + non-TTY paths:** TTY uses `@clack/prompts` multiselect; non-TTY auto-detects. Non-TTY with empty detection exits 1 with hint.
+- **Flags:** `--mcp/--no-mcp`, `--force`, `--editor`.
+- **Known gaps (bugs we've discovered during research):**
+  - Non-atomic writes — inherits Claude Code concurrent-write corruption class
+  - No Claude Desktop target
+  - No user-scope targets for Claude Code / Cursor / Codex
+  - No activation-sidecar writes (`permissions.json`, `settings.local.json`)
+  - No post-write activation for Cursor CLI (`agent mcp enable`)
+  - No explicit `--yes` flag (non-TTY fallback works but isn't discoverable)
+
+## 9) Proposed solution (vertical slice)
+
+### User experience / surfaces
+
+- **CLI:** Same `open-knowledge init` command, extended:
+  - New flag: `--global` — opts into user-scope writes for Claude Code, Cursor, Codex (alongside project-scope).
+  - New flag: `--yes` — non-interactive; skips all prompts; installs to all detected harnesses.
+  - Extended `--editor` flag: accepts `claude-desktop`, `claude-user`, `cursor-user`, `codex-user` in addition to existing IDs.
+  - New: Cowork caveat block printed when Claude Desktop target is written.
+- **Docs/onboarding:** Update repo README to describe the 7-harness coverage + `--global` / `--yes` flags. Add a "Known Cowork caveats" section that documents #24433 + #26259 verbatim.
+- **Error messages:** On write failure, include the specific harness + file + error; point to the existing "manual setup" link.
+
+### Affected routes / pages
+
+| Route / Page | Surface | What to verify |
+|---|---|---|
+| `npx @inkeep/open-knowledge init` (CLI only) | Terminal output | Per-harness write status matches expected |
+| `npx @inkeep/open-knowledge init --yes` | Terminal output | No prompts; completes; exit code correct |
+| `npx @inkeep/open-knowledge init --global` | Terminal output | Both project + user-scope files written |
+| `npx @inkeep/open-knowledge init --editor claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` | Entry added; existing entries preserved |
+
+### System design
+
+**Data model — expand `EditorId`:**
+
+```typescript
+export type EditorId =
+  // Project-scope (existing)
+  | 'claude'         // .mcp.json
+  | 'cursor'         // .cursor/mcp.json
+  | 'vscode'         // .vscode/mcp.json
+  | 'codex'          // .codex/config.toml
+  // Project-scope (new sidecars; written alongside `claude` + `cursor`)
+  | 'claude-settings'   // .claude/settings.local.json (trust bypass)
+  // User-scope (existing)
+  | 'windsurf'       // ~/.codeium/windsurf/mcp_config.json
+  // User-scope (new, via --global)
+  | 'claude-user'    // ~/.claude.json
+  | 'cursor-user'    // ~/.cursor/mcp.json
+  | 'cursor-permissions' // ~/.cursor/permissions.json (auto-approve)
+  | 'codex-user'     // ~/.codex/config.toml
+  // Host-level (new, always when Claude Desktop detected)
+  | 'claude-desktop'; // ~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+That's 11 IDs — covers all 7 target harnesses plus the 2 activation sidecar files. Not every ID maps 1:1 to a harness (sidecars + user-scope variants).
+
+**Alternative data model** (TO CONSIDER in iteration): introduce `EditorScope` concept — each harness has {project, user, host} scopes with per-scope paths. Reduces ID proliferation. More code, cleaner abstraction.
+
+**Architecture overview:**
+
+```
+init command
+  │
+  ├─ detectInstalledEditors(cwd, home)  ← existing; extended to new IDs
+  │
+  ├─ for each selected target:
+  │    ├─ readConfig (JSON or TOML) — existing
+  │    ├─ merge open-knowledge entry — existing
+  │    └─ writeConfigAtomic (NEW) — tmp + fsync + rename
+  │
+  ├─ for Cursor CLI (NEW): shell out `cursor-agent mcp enable open-knowledge`
+  │      - only if binary on PATH; graceful no-op otherwise
+  │
+  ├─ print per-harness summary (existing)
+  │
+  └─ if claude-desktop was written: print Cowork caveat block (NEW)
+```
+
+**Enforcement points:**
+
+- Atomic write primitive: `packages/cli/src/utils/write-file-atomic.ts` (new).
+  - Writes to `<path>.<pid>.<random>.tmp` → `fsync` → `rename`.
+  - On rename failure: unlink tmp, throw. Prior file unchanged.
+- Activation sidecars: orchestrated inside `runInit` — when `claude` target written, also write `claude-settings` sidecar (unless `--no-mcp`). Similar for `cursor` → `cursor-permissions`.
+- Cowork caveat: printed once per init run if `claude-desktop` in written set.
+
+**Observability:**
+
+- Per-harness action line already in `formatInitResult`. Extend to cover sidecars with sub-bullet nesting.
+- Atomic-write failures are first-class errors (logged with file + cause).
+- No telemetry sent to any server. Local-first ethos.
+
+#### Data flow diagram
+
+- **Primary flow:**
+  ```
+  User runs init → detectInstalledEditors → [TTY: multiselect | non-TTY: auto] →
+  resolveEditorTargets → for each target: readConfig → merge → writeFileAtomic →
+  (optional) shellOut cursor-agent → print summary
+  ```
+- **Shadow paths to test:**
+  - **nil / missing:** Target directory absent → file creation + parent mkdir (existing pattern)
+  - **empty:** Existing config file empty string → treated as `{}` (existing)
+  - **wrong type:** Existing config's root is array not object → throw (existing)
+  - **timeout:** Shell-out to `cursor-agent mcp enable` — hangs; add 10s timeout (new)
+  - **conflict:** Two `init` processes racing → atomic rename wins last-write; neither observes partial state (NEW primitive prevents corruption)
+  - **partial failure:** One harness write fails → other harnesses continue; exit nonzero with per-harness status (existing)
+
+#### Failure modes and handling
+
+| Component | Failure | Detection | Recovery | User Impact |
+|---|---|---|---|---|
+| Atomic write | Rename fails mid-op | `fs.rename` throws | Unlink tmp; throw; init continues with other targets | Per-target failure message; other harnesses unaffected |
+| `cursor-agent` shell-out | Binary not on PATH | `ENOENT` | Silent no-op, note in summary | Cursor CLI still usable after manual `agent mcp enable`; docs explain |
+| `cursor-agent` shell-out | Hangs | 10s timeout | Kill child; log warning | Cursor CLI partially configured; user can run `agent mcp enable` manually |
+| Claude Desktop path resolution | Linux detected | `process.platform === 'linux'` | Skip `claude-desktop` target with silent no-op | Linux users don't get Claude Desktop (which doesn't exist on Linux) |
+| JSON/TOML parse | Existing config malformed | `JSON.parse` / `parseToml` throws | Per-target failure; other targets continue | User sees error with file path; fixes manually |
+| Concurrent init runs | Two processes writing same file | Each does own atomic rename | Last write wins; no corruption | UX implication: rare but possible; no data loss |
+
+### Alternatives considered
+
+- **Option A — call `claude mcp add` / `codex mcp add` CLIs instead of file-write.** Rejected (D-Intake-3 LOCKED): atomic tmp+rename in our own code is 15 lines; CLI delegation inherits Claude Code's concurrent-write corruption bugs + requires binaries on PATH + differs per harness (Codex overwrites, Claude errors).
+- **Option B — ship the localhost HTTP transport alongside stdio.** Rejected (NG3): research confirmed it worsens 2 of 7 harnesses. Future work if ecosystem shifts.
+- **Option C — implement Cowork supergateway/tunnel fallback in our installer.** Rejected (NG10): not a transport problem; won't fix per-tool approval bug.
+- **Option D — use `EditorScope` enum instead of flat ID proliferation** (alternative data model, flagged above). In consideration for iteration loop.
+- **Option E — split this into two PRs (Claude Desktop + atomic writes first, Cursor polish second).** Rejected (D-Intake-1 LOCKED): single-spec coverage is cleaner.
+
+## 10) Decision log
+
+| ID | Decision | Type | Resolution | 1-way door? | Rationale | Evidence / links | Implications |
+|---|---|---|---|---|---|---|---|
+| D-Intake-1 | All 7 harnesses in one spec (not phased) | Cross | LOCKED | No | Research is done; spec cost similar for 1 vs 7. Cohesive implementation. | Intake turn | Single PR covers all gaps |
+| D-Intake-2 | Cowork = "supported with known caveats" | Product | LOCKED | No | Honest; matches research reality. Anthropic has declined to fix #24433. | [evidence/cowork-deep-dive.md](evidence/cowork-deep-dive.md) | Docs describe caveats; init prints caveat block |
+| D-Intake-3 | Atomic writes (tmp+rename) across all targets; no CLI-delegate fallback | Technical | LOCKED | No | ~15 lines Node fs; avoids Claude Code #28842 class bugs; no binary deps; uniform across harnesses. | [evidence/cli-vs-file-write.md](../../reports/mcp-server-auto-install-harnesses/evidence/cli-vs-file-write.md) | New `write-file-atomic.ts` utility; replaces `writeFileSync` calls |
+| D-Intake-4 | `--yes` flag for non-interactive install | Cross | LOCKED | No | Enables Docker / postinstall / CI use cases. Matches `add-mcp -y` pattern. | [evidence/extended-tooling-survey.md](../../reports/mcp-server-auto-install-harnesses/evidence/extended-tooling-survey.md) | New flag in commander; threads through to non-TTY path |
+| D-1 | `--global` flag for user-scope writes; default stays project-scope | Cross | DIRECTED | No | Agent-proposed, user-confirmable. Preserves team-lead persona's current workflow. Solo developers opt in. | Recommendation in Intake | New flag; expands selected IDs to include user-scope variants when passed |
+| D-2 | Flat `EditorId` list vs `EditorScope` enum | Technical | INVESTIGATING | No | Open — needs iteration-loop investigation + worldmodel |  | Affects data model + test surface |
+| D-3 | Whether to bundle `claude-settings` / `cursor-permissions` sidecars as automatic when main target selected, OR make them separate `--editor` IDs | Technical | INVESTIGATING | No | Open — UX call |  | Affects CLI surface + docs |
+| D-4 | `cursor-agent mcp enable` shell-out vs skip-with-docs | Technical | INVESTIGATING | No | Open — shell-out gives zero-click; skip is simpler |  | Affects edge-case handling |
+
+## 11) Open questions
+
+| ID | Question | Type | Priority | Blocking? | Plan to resolve | Status |
+|---|---|---|---|---|---|---|
+| Q1 | Flat `EditorId` list (11 IDs) or `EditorScope` enum (7 harnesses × scope)? | T | P0 | Yes | Prototype both; weight against test surface + CLI UX | Open |
+| Q2 | Sidecar files (`settings.local.json`, `permissions.json`) — automatic when main target written, or separate `--editor` IDs? | T | P0 | Yes | Decide with user — UX question | Open |
+| Q3 | `cursor-agent mcp enable` shell-out — in-scope or skip with docs? | T | P0 | Yes | Light investigation: how common is `cursor-agent` on PATH for our users? Probably high among Cursor users. | Open |
+| Q4 | Windows path resolution for `%APPDATA%\Claude\claude_desktop_config.json` — use env var or hardcoded? | T | P0 | Yes | Worldmodel will surface existing Windows path patterns in the codebase | Open |
+| Q5 | Should `--yes` default to writing ALL detected harnesses, or only the project-scope subset (matching current behavior)? | P | P0 | No | User judgment call — recommend "all detected" for DX | Open |
+| Q6 | Linux detection path for Claude Desktop — silently skip, or log "not applicable"? | T | P0 | No | Quiet no-op; existing precedent | Probably LOCKED to quiet no-op but flag in iteration |
+| Q7 | Does `cursor-agent mcp enable` persist across sessions, or require re-run? | T | P2 | No | Matters for uninstall/upgrade semantics, not initial install | Deferred |
+| Q8 | Atomic write on Windows — `fs.rename` semantics differ (EPERM if target handle held). Retry-with-delay strategy? | T | P0 | Yes | Research: what does `write-file-atomic` npm package do? | Open |
+| Q9 | Should we write `claude-desktop` target even when no Claude Desktop app is detected, assuming user may install later? | P | P0 | No | Probably skip if undetected — consistent with other targets | Open |
+
+## 12) Assumptions
+
+| ID | Assumption | Confidence | Verification plan | Expiry | Status |
+|---|---|---|---|---|---|
+| A1 | Claude Desktop Chat / Cowork's `claude_desktop_config.json` path is OS-dependent and stable: macOS = `~/Library/Application Support/Claude/`, Windows = `%APPDATA%\Claude\` | HIGH | Confirmed in research (evidence/anthropic-harnesses.md); verify in iteration by reading Claude Desktop docs once more | Before finalization | Active |
+| A2 | Existing `smol-toml` library handles the Codex TOML round-trip without losing comments/formatting on idempotent merge | MEDIUM | Check via worldmodel / look at codex-related tests | Before finalization | Active |
+| A3 | `cursor-agent` binary, when present on PATH, accepts `mcp enable <name>` non-interactively and exits 0 on success | MEDIUM | Verify via Cursor CLI docs + empirical test if available | Before finalization | Active |
+| A4 | Atomic tmp+rename on macOS + Linux is truly atomic (POSIX `rename(2)`); Windows may need retry-with-delay for EPERM cases | MEDIUM | Check `write-file-atomic` npm package or equivalent for Windows-specific handling | Before finalization | Active |
+| A5 | Users running `init --global` trust the installer to write to `~/` — consistent with existing Windsurf behavior | HIGH | Existing precedent | N/A | Active |
+| A6 | `open-knowledge` MCP server name is stable and doesn't need `open-knowledge@<version>` pinning in args | HIGH | `constants.ts:MCP_SERVER_NAME` is the source of truth | Before finalization | Active |
+
+## 13) In Scope (implement now)
+
+- **Goal:** All 7 target harnesses get zero-click headless install via `open-knowledge init [--yes] [--global] [--editor ...]`.
+- **Non-goals:** See §3.
+- **Requirements with acceptance criteria:** See §6 (FR-1 through FR-10; FR-11 is Future Work).
+- **Proposed solution:** See §9.
+- **Owner(s)/DRI:** Nick Gomez
+- **Next actions:** Iteration loop will produce detailed task list; implementation follows in a separate PR.
+- **Risks + mitigations:** See §14.
+- **What gets instrumented/measured:** E2E tests per harness on CI; concurrent-write unit test for atomic primitive.
+
+### Deployment / rollout considerations
+
+| Concern | Approach | Verify |
+|---|---|---|
+| Breaking change for existing `--editor` users | Additive — existing IDs unchanged; new IDs are opt-in | `init --editor claude,cursor` behaves identically to before |
+| Backward-compat for `init.ts` JSON output schema | `InitCommandResult` gets new fields but existing fields unchanged | Test fixtures preserved |
+| Windows file-write atomicity | Use `write-file-atomic` pattern with retry on EPERM | Unit test with concurrent writes |
+| macOS path resolution | Use `node:os.homedir()` | Existing precedent (Windsurf) |
+
+## 14) Risks & mitigations
+
+| Risk | Likelihood | Impact | Mitigation | Owner |
+|---|---|---|---|---|
+| Anthropic changes `claude_desktop_config.json` schema or path | Low | High | Monitor Anthropic release notes; schema migration follows Claude Code launch.json precedent | Nick |
+| `cursor-agent mcp enable` shell-out hangs / fails | Medium | Low | 10s timeout; graceful degrade with user-facing message | Nick |
+| Atomic write on Windows flakes (EPERM) | Medium | Medium | Adopt `write-file-atomic` pattern with retry; test in CI once Windows runner is available | Nick |
+| Users confused by `--global` flag semantics | Medium | Low | Clear docs; `init --help` shows examples | Nick |
+| Cowork caveat block becomes stale as Anthropic ships fixes | Medium | Low | Changelog entry on each research update; docs source of truth | Nick |
+
+## 15) Future Work
+
+### Explored (investigated during this spec)
+
+- **Runtime MCP self-install via skill/tool-call**
+  - What we learned: Only Cursor Desktop has a genuine runtime API (`vscode.cursor.mcp.registerServer()`); all other 6 harnesses require session/app restart to see new MCPs. `anaisbetts/mcp-installer` writes config but can't hot-reload.
+  - Recommended approach: Wait for Anthropic #46426 (Claude Code hot-reload) or Cursor CIMD ship.
+  - Why not in scope now: "Not today, not single-conversation flow" — premise fails for 6 of 7 harnesses.
+  - Triggers to revisit: Any of Claude Code #46426, Codex #7767 (currently "not planned"), Cursor adds `mcp add` verb.
+  - Implementation sketch: Ship a `SKILL.md` that invokes `init` as a bash command, then asks user to restart harness. Two-conversation flow.
+
+- **Cowork supergateway/tunnel fallback**
+  - What we learned: dev.to/murat-a-a pattern works (supergateway + cloudflared tunnel, Cowork reads public URL from Custom Connector UI) but requires host-side daemon supervision and doesn't solve per-tool approval.
+  - Recommended approach: Scriptable helper command `open-knowledge cowork-bridge` that starts supergateway + cloudflared and prints URL for user to paste.
+  - Why not in scope now: Adds significant surface area; niche demand until someone's genuinely blocked.
+  - Triggers to revisit: User explicitly requests; Anthropic #26259/#24433 show no fix movement for >6 months.
+
+- **Localhost HTTP transport for our MCP**
+  - What we learned: worsens 2 of 7 harnesses (Claude Code Desktop rejects `http://`; Cowork VM blocks #28018).
+  - Recommended approach: Keep stdio primary. Localhost HTTP only if ecosystem tooling shifts or a specific consumer needs shared-state-across-harnesses.
+  - Why not in scope now: Research-decisive no-go.
+  - Triggers to revisit: Major ecosystem shift.
+
+### Identified (needs its own spec pass)
+
+- **`open-knowledge uninstall` command** — reverse init; idempotent; removes open-knowledge entries from all written config files. Needs own spec pass covering: which files to touch, whether to leave activation sidecars alone, user-facing confirmation, atomic multi-file delete semantics.
+
+### Noted
+
+- **User-scope precedence conflicts** — what if user has `open-knowledge` in both project-scope `.mcp.json` and user-scope `~/.claude.json`? Claude Code precedence is `local > project > user > plugin`. Worth surfacing clearly in docs.
+- **Project migration** — users who init'd pre-this-spec and want to upgrade to new coverage. Probably handled by `--force` on re-init, but worth a dedicated note.
+- **Managed MCP / enterprise lockdown** — Claude Code supports `managed-mcp.json` for enterprise policy. Our init doesn't touch this. Probably not our concern.
+
+## 16) Agent constraints
+
+- **SCOPE:**
+  - `packages/cli/src/commands/init.ts`
+  - `packages/cli/src/commands/editors.ts`
+  - `packages/cli/src/commands/init.test.ts`
+  - `packages/cli/src/commands/editors.test.ts`
+  - `packages/cli/src/utils/write-file-atomic.ts` (NEW)
+  - `packages/cli/src/utils/write-file-atomic.test.ts` (NEW)
+  - `CLAUDE.md` / `AGENTS.md` / README — documentation updates
+- **EXCLUDE:**
+  - `packages/cli/src/mcp/**` — MCP server itself, not its install
+  - `packages/server/**` — no server changes
+  - `packages/core/**`, `packages/app/**` — no core/app changes
+- **STOP_IF:**
+  - Requires changes to the MCP protocol or transport
+  - Requires bundling new npm dependencies outside `smol-toml` / `@clack/prompts` / `commander`
+  - Requires changes to `constants.ts:MCP_SERVER_NAME` or the server command/args shape
+- **ASK_FIRST:**
+  - Changing existing `EditorId` values (breaking for `--editor` flag users)
+  - Changing `InitCommandResult` schema in backward-incompatible way
+  - Claude Desktop path resolution for any platform (verify against vendor docs)
