@@ -385,7 +385,14 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       data-selection-origin={selectionOrigin}
       data-dragging={isDraggingSelf ? 'true' : undefined}
       data-needs-config={needsConfig ? 'true' : undefined}
-      aria-selected={isInnermostSelected ? true : undefined}
+      // `aria-selected` is intentionally omitted — per WAI-ARIA 1.2, it's
+      // only valid on `role` values that support selection semantics
+      // (option, tab, row, gridcell, treeitem, columnheader, rowheader).
+      // Our wrappers carry `role="group"` (for emptyChildName containers)
+      // or no role (for generic block components). Emitting `aria-selected`
+      // on those roles is an ARIA conformance violation caught by axe-core.
+      // Selection announcement to AT is handled via the `<SelectionAnnouncer>`
+      // aria-live region (SPEC §3.6) which works regardless of wrapper role.
       role={isGroupContainer ? 'group' : undefined}
       aria-label={groupAriaLabel}
       // Roving tabindex (W3C ARIA Authoring Practices, "Composite Widgets"):
