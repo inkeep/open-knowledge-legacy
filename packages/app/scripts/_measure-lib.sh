@@ -28,15 +28,26 @@ fi
 # ── Portable epoch-ms ──────────────────────────────────────────────────────
 # GNU `date +%s%3N` is preferred but macOS BSD `date` emits the literal
 # string "%3N" instead of milliseconds. Detect format validity and fall
-# back to seconds-times-1000 when the primary form doesn't work.
+# back to seconds-times-1000 when the primary form doesn't work. Hard
+# failure (both paths yield non-numeric) exits non-zero — timing
+# infrastructure that silently returns 0 is worse than timing that
+# loudly breaks (would record nonsensical durationMs in the JSONL).
 epoch_ms() {
   local ms
   ms="$(date +%s%3N 2>/dev/null || true)"
   if [[ "$ms" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$ms"
-  else
-    printf '%s000\n' "$(date +%s)"
+    return 0
   fi
+  # Fallback: seconds * 1000 (millisecond precision lost but still valid).
+  local sec
+  sec="$(date +%s 2>/dev/null || true)"
+  if [[ "$sec" =~ ^[0-9]+$ ]]; then
+    printf '%s000\n' "$sec"
+    return 0
+  fi
+  echo "error: epoch_ms failed — both GNU and BSD date paths returned non-numeric output" >&2
+  exit 5
 }
 
 # ── Host tag ───────────────────────────────────────────────────────────────
@@ -83,37 +94,64 @@ assert_numeric_flag() {
 # the JSONL trend record. Guard with flock on Linux; fall back to mkdir-
 # based mutex on macOS (flock is not in the BSD toolchain).
 #
-# 10-second lock timeout — if the lock can't be acquired in that time,
-# proceed without it (warn + continue) since a stuck lock would hurt more
-# than the rare interleaving risk it guards against.
+# On lock failure (timeout, crash-left lockdir, filesystem error), the
+# helper now EXITS NON-ZERO rather than warn-and-proceed. The JSONL is
+# the spec-named evidence trail (NG6 of the CI signal quality spec) —
+# silently dropping or non-atomically appending to it is worse than
+# surfacing the failure to the caller who can decide whether to retry,
+# investigate, or escalate.
+#
+# Stale-lock recovery: on the mkdir fallback path, if the lockdir exists
+# and its mtime is older than 60s, treat it as a crashed-writer artifact
+# (a Ctrl-C between mkdir and rmdir would leave this behind). Remove it
+# and retry once before giving up. 60s is conservative — a real writer
+# completes its jsonl append in well under a second.
 append_jsonl_atomic() {
   local log="$1"
   local record="$2"
   if command -v flock >/dev/null 2>&1; then
-    # Acquire exclusive lock on the log file itself (fd 9). Releases on
-    # subshell exit.
+    local flock_exit=0
     (
-      flock -x -w 10 9 || {
-        echo "warn: could not acquire log lock; writing without lock" >&2
-      }
+      flock -x -w 10 9 || exit 7
       printf '%s\n' "$record" >> "$log"
-    ) 9>> "$log"
+    ) 9>> "$log" || flock_exit=$?
+    if [[ "$flock_exit" -ne 0 ]]; then
+      echo "error: append_jsonl_atomic failed to acquire flock on $log (exit $flock_exit)" >&2
+      echo "       the record below was NOT committed to the trend log — rerun this invocation:" >&2
+      echo "       $record" >&2
+      exit 6
+    fi
   else
-    # macOS fallback: `mkdir` is atomic on the same filesystem. Retry for
-    # up to 10 seconds with 100 ms backoff, then proceed without the
-    # lock (atomic-enough for ad-hoc dev use).
     local lockdir="${log}.lock"
+    # Stale-lock recovery: if the lockdir is older than 60s, it's almost
+    # certainly from a crashed writer. `stat -f %m` (BSD) / `stat -c %Y`
+    # (GNU) returns mtime; we use portable `find -prune` with `-mmin`.
+    if [[ -d "$lockdir" ]]; then
+      local stale
+      stale="$(find "$lockdir" -maxdepth 0 -mmin +1 -print 2>/dev/null || true)"
+      if [[ -n "$stale" ]]; then
+        echo "warn: removing stale lockdir ($lockdir mtime > 60s) — likely from crashed writer" >&2
+        rmdir "$lockdir" 2>/dev/null || true
+      fi
+    fi
     local i=0
     while ! mkdir "$lockdir" 2>/dev/null; do
       i=$((i + 1))
       if (( i >= 100 )); then
-        echo "warn: could not acquire log lock after 10s; writing without lock" >&2
-        break
+        echo "error: append_jsonl_atomic failed to acquire lockdir $lockdir after 10s" >&2
+        echo "       the record below was NOT committed to the trend log — rerun this invocation:" >&2
+        echo "       $record" >&2
+        exit 6
       fi
       sleep 0.1
     done
+    # trap EXIT on subshell so crashes between mkdir and rmdir don't wedge
+    # the lockdir. If the rmdir here fails we still exit 0 for the append,
+    # but the next invocation's stale-lock recovery will clean up.
+    trap "rmdir '$lockdir' 2>/dev/null || true" EXIT
     printf '%s\n' "$record" >> "$log"
     rmdir "$lockdir" 2>/dev/null || true
+    trap - EXIT
   fi
 }
 

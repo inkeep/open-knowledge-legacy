@@ -13,13 +13,15 @@
 #
 # Usage
 # -----
-#   bash scripts/measure-fuzz.sh --seeds 500 --context "pre-PR-218 baseline"
+#   bash scripts/measure-fuzz.sh --seeds 1000 --context "pre-PR-218 baseline"
 #   bash scripts/measure-fuzz.sh --seed-replay 1776559905522 --context "reproduce PR #206 failing seed"
 #   bun run measure:fuzz --seeds 100 --context "investigate fuzz rate shift"
 #
 # Flags
 # -----
-#   --seeds N          Total seed budget (default: 500). Maps to
+#   --seeds N          Total seed budget (default: 1000 — matches AGENTS.md
+#                      §Measurement scripts canonical example and the
+#                      pre-merge bridge-touching-PR convention). Maps to
 #                      BRIDGE_FUZZ_SEEDS=N on the test invocation.
 #   --seed-replay SEED Single-seed replay mode — invokes with
 #                      STRESS_FUZZ_SEED=SEED. Overrides --seeds.
@@ -89,7 +91,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_measure-lib.sh"
 
 # ── Defaults ───────────────────────────────────────────────────────────────
-SEEDS=500
+SEEDS=1000
 SEED_REPLAY=""
 CONTEXT=""
 

@@ -842,10 +842,21 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
   // Discoverability marker for the ZWJ-sequence gap surfaced by this PBT
   // during the CI signal quality spec work. `.skip` marks the test as
   // intentionally pending so readers know the coverage gap is deliberate
-  // and documented, not accidentally missed. Fixing the underlying ZWJ
-  // handling belongs in a follow-up spec on Unicode normalization in the
-  // md/PM conversion layer — tracked in state.json deferredScope[] and
-  // surfaced in the Ship Summary.
+  // and documented, not accidentally missed.
+  //
+  // TRACKING:
+  //   - Scope origin: `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-1 is
+  //     explicitly scoped to conversion-chain coverage at current
+  //     arbitraries — ZWJ normalization is NG11-class per CLAUDE.md and
+  //     belongs in a follow-up Unicode-normalization spec.
+  //   - Persisted: Ship Summary post-merge monitoring + state.json
+  //     `deferredScope[]` entry "ZWJ-sequence emoji handling in md/PM
+  //     conversion — follow-up spec on Unicode normalization".
+  //   - Reproducer: see Chain C smoke test above — counterexample
+  //     `"  👨‍💻\n"` fails the bridge-invariant after round-trip.
+  //   - To enable: remove `.skip` AFTER the follow-up spec lands a fix in
+  //     the md/PM conversion layer (parseWithFallback + schema.nodeFromJSON
+  //     + serializeFragment normalization symmetry).
   test.skip('paired write: ZWJ-sequence emoji (👨‍💻, 🏳️‍🌈) — pre-existing md/PM gap, separate spec', () => {
     // Intentionally skipped — see comment above. Uncommenting this test
     // body would exercise the ZWJ round-trip once the underlying parser/
@@ -1085,16 +1096,22 @@ describe('Handler-specific survivability (chains A+C)', () => {
 // to 0 or NaN, every test above would pass vacuously — this test ensures
 // the PBT harness actually ran a non-trivial number of cases.
 describe('Meta — PBT harness is live', () => {
-  test('NUM_RUNS is a positive integer ≥100', () => {
+  // Floors aligned with the actual `helpers.ts` calibration (1000 default,
+  // 10000 under STRESS_FIDELITY=1). Using the real values — not a weaker
+  // ≥100 / ≥1000 pair — so any future regression that halves NUM_RUNS
+  // trips this assertion. A meta-test whose floor is an order of
+  // magnitude below reality is a meta-test that doesn't actually guard
+  // what it claims to.
+  test('NUM_RUNS matches default helper calibration (≥1000)', () => {
     expect(Number.isFinite(NUM_RUNS)).toBe(true);
-    expect(NUM_RUNS).toBeGreaterThanOrEqual(100);
+    expect(NUM_RUNS).toBeGreaterThanOrEqual(1000);
   });
 
-  test('STRESS_FIDELITY=1 bumps NUM_RUNS to ≥1000 (self-documenting contract)', () => {
+  test('STRESS_FIDELITY=1 bumps NUM_RUNS to ≥10_000 (self-documenting contract)', () => {
     // Guards against a future contributor bumping the default NUM_RUNS floor
     // without remembering the stress-mode multiplier documented in helpers.ts.
     if (process.env.STRESS_FIDELITY === '1') {
-      expect(NUM_RUNS).toBeGreaterThanOrEqual(1000);
+      expect(NUM_RUNS).toBeGreaterThanOrEqual(10_000);
     }
   });
 });

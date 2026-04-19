@@ -501,15 +501,41 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 const SEED_COUNT_PR = 75;
 const SEED_COUNT_NIGHTLY = 10_000;
 const SEED_COUNT_DEFAULT = 25;
+
+/**
+ * Strict integer-env parser. Non-finite, non-integer, or otherwise malformed
+ * inputs throw with a concrete example message — matches the defense-in-
+ * depth discipline `server-authoritative-stress.test.ts` uses for
+ * STRESS_SEED. The measurement script layer (`measure-fuzz.sh`) also
+ * validates via `assert_numeric_flag`, but this test is also invokable
+ * directly via `bun test` without going through the wrapper — so the
+ * test file must not silently coerce "100.5" or "0x42" to NaN→1 at the
+ * PRNG layer. Evidence log that lies quietly is worse than a loud throw.
+ */
+function parseIntegerEnv(name: string, raw: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error(
+      `${name} must be a finite integer, got ${JSON.stringify(raw)}. ` +
+        `Example: ${name}=42 bun test tests/stress/bridge-convergence.fuzz.test.ts`,
+    );
+  }
+  return parsed;
+}
+
 function resolveSeedCount(): number {
   if (process.env.STRESS_FUZZ_SEED) return 1;
-  if (process.env.BRIDGE_FUZZ_SEEDS) return Number(process.env.BRIDGE_FUZZ_SEEDS);
+  if (process.env.BRIDGE_FUZZ_SEEDS) {
+    return parseIntegerEnv('BRIDGE_FUZZ_SEEDS', process.env.BRIDGE_FUZZ_SEEDS);
+  }
   if (process.env.STRESS_FUZZ_NIGHTLY === '1') return SEED_COUNT_NIGHTLY;
   if (process.env.STRESS_FUZZ_PR === '1') return SEED_COUNT_PR;
   return SEED_COUNT_DEFAULT;
 }
 const SEED_COUNT = resolveSeedCount();
-const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
+const FIXED_SEED = process.env.STRESS_FUZZ_SEED
+  ? parseIntegerEnv('STRESS_FUZZ_SEED', process.env.STRESS_FUZZ_SEED)
+  : undefined;
 
 // Surface the resolved seed count in CI logs so reviewers can confirm the
 // PR-tier gate is actually running at its calibrated coverage, not the
@@ -573,6 +599,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
+    // Per-seed setup try/catch — if the setup path throws (harness init,
+    // port allocation, agentWriteMd, createTestClients) BEFORE we reach
+    // the main test body, the seed must still be accounted for in the
+    // RESULT line. Otherwise the script's seedCount drifts below the
+    // requested --seeds N and trend analysis across runs compares
+    // apples and oranges. Re-throw after recording so the test still
+    // fails loudly — this is accounting hygiene, not error swallowing.
+    let setupOk = false;
+    let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;
     const rng = createPRNG(seed);
     const clientCount = 2 + (seed % 2); // 2..3
     // 12 ops per seed: enough to sample 2-3 agent-write + wysiwyg-type pairs
@@ -582,15 +617,31 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     const opCount = 12;
     const docName = `fuzz-${seed}`;
 
-    // Seed initial content
-    await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
-    await wait(200);
+    try {
+      // Seed initial content
+      await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
+      await wait(200);
 
-    const clients = await createTestClients(server.port, {
-      count: clientCount,
-      docName,
-      perClientOptions: { syncControl: true, skipInvariantWatcher: true },
-    });
+      clients = await createTestClients(server.port, {
+        count: clientCount,
+        docName,
+        perClientOptions: { syncControl: true, skipInvariantWatcher: true },
+      });
+      setupOk = true;
+    } catch (err) {
+      // Setup failure — record as failed seed so RESULT accounting is
+      // complete, then re-throw so the test fails visibly. The catch at
+      // the end of the try-block (below, around the main oracle) records
+      // post-setup failures; this catch records pre-setup failures.
+      fuzzFailed.push(seed);
+      throw err;
+    }
+    // Guard against any unexpected control-flow — if we somehow reached
+    // here with setupOk=false without the catch having run, fail loud.
+    if (!setupOk) {
+      fuzzFailed.push(seed);
+      throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
+    }
 
     const agentProbes = clients.map((c) =>
       createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
