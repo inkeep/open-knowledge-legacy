@@ -5,9 +5,10 @@
 **Last updated:** 2026-04-18
 **Baseline commit:** aced0253
 **Links:**
-- Research report: [reports/mcp-server-auto-install-harnesses/](../../reports/mcp-server-auto-install-harnesses/) (REPORT.md + 14 evidence files)
+- Research report: [reports/mcp-server-auto-install-harnesses/](../../reports/mcp-server-auto-install-harnesses/) (REPORT.md + 18 evidence files including source audits)
 - Evidence: [./evidence/](evidence/) (spec-local findings)
 - Changelog: [./meta/_changelog.md](meta/_changelog.md)
+- **Dependency:** [GH PR #207 — enforce strict MCP routing](https://github.com/inkeep/open-knowledge/pull/207) (open as of 2026-04-18) — our spec inherits its routing architecture (D-8)
 
 ---
 
@@ -139,23 +140,30 @@
 
 ## 8) Current state (how it works today)
 
-Summary of current behavior (from `init.ts` + `editors.ts` inspection):
+Summary of current behavior (from `init.ts` + `editors.ts` inspection + source audits):
 
 - **Covered today:** 5 editor targets at project scope. Editor IDs: `claude`, `cursor`, `vscode`, `codex`, `windsurf`. Only Windsurf is user-scope (`~/.codeium/windsurf/mcp_config.json`).
-- **File-write pattern already exists:** `readJsonConfig` / `readTomlConfig` / `writeJsonConfig` / `writeTomlConfig` (non-atomic).
-- **Idempotent merge already done:** `writeEditorMcpConfig` preserves existing `mcpServers`, skips if `open-knowledge` present unless `--force`.
+- **File-write pattern already exists:** `readJsonConfig` / `readTomlConfig` / `writeJsonConfig` / `writeTomlConfig` (non-atomic — `init.ts:95,105`).
+- **Idempotent merge already done:** `writeEditorMcpConfig` preserves existing `mcpServers`, skips if `open-knowledge` present unless `--force`. D-9 will upgrade to identical-vs-conflicting-vs-missing trichotomy (matches PR #207).
 - **Detection already works:** `detectInstalledEditors` probes parent dirs of each target's `configPath`.
-- **Launch.json scaffolding for Claude Code:** sophisticated stale-field detection — precedent for handling config-schema drift.
+- **Launch.json scaffolding for Claude Code:** sophisticated stale-field detection (`diffLaunchEntry`) — precedent for handling config-schema drift.
 - **AGENTS.md injection:** `upsertRootInstructions` writes Open Knowledge section — precedent for multi-file-write orchestration.
 - **TTY + non-TTY paths:** TTY uses `@clack/prompts` multiselect; non-TTY auto-detects. Non-TTY with empty detection exits 1 with hint.
 - **Flags:** `--mcp/--no-mcp`, `--force`, `--editor`.
-- **Known gaps (bugs we've discovered during research):**
+- **MCP runtime today:** `mcp.ts:299` uses `projectDir = process.cwd()` — project is hard-bound at subprocess spawn. PR #207 (in-flight, open) replaces this with strict `roots/list`-based routing. Our spec inherits PR #207's architecture where it works and adds `--project` arg fallback where it doesn't.
+- **MCP routing landscape per harness (from source audits):**
+  - Claude Code CLI / Desktop / Cowork in-VM: advertises `roots` capability (`{}`, no `listChanged`); returns 1 root = startup cwd (`@anthropic-ai/claude-code@2.1.114` binary offset ~9320, `T8()` = `m_.originalCwd`). Works with PR #207 ✅
+  - Codex CLI / Desktop / IDE ext: **does NOT advertise `roots`** (`codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419`, `roots: None`). **Breaks under PR #207** without `--project` fallback ❌
+  - Cursor CLI / Desktop: advertises `roots` with `listChanged: false`; multi-root spawns N MCP instances. Works with PR #207 ✅
+  - Claude Desktop Chat: no workspace concept; advertises no meaningful root. **Breaks under PR #207** without `--project` fallback ❌
+- **Known gaps (pre-spec):**
   - Non-atomic writes — inherits Claude Code concurrent-write corruption class
   - No Claude Desktop target
   - No user-scope targets for Claude Code / Cursor / Codex
   - No activation-sidecar writes (`permissions.json`, `settings.local.json`)
   - No post-write activation for Cursor CLI (`agent mcp enable`)
   - No explicit `--yes` flag (non-TTY fallback works but isn't discoverable)
+  - No `--project` arg on `mcp` command (needed for Codex + Claude Desktop Chat)
 
 ## 9) Proposed solution (vertical slice)
 
@@ -180,31 +188,41 @@ Summary of current behavior (from `init.ts` + `editors.ts` inspection):
 
 ### System design
 
-**Data model — expand `EditorId`:**
+**Data model — expand `EditorId`:** (D-2 LOCKS flat-ID approach)
 
 ```typescript
 export type EditorId =
   // Project-scope (existing)
-  | 'claude'         // .mcp.json
-  | 'cursor'         // .cursor/mcp.json
-  | 'vscode'         // .vscode/mcp.json
-  | 'codex'          // .codex/config.toml
-  // Project-scope (new sidecars; written alongside `claude` + `cursor`)
-  | 'claude-settings'   // .claude/settings.local.json (trust bypass)
+  | 'claude'               // <project>/.mcp.json
+  | 'cursor'               // <project>/.cursor/mcp.json
+  | 'vscode'               // <project>/.vscode/mcp.json
+  | 'codex'                // <project>/.codex/config.toml — WITH --project arg baked (D-7)
   // User-scope (existing)
-  | 'windsurf'       // ~/.codeium/windsurf/mcp_config.json
+  | 'windsurf'             // ~/.codeium/windsurf/mcp_config.json
   // User-scope (new, via --global)
-  | 'claude-user'    // ~/.claude.json
-  | 'cursor-user'    // ~/.cursor/mcp.json
-  | 'cursor-permissions' // ~/.cursor/permissions.json (auto-approve)
-  | 'codex-user'     // ~/.codex/config.toml
-  // Host-level (new, always when Claude Desktop detected)
-  | 'claude-desktop'; // ~/Library/Application Support/Claude/claude_desktop_config.json
+  | 'claude-user'          // ~/.claude.json — top-level mcpServers (D-5)
+  | 'cursor-user'          // ~/.cursor/mcp.json (user-global)
+  | 'codex-user'           // ~/.codex/config.toml — WITH --project arg baked (D-7)
+  // Host-global (new, via --global or --yes)
+  | 'claude-desktop';      // claude_desktop_config.json — WITH --project arg baked (D-7)
 ```
 
-That's 11 IDs — covers all 7 target harnesses plus the 2 activation sidecar files. Not every ID maps 1:1 to a harness (sidecars + user-scope variants).
+That's **9 IDs** — the 7 target harnesses plus Windsurf (existing) plus 2 new user-scope variants. Cursor's user-scope shares the same config shape as project-scope, so no separate ID needed — same `cursor-user` target writes to `~/.cursor/mcp.json`.
 
-**Alternative data model** (TO CONSIDER in iteration): introduce `EditorScope` concept — each harness has {project, user, host} scopes with per-scope paths. Reduces ID proliferation. More code, cleaner abstraction.
+**Sidecar files (D-3)** are NOT separate IDs — they're written automatically inside the main target's write path:
+- `claude` target → writes `<project>/.mcp.json` + `<project>/.claude/settings.local.json` + appends `.claude/settings.local.json` to `<project>/.gitignore` (D-10)
+- `cursor` + `cursor-user` targets → writes `.cursor/mcp.json` + `~/.cursor/permissions.json` (always user-scope — Cursor `permissions.json` is global-only)
+
+**Post-write activation (D-4):**
+- `cursor` + `cursor-user` targets → shell out to `cursor-agent mcp enable open-knowledge` if `cursor-agent` binary on PATH; graceful no-op otherwise; 10s timeout
+
+**`--project <abs-path>` arg baking (D-7):**
+- `codex`, `codex-user`, `claude-desktop` targets → entry args include `["--project", "<abs-path>"]` baked at install time with the project's absolute cwd
+- Other targets — no `--project` arg; clients advertise roots via `roots/list`, PR #207 routes correctly
+
+### Alternatives considered
+
+(see existing §9 alternatives section — unchanged; D-5/D-6/D-7/D-8/D-9/D-10 now LOCKED with full evidence)
 
 **Architecture overview:**
 
@@ -280,38 +298,69 @@ init command
 | ID | Decision | Type | Resolution | 1-way door? | Rationale | Evidence / links | Implications |
 |---|---|---|---|---|---|---|---|
 | D-Intake-1 | All 7 harnesses in one spec (not phased) | Cross | LOCKED | No | Research is done; spec cost similar for 1 vs 7. Cohesive implementation. | Intake turn | Single PR covers all gaps |
-| D-Intake-2 | Cowork = "supported with known caveats" | Product | LOCKED | No | Honest; matches research reality. Anthropic has declined to fix #24433. | [evidence/cowork-deep-dive.md](evidence/cowork-deep-dive.md) | Docs describe caveats; init prints caveat block |
-| D-Intake-3 | Atomic writes (tmp+rename) across all targets; no CLI-delegate fallback | Technical | LOCKED | No | ~15 lines Node fs; avoids Claude Code #28842 class bugs; no binary deps; uniform across harnesses. | [evidence/cli-vs-file-write.md](../../reports/mcp-server-auto-install-harnesses/evidence/cli-vs-file-write.md) | New `write-file-atomic.ts` utility; replaces `writeFileSync` calls |
+| D-Intake-2 | Cowork = "supported with known caveats" | Product | LOCKED | No | Honest; matches research reality. Anthropic has declined to fix #24433 (closed "not planned"). | [evidence/cowork-deep-dive.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-deep-dive.md) | Docs describe caveats; init prints caveat block |
+| D-Intake-3 | Atomic writes across all targets; **adopt `write-file-atomic` npm package** (not DIY) | Technical | LOCKED | No | ~5kB dep; battle-tested (npm itself uses it); 100M+ weekly DLs; zero-dep (no transitive). Windows EPERM semantics + fsync + retry handled correctly. DIY estimate revised 15→30-40 lines with tests. | [evidence/cli-vs-file-write.md](../../reports/mcp-server-auto-install-harnesses/evidence/cli-vs-file-write.md) | New `write-file-atomic.ts` thin facade; replaces `writeFileSync` calls at `init.ts:95,105` |
 | D-Intake-4 | `--yes` flag for non-interactive install | Cross | LOCKED | No | Enables Docker / postinstall / CI use cases. Matches `add-mcp -y` pattern. | [evidence/extended-tooling-survey.md](../../reports/mcp-server-auto-install-harnesses/evidence/extended-tooling-survey.md) | New flag in commander; threads through to non-TTY path |
-| D-1 | `--global` flag for user-scope writes; default stays project-scope | Cross | DIRECTED | No | Agent-proposed, user-confirmable. Preserves team-lead persona's current workflow. Solo developers opt in. | Recommendation in Intake | New flag; expands selected IDs to include user-scope variants when passed |
-| D-2 | Flat `EditorId` list vs `EditorScope` enum | Technical | INVESTIGATING | No | Open — needs iteration-loop investigation + worldmodel |  | Affects data model + test surface |
-| D-3 | Whether to bundle `claude-settings` / `cursor-permissions` sidecars as automatic when main target selected, OR make them separate `--editor` IDs | Technical | INVESTIGATING | No | Open — UX call |  | Affects CLI surface + docs |
-| D-4 | `cursor-agent mcp enable` shell-out vs skip-with-docs | Technical | INVESTIGATING | No | Open — shell-out gives zero-click; skip is simpler |  | Affects edge-case handling |
+| D-1 | `--global` flag for user-scope writes; default stays project-scope | Cross | LOCKED | No | Via /analyze — preserves team-lead persona's current workflow; solo developers opt in. `--yes` implies `--global` for headless "install everything" UX. | Intake + /analyze | New flag; expands selected IDs to include user-scope variants |
+| D-2 | Flat `EditorId` list (11+ IDs) over `EditorScope` enum | Technical | DIRECTED | No | Matches prior spec's flat-ID precedent (`specs/2026-04-13-cli-init-clarity`); simpler test surface; one-to-one mapping per target. | Worldmodel + /analyze | Expand `EditorId` from 5 to ~11 IDs covering sidecars + user-scope variants |
+| D-3 | Sidecar files (`settings.local.json`, `permissions.json`) written automatically when main target is selected — NOT separate `--editor` IDs | Technical | DIRECTED | No | User-facing simplicity: one `--editor claude` install is one mental action. Sidecars are implementation detail. | /analyze | `runInit` orchestrates sidecar writes inside each main target's write path |
+| D-4 | `cursor-agent mcp enable` shell-out when binary on PATH; graceful no-op otherwise | Technical | LOCKED | No | Closes zero-click gap for Cursor CLI users without making install fail for Cursor-Desktop-only users. 10s timeout on shell-out. | /analyze | Post-write step in `writeEditorMcpConfig` for `cursor` target when binary detected |
+| **D-5** | **Uphold prior spec NG4 narrowly — allow `~/.claude.json` under `--global`; keep NG4's `~/.claude/.mcp.json` path rejection intact** | Cross | **LOCKED** | **YES** (precedent) | NG4 rejected `~/.claude/.mcp.json` specifically (nonstandard path); `~/.claude.json` is Anthropic's canonical user-scope file (documented; `claude mcp add --scope user` writes here). Different files, different semantics. | /analyze + [specs/2026-04-16-zero-ceremony-resume/SPEC.md](../2026-04-16-zero-ceremony-resume/SPEC.md) NG4 | Adds `claude-user` target writing `~/.claude.json` under `--global`; spec NG11 restates prior NG4's path-specific rejection |
+| **D-6** | **Claude Desktop (`claude_desktop_config.json`) written only under `--global`** (or `--yes`, which implies `--global`); with discoverability hint when detected but unwritten | Cross | **LOCKED** | No | Honors D-Intake-1-era invariant ("default stays project-scope"). Consistent `--global` semantics = "everything host/user scope." Hint in init output prevents surprise-missing-Cowork. | /analyze | Add `claude-desktop` target, gated on `--global` in selection logic |
+| **D-7** | **Add `--project <abs-path>` arg to `mcp` command. Bake it into install-time config for harnesses that don't route via MCP `roots/list`**: **Codex CLI, Codex Desktop, Claude Desktop Chat.** | Technical | **LOCKED** | No | **Source audit** ([claude-code-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/claude-code-roots-source-audit.md), [codex-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)): Codex declares `roots: None` verbatim in single production path (`codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419`) — never advertises roots capability. Claude Desktop Chat has no workspace concept (verified [claude-desktop-project-scope.md](../../reports/mcp-server-auto-install-harnesses/evidence/claude-desktop-project-scope.md)). Claude Code family + Cursor work via roots. `--project` triggers PR #207's `bypassProjectSelection: true` fallback to explicit path. | Source audits | ~20 LoC to `mcp.ts` for flag parsing; init bakes into 3 targets (Codex user-scope, Codex project-scope, Claude Desktop) |
+| **D-8** | **Spec inherits PR #207's strict-routing architecture as a dependency.** Our spec adds install-time capabilities; PR #207 adds runtime routing. They compose. | Cross | **DIRECTED** | No | PR #207 solves multi-project routing for harnesses advertising roots (4-5 of 7); our `--project` arg solves it for harnesses that don't (2-3 of 7). Complementary, not competing. Coordinate with PR author (mike-inkeep) on sequencing. | [GH PR #207](https://github.com/inkeep/open-knowledge/pull/207) | Spec references PR #207 commit as baseline; if PR #207 lands first, rebase; else coordinate scope |
+| **D-9** | **Idempotent-merge UX: adopt PR #207's identical-vs-conflicting-vs-missing trichotomy** | Technical | **DIRECTED** | No | Strictly better than today's skip/force binary. Identical-entry skip; conflicting-entry refuses with explicit `--force` hint; missing-entry writes. | PR #207 init.ts changes | FR-1's acceptance criteria update to this shape |
+| **D-10** | **`.claude/settings.local.json` added to project `.gitignore` automatically by init** | Product | **LOCKED** | No | Matches dev-tooling `.local.*` convention (VS Code, JetBrains). Trust-bypass is user-machine-local; shouldn't propagate via git. Each team member approves their own. | /analyze | New idempotent `.gitignore` append primitive — single line `.claude/settings.local.json` |
 
 ## 11) Open questions
 
-| ID | Question | Type | Priority | Blocking? | Plan to resolve | Status |
-|---|---|---|---|---|---|---|
-| Q1 | Flat `EditorId` list (11 IDs) or `EditorScope` enum (7 harnesses × scope)? | T | P0 | Yes | Prototype both; weight against test surface + CLI UX | Open |
-| Q2 | Sidecar files (`settings.local.json`, `permissions.json`) — automatic when main target written, or separate `--editor` IDs? | T | P0 | Yes | Decide with user — UX question | Open |
-| Q3 | `cursor-agent mcp enable` shell-out — in-scope or skip with docs? | T | P0 | Yes | Light investigation: how common is `cursor-agent` on PATH for our users? Probably high among Cursor users. | Open |
-| Q4 | Windows path resolution for `%APPDATA%\Claude\claude_desktop_config.json` — use env var or hardcoded? | T | P0 | Yes | Worldmodel will surface existing Windows path patterns in the codebase | Open |
-| Q5 | Should `--yes` default to writing ALL detected harnesses, or only the project-scope subset (matching current behavior)? | P | P0 | No | User judgment call — recommend "all detected" for DX | Open |
-| Q6 | Linux detection path for Claude Desktop — silently skip, or log "not applicable"? | T | P0 | No | Quiet no-op; existing precedent | Probably LOCKED to quiet no-op but flag in iteration |
-| Q7 | Does `cursor-agent mcp enable` persist across sessions, or require re-run? | T | P2 | No | Matters for uninstall/upgrade semantics, not initial install | Deferred |
-| Q8 | Atomic write on Windows — `fs.rename` semantics differ (EPERM if target handle held). Retry-with-delay strategy? | T | P0 | Yes | Research: what does `write-file-atomic` npm package do? | Open |
-| Q9 | Should we write `claude-desktop` target even when no Claude Desktop app is detected, assuming user may install later? | P | P0 | No | Probably skip if undetected — consistent with other targets | Open |
+Most P0 items were resolved via /analyze + two source audits (2026-04-18). Remaining open items are listed first; resolved items are kept as historical record with status `RESOLVED → D-N` pointing at the Decision Log entry.
+
+| ID | Question | Type | Priority | Status |
+|---|---|---|---|---|
+| Q3 | `cursor-agent mcp enable` shell-out reliability: does the binary accept `mcp enable <name>` non-interactively and exit 0 on success? | T | P0 | Open — verify empirically with `cursor-agent --version >= TBD`; A3 assumption carries risk |
+| Q4 | Windows path resolution for `%APPDATA%\Claude\claude_desktop_config.json` — what's the cleanest branch pattern (new helper vs inline `process.platform` switch)? | T | P0 | Open — will decide during implementation; no existing OS-branching in `editors.ts` |
+| Q7 | Does `cursor-agent mcp enable` persist across sessions, or require re-run on next Cursor launch? | T | P2 | Deferred — matters for uninstall/upgrade, not install |
+| Q19 | Which docs need updates: `README.md`, `CLAUDE.md`, `AGENTS.md`, `packages/cli/README.md`? | X | P0 | Open — all four likely; resolve during implementation |
+| Q-Cowork-cwd | What cwd does the Cowork launcher (`@ant/claude-swift`) set when spawning in-VM `claude`? Determines whether Cowork advertises the mounted workspace folder as an MCP root. | T | P0 | In-flight research (opus subagent) — blocks D-7's Cowork coverage verdict |
+| Q-PR207 | Coordination sequencing with PR #207 — ship our spec first, after, or merged? | X | P0 | Open — user decision on coordination with mike-inkeep |
+
+### Resolved (historical)
+
+| ID | Question | Resolved by |
+|---|---|---|
+| Q1 | Flat `EditorId` list vs `EditorScope` enum | D-2 (flat) |
+| Q2 | Sidecars — automatic or separate `--editor` IDs | D-3 (automatic) |
+| Q5 | `--yes` defaults to all detected | Follows D-Intake-4; confirmed by /analyze |
+| Q6 | Linux Claude Desktop — silent skip (no-op) | Follows precedent |
+| Q8 | Atomic write Windows EPERM retry strategy | D-Intake-3 (adopt `write-file-atomic` package which handles EPERM) |
+| Q9 | Write `claude-desktop` when undetected | NO — consistent with other targets' detection pattern |
+| Q10 | `~/.claude.json` top-level vs `projects.*` | Top-level only (Anthropic docs) |
+| Q11 | `.claude/settings.local.json` in `.gitignore`? | D-10 (add to `.gitignore`) |
+| Q12 | `--yes` + `--editor` precedence | Explicit list wins; `--yes` just skips prompts |
+| Q13 | Cowork caveat block location | stdout, normal verbosity |
+| Q15 | `write-file-atomic` npm package vs DIY | D-Intake-3 (adopt package) |
+| Q16 | `--global` on no-user-scope harness | Silent no-op |
+| Q17 | Claude Desktop gate on `--global`? | D-6 (gate on `--global`) |
+| Q18 | Codex project-scope still worth writing given #13025? | YES — CLI still respects it; also add user-scope via `--global` |
+| Q20 | Windows path display | Native backslashes |
+| Q-NG4 | NG4 precedent blocks `~/.claude.json`? | D-5 (uphold NG4 narrowly) |
 
 ## 12) Assumptions
 
-| ID | Assumption | Confidence | Verification plan | Expiry | Status |
-|---|---|---|---|---|---|
-| A1 | Claude Desktop Chat / Cowork's `claude_desktop_config.json` path is OS-dependent and stable: macOS = `~/Library/Application Support/Claude/`, Windows = `%APPDATA%\Claude\` | HIGH | Confirmed in research (evidence/anthropic-harnesses.md); verify in iteration by reading Claude Desktop docs once more | Before finalization | Active |
-| A2 | Existing `smol-toml` library handles the Codex TOML round-trip without losing comments/formatting on idempotent merge | MEDIUM | Check via worldmodel / look at codex-related tests | Before finalization | Active |
-| A3 | `cursor-agent` binary, when present on PATH, accepts `mcp enable <name>` non-interactively and exits 0 on success | MEDIUM | Verify via Cursor CLI docs + empirical test if available | Before finalization | Active |
-| A4 | Atomic tmp+rename on macOS + Linux is truly atomic (POSIX `rename(2)`); Windows may need retry-with-delay for EPERM cases | MEDIUM | Check `write-file-atomic` npm package or equivalent for Windows-specific handling | Before finalization | Active |
-| A5 | Users running `init --global` trust the installer to write to `~/` — consistent with existing Windsurf behavior | HIGH | Existing precedent | N/A | Active |
-| A6 | `open-knowledge` MCP server name is stable and doesn't need `open-knowledge@<version>` pinning in args | HIGH | `constants.ts:MCP_SERVER_NAME` is the source of truth | Before finalization | Active |
+| ID | Assumption | Confidence | Verification plan | Status |
+|---|---|---|---|---|
+| A1 | Claude Desktop Chat / Cowork's `claude_desktop_config.json` path is OS-dependent and stable: macOS = `~/Library/Application Support/Claude/`, Windows = `%APPDATA%\Claude\` | **CONFIRMED** (multiple primary sources) | Verified | Resolved |
+| A2 | Existing `smol-toml` library handles the Codex TOML round-trip without losing comments/formatting on idempotent merge | MEDIUM | Check during implementation; test with existing Codex user-scope TOML | Active |
+| A3 | `cursor-agent` binary, when present on PATH, accepts `mcp enable <name>` non-interactively and exits 0 on success | MEDIUM | Verify empirically with current Cursor CLI version during implementation (Q3) | Active |
+| A4 | Atomic writes handled correctly by `write-file-atomic` npm package (POSIX `rename(2)` + Windows EPERM retry) | **CONFIRMED** (D-Intake-3 locks adoption) | Package audit done during /analyze | Resolved |
+| A5 | Users running `init --global` trust the installer to write to `~/` — consistent with existing Windsurf behavior | HIGH | Existing precedent | Active |
+| A6 | `open-knowledge` MCP server name is stable and doesn't need `open-knowledge@<version>` pinning in args | HIGH | `constants.ts:MCP_SERVER_NAME` is the source of truth | Active |
+| **A7** | **Claude Code family (CLI + Desktop Code tab + Cowork in-VM) advertises MCP `roots` capability returning exactly one root = startup cwd; `/add-dir` does NOT trigger `roots/list_changed`** | **CONFIRMED** via binary audit of `@anthropic-ai/claude-code@2.1.114` ([claude-code-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/claude-code-roots-source-audit.md)) | Verified | Resolved |
+| **A8** | **Codex (CLI + Desktop + IDE ext) does NOT advertise MCP `roots` capability at all** | **CONFIRMED** via Rust source audit at `codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419` ([codex-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)) | Verified | Resolved |
+| **A9** | **Cursor (CLI + Desktop) advertises MCP `roots` capability with `listChanged: false`; multi-root workspaces spawn N MCP instances** | SUPPORTED via Cursor forum threads + existing Cursor research | Verified | Resolved |
+| **A10** | **Cowork launcher cwd → user's mounted workspace folder** (makes Cowork's in-VM Claude Code advertise the right path as its root) | **UNCERTAIN** | Opus subagent audit in-flight (2026-04-18) | **Active — blocks final Cowork verdict** |
+| **A11** | **PR #207's `bypassProjectSelection` flag is accessible from `--project` CLI arg** (not just `--port`) — enables our `--project` fallback to integrate cleanly | MEDIUM | Confirm via coordination with PR #207 author; ~2 LoC change if needed | Active |
 
 ## 13) In Scope (implement now)
 
