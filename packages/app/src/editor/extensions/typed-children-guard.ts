@@ -82,8 +82,18 @@ const typedChildrenGuardKey = new PluginKey('typedChildrenGuard');
  *
  * Exported standalone (not inside the Extension) so unit tests can exercise
  * the depth logic directly without instantiating a full editor state.
+ *
+ * **Pure predicate — no side effects.** Callers that want user-visible
+ * feedback on rejection (toast, telemetry) should pass an `onReject`
+ * callback. Keeping the function pure preserves testability in the bun-test
+ * Node environment, where UI libraries like `sonner` throw on access to
+ * browser-only globals. The plugin wrapper below passes `surfaceRejection`;
+ * tests pass nothing.
  */
-export function shouldRejectTypedChildrenInsertion(tr: Transaction): boolean {
+export function shouldRejectTypedChildrenInsertion(
+  tr: Transaction,
+  onReject?: (containerName: string, insertedType: string) => void,
+): boolean {
   let dominated = false;
 
   tr.steps.forEach((step) => {
@@ -110,8 +120,21 @@ export function shouldRejectTypedChildrenInsertion(tr: Transaction): boolean {
                       componentName,
                       `(posDepth=${$pos.depth}, containerDepth=${depth})`,
                     );
-                    surfaceRejection(componentName, insertedNode.type.name);
                     dominated = true;
+                    if (onReject) {
+                      // Wrap the reporter so a throwing side-effect (e.g.
+                      // sonner's toast accessing browser-only globals in a
+                      // Node test runner) cannot roll back the `dominated`
+                      // decision we just made. Side-effect errors are noise
+                      // relative to the filterTransaction invariant.
+                      try {
+                        onReject(componentName, insertedNode.type.name);
+                      } catch (reporterErr) {
+                        if (process.env.NODE_ENV === 'development') {
+                          console.debug('[TypedChildrenGuard] onReject threw', reporterErr);
+                        }
+                      }
+                    }
                   }
                 });
               }
@@ -157,7 +180,7 @@ export const TypedChildrenGuard = Extension.create({
           // it as rawMdxFallback, not as silent divergence.
           if (tr.getMeta(ySyncPluginKey)) return true;
 
-          return !shouldRejectTypedChildrenInsertion(tr);
+          return !shouldRejectTypedChildrenInsertion(tr, surfaceRejection);
         },
       }),
     ];
