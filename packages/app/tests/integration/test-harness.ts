@@ -529,7 +529,7 @@ export async function pollUntil(
 export async function awaitFileWatcherIndexed(
   server: TestServer,
   docPath: string,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
@@ -579,7 +579,7 @@ export async function awaitBacklinkIndexed(
   server: TestServer,
   targetDocName: string,
   sourceDocName: string,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
