@@ -85,3 +85,21 @@ Dispatched 3 parallel Opus investigations covering 27 technical + design questio
 All initial Q1-Q11 now CLOSED. New residual questions Q100-Q105 tracked for implementation-time resolution (mostly P2, one P0 empirical — Q104 on cross-session undo behavior, to be covered by fuzzer extension).
 
 Updated FR-3 (UM scope extension), FR-5 (endpoint list expansion), §8.6 ref table (drop `human-` prefix) to reflect decisions.
+
+## 2026-04-18 — Directive-correction sweep + naming rename
+
+**Trigger:** Nick flagged D45 (non-git mode) and the broader spec for pragmatism-mode slippage ("leave bifurcation + revisit if users complain" is exactly the deferral the directive calls out).
+
+**D45 rewrite.** Corrected sloppy lock. Was: "save-version disabled in non-git mode with run-git-init prompt." Now (architecturally correct per `api-extension.ts:1877-1897`): save-version is graceful; history checkpoint always lands; parent-git commit + tag is best-effort; transitions heal forward (user runs `git init` later → next save-version tags normally); no retroactive backfill of past history-only checkpoints.
+
+**D49 rewrite.** Was: `Y.Map('agent-activity')` on each doc, replicates to clients. Problem: Y.Doc state bloat over time (500 entries × 10 sessions × 30 days = MB-scale per-doc download on connect). Staff-engineer call: server-side store + CC1 broadcast for invalidation + REST fetch (`/api/activity-log?doc=X`). Matches existing precedent (backlink-index, file-index). Y.Doc carries content, not ever-growing metadata.
+
+**D55 + D56 added (naming + unified location):**
+- **D55**: Retires the "shadow" label. "History repo" throughout code, spec, docs, log prefixes, prose. File renames: `shadow-repo.ts` → `history-repo.ts`, `shadow-lock.ts` → `history-lock.ts`, `shadow-branch-gc.ts` → `history-branch-gc.ts`, `shadow-repo-layout.ts` → `history-repo-layout.ts`. Symbol renames: `ShadowHandle`→`HistoryHandle` etc. Log prefix `[shadow]`→`[history]`. Aligns with existing `/api/history` endpoint + UI "History panel" + user mental model.
+- **D56**: Unified state directory `.open-knowledge/` for all metadata. Subdirs `config.yml`, `principal.json`, `history/`, `*.lock`. Eliminates `.openknowledge/` (non-hyphenated shadow dir) vs `.open-knowledge/` (hyphenated config dir) drift. Eliminates integrated (`.git/openknowledge/`) vs standalone bifurcation. First-run migration from legacy locations.
+
+**Sweep execution.** SPEC.md: 52+ "shadow" references replaced to "history" throughout prose, tables, §8.6 heading, §16 Agent Constraints file paths. Evidence file `shadow-git-and-sweep.md` renamed to `history-and-sweep.md`. Residual "shadow" mentions left only in D55/D56 where they describe the rename transition (intentional).
+
+**ASK_FIRST cleanup.** All 6 previously-listed items resolved by locks D21-D54. ASK_FIRST now points to residual Q100-Q105 which are implementer-time considerations, not blockers.
+
+**Full spec state post-sweep.** 56 decisions locked. Footer updated: iterative loop substantially complete; ready for Audit phase (Task 9).
