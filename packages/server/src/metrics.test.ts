@@ -93,7 +93,7 @@ describe('reconciliation metrics', () => {
   });
 });
 
-describe('collab-socket error filter (precedent §22)', () => {
+describe('collab-socket error filter (precedent §23)', () => {
   test('handleCollabSocketError filters EPIPE and increments epipe counter', () => {
     resetMetrics();
     const err = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }) as NodeJS.ErrnoException;
@@ -118,7 +118,7 @@ describe('collab-socket error filter (precedent §22)', () => {
 
   test('handleCollabSocketError does NOT filter other error codes', () => {
     // Exhaustive list of codes that are NOT the known-safe kernel TCP-teardown
-    // signals from precedent §22. Each one should surface (return false) so the
+    // signals from precedent §23. Each one should surface (return false) so the
     // caller's normal logging path fires. Adding a new known-safe code means
     // adding it BOTH to `handleCollabSocketError` AND to this test's filtered
     // set — the contract is mechanically enforced here.

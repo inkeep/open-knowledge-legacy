@@ -38,12 +38,12 @@ export interface ReconciliationMetrics {
   /** Collab WebSocket upgrade sockets emitting EPIPE from `ws.send()` AFTER
    *  the call returned control — kernel-level TCP race against a peer that
    *  has sent FIN. Filtered at the socket-boundary listener per precedent
-   *  §22 (known-safe at half-close). Counted for observability: a spike
+   *  §23 (known-safe at half-close). Counted for observability: a spike
    *  indicates upstream network load or peer-disconnect patterns worth
    *  investigating, even though individual events are expected. */
   collabSocketEpipeCount: number;
   /** Collab WebSocket upgrade sockets emitting ECONNRESET — peer-side
-   *  unclean close (RST). Same precedent §22 filter boundary; same
+   *  unclean close (RST). Same precedent §23 filter boundary; same
    *  observability rationale as `collabSocketEpipeCount`. */
   collabSocketEconnresetCount: number;
 }
@@ -151,7 +151,7 @@ export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET')
 /**
  * Classify a collab-socket error. Returns `true` if the error is a
  * known-safe kernel TCP-teardown signal (EPIPE or ECONNRESET) that should
- * be filtered out of logs per precedent §22. As a side effect, increments
+ * be filtered out of logs per precedent §23. As a side effect, increments
  * the corresponding per-code metric counter so operators can see the rate
  * during incident triage.
  *
