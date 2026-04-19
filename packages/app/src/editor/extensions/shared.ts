@@ -8,7 +8,7 @@ import {
   sharedExtensions as coreExtensions,
 } from '@inkeep/open-knowledge-core';
 import FileHandler from '@tiptap/extension-file-handler';
-import { KeyboardNav } from '../block-ux/KeyboardNav';
+import { KeyboardNav } from '../block-ux/keyboard-nav';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';

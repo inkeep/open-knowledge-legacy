@@ -92,6 +92,18 @@ jobs:
           - test:health
           - test:perf:fallback
           - test:perf:r15-guard
+          # Component Blocks v2 tier-2 gates. `test:perf` is a Bun perf suite
+          # for the γ serialization path; `test:a11y` runs structural
+          # accessibility assertions (role, aria-*, focus order) via
+          # Playwright. `test:visual` is NOT listed here — it requires
+          # committed screenshot baselines (see
+          # packages/app/playwright.visual.config.ts `updateSnapshots:
+          # 'none'`) and is run manually via
+          # `bun run --cwd packages/app test:visual:update` to refresh
+          # baselines in a reviewable PR, then
+          # `bun run --cwd packages/app test:visual` for verification.
+          - test:perf
+          - test:a11y
     env:
       RUN_BENCH: "1"
     steps:
@@ -107,4 +119,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
+      # Playwright browsers must be installed for the a11y suite. The perf
+      # tasks don't use them — skip the install step to save ~1 min on those
+      # shards.
+      - if: matrix.task == 'test:a11y'
+        run: bunx playwright install --with-deps chromium
       - run: bunx turbo run ${{ matrix.task }}

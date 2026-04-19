@@ -1,7 +1,7 @@
 /**
  * Accessibility test suite for Component Blocks v2 (A11Y01-A11Y10).
  *
- * Playwright + axe-core (when installed) scenarios covering WCAG 2.1:
+ * Playwright + @axe-core/playwright scenarios covering WCAG 2.1:
  * - 2.1.2: No keyboard trap
  * - 2.4.3: Focus order
  * - 4.1.2: Name, role, value
@@ -10,17 +10,11 @@
  * @see SPEC §14 for surface-by-surface a11y requirements
  *
  * Requires: Playwright browsers installed. Dev server started by
- * playwright.config.ts webServer on VITE_PORT.
- *
- * NOTE: @axe-core/playwright is not yet installed. When installed, uncomment
- * the axe-related imports and assertions. The structural a11y tests (focus
- * order, aria attributes, keyboard navigation) work without axe.
+ * playwright.a11y.config.ts webServer on VITE_PORT.
  */
 
+import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
-
-// Uncomment when @axe-core/playwright is installed:
-// import AxeBuilder from '@axe-core/playwright';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
@@ -71,11 +65,11 @@ test('A11Y01: Tab key cycles through PropPanel controls in visual DOM order', as
       // Focus first control
       await controls.first().focus();
 
-      // Tab through all controls and verify focus moves in order
+      // Tab through all controls and verify focus moves to something visible.
       for (let i = 1; i < controlCount; i++) {
         await page.keyboard.press('Tab');
         const focused = page.locator(':focus');
-        await expect(focused).toBeTruthy();
+        await expect(focused).toHaveCount(1);
       }
     }
   }
@@ -248,13 +242,18 @@ test('A11Y10: Zero axe-core violations on 20-component fixture', async ({ page }
   await writeContent(content);
   await page.waitForTimeout(1000);
 
-  // When @axe-core/playwright is installed, uncomment:
-  // const results = await new AxeBuilder({ page })
-  //   .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-  //   .analyze();
-  // expect(results.violations).toEqual([]);
+  // Run axe-core across the whole page, then filter to violations that live
+  // inside the editor surface. Runner chrome (sidebar, header) is shared
+  // with other surfaces and not this suite's responsibility.
+  const axeResults = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .include('.ProseMirror')
+    .analyze();
+  expect(axeResults.violations).toEqual([]);
 
-  // Structural assertions that work without axe:
+  // Structural assertions (redundant with axe but cheap — kept as a
+  // specification of the editor's minimum a11y contract so regressions
+  // show up even if an axe rule is later disabled):
   // 1. All interactive elements should be keyboard-reachable
   const interactiveElements = page.locator(
     '.ProseMirror button, .ProseMirror [role="button"], .ProseMirror input, .ProseMirror select',
@@ -286,4 +285,43 @@ test('A11Y10: Zero axe-core violations on 20-component fixture', async ({ page }
       ariaLabelledBy !== null;
     expect(hasAccessibleName).toBeTruthy();
   }
+});
+
+// ── A11Y11: URL props with javascript: scheme render inert (XSS mitigation) ──
+//
+// User-authored MDX can include arbitrary `href`/`src` strings. The live
+// React render must not produce a clickable `javascript:` link that would
+// execute attacker-controlled JS in the editor origin when a second user
+// opens the same document. `extractPrimitiveProps` routes URL-typed props
+// through `sanitizeComponentProps`; this test asserts the mitigation is
+// wired end-to-end (props → React render → DOM attribute).
+
+test('A11Y11: javascript:/data: URL props render as inert # in the DOM', async ({ page }) => {
+  const malicious = [
+    '<Card title="xss-card" href="javascript:fetch(`/nope`)">',
+    '',
+    'Test',
+    '',
+    '</Card>',
+    '',
+    '<Card title="safe-card" href="https://example.com/ok">',
+    '',
+    'Test',
+    '',
+    '</Card>',
+  ].join('\n');
+  await writeContent(malicious);
+  await page.waitForTimeout(500);
+
+  // Collect every anchor under the editor surface and assert none carries a
+  // javascript:/vbscript:/data:-scheme href. The safe-card https href must
+  // still be present so we know the test is exercising the render path.
+  const hrefs = await page.evaluate(() => {
+    const anchors = document.querySelectorAll<HTMLAnchorElement>('.ProseMirror a[href]');
+    return Array.from(anchors).map((a) => a.getAttribute('href') ?? '');
+  });
+  for (const href of hrefs) {
+    expect(href.toLowerCase()).not.toMatch(/^\s*(javascript|vbscript|data):/);
+  }
+  expect(hrefs).toContain('https://example.com/ok');
 });

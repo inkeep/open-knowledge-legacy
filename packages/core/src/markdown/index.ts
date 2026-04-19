@@ -717,7 +717,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       state: MdastToPmState,
     ) => {
       const name = node.name ?? '';
-      const descriptor = registry.get(name);
+      const descriptor = registry.getOrWildcard(name);
       const structuredAttrs = destructureAttrs(node.attributes, descriptor.props);
       const children = state.all(node).flat();
 

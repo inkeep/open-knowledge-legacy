@@ -235,6 +235,49 @@ describe('parseWithFallback (R6)', () => {
     expect(types).not.toContain('rawMdxFallback');
     expect(getParseHealth().parseFallback.wholeDoc).toBeGreaterThanOrEqual(1);
   });
+
+  // ─── FR-22 invariant: parseWithFallback never throws ────────────────
+  //
+  // Observer B (`packages/server/src/server-observers.ts`) routes every
+  // Y.Text → XmlFragment parse through `mdManager.parseWithFallback(...)`.
+  // Per precedent #13(a) — named invariants are enforced by tests, not by
+  // convention. These cases enumerate the pathological inputs that previously
+  // caused Observer B to throw + freeze XmlFragment (SyntaxError /
+  // VFileMessage / "Invalid content for node" RangeError). If any future
+  // refactor removes `parseWithFallback`'s try/catch wrapper or inlines a
+  // direct `parse()` call, these tests fail — surfacing the regression
+  // before Observer B goes back to freezing the tree under concurrent typing.
+  describe('never-throws invariant (Observer B hot-path)', () => {
+    const pathological = [
+      // Unmatched open tag — remark-mdx SyntaxError
+      '<Foo>',
+      '<Foo><Bar></Foo>',
+      // Mid-attribute truncation
+      '<Foo bar="',
+      '<Foo bar={',
+      // Brace imbalance — micromark-extension-mdx unmatched expression
+      '{ unclosed',
+      '{ {{ nested unbalanced }',
+      // HTML-block-like gotchas
+      '<div><span>',
+      // Characters that historically hit crash-class bugs
+      '\u0000\u0001\u0002',
+      // Empty + single-character
+      '',
+      '\n',
+      '<',
+      '{',
+      // Multi-line mix of valid + broken
+      '# H\n\n<Foo>\n\n<Bar attr="xxx',
+    ];
+
+    for (const src of pathological) {
+      const label = JSON.stringify(src).slice(0, 60);
+      test(`does not throw on ${label}`, () => {
+        expect(() => mdManager.parseWithFallback(src)).not.toThrow();
+      });
+    }
+  });
 });
 
 // ─── US-015 R23 parseWithFallback perf bound ─────────────────────────

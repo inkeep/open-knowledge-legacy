@@ -18,6 +18,23 @@ import type { PropDef } from '@inkeep/open-knowledge-core';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 
+/**
+ * Humanize a camelCase / snake_case prop name for the PropPanel UI.
+ * `emptyChildName` → `Empty Child Name`, `default_value` → `Default Value`.
+ * Identifiers stay camelCase in the generated markdown attr; only the label
+ * is transformed.
+ */
+function humanizePropName(name: string): string {
+  if (!name) return name;
+  const spaced = name
+    // snake_case and kebab-case → space
+    .replace(/[_-]+/g, ' ')
+    // camelCase and consecutive-capitals boundaries (emptyChildName → empty Child Name; ARIALabel → ARIA Label)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 interface PropPanelProps {
   props: PropDef[];
   values: Record<string, unknown>;
@@ -58,7 +75,7 @@ function PropControl({
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={stringId} className="text-xs text-muted-foreground">
-            {propDef.name}
+            {humanizePropName(propDef.name)}
           </label>
           <Input
             id={stringId}
@@ -73,16 +90,17 @@ function PropControl({
 
     case 'boolean': {
       const boolId = `prop-${propDef.name}`;
+      const boolLabel = humanizePropName(propDef.name);
       return (
         <div className="flex items-center justify-between gap-2">
           <label htmlFor={boolId} className="text-xs text-muted-foreground">
-            {propDef.name}
+            {boolLabel}
           </label>
           <Switch
             id={boolId}
             checked={Boolean(value)}
             onCheckedChange={(checked) => onChange(checked)}
-            aria-label={propDef.name}
+            aria-label={boolLabel}
           />
         </div>
       );
@@ -93,7 +111,7 @@ function PropControl({
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={enumId} className="text-xs text-muted-foreground">
-            {propDef.name}
+            {humanizePropName(propDef.name)}
           </label>
           <select
             id={enumId}
@@ -116,7 +134,7 @@ function PropControl({
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={numberId} className="text-xs text-muted-foreground">
-            {propDef.name}
+            {humanizePropName(propDef.name)}
           </label>
           <Input
             id={numberId}

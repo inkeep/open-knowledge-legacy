@@ -44,6 +44,26 @@ export function parseWithFallback(source: string, opts: ParseWithFallbackOptions
  * coverage of `depth > MAX_SPLIT_DEPTH`). Production callers should use
  * `parseWithFallback` which pins the starting depth at 0.
  */
+/**
+ * Extract a structured error payload from an unknown caught value. Keeps the
+ * bracket-style message friendly for humans reading dev-server output while
+ * adding name + stack (head of) for log aggregators that key off JSON shape.
+ * See CLAUDE.md "Logging conventions" and the `bridge-merge-content-loss`
+ * event shape for the precedent this mirrors.
+ */
+function errorPayload(err: unknown): { name: string; message: string; stack?: string } {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      // Stack traces can be tens of KB. Keep the first 4 frames — enough to
+      // locate the throw site without flooding log aggregators.
+      stack: err.stack?.split('\n').slice(0, 4).join('\n'),
+    };
+  }
+  return { name: 'UnknownError', message: String(err ?? 'unknown') };
+}
+
 export function parseRecursive(source: string, parse: ParseFn, depth: number): JSONContent {
   if (depth > MAX_SPLIT_DEPTH) {
     incrementWholeDocFallback();
@@ -57,6 +77,7 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
     return parse(source);
   } catch (e: unknown) {
     const offset = extractErrorOffset(e);
+    const payload = errorPayload(e);
     if (offset === undefined) {
       // Position-less error — covers PM-construction failures (RangeError from
       // `prosemirror-model/schema.ts:201` "Invalid content for node X") and
@@ -72,7 +93,8 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
       console.warn(
         JSON.stringify({
           event: 'mdx-whole-doc-fallback',
-          reason: (e as Error)?.message ?? 'unknown error (no position)',
+          reason: payload.message,
+          error: payload,
         }),
       );
       return wholeDocRawText(source);
@@ -83,7 +105,8 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
       JSON.stringify({
         event: 'mdx-block-fallback',
         offset,
-        reason: (e as Error)?.message ?? 'parse error',
+        reason: payload.message,
+        error: payload,
       }),
     );
 
@@ -103,7 +126,7 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
       const fallbackNode: JSONContent = {
         type: 'rawMdxFallback',
         attrs: {
-          reason: (e as Error)?.message ?? 'parse error',
+          reason: payload.message,
           originalSpan: { start: region.start, end: region.end },
         },
         content: brokenSrc ? [{ type: 'text', text: brokenSrc }] : [],
@@ -121,10 +144,13 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
       };
     } catch (recoveryErr) {
       incrementWholeDocFallback();
+      const recoveryPayload = errorPayload(recoveryErr);
       console.warn(
         JSON.stringify({
           event: 'mdx-whole-doc-fallback',
-          reason: `Recovery failed: ${(recoveryErr as Error)?.message ?? 'unknown'}`,
+          reason: `Recovery failed: ${recoveryPayload.message}`,
+          error: recoveryPayload,
+          originalError: payload,
         }),
       );
       return wholeDocRawText(source);
