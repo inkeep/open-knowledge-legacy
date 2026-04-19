@@ -506,6 +506,104 @@ export async function pollUntil(
   throw new Error(`pollUntil timed out after ${timeoutMs}ms`);
 }
 
+/**
+ * Poll the server's in-memory file index (via `GET /api/documents`) until
+ * the given `docPath` appears. Replaces the `await wait(N)` anti-pattern
+ * after `seedDoc(server.contentDir, docName, …)` — the file watcher
+ * (chokidar / @parcel/watcher) batches create events asynchronously, so a
+ * wall-clock sleep is both slow (overly conservative) and flaky
+ * (occasionally insufficient under CI load).
+ *
+ * `docPath` is the canonical doc name as the server indexes it — i.e. the
+ * path relative to `contentDir`, WITHOUT the `.md` suffix (matches what
+ * `/api/documents` returns in each entry's `docName` field). E.g. for a
+ * file at `<contentDir>/folder/README.md`, pass `"folder/README"`.
+ *
+ * Usage:
+ *
+ *   seedDoc(server.contentDir, `${folder}/README`, '# Hub\n…');
+ *   await awaitFileWatcherIndexed(server, `${folder}/README`);
+ *   // …now safe to call /api/agent-write-md and expect the hub to be
+ *   //   visible to findHubCandidates / backlinkIndex lookups.
+ */
+export async function awaitFileWatcherIndexed(
+  server: TestServer,
+  docPath: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  const start = Date.now();
+  let lastStatus = 0;
+  let lastBodyPreview = '';
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(`http://localhost:${server.port}/api/documents`).catch((err) => {
+      lastStatus = -1;
+      lastBodyPreview = `fetch error: ${String(err).slice(0, 80)}`;
+      return null;
+    });
+    if (res?.ok) {
+      lastStatus = res.status;
+      const data = (await res.json()) as { ok: boolean; documents?: Array<{ docName: string }> };
+      lastBodyPreview = `ok, docs=${data.documents?.length ?? 0}`;
+      if (data.ok && data.documents?.some((d) => d.docName === docPath)) {
+        return;
+      }
+    } else if (res) {
+      lastStatus = res.status;
+      lastBodyPreview = `non-ok status`;
+    }
+    await wait(50);
+  }
+  throw new Error(
+    `awaitFileWatcherIndexed: ${docPath} not indexed within ${timeoutMs}ms (last status=${lastStatus}, ${lastBodyPreview})`,
+  );
+}
+
+/**
+ * Poll the server's backlink index (via `GET /api/backlinks?docName=…`)
+ * until `targetDocName` has a backlink from `sourceDocName`. Replaces the
+ * `await wait(N)` anti-pattern after seeding a doc whose body contains
+ * `[[${targetDocName}]]` — the file watcher publishes the file first, then
+ * the backlink index asynchronously parses the body to update its
+ * source→target map. Two-stage async gap that a single wall-clock sleep
+ * cannot robustly close.
+ *
+ * Usage:
+ *
+ *   seedDoc(server.contentDir, `${folder}/README`, `[[${target}]]`);
+ *   seedDoc(server.contentDir, target, '# body');
+ *   await awaitBacklinkIndexed(server, target, `${folder}/README`);
+ *   // …now safe to assume the backlink index reflects the README→target
+ *   //   link; computeOrphanHints will see `target` as non-orphan.
+ */
+export async function awaitBacklinkIndexed(
+  server: TestServer,
+  targetDocName: string,
+  sourceDocName: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  const start = Date.now();
+  let lastStatus = 0;
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(
+      `http://localhost:${server.port}/api/backlinks?docName=${encodeURIComponent(targetDocName)}`,
+    ).catch(() => null);
+    if (res?.ok) {
+      lastStatus = res.status;
+      const data = (await res.json()) as {
+        ok: boolean;
+        backlinks?: Array<{ source: string }>;
+      };
+      if (data.ok && data.backlinks?.some((b) => b.source === sourceDocName)) return;
+    } else if (res) {
+      lastStatus = res.status;
+    }
+    await wait(50);
+  }
+  throw new Error(
+    `awaitBacklinkIndexed: ${sourceDocName} → ${targetDocName} not indexed within ${timeoutMs}ms (last status=${lastStatus})`,
+  );
+}
+
 // ─── Server-side state inspector (FR-13) ───
 
 export type ServerDocState = {

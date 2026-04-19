@@ -12,7 +12,15 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { agentPatch, agentWriteMd, createTestServer, type TestServer, wait } from './test-harness';
+import {
+  agentPatch,
+  agentWriteMd,
+  awaitBacklinkIndexed,
+  awaitFileWatcherIndexed,
+  createTestServer,
+  type TestServer,
+  wait,
+} from './test-harness';
 
 function seedDoc(contentDir: string, docName: string, body: string): void {
   const filePath = join(contentDir, `${docName}.md`);
@@ -98,9 +106,13 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
 
   test('orphan doc in folder with a hub gets a hint', async () => {
     const folder = `orph-${crypto.randomUUID().slice(0, 8)}`;
-    // Seed a hub doc on disk so the file watcher + backlink index pick it up
+    // Seed a hub doc on disk so the file watcher + backlink index pick it up.
+    // Condition-based wait on the server's file index — replaces the prior
+    // `await wait(400)` wall-clock sleep which was occasionally insufficient
+    // under CI file-watcher backend latency (chokidar / @parcel/watcher
+    // batching). See the `awaitFileWatcherIndexed` JSDoc for the pattern.
     seedDoc(server.contentDir, `${folder}/README`, '# README\n\nHub of the folder.\n');
-    await wait(400); // wait for file watcher to index
+    await awaitFileWatcherIndexed(server, `${folder}/README`);
 
     const orphanName = `${folder}/orphan`;
     const body = await postWrite(orphanName, '# Orphan body without any wiki-links');
@@ -118,7 +130,11 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
     const target = `${folder}/linked`;
     seedDoc(server.contentDir, `${folder}/README`, `# README\n\nSee [[${target}]].\n`);
     seedDoc(server.contentDir, target, '# Linked\n\nBody.\n');
-    await wait(400);
+    // Two-stage wait: file watcher must index README, AND backlink index
+    // must process the [[target]] link so target has a recorded backlink.
+    // `awaitBacklinkIndexed` gates on the exact invariant `computeOrphanHints`
+    // depends on — target is non-orphan iff its backlinks list is non-empty.
+    await awaitBacklinkIndexed(server, target, `${folder}/README`);
 
     const body = await postWrite(target, '# Linked body v2');
     expect(body.ok).toBe(true);
