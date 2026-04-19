@@ -9,11 +9,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
-import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import {
+  type ApiHelpers,
+  expect,
+  test,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 /** Get the current Y.Text content from the provider */
 async function getYText(page: Page): Promise<string> {
@@ -31,14 +33,11 @@ function uniqueDocName(label: string): string {
  * Create a per-test doc, reset it on the server, open it, and wait for sync.
  * Returns the docName so tests can pass it to agent-write-md.
  */
-async function openFreshDoc(page: Page, label: string): Promise<string> {
+async function openFreshDoc(api: ApiHelpers, page: Page, label: string): Promise<string> {
   const docName = uniqueDocName(label);
-  await createPage(`${docName}.md`);
-  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
-    method: 'POST',
-  });
-  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
-  await page.goto(`${BASE}/#/${docName}`);
+  await api.createPage(`${docName}.md`);
+  await api.testReset(docName);
+  await page.goto(`/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
   return docName;
@@ -51,8 +50,8 @@ async function openFreshDoc(page: Page, label: string): Promise<string> {
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
-test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
-  await openFreshDoc(page, 'wysiwyg-to-source');
+test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'wysiwyg-to-source');
   // Type in WYSIWYG mode. `.click()` + `toBeFocused()` is load-bearing under
   // full-suite parallel load: `.focus()` does not await focus-transfer in
   // Chromium, and keystrokes dispatched before focus lands can be reordered or
@@ -80,8 +79,8 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   expect(cmContent).toContain('Hello from WYSIWYG');
 });
 
-test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page }) => {
-  await openFreshDoc(page, 'source-to-wysiwyg');
+test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'source-to-wysiwyg');
   // Switch to Source mode
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
@@ -128,8 +127,8 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   expect(pmContent).toContain('Paragraph from source');
 });
 
-test('round-trip: edits in both modes survive toggle cycle', async ({ page }) => {
-  await openFreshDoc(page, 'round-trip');
+test('round-trip: edits in both modes survive toggle cycle', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'round-trip');
   // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
   await page.locator('.ProseMirror').click();
   await expect(page.locator('.ProseMirror')).toBeFocused();
@@ -177,8 +176,8 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   expect(pmContent).toContain('Source edit');
 });
 
-test('concurrent agent write: user + agent content coexist', async ({ page }) => {
-  const docName = await openFreshDoc(page, 'concurrent-agent');
+test('concurrent agent write: user + agent content coexist', async ({ page, api, baseURL }) => {
+  const docName = await openFreshDoc(api, page, 'concurrent-agent');
   // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
   await page.locator('.ProseMirror').click();
   await expect(page.locator('.ProseMirror')).toBeFocused();
@@ -190,8 +189,10 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
     { timeout: 10_000 },
   );
 
-  // Agent writes via API while user is editing
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
+  // Agent writes via API while user is editing. Uses default `position: append`
+  // (omitted) to stack on top of the user's typing — the whole point of this
+  // test is coexistence, not replace.
+  const res = await fetch(`${baseURL}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ docName, markdown: '## Agent Section\n\nAgent content here.' }),
@@ -234,9 +235,9 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   // for Model A semantics coverage.
   //
   // This test relies only on the pre-seeded sidebar-folder/nested-doc.md
-  // fixture (see playwright.config.ts). It does not write content, so no
-  // per-test doc is required.
-  await page.goto(BASE);
+  // fixture (see `_helpers/fixtures.ts`'s per-worker seeding). It does not
+  // write content, so no per-test doc is required.
+  await page.goto('/');
   const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
   const chevron = page.getByRole('button', { name: 'Expand sidebar-folder' });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
@@ -292,16 +293,12 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
 
 test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({
   page,
+  api,
 }) => {
-  const docName = await openFreshDoc(page, 'link-edit');
+  const docName = await openFreshDoc(api, page, 'link-edit');
   const doc = '[Beta page](beta.md)';
 
-  const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown: doc, position: 'replace' }),
-  });
-  expect(writeRes.ok).toBe(true);
+  await api.replaceDoc(docName, doc);
 
   await page.waitForFunction(
     () =>

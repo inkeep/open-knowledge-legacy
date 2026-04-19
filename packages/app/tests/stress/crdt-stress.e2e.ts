@@ -11,15 +11,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
 import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
-import { filterCriticalErrors } from './_helpers';
+import { expect, filterCriticalErrors, test } from './_helpers';
 
-const port = process.env.VITE_PORT || '5173';
-const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 const FIXTURE = loadLargeRealistic();
 
-test('S6: multi-turn stress — large content + user edits', async ({ page }) => {
+test('S6: multi-turn stress — large content + user edits', async ({ page, api, baseURL }) => {
   // 1. Capture console errors during the full flow
   //    US-012 F1: capture message.location() URL + lineNumber so generic
   //    "Failed to load resource: 404" errors can be triaged by URL pattern,
@@ -34,21 +31,11 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
   // 2. Create a per-test doc + reset its server state (avoids racing with
   //    parallel tests that would otherwise share the global `test-doc` name).
   const docName = `test-crdtstress-${randomUUID().slice(0, 8)}`;
-  const createRes = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: `${docName}.md` }),
-  });
-  if (!createRes.ok && createRes.status !== 409) {
-    throw new Error(`create-page failed: ${createRes.status}`);
-  }
-  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
-    method: 'POST',
-  });
-  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  await api.createPage(`${docName}.md`);
+  await api.testReset(docName);
 
   // 3. Navigate directly to the per-test doc via hash routing.
-  await page.goto(`${BASE}/#/${docName}`);
+  await page.goto(`/#/${docName}`);
   await page.waitForFunction(() => Boolean(window.__activeProvider), {
     timeout: 15_000,
   });
@@ -58,8 +45,10 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
   const markers = ['USER-E2E-MARK-1', 'USER-E2E-MARK-2', 'USER-E2E-MARK-3'];
 
   for (const marker of markers) {
-    // Inject large content via agent API
-    const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
+    // Inject large content via agent API. Default `position: append` (omitted)
+    // so each turn stacks onto the previous — testing coexistence of agent
+    // writes + accumulated user typing across turns.
+    const writeRes = await fetch(`${baseURL}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docName, markdown: FIXTURE }),

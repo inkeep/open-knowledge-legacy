@@ -431,8 +431,15 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // The idle-shutdown listener (registered separately below) already
     // counts this upgrade via its own `/collab*`-prefixed path check; no
     // change is needed there.
+    // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that surface
+    // asynchronously after ws.send()/socket.write() has already returned.
+    // Userspace pre-checks cannot prevent them (see websockets/ws#1017).
+    // Hocuspocus already filters by readyState in Connection.send; this
+    // handler classifies + drops the expected async emission, surfacing
+    // everything else. See CLAUDE.md precedent on async socket errors.
     if (req.url?.startsWith('/collab/keepalive')) {
-      socket.on('error', (err: Error) => {
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') return;
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -448,8 +455,10 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         }, 30_000);
         pingTimer.unref?.();
         ws.on('close', () => clearInterval(pingTimer));
-        ws.on('error', (err: Error) => {
-          log.error({ err }, 'MCP keepalive WS error');
+        ws.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+            log.error({ err }, 'MCP keepalive WS error');
+          }
           ws.terminate();
         });
       });
@@ -457,7 +466,8 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     }
 
     if (req.url?.startsWith('/collab')) {
-      socket.on('error', (err: Error) => {
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') return;
         log.error({ err }, 'Upgrade socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -473,8 +483,10 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         ws.on('close', (code: number, reason: Buffer) => {
           clientConnection.handleClose({ code, reason: reason.toString() });
         });
-        ws.on('error', (err: Error) => {
-          log.error({ err }, 'WebSocket error');
+        ws.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+            log.error({ err }, 'WebSocket error');
+          }
           ws.terminate();
         });
       });

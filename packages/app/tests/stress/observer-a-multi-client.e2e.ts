@@ -31,37 +31,29 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
+import { expect, test } from './_helpers';
 
 const AGENT_MARKER = 'AGENT-MARKER-XYZ';
 const USER_MARKER = 'USER-MARKER-PQR';
 
 test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients', async ({
   browser,
+  api,
+  baseURL,
 }) => {
   // Per-test unique doc — both browser contexts connect to the same unique
   // docName, avoiding races with parallel tests on the global `test-doc`.
   const docName = `test-observer-a-${randomUUID().slice(0, 8)}`;
-  const createRes = await fetch(`${BASE}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: `${docName}.md` }),
-  });
-  if (!createRes.ok && createRes.status !== 409) {
-    throw new Error(`create-page failed: ${createRes.status}`);
-  }
-  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
-    method: 'POST',
-  });
-  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  await api.createPage(`${docName}.md`);
+  await api.testReset(docName);
 
   // Two independent browser contexts → two separate WebSocket clients on the
   // same per-test doc. Each context isolates cookies, storage, and network.
-  const ctxA = await browser.newContext();
-  const ctxB = await browser.newContext();
+  // `baseURL` comes from the worker-scoped server fixture — `browser.newContext`
+  // does NOT inherit it automatically (unlike the `page` fixture), so we pass
+  // it explicitly.
+  const ctxA = await browser.newContext({ baseURL });
+  const ctxB = await browser.newContext({ baseURL });
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
@@ -74,7 +66,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     pageB.on('pageerror', (e) => logsB.push({ type: 'uncaught', text: e.message }));
 
     // Both clients open the per-test doc via hash routing.
-    await Promise.all([pageA.goto(`${BASE}/#/${docName}`), pageB.goto(`${BASE}/#/${docName}`)]);
+    await Promise.all([pageA.goto(`/#/${docName}`), pageB.goto(`/#/${docName}`)]);
     await Promise.all([
       pageA.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
       pageB.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
@@ -87,7 +79,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     // Seed a baseline via agent write so both clients have the same starting line.
     // Agent write uses origin='agent-write' server-side and updates Y.Text + XmlFragment
     // together, so it propagates cleanly to both browser clients.
-    const seedRes = await fetch(`${BASE}/api/agent-write-md`, {
+    const seedRes = await fetch(`${baseURL}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docName, markdown: `baseline-line\n` }),
@@ -122,16 +114,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     // The write is server-origin ('agent-write'), so it lands in Y.Text on BOTH
     // browser clients. Observer B on each client will eventually re-render
     // XmlFragment from the merged Y.Text.
-    const agentWriteRes = await fetch(`${BASE}/api/agent-write-md`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        docName,
-        markdown: `baseline-line ${AGENT_MARKER}\n`,
-        position: 'replace',
-      }),
-    });
-    expect(agentWriteRes.ok).toBe(true);
+    await api.replaceDoc(docName, `baseline-line ${AGENT_MARKER}\n`);
 
     // Wait for agent marker to reach Y.Text on both clients.
     await Promise.all([

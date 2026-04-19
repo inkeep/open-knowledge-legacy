@@ -269,7 +269,16 @@ export function hocuspocusPlugin(): Plugin {
           // Attach error handler on the raw TCP socket BEFORE handleUpgrade.
           // Without this, an ECONNRESET during/after upgrade emits an 'error'
           // event with no listener, which crashes the entire Node process.
-          socket.on('error', (err: Error) => {
+          //
+          // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that
+          // surface asynchronously after ws.send()/socket.write() has already
+          // returned — no userspace pre-check can prevent them (see
+          // websockets/ws#1017). Hocuspocus already filters by readyState in
+          // Connection.send (packages/server/src/Connection.ts), so the only
+          // remaining visibility is catching + classifying the async emission
+          // here. Drop the expected codes; surface everything else.
+          socket.on('error', (err: NodeJS.ErrnoException) => {
+            if (err.code === 'EPIPE' || err.code === 'ECONNRESET') return;
             console.error('[collab] Upgrade socket error:', err);
           });
 
@@ -283,8 +292,10 @@ export function hocuspocusPlugin(): Plugin {
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
-            ws.on('error', (err) => {
-              console.error('[collab] WebSocket error:', err);
+            ws.on('error', (err: NodeJS.ErrnoException) => {
+              if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+                console.error('[collab] WebSocket error:', err);
+              }
               ws.terminate();
             });
           });

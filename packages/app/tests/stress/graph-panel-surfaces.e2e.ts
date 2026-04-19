@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
-import { createPage, replaceDoc } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import { type ApiHelpers, expect, test } from './_helpers';
 
 type GraphHarness = {
   clickDoc: (docName: string) => boolean;
@@ -23,6 +20,7 @@ type GraphHarness = {
     sourceDocName: string,
     targetDocName: string,
   ) => { x: number; y: number } | null;
+  isSimulationSettled: () => boolean;
 };
 
 interface GraphFixtures {
@@ -43,7 +41,7 @@ function escapeRegex(s: string): string {
  * NOT call `test-reset` here — doing so would reset `test-doc` globally and
  * interfere with parallel tests.
  */
-async function seedGraphFixtures(): Promise<GraphFixtures> {
+async function seedGraphFixtures(api: ApiHelpers, baseURL: string): Promise<GraphFixtures> {
   const suffix = randomUUID().slice(0, 8);
   const fixtures: GraphFixtures = {
     suffix,
@@ -54,16 +52,16 @@ async function seedGraphFixtures(): Promise<GraphFixtures> {
   };
 
   for (const docName of [fixtures.alpha, fixtures.beta, fixtures.gamma, fixtures.zeta]) {
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
   }
 
-  await replaceDoc(
+  await api.replaceDoc(
     fixtures.alpha,
     `# Alpha\n\n[[${fixtures.beta}#deep-link]]\n\n[Example Docs](https://example.com/docs)`,
   );
-  await replaceDoc(fixtures.beta, '# Beta');
-  await replaceDoc(fixtures.gamma, '# Gamma');
-  await replaceDoc(fixtures.zeta, `# Zeta\n\n[[${fixtures.beta}]]`);
+  await api.replaceDoc(fixtures.beta, '# Beta');
+  await api.replaceDoc(fixtures.gamma, '# Gamma');
+  await api.replaceDoc(fixtures.zeta, `# Zeta\n\n[[${fixtures.beta}]]`);
 
   // Poll until the backlink index reflects our fixtures. We check for our
   // specific docs rather than global orphan/hub state (parallel tests may
@@ -71,7 +69,7 @@ async function seedGraphFixtures(): Promise<GraphFixtures> {
   await expect
     .poll(
       async () => {
-        const response = await fetch(`${BASE}/api/orphans?mode=both`);
+        const response = await fetch(`${baseURL}/api/orphans?mode=both`);
         const data = (await response.json()) as {
           ok: boolean;
           orphans?: Array<{ docName: string }>;
@@ -91,7 +89,7 @@ async function seedGraphFixtures(): Promise<GraphFixtures> {
   await expect
     .poll(
       async () => {
-        const response = await fetch(`${BASE}/api/hubs?limit=50`);
+        const response = await fetch(`${baseURL}/api/hubs?limit=50`);
         const data = (await response.json()) as {
           ok: boolean;
           hubs?: Array<{ docName: string; count: number }>;
@@ -116,7 +114,7 @@ async function openGraph(
     fullscreen?: boolean;
   },
 ) {
-  await page.goto(`${BASE}/#/${docName}`);
+  await page.goto(`/#/${docName}`);
   await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
     timeout: 15_000,
   });
@@ -275,6 +273,31 @@ async function waitForGraphLinkClickPoint(
     .toBe(true);
 }
 
+/**
+ * Block until the force-layout simulation has reached its cooldown terminus
+ * — `react-force-graph-2d`'s `onEngineStop` fires, latching
+ * `simulationSettledRef` to true in `GraphView.tsx`. Before this point, node
+ * positions drift under active physics; a canvas click computed from a
+ * pre-settlement snapshot lands in the wrong place (beta drifts ~24px in
+ * ~500ms, vs a non-active 8px hit radius). See precedent §20(a) category C
+ * (physics-simulation race sub-note). Required before any
+ * `getGraphSurface(page).click({ position: ... })` call whose position was
+ * captured via `getGraphNodeClickPoint` / `getGraphLinkClickPoint`.
+ */
+async function waitForGraphSimulationSettled(page: Page) {
+  await page.waitForFunction(
+    () =>
+      (
+        window as Window &
+          typeof globalThis & {
+            __graphHarness?: GraphHarness;
+          }
+      ).__graphHarness?.isSimulationSettled() === true,
+    undefined,
+    { timeout: 10_000 },
+  );
+}
+
 async function expectGraphToFillAvailableHeight(page: Page) {
   const metrics = await getGraphLayoutMetrics(page);
   expect(metrics.graphHeight).toBeGreaterThan(0);
@@ -289,8 +312,10 @@ async function expectGraphToFillAvailableHeight(page: Page) {
 
 test('fullscreen graph exposes Explore, Orphans, Hubs, and a visible orphan toggle', async ({
   page,
+  api,
+  baseURL,
 }) => {
-  const fixtures = await seedGraphFixtures();
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
 
   await expect(page.getByRole('radio', { name: 'Explore' })).toBeVisible();
@@ -341,8 +366,12 @@ test('fullscreen graph exposes Explore, Orphans, Hubs, and a visible orphan togg
   await expect(page).toHaveURL(new RegExp(`#/${escapeRegex(fixtures.beta)}$`));
 });
 
-test('fullscreen graph selects a document before explicitly opening it', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph selects a document before explicitly opening it', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.alpha);
   await waitForGraphNode(page, fixtures.beta);
@@ -366,8 +395,10 @@ test('fullscreen graph selects a document before explicitly opening it', async (
 
 test('fullscreen graph selecting the active document shows the already-open state', async ({
   page,
+  api,
+  baseURL,
 }) => {
-  const fixtures = await seedGraphFixtures();
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.alpha);
 
@@ -386,8 +417,8 @@ test('fullscreen graph selecting the active document shows the already-open stat
   await expect(page).toHaveURL(new RegExp(`#/${escapeRegex(fixtures.alpha)}$`));
 });
 
-test('fullscreen graph background click clears selection', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph background click clears selection', async ({ page, api, baseURL }) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.beta);
 
@@ -399,8 +430,12 @@ test('fullscreen graph background click clears selection', async ({ page }) => {
   await expect(selectedDoc).toHaveCount(0);
 });
 
-test('graph canvas fills the available height in docked and fullscreen modes', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('graph canvas fills the available height in docked and fullscreen modes', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha });
   await waitForGraphNode(page, fixtures.alpha);
   await expectGraphToFillAvailableHeight(page);
@@ -413,12 +448,21 @@ test('graph canvas fills the available height in docked and fullscreen modes', a
   await expectGraphToFillAvailableHeight(page);
 });
 
-test('fullscreen graph edge clicks clear selection on the first try', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph edge clicks clear selection on the first try', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.beta);
   await waitForGraphNodeClickPoint(page, fixtures.beta);
   await waitForGraphLinkClickPoint(page, fixtures.alpha, fixtures.beta);
+  // Gate canvas-coordinate clicks on simulation settlement per precedent
+  // §20(a) category C (physics-sim race). Without this, beta drifts ~24px
+  // between `getGraphNodeClickPoint` capture and Playwright's pointerdown —
+  // well outside the 8px hit radius — so the click routes to background.
+  await waitForGraphSimulationSettled(page);
 
   const betaPoint = await getGraphNodeClickPoint(page, fixtures.beta);
   expect(betaPoint).not.toBeNull();
@@ -448,11 +492,18 @@ test('fullscreen graph edge clicks clear selection on the first try', async ({ p
   await expect(selectedDoc).toHaveCount(0);
 });
 
-test('fullscreen graph clicking the selected node toggles selection off', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph clicking the selected node toggles selection off', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.beta);
   await waitForGraphNodeClickPoint(page, fixtures.beta);
+  // Gate canvas-coordinate clicks on simulation settlement per precedent
+  // §20(a) category C (physics-sim race).
+  await waitForGraphSimulationSettled(page);
 
   const betaPoint = await getGraphNodeClickPoint(page, fixtures.beta);
   expect(betaPoint).not.toBeNull();
@@ -475,8 +526,12 @@ test('fullscreen graph clicking the selected node toggles selection off', async 
   await expect(selectedDoc).toHaveCount(0);
 });
 
-test('fullscreen graph external nodes use the same selection affordance', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph external nodes use the same selection affordance', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   // External URL nodes default to hidden (see `GraphPanel.tsx` —
   // `GRAPH_URL_NODES_FULLSCREEN_KEY` loadBoolPref returns false for a fresh
@@ -493,8 +548,8 @@ test('fullscreen graph external nodes use the same selection affordance', async 
   await expect(selectedNode.getByRole('button', { name: 'Open link' })).toBeVisible();
 });
 
-test('fullscreen graph selection clears when switching modes', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph selection clears when switching modes', async ({ page, api, baseURL }) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.beta);
 
@@ -510,8 +565,12 @@ test('fullscreen graph selection clears when switching modes', async ({ page }) 
   await expect(selectedDoc).toHaveCount(0);
 });
 
-test('fullscreen graph selection clears after exiting fullscreen', async ({ page }) => {
-  const fixtures = await seedGraphFixtures();
+test('fullscreen graph selection clears after exiting fullscreen', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha, fullscreen: true });
   await waitForGraphNode(page, fixtures.beta);
 
@@ -533,8 +592,10 @@ test('fullscreen graph selection clears after exiting fullscreen', async ({ page
 
 test('docked graph clicks still navigate immediately with anchor-preserving hashes', async ({
   page,
+  api,
+  baseURL,
 }) => {
-  const fixtures = await seedGraphFixtures();
+  const fixtures = await seedGraphFixtures(api, baseURL ?? '');
   await openGraph(page, { docName: fixtures.alpha });
   await waitForGraphNode(page, fixtures.beta);
   expect(await clickGraphDoc(page, fixtures.beta)).toBe(true);

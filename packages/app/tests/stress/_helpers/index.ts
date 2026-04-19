@@ -10,13 +10,14 @@
  */
 
 export { simulateCopyAndRead, simulateCutAndRead } from './clipboard.ts';
-export {
-  createPage,
-  replaceDoc,
-  seedDocs,
-  selectAllAndWaitForSelection,
-} from './editor-state.ts';
+export { selectAllAndWaitForSelection, waitForPmSelectionInNode } from './editor-state.ts';
 export { filterCriticalErrors, type LogEntry } from './error-filters.ts';
+export {
+  type ApiHelpers,
+  expect,
+  test,
+  type WorkerServer,
+} from './fixtures.ts';
 export {
   installClockAfterSync,
   type WaitForProviderOptions,

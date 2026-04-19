@@ -9,11 +9,8 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
-import { expect, type Page, test } from '@playwright/test';
-import { createPage, replaceDoc, seedDocs, waitForActiveProviderSynced } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
 async function openFromSidebar(page: Page, filename: string) {
   // Scope to sidebar to avoid strict-mode violations when the EditorHeader
@@ -33,13 +30,14 @@ const DOC_E = '# Doc E Heading\n\nDoc E unique body paragraph.';
 test.describe('docs-open — hybrid navigation UX', () => {
   test('F1: warm-nav preserves content atomically (scroll position survives A→B→A)', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     // Open doc A first (cold mount) and wait for sync + content render.
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
@@ -74,13 +72,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
       .toBeGreaterThan(scrollBeforeNav - 50); // allow minor rounding; position must not reset to 0
   });
 
-  test('F2: cold-nav keeps prior doc visible during pending', async ({ page }) => {
-    await seedDocs([
+  test('F2: cold-nav keeps prior doc visible during pending', async ({ page, api }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -114,13 +112,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
     expect(docASeen).toBe(true);
   });
 
-  test('F3: NavigationPendingBar is visible during isPending', async ({ page }) => {
-    await seedDocs([
+  test('F3: NavigationPendingBar is visible during isPending', async ({ page, api }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -174,13 +172,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
       .catch(() => {});
   });
 
-  test('F4: cold-load skeleton only when there is no prior content', async ({ page }) => {
-    await seedDocs([
+  test('F4: cold-load skeleton only when there is no prior content', async ({ page, api }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
 
     // Capture skeleton appearances across the session via a persistent
     // MutationObserver installed before the first nav.
@@ -257,13 +255,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
   test('F5: sync failure shows recoverable error boundary + retry re-enters Suspense', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -299,13 +298,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
   test('F6: error boundary "Back to previous document" navigates to prior doc', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -338,10 +338,10 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
   });
 
-  test('F8: post-wake reconnect preserves content on the active doc', async ({ page }) => {
-    await seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
+  test('F8: post-wake reconnect preserves content on the active doc', async ({ page, api }) => {
+    await api.seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -389,8 +389,8 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(errorAlert).toHaveCount(0);
   });
 
-  test('F11: rapid sequential navigation converges to final click', async ({ page }) => {
-    await seedDocs([
+  test('F11: rapid sequential navigation converges to final click', async ({ page, api }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
       { name: 'doc-c', markdown: DOC_C },
@@ -398,7 +398,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
       { name: 'doc-e', markdown: DOC_E },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -443,13 +443,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
   test('F10: source editor path follows same architecture (warm swap preserves cm state)', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -477,13 +478,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
   test('F13: a11y attributes present on pending-bar + error-boundary surfaces', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -523,8 +525,8 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // role=alert on the fallback. We nav to doc-c (seeded fresh below) so
     // DocumentBoundary creates a brand-new syncPromise entry that the arm
     // can reject on creation. See F5 for the arm-vs-reject timing rationale.
-    await createPage('doc-c.md');
-    await replaceDoc('doc-c', DOC_C);
+    await api.createPage('doc-c.md');
+    await api.replaceDoc('doc-c', DOC_C);
     await page.evaluate(() => {
       window.__test_armPendingRejection?.('doc-c', 'timeout');
     });
@@ -541,13 +543,16 @@ test.describe('docs-open — hybrid navigation UX', () => {
   // retry, and visibility events. Unblocked by __test_armPendingRejection
   // (race-free arm-before-create; see sync-promise.ts).
 
-  test('QA-022: error → retry succeeds → continue editing (compositional)', async ({ page }) => {
-    await seedDocs([
+  test('QA-022: error → retry succeeds → continue editing (compositional)', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -579,13 +584,16 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(editor).toContainText('post-recovery typed content', { timeout: 5_000 });
   });
 
-  test('QA-023: navigate-away hides error from user (per-Activity scoping)', async ({ page }) => {
-    await seedDocs([
+  test('QA-023: navigate-away hides error from user (per-Activity scoping)', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -615,13 +623,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
   test('QA-024: errored-doc revisit re-renders error (cached-rejection persistence)', async ({
     page,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -655,13 +664,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(errorAlert).toContainText('doc-b');
   });
 
-  test('QA-027: pre-sync sleep → wake shows error (not silent failure)', async ({ page }) => {
-    await seedDocs([
+  test('QA-027: pre-sync sleep → wake shows error (not silent failure)', async ({ page, api }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -708,12 +717,12 @@ test.describe('docs-open — hybrid navigation UX', () => {
   // The test-only __test_closeActiveWebSocket hook closes the live WS, pool
   // enters pendingRecycleTimer, clock.runFor(5s) fires the setTimeout inside
   // RECYCLE_DEBOUNCE_MS, destroyEntry runs → invalidateSyncPromise + re-create.
-  test('QA-015: provider-pool 4s recycle exercised via page.clock', async ({ page }) => {
+  test('QA-015: provider-pool 4s recycle exercised via page.clock', async ({ page, api }) => {
     await page.clock.install();
 
-    await seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
+    await api.seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
 
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -764,8 +773,9 @@ test.describe('docs-open — WS-interception scenarios', () => {
   // ── QA-014: Pre-sync WebSocket disconnect → PreSyncDisconnectError ──
   test('QA-014: pre-sync WS close → PreSyncDisconnectError → "Connection dropped"', async ({
     context,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
@@ -781,7 +791,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
 
     const page = await context.newPage();
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
@@ -818,8 +828,9 @@ test.describe('docs-open — WS-interception scenarios', () => {
   // the doc eventually times out via the real 30s path (not stuck forever).
   test('QA-012: warm-recycle with hung WS → doc-b unsynced, eventually errors', async ({
     context,
+    api,
   }) => {
-    await seedDocs([
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
@@ -831,7 +842,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
 
     const page = await context.newPage();
-    await page.goto(BASE);
+    await page.goto('/');
 
     // Warm both docs
     await openFromSidebar(page, 'doc-a.md');
@@ -870,8 +881,11 @@ test.describe('docs-open — WS-interception scenarios', () => {
   // wait the full 30s of real wall-clock for the setTimeout to fire.
   // This is slower than __test_armPendingRejection (~30s real time) but
   // exercises the REAL timeout path (not synthetic injection).
-  test('QA-013: 30s real syncPromise timeout → "Couldn\'t load document"', async ({ context }) => {
-    await seedDocs([
+  test('QA-013: 30s real syncPromise timeout → "Couldn\'t load document"', async ({
+    context,
+    api,
+  }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
@@ -883,7 +897,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
 
     const page = await context.newPage();
-    await page.goto(BASE);
+    await page.goto('/');
 
     // Warm both docs
     await openFromSidebar(page, 'doc-a.md');
@@ -917,8 +931,11 @@ test.describe('docs-open — WS-interception scenarios', () => {
   // changes the URL hash to the agent's focus doc. No second browser tab
   // or agent-sim process needed — the __test_injectAgentFocus hook pokes
   // the __system__ awareness directly from page.evaluate().
-  test('QA-010: agent focus injection → hash changes to agent focus doc', async ({ context }) => {
-    await seedDocs([
+  test('QA-010: agent focus injection → hash changes to agent focus doc', async ({
+    context,
+    api,
+  }) => {
+    await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
     ]);
@@ -929,7 +946,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
 
     const page = await context.newPage();
-    await page.goto(BASE);
+    await page.goto('/');
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');

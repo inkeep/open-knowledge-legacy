@@ -16,6 +16,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
+import { registerEditor, unregisterEditor } from './active-editor';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
@@ -180,6 +181,26 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     setCurrentDocName(docName ?? null);
     return () => setCurrentDocName(null);
   }, [provider]);
+
+  // DEV-only: register the TipTap editor instance in the module-level
+  // active-editor map so Playwright can resolve `window.__activeEditor` →
+  // the real Editor instance and poll `editor.state.selection` directly.
+  // Needed to close the `click → keyboard.press(Tab|...)` PM-selection-sync
+  // race described in precedent §20(a) category C — under workers>1 CPU
+  // contention the DOMObserver hasn't synced the click-induced DOM
+  // selection into PM state yet, and double-rAF yields aren't enough.
+  //
+  // `unregisterEditor` matches on the editor ref so the StrictMode double-
+  // invoke ordering (register-A, register-B, cleanup-A) doesn't leave the
+  // registry empty. Vite replaces `import.meta.env.DEV` at build time, so
+  // production bundles strip this effect entirely.
+  useEffect(() => {
+    if (!editor || !import.meta.env.DEV) return;
+    const docName = provider.configuration.name;
+    if (!docName) return;
+    registerEditor(docName, editor);
+    return () => unregisterEditor(docName, editor);
+  }, [editor, provider]);
 
   useEffect(() => {
     if (!editor) return;

@@ -5,10 +5,8 @@
 // interferes with parallel tests in other files (see spec §6 AC6). If a future
 // test here needs to assert doc *content*, migrate that specific test to the
 // per-test unique-docName pattern instead.
-import { expect, type Page, test } from '@playwright/test';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import { expect, test } from './_helpers';
 
 const sidebar = (page: Page) => page.locator('[data-slot="sidebar-container"]');
 // Targets the chevron (SidebarMenuAction) whose aria-label is
@@ -19,7 +17,7 @@ const folderButton = (page: Page) =>
   page.getByRole('button', { name: /^(Expand|Collapse) sidebar-folder$/ });
 
 test('direct URL load reveals nested doc on first paint', async ({ page }) => {
-  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await page.goto(`/#/sidebar-folder/nested-doc`);
   await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
@@ -30,7 +28,7 @@ test('direct URL load reveals nested doc on first paint', async ({ page }) => {
 });
 
 test('hash navigation reveals nested doc (simulates graph/wikilink click)', async ({ page }) => {
-  await page.goto(BASE);
+  await page.goto('/');
   await page.getByText('test-doc.md').click({ timeout: 10_000 });
 
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
@@ -56,7 +54,7 @@ test('active-doc ancestor stays expanded despite chevron clicks (Model A ancesto
   // derivation (`ancestors ∪ (userExpanded \ userCollapsed)`) re-adds the
   // ancestor. This matches VS Code / Finder: active file's context is
   // always visible. See SPEC.md §10 D-Q?? for rationale + US-011 implementation.
-  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await page.goto(`/#/sidebar-folder/nested-doc`);
   await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
@@ -93,7 +91,7 @@ test('activation auto-expands prior-collapsed non-ancestor folder (D1)', async (
   // non-ancestor folders. This test verifies: user collapses folder while
   // it's NOT an active-doc ancestor, then navigates INTO the folder —
   // activation wins, folder expands automatically.
-  await page.goto(`${BASE}/#/test-doc`);
+  await page.goto(`/#/test-doc`);
   await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   // While test-doc is active (sidebar-folder is NOT an ancestor), expand
@@ -115,7 +113,7 @@ test('activation auto-expands prior-collapsed non-ancestor folder (D1)', async (
 });
 
 test('user-expanded non-ancestor folder persists across navigation (D4)', async ({ page }) => {
-  await page.goto(`${BASE}/#/test-doc`);
+  await page.goto(`/#/test-doc`);
   await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
@@ -135,7 +133,7 @@ test('user-expanded non-ancestor folder persists across navigation (D4)', async 
 });
 
 test('exactly one aria-current="page" row, matching activeDocName (D9)', async ({ page }) => {
-  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await page.goto(`/#/sidebar-folder/nested-doc`);
   await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   const current = sidebar(page).locator('[aria-current="page"]');
@@ -152,7 +150,7 @@ test('exactly one aria-current="page" row, matching activeDocName (D9)', async (
 });
 
 test('activation does not steal focus from the editor', async ({ page }) => {
-  await page.goto(`${BASE}/#/test-doc`);
+  await page.goto(`/#/test-doc`);
   await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
   await page.waitForSelector('.ProseMirror', { timeout: 15_000 });
 

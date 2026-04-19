@@ -1,20 +1,21 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 
-// Module-scope creation: runs at config-eval time, before any setup tasks.
-// The webServer captures this via webServer.env at spawn time.
-// Using globalSetup is too late — Playwright 1.59.1 spawns webServer BEFORE
-// config.globalSetups (verified against source: lib/runner/tasks.js:100-109).
-const contentDir = mkdtempSync(join(tmpdir(), 'ok-playwright-'));
-writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
-mkdirSync(join(contentDir, 'sidebar-folder'), { recursive: true });
-writeFileSync(join(contentDir, 'sidebar-folder', 'nested-doc.md'), '', 'utf-8');
-console.log(`[playwright] OK_TEST_CONTENT_DIR = ${contentDir}`);
-
-const port = process.env.VITE_PORT || '5173';
-const baseURL = `http://localhost:${port}`;
+/**
+ * Per-worker server isolation: the `webServer` block was removed in favor of
+ * a worker-scoped fixture at `tests/stress/_helpers/fixtures.ts`. Each
+ * Playwright worker spawns its own `bun run dev` process on a
+ * kernel-allocated port + unique tmpdir, eliminating the cross-worker CPU
+ * contention that created a structural flake class under shared webServer.
+ *
+ * See `reports/e2e-isolation-and-broadcaster-lifecycle/REPORT.md` Track A for
+ * the architectural evidence (React Router v7 precedent: per-test fixtures
+ * without `webServer`; Hocuspocus's own tests allocate port 0 per test).
+ *
+ * Per-test `baseURL` comes from the `baseURL` fixture in `fixtures.ts`, which
+ * reads the worker's `workerServer.baseURL`. Consumers use
+ * `test('...', async ({ page, api, baseURL }) => ...)` — no
+ * `process.env.VITE_PORT` lookup required.
+ */
 
 /**
  * Single-browser (Chromium) — all E2E tests use programmatic clipboard
@@ -51,7 +52,10 @@ export default defineConfig({
   failOnFlakyTests: false,
   forbidOnly: isCI,
   // D-Q7 LOCKED at workers=4 on `ubuntu-64gb` (16+ vCPU / 64 GB RAM shared
-  // runner). Calibration history:
+  // runner). With per-worker server fixtures (Track A), each worker spawns
+  // its own Vite+Hocuspocus process + content directory, so worker count is
+  // bounded by runner CPU + Vite cold-start budget rather than CRDT state
+  // contention. Calibration history preceding the per-worker migration:
   //   - ubuntu-latest (2 vCPU), workers=4 × retries=2: cancelled at 15:00
   //     (PR #193 run 24572488164) — oversubscribed 2×
   //   - ubuntu-latest (2 vCPU), workers=2 × retries=2: cancelled at 15:14
@@ -60,9 +64,9 @@ export default defineConfig({
   //     (PR #193 run 24574575469) — serial with retries, no CPU contention
   //   - ubuntu-64gb (≥16 vCPU), workers=4 × retries=2: fits comfortably —
   //     the runner has headroom for 4 × (playwright worker + chromium
-  //     process) with retries='2'.
-  // Per-test docName isolation (PR #185) enables fullyParallel. Local workers
-  // undefined = Playwright default for single-test debug ergonomics.
+  //     process + dev server) with retries='2'.
+  // Per-test docName isolation (PR #185) + per-worker server isolation
+  // (this migration) together make fullyParallel fully safe.
   // See `specs/2026-04-17-e2e-observability-determinism/evidence/workers-calibration.md`
   // for the full calibration evidence. If the CI runner tier changes back to
   // 2 vCPU (e.g., ubuntu-64gb quota exhausted), re-downgrade to workers=1.
@@ -71,9 +75,10 @@ export default defineConfig({
   // D-Q8 DELEGATED: HTML report as artifact; list locally + github reporter on
   // CI for inline PR annotations.
   reporter: [['html', { open: 'never' }], ['list'], ...(isCI ? [['github'] as const] : [])],
-  globalTeardown: './tests/stress/global-teardown.ts',
   use: {
-    baseURL,
+    // `baseURL` is populated by the worker-scoped fixture in
+    // `tests/stress/_helpers/fixtures.ts`. Leaving it unset here so the
+    // fixture's override takes effect cleanly per worker.
     headless: true,
     // D-Q9 DELEGATED: 1280×720 matches the most common default viewport; the
     // default 800×450 crops the sidebar in narrow-viewport tests. Retained only
@@ -83,15 +88,5 @@ export default defineConfig({
     // to stay under the CI runtime envelope (AC-12).
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-  },
-  webServer: {
-    command: `VITE_PORT=${port} bun run dev`,
-    url: baseURL,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      OK_TEST_CONTENT_DIR: contentDir,
-    },
   },
 });
