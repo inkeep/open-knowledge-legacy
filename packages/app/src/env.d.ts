@@ -2,6 +2,7 @@
 
 declare namespace globalThis {
   import type { HocuspocusProvider } from '@hocuspocus/provider';
+  import type { Editor } from '@tiptap/core';
   import type { GraphNodeVisualState } from '@/components/graph-view-utils';
   import type { ProviderPool } from '@/editor/provider-pool';
   var __graphHarness:
@@ -23,10 +24,18 @@ declare namespace globalThis {
           sourceDocName: string,
           targetDocName: string,
         ) => { x: number; y: number } | null;
+        isSimulationSettled: () => boolean;
       }
     | undefined;
   var __providerPool: ProviderPool | undefined;
   var __activeProvider: HocuspocusProvider | null;
+  /**
+   * DEV-only: TipTap `Editor` instance of the currently-active pooled doc.
+   * Playwright reads `editor.state.selection` to close the PM-selection-sync
+   * race described in precedent §20(a) category C. Tree-shaken from production
+   * bundles by the `import.meta.env.DEV` guard in `DocumentContext.tsx`.
+   */
+  var __activeEditor: Editor | null;
   /**
    * Test-only hook: force-reject the cached syncPromise for a docName.
    * Returns true if an entry was rejected, false otherwise.

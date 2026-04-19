@@ -11,10 +11,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
-  createPage,
+  type ApiHelpers,
+  expect,
   getSelectedItemSnapshot,
+  test,
   waitForActiveProviderSynced,
   waitForSlashMenuClosed,
   waitForSlashMenuFilteredBy,
@@ -22,27 +24,25 @@ import {
   waitForSlashMenuOpen,
 } from './_helpers';
 
-const port = process.env.VITE_PORT || '5173';
-const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
-
 // ---------------------------------------------------------------------------
 // Helpers — thin wrappers around the editor's observable surface
 // ---------------------------------------------------------------------------
 
-async function resetEditor(page: Page, docName: string) {
-  const res = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
-    method: 'POST',
-  });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
+async function resetEditor(api: ApiHelpers, page: Page, docName: string) {
+  await api.testReset(docName);
   await page.reload({ waitUntil: 'domcontentloaded' });
   // After reload, re-navigate to the per-test doc via hash.
-  await page.goto(`${BASE}/#/${docName}`);
+  await page.goto(`/#/${docName}`);
   await page.waitForSelector('.ProseMirror');
   await waitForActiveProviderSynced(page);
   await page.click('.ProseMirror');
-  await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent === '', {
-    timeout: 5_000,
-  });
+  await page.waitForFunction(
+    () => document.querySelector('.ProseMirror')?.textContent === '',
+    null,
+    {
+      timeout: 5_000,
+    },
+  );
 }
 
 async function getEditorState(page: Page) {
@@ -131,18 +131,18 @@ async function getCursorRect(page: Page) {
 test.describe('slash command — triggering and filtering', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-slash-trigger-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(`${BASE}/#/${docName}`);
+    await page.goto(`/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('typing / in an empty paragraph opens the command menu', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('typing / in an empty paragraph opens the command menu', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -153,8 +153,11 @@ test.describe('slash command — triggering and filtering', () => {
     expect(m.items[0]?.ariaSelected).toBe('true');
   });
 
-  test('typing a query after / narrows items to those matching the query', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('typing a query after / narrows items to those matching the query', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/heading');
     await waitForSlashMenuFilteredBy(page, 'heading');
 
@@ -164,8 +167,8 @@ test.describe('slash command — triggering and filtering', () => {
     expect(m.items.every((i) => i.text.toLowerCase().includes('heading'))).toBe(true);
   });
 
-  test('query matching is case-insensitive', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('query matching is case-insensitive', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/HEADING');
     await waitForSlashMenuFilteredBy(page, 'heading');
 
@@ -176,8 +179,8 @@ test.describe('slash command — triggering and filtering', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('typing / after whitespace mid-line opens the menu', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('typing / after whitespace mid-line opens the menu', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('hello world ');
     await expect(page.locator('.ProseMirror')).toContainText('hello world');
     await page.keyboard.type('/bullet');
@@ -188,8 +191,11 @@ test.describe('slash command — triggering and filtering', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('a query with no matches closes the menu and preserves the typed text', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('a query with no matches closes the menu and preserves the typed text', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/xyz');
     await waitForSlashMenuClosed(page);
 
@@ -205,18 +211,21 @@ test.describe('slash command — triggering and filtering', () => {
 test.describe('slash command — item insertion', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-slash-insert-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(`${BASE}/#/${docName}`);
+    await page.goto(`/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('selecting an item via Enter inserts it and removes the trigger text', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('selecting an item via Enter inserts it and removes the trigger text', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/h2');
     await waitForSlashMenuFirstOption(page, 'heading 2');
     await page.keyboard.press('Enter');
@@ -227,8 +236,8 @@ test.describe('slash command — item insertion', () => {
     expect(s.text).not.toContain('/');
   });
 
-  test('Tab inserts the selected item (same as Enter)', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('Tab inserts the selected item (same as Enter)', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/h2');
     await waitForSlashMenuFirstOption(page, 'heading 2');
     await page.keyboard.press('Tab');
@@ -239,8 +248,8 @@ test.describe('slash command — item insertion', () => {
     expect(s.text).not.toContain('/h2');
   });
 
-  test('clicking an item with the mouse inserts it', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('clicking an item with the mouse inserts it', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/quote');
     await waitForSlashMenuFirstOption(page, 'quote');
 
@@ -258,8 +267,8 @@ test.describe('slash command — item insertion', () => {
     expect(s.text).not.toContain('/');
   });
 
-  test('table command inserts a table with a header row', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('table command inserts a table with a header row', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/table');
     await waitForSlashMenuFirstOption(page, 'table');
     await page.keyboard.press('Enter');
@@ -279,8 +288,11 @@ test.describe('slash command — item insertion', () => {
     expect(info.hasHeader).toBe(true);
   });
 
-  test('mid-line insertion converts the paragraph and preserves prior text', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('mid-line insertion converts the paragraph and preserves prior text', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('hello world ');
     await expect(page.locator('.ProseMirror')).toContainText('hello world');
     await page.keyboard.type('/bullet');
@@ -294,8 +306,11 @@ test.describe('slash command — item insertion', () => {
     expect(s.text).not.toContain('/bullet');
   });
 
-  test('rapid / then Enter inserts an item without leftover trigger text', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('rapid / then Enter inserts an item without leftover trigger text', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.press('Slash');
     await page.keyboard.press('Enter');
     await expect
@@ -311,8 +326,8 @@ test.describe('slash command — item insertion', () => {
     expect(s.text).not.toContain('/');
   });
 
-  test('no trigger text remains in the document after any insertion', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('no trigger text remains in the document after any insertion', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/bulletList');
     await waitForSlashMenuFirstOption(page, 'bullet list');
     await page.keyboard.press('Enter');
@@ -331,18 +346,18 @@ test.describe('slash command — item insertion', () => {
 test.describe('slash command — keyboard navigation', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-slash-nav-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(`${BASE}/#/${docName}`);
+    await page.goto(`/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('arrow keys move the selection through menu items', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('arrow keys move the selection through menu items', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -364,8 +379,11 @@ test.describe('slash command — keyboard navigation', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('ArrowUp moves selection upward and wraps around to the last item', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('ArrowUp moves selection upward and wraps around to the last item', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -384,8 +402,11 @@ test.describe('slash command — keyboard navigation', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('selection clamps to the last item when filtering narrows the list', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('selection clamps to the last item when filtering narrows the list', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -412,8 +433,8 @@ test.describe('slash command — keyboard navigation', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('Escape closes the menu without inserting anything', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('Escape closes the menu without inserting anything', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
     expect(await getMenuState(page).then((m) => m.open)).toBe(true);
@@ -426,8 +447,8 @@ test.describe('slash command — keyboard navigation', () => {
     expect(await getEditorState(page).then((s) => s.text)).toContain('/');
   });
 
-  test('navigating past the last item keeps the selected item visible', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('navigating past the last item keeps the selected item visible', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -463,18 +484,18 @@ test.describe('slash command — keyboard navigation', () => {
 test.describe('slash command — accessibility', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-slash-a11y-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(`${BASE}/#/${docName}`);
+    await page.goto(`/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('the menu uses listbox role with labeled options', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('the menu uses listbox role with labeled options', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -500,8 +521,9 @@ test.describe('slash command — accessibility', () => {
 
   test('aria-activedescendant references a valid option and updates on navigation', async ({
     page,
+    api,
   }) => {
-    await resetEditor(page, docName);
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -550,8 +572,8 @@ test.describe('slash command — accessibility', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('live region announces the selected item label on navigation', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('live region announces the selected item label on navigation', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -577,8 +599,8 @@ test.describe('slash command — accessibility', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('items are grouped under category headers', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('items are grouped under category headers', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -595,8 +617,9 @@ test.describe('slash command — accessibility', () => {
 
   test('the menu has a constrained max-height driven by available viewport space', async ({
     page,
+    api,
   }) => {
-    await resetEditor(page, docName);
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -620,18 +643,18 @@ test.describe('slash command — accessibility', () => {
 test.describe('slash command — menu positioning', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-slash-pos-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
+    await api.createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(`${BASE}/#/${docName}`);
+    await page.goto(`/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('the menu appears just below the cursor', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('the menu appears just below the cursor', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
@@ -647,8 +670,11 @@ test.describe('slash command — menu positioning', () => {
     expect(gap).toBeLessThan(20);
   });
 
-  test('the menu flips above the cursor when there is not enough room below', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('the menu flips above the cursor when there is not enough room below', async ({
+    page,
+    api,
+  }) => {
+    await resetEditor(api, page, docName);
     // Push cursor near the bottom of the viewport
     for (let i = 0; i < 18; i++) {
       await page.keyboard.type(`line ${i}`);
@@ -666,8 +692,8 @@ test.describe('slash command — menu positioning', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('the menu max-height adapts to available viewport space', async ({ page }) => {
-    await resetEditor(page, docName);
+  test('the menu max-height adapts to available viewport space', async ({ page, api }) => {
+    await resetEditor(api, page, docName);
     await page.keyboard.type('/');
     await waitForSlashMenuOpen(page);
 
