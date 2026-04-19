@@ -501,15 +501,41 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 const SEED_COUNT_PR = 75;
 const SEED_COUNT_NIGHTLY = 10_000;
 const SEED_COUNT_DEFAULT = 25;
+
+/**
+ * Strict integer-env parser. Non-finite, non-integer, or otherwise malformed
+ * inputs throw with a concrete example message — matches the defense-in-
+ * depth discipline `server-authoritative-stress.test.ts` uses for
+ * STRESS_SEED. The measurement script layer (`measure-fuzz.sh`) also
+ * validates via `assert_numeric_flag`, but this test is also invokable
+ * directly via `bun test` without going through the wrapper — so the
+ * test file must not silently coerce "100.5" or "0x42" to NaN→1 at the
+ * PRNG layer. Evidence log that lies quietly is worse than a loud throw.
+ */
+function parseIntegerEnv(name: string, raw: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error(
+      `${name} must be a finite integer, got ${JSON.stringify(raw)}. ` +
+        `Example: ${name}=42 bun test tests/stress/bridge-convergence.fuzz.test.ts`,
+    );
+  }
+  return parsed;
+}
+
 function resolveSeedCount(): number {
   if (process.env.STRESS_FUZZ_SEED) return 1;
-  if (process.env.BRIDGE_FUZZ_SEEDS) return Number(process.env.BRIDGE_FUZZ_SEEDS);
+  if (process.env.BRIDGE_FUZZ_SEEDS) {
+    return parseIntegerEnv('BRIDGE_FUZZ_SEEDS', process.env.BRIDGE_FUZZ_SEEDS);
+  }
   if (process.env.STRESS_FUZZ_NIGHTLY === '1') return SEED_COUNT_NIGHTLY;
   if (process.env.STRESS_FUZZ_PR === '1') return SEED_COUNT_PR;
   return SEED_COUNT_DEFAULT;
 }
 const SEED_COUNT = resolveSeedCount();
-const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
+const FIXED_SEED = process.env.STRESS_FUZZ_SEED
+  ? parseIntegerEnv('STRESS_FUZZ_SEED', process.env.STRESS_FUZZ_SEED)
+  : undefined;
 
 // Surface the resolved seed count in CI logs so reviewers can confirm the
 // PR-tier gate is actually running at its calibrated coverage, not the
@@ -529,13 +555,42 @@ if (FIXED_SEED === undefined) {
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
   let server: TestServer;
+  // Track per-seed outcomes so the after-all hook can emit a machine-
+  // parseable summary line for `packages/app/scripts/measure-fuzz.sh` to
+  // consume. The script grep-matches:
+  //   [fuzz] RESULT seeds=<total> passed=<n> failed=<n> failingSeeds=[<s1>,<s2>,...]
+  // Written via `process.stdout.write` so it's stdout-only and not subject
+  // to bun's human-summary formatting — mirrors the stress test's approach
+  // (`packages/app/tests/stress/server-authoritative-stress.test.ts`).
+  // Changing the format is a breaking change for the measurement script's
+  // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
+  const fuzzPassed: number[] = [];
+  const fuzzFailed: number[] = [];
 
   beforeAll(async () => {
     server = await createTestServer();
   });
 
   afterAll(async () => {
-    await server?.cleanup();
+    // Emit RESULT BEFORE cleanup. measure-fuzz.sh greps for this exact line
+    // as its only data source — if server.cleanup() threw first (handle leak,
+    // port teardown race), the summary would never reach the script and the
+    // run would be classified as a crash-before-banner with conservative all-
+    // seeds-failed accounting. Ordering this pre-cleanup makes the RESULT
+    // emission unconditional on cleanup outcome. Cleanup itself is wrapped in
+    // try/catch so a cleanup failure surfaces as a warn but does not destroy
+    // the observability signal we just wrote.
+    process.stdout.write(
+      `[fuzz] RESULT seeds=${fuzzPassed.length + fuzzFailed.length} passed=${fuzzPassed.length} failed=${fuzzFailed.length} failingSeeds=[${fuzzFailed.join(',')}]\n`,
+    );
+    try {
+      await server?.cleanup();
+    } catch (err) {
+      console.warn(
+        '[bridge-convergence fuzzer] server.cleanup() failed after RESULT emission:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
   const seeds =
@@ -544,6 +599,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
+    // Per-seed setup try/catch — if the setup path throws (harness init,
+    // port allocation, agentWriteMd, createTestClients) BEFORE we reach
+    // the main test body, the seed must still be accounted for in the
+    // RESULT line. Otherwise the script's seedCount drifts below the
+    // requested --seeds N and trend analysis across runs compares
+    // apples and oranges. Re-throw after recording so the test still
+    // fails loudly — this is accounting hygiene, not error swallowing.
+    let setupOk = false;
+    let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;
     const rng = createPRNG(seed);
     const clientCount = 2 + (seed % 2); // 2..3
     // 12 ops per seed: enough to sample 2-3 agent-write + wysiwyg-type pairs
@@ -553,15 +617,31 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     const opCount = 12;
     const docName = `fuzz-${seed}`;
 
-    // Seed initial content
-    await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
-    await wait(200);
+    try {
+      // Seed initial content
+      await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
+      await wait(200);
 
-    const clients = await createTestClients(server.port, {
-      count: clientCount,
-      docName,
-      perClientOptions: { syncControl: true, skipInvariantWatcher: true },
-    });
+      clients = await createTestClients(server.port, {
+        count: clientCount,
+        docName,
+        perClientOptions: { syncControl: true, skipInvariantWatcher: true },
+      });
+      setupOk = true;
+    } catch (err) {
+      // Setup failure — record as failed seed so RESULT accounting is
+      // complete, then re-throw so the test fails visibly. The catch at
+      // the end of the try-block (below, around the main oracle) records
+      // post-setup failures; this catch records pre-setup failures.
+      fuzzFailed.push(seed);
+      throw err;
+    }
+    // Guard against any unexpected control-flow — if we somehow reached
+    // here with setupOk=false without the catch having run, fail loud.
+    if (!setupOk) {
+      fuzzFailed.push(seed);
+      throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
+    }
 
     const agentProbes = clients.map((c) =>
       createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
@@ -914,16 +994,42 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           );
         }
       }
+      // Record the seed as passing BEFORE the `finally` block so a cleanup
+      // throw cannot silently skew RESULT totals. If the try-block completed
+      // every assertion, the seed is a genuine pass; the cleanup machinery
+      // running after is teardown-only and its failure must not retroactively
+      // reclassify the outcome. Cleanup errors are swallowed+logged in the
+      // finally block below for the same reason.
+      fuzzPassed.push(seed);
     } catch (err) {
       writeFuzzSnapshot(seed, {
         ops: generateOps(createPRNG(seed), clientCount, opCount),
         error: err,
         clientStates: snapshotClients(clients),
       });
+      fuzzFailed.push(seed);
       throw err;
     } finally {
-      for (const p of agentProbes) p.cleanup();
-      for (const c of clients) await c.cleanup();
+      for (const p of agentProbes) {
+        try {
+          p.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] agent-probe cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
+      for (const c of clients) {
+        try {
+          await c.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] client cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
     }
     // 120s per seed: the original 90s budget covered macOS scheduler jitter
     // locally (observed ~40s p50, 60s p99 on M-series hardware). On

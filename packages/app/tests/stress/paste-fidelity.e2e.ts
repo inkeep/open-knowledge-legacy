@@ -14,7 +14,7 @@
  * FR-2 / FR-4 acceptance criteria at the MIME boundary.
  *
  * Run:
- *   bun run test:stress:e2e  (or bunx playwright test paste-fidelity.e2e.ts)
+ *   cd packages/app && bun run test:e2e  (or bunx playwright test paste-fidelity.e2e.ts)
  */
 
 import { randomUUID } from 'node:crypto';
