@@ -49,6 +49,10 @@
 
 set -euo pipefail
 
+# Shared helpers — see measure-fuzz.sh for the rationale.
+# shellcheck source=./_measure-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_measure-lib.sh"
+
 # ── Defaults ───────────────────────────────────────────────────────────────
 SEED=""
 CONTEXT=""
@@ -78,26 +82,14 @@ if [[ -z "$CONTEXT" ]]; then
   exit 2
 fi
 
-# Validate --seed is numeric. Non-numeric values exported as STRESS_SEED
-# would coerce to NaN→1 at the test's Number() call, producing a
-# deterministic-looking run unrelated to the operator's request.
-if [[ -n "$SEED" && ! "$SEED" =~ ^-?[0-9]+$ ]]; then
-  echo "error: --seed must be an integer (got: $SEED)" >&2
-  exit 2
+# Validate --seed via shared helper (see _measure-lib.sh).
+if [[ -n "$SEED" ]]; then
+  assert_numeric_flag "--seed" "$SEED" --signed
 fi
 
 # ── Environment ────────────────────────────────────────────────────────────
-if ! command -v jq >/dev/null 2>&1; then
-  echo "error: jq is required (JSONL composition)" >&2
-  echo "install: brew install jq  # or equivalent" >&2
-  exit 3
-fi
-
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-if [[ -z "$REPO_ROOT" ]]; then
-  echo "error: not inside a git repository" >&2
-  exit 4
-fi
+require_jq
+REPO_ROOT="$(resolve_repo_root)"
 
 APP_DIR="$REPO_ROOT/packages/app"
 LOG_DIR="$REPO_ROOT/specs/2026-04-16-bridge-correctness/evidence"
@@ -121,33 +113,13 @@ COMMIT="$(git rev-parse --short HEAD)"
 INVOKED_BY="${USER:-unknown}"
 BUN_VERSION="$(bun --version 2>/dev/null || echo unknown)"
 
-if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-  HOST="ci-${RUNNER_NAME:-${RUNNER_OS:-github}}"
-elif [[ "$(uname)" == "Darwin" ]]; then
-  HOST="local-macos"
-elif [[ "$(uname)" == "Linux" ]]; then
-  HOST="local-linux"
-else
-  HOST="$(uname | tr '[:upper:]' '[:lower:]')"
-fi
+HOST="$(detect_host)"
 
 # ── Run test, capture output ───────────────────────────────────────────────
 OUT_FILE="$(mktemp -t measure-stress-XXXXXX)"
 trap 'rm -f "$OUT_FILE"' EXIT
 
 echo "[measure-stress] running $TEST_FILE ..."
-
-# Portable epoch-ms. GNU `date +%s%3N` is preferred but macOS BSD `date` emits
-# the literal "%3N" instead of milliseconds. Detect by format-validity.
-epoch_ms() {
-  local ms
-  ms="$(date +%s%3N 2>/dev/null || true)"
-  if [[ "$ms" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$ms"
-  else
-    printf '%s000\n' "$(date +%s)"
-  fi
-}
 
 START_MS="$(epoch_ms)"
 
@@ -267,33 +239,6 @@ RECORD="$(jq -c -n \
      extra: $extra
    }')"
 
-# Atomic append under concurrent invocation. See measure-fuzz.sh for the
-# rationale — same guard is applied verbatim here to keep the producer
-# pair symmetric. Concurrent measure:fuzz + measure:stress runs against
-# the same log would otherwise interleave partial lines > PIPE_BUF bytes.
-append_jsonl_atomic() {
-  local log="$1"
-  local record="$2"
-  if command -v flock >/dev/null 2>&1; then
-    (
-      flock -x -w 10 9 || { echo "warn: could not acquire log lock; writing without lock" >&2; }
-      printf '%s\n' "$record" >> "$log"
-    ) 9>> "$log"
-  else
-    local lockdir="${log}.lock"
-    local i=0
-    while ! mkdir "$lockdir" 2>/dev/null; do
-      i=$((i + 1))
-      if (( i >= 100 )); then
-        echo "warn: could not acquire log lock after 10s; writing without lock" >&2
-        break
-      fi
-      sleep 0.1
-    done
-    printf '%s\n' "$record" >> "$log"
-    rmdir "$lockdir" 2>/dev/null || true
-  fi
-}
 append_jsonl_atomic "$LOG_FILE" "$RECORD"
 
 # ── Summary ────────────────────────────────────────────────────────────────

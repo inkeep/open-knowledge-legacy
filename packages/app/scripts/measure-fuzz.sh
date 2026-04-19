@@ -82,6 +82,12 @@
 
 set -euo pipefail
 
+# Shared helpers — keeps host detection, epoch-ms resolution, JSONL
+# append serialization, and numeric-flag validation in one place. See
+# `_measure-lib.sh` for each function's contract.
+# shellcheck source=./_measure-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_measure-lib.sh"
+
 # ── Defaults ───────────────────────────────────────────────────────────────
 SEEDS=500
 SEED_REPLAY=""
@@ -115,34 +121,17 @@ if [[ -z "$CONTEXT" ]]; then
   exit 2
 fi
 
-# Validate numeric inputs: non-numeric --seeds / --seed-replay would export
-# a non-numeric env to the child `bun test` and silently coerce to NaN→1
-# at the PRNG layer, producing deterministic-looking runs that have no
-# relationship to the requested seed. Fail loud instead.
-if [[ ! "$SEEDS" =~ ^[0-9]+$ ]]; then
-  echo "error: --seeds must be a non-negative integer (got: $SEEDS)" >&2
-  exit 2
-fi
-if [[ -n "$SEED_REPLAY" && ! "$SEED_REPLAY" =~ ^-?[0-9]+$ ]]; then
-  echo "error: --seed-replay must be an integer (got: $SEED_REPLAY)" >&2
-  exit 2
+# Validate numeric inputs via shared helper. Non-numeric inputs would
+# export a non-numeric env to the child `bun test` and silently coerce
+# to NaN→1 at the PRNG layer.
+assert_numeric_flag "--seeds" "$SEEDS"
+if [[ -n "$SEED_REPLAY" ]]; then
+  assert_numeric_flag "--seed-replay" "$SEED_REPLAY" --signed
 fi
 
 # ── Environment ────────────────────────────────────────────────────────────
-# Validate jq availability upfront — the JSONL composition fails silently
-# otherwise.
-if ! command -v jq >/dev/null 2>&1; then
-  echo "error: jq is required (JSONL composition)" >&2
-  echo "install: brew install jq  # or equivalent" >&2
-  exit 3
-fi
-
-# Resolve repo root. Works from any subdirectory and inside git worktrees.
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-if [[ -z "$REPO_ROOT" ]]; then
-  echo "error: not inside a git repository" >&2
-  exit 4
-fi
+require_jq
+REPO_ROOT="$(resolve_repo_root)"
 
 APP_DIR="$REPO_ROOT/packages/app"
 LOG_DIR="$REPO_ROOT/specs/2026-04-16-bridge-correctness/evidence"
@@ -170,34 +159,13 @@ COMMIT="$(git rev-parse --short HEAD)"
 INVOKED_BY="${USER:-unknown}"
 BUN_VERSION="$(bun --version 2>/dev/null || echo unknown)"
 
-# Host tag: local-macos / local-linux / ci-<runner-label>
-if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-  HOST="ci-${RUNNER_NAME:-${RUNNER_OS:-github}}"
-elif [[ "$(uname)" == "Darwin" ]]; then
-  HOST="local-macos"
-elif [[ "$(uname)" == "Linux" ]]; then
-  HOST="local-linux"
-else
-  HOST="$(uname | tr '[:upper:]' '[:lower:]')"
-fi
+HOST="$(detect_host)"
 
 # ── Run test, capture output ───────────────────────────────────────────────
 OUT_FILE="$(mktemp -t measure-fuzz-XXXXXX)"
 trap 'rm -f "$OUT_FILE"' EXIT
 
 echo "[measure-fuzz] running $TEST_FILE ..."
-
-# Portable epoch-ms. GNU `date +%s%3N` is preferred but macOS BSD `date` emits
-# the literal "%3N" instead of milliseconds. Detect by format-validity.
-epoch_ms() {
-  local ms
-  ms="$(date +%s%3N 2>/dev/null || true)"
-  if [[ "$ms" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$ms"
-  else
-    printf '%s000\n' "$(date +%s)"
-  fi
-}
 
 START_MS="$(epoch_ms)"
 
@@ -325,42 +293,6 @@ RECORD="$(jq -c -n \
      extra: $extra
    }')"
 
-# Atomic append under concurrent invocation. `>>` in shell is a single
-# `write(2)` only for payloads ≤ PIPE_BUF (4096 bytes on Linux) and is NOT
-# atomic at any size on macOS. A fuzz record with many failing seeds +
-# long --context can exceed 4 KB and would interleave with a concurrent
-# measure:stress run appending to the same log, corrupting the JSONL.
-# Guard with flock on Linux; fall back to mkdir-based mutex on macOS
-# (flock is not present in the BSD toolchain).
-append_jsonl_atomic() {
-  local log="$1"
-  local record="$2"
-  if command -v flock >/dev/null 2>&1; then
-    # Acquire exclusive lock on the log file itself (fd 9). Releases on
-    # subshell exit. 10s timeout so a stuck-lock never hangs measurement.
-    (
-      flock -x -w 10 9 || { echo "warn: could not acquire log lock; writing without lock" >&2; }
-      printf '%s\n' "$record" >> "$log"
-    ) 9>> "$log"
-  else
-    # macOS fallback: mkdir is atomic on the same filesystem. Retry for up
-    # to 10 seconds with 100ms backoff, then proceed without the lock
-    # (atomic enough for ad-hoc dev use; concurrent CI invocation is
-    # accepted-cost per NG6).
-    local lockdir="${log}.lock"
-    local i=0
-    while ! mkdir "$lockdir" 2>/dev/null; do
-      i=$((i + 1))
-      if (( i >= 100 )); then
-        echo "warn: could not acquire log lock after 10s; writing without lock" >&2
-        break
-      fi
-      sleep 0.1
-    done
-    printf '%s\n' "$record" >> "$log"
-    rmdir "$lockdir" 2>/dev/null || true
-  fi
-}
 append_jsonl_atomic "$LOG_FILE" "$RECORD"
 
 # ── Summary ────────────────────────────────────────────────────────────────
