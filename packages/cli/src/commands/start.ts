@@ -23,7 +23,7 @@ import {
 import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
-import { incrementCollabSocketFilteredError, type PinoLogger } from '@inkeep/open-knowledge-server';
+import { handleCollabSocketError, type PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
@@ -439,10 +439,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // everything else. See CLAUDE.md precedent on async socket errors.
     if (req.url?.startsWith('/collab/keepalive')) {
       socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
-          incrementCollabSocketFilteredError(err.code);
-          return;
-        }
+        if (handleCollabSocketError(err)) return;
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -459,9 +456,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         pingTimer.unref?.();
         ws.on('close', () => clearInterval(pingTimer));
         ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
-            incrementCollabSocketFilteredError(err.code);
-          } else {
+          if (!handleCollabSocketError(err)) {
             log.error({ err }, 'MCP keepalive WS error');
           }
           ws.terminate();
@@ -472,10 +467,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
     if (req.url?.startsWith('/collab')) {
       socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
-          incrementCollabSocketFilteredError(err.code);
-          return;
-        }
+        if (handleCollabSocketError(err)) return;
         log.error({ err }, 'Upgrade socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -492,9 +484,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
           clientConnection.handleClose({ code, reason: reason.toString() });
         });
         ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
-            incrementCollabSocketFilteredError(err.code);
-          } else {
+          if (!handleCollabSocketError(err)) {
             log.error({ err }, 'WebSocket error');
           }
           ws.terminate();

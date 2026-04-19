@@ -139,13 +139,50 @@ export function incrementBridgeMergeCheckpointCreated(): void {
 }
 
 /**
- * Record a filtered collab-socket error. Use from every `/collab` upgrade
- * error listener (dev + prod) per precedent §22. The filter returns early
- * for EPIPE/ECONNRESET; this counter lets operators see the rate.
+ * Record a filtered collab-socket error. Prefer `handleCollabSocketError`
+ * at call sites — it pairs the classify + counter update atomically so the
+ * two can't drift. This low-level function is exported for tests.
  */
 export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
   if (code === 'EPIPE') counters.collabSocketEpipeCount++;
   else counters.collabSocketEconnresetCount++;
+}
+
+/**
+ * Classify a collab-socket error. Returns `true` if the error is a
+ * known-safe kernel TCP-teardown signal (EPIPE or ECONNRESET) that should
+ * be filtered out of logs per precedent §22. As a side effect, increments
+ * the corresponding per-code metric counter so operators can see the rate
+ * during incident triage.
+ *
+ * Returns `false` for any other error code — the caller surfaces those
+ * via their normal logging path.
+ *
+ * Contract: callers MUST use this helper rather than re-implementing the
+ * `code === 'EPIPE' || code === 'ECONNRESET'` check inline. Centralizing
+ * the filter surface prevents future skew (e.g., if ETIMEDOUT or ECONNABORTED
+ * become known-safe, the decision flips in one place).
+ *
+ * Usage shape:
+ *
+ *   socket.on('error', (err: NodeJS.ErrnoException) => {
+ *     if (handleCollabSocketError(err)) return;
+ *     log.error({ err }, 'Upgrade socket error');
+ *   });
+ *
+ *   ws.on('error', (err: NodeJS.ErrnoException) => {
+ *     if (!handleCollabSocketError(err)) {
+ *       log.error({ err }, 'WebSocket error');
+ *     }
+ *     ws.terminate();
+ *   });
+ */
+export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
+  if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+    incrementCollabSocketFilteredError(err.code);
+    return true;
+  }
+  return false;
 }
 
 export function setCC1LastSeq(channel: string, seq: number): void {
