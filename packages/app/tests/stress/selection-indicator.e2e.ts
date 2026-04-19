@@ -33,7 +33,7 @@ async function seedMarkdown(markdown: string) {
   const res = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, mode: 'replace' }),
+    body: JSON.stringify({ markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
