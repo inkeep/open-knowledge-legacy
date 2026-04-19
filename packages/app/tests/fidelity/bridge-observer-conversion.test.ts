@@ -302,6 +302,11 @@ const unicodeParagraph = fc
       fc.constantFrom('Привет', 'Спасибо'),
       // Supplementary-plane emoji (surrogate pairs, single code-point each)
       fc.constantFrom('🎉', '🚀', '💡', '🔥', '✨'),
+      // ZWJ sequences (family + flag-with-modifier). Verified to round-trip
+      // correctly across 9 contexts via direct probe; the initial skip was
+      // a mis-attribution of a leading-whitespace failure (see comment
+      // below this arbitrary).
+      fc.constantFrom('👨‍💻', '🏳️‍🌈'),
       // Combining marks (precomposed form — NFC-normalized by most parsers)
       fc.constantFrom('café', 'naïve', 'résumé'),
     ),
@@ -320,16 +325,15 @@ const unicodeParagraph = fc
         .trim()}\n`,
   );
 
-// NOTE: ZWJ-sequence emoji (👨‍💻 family, 🏳️‍🌈 flag-with-modifier) are
-// deliberately excluded from `unicodeParagraph`. Running this PBT with
-// `👨‍💻` surfaced a pre-existing ZWJ handling issue in the md/PM
-// conversion layer — the Zero-Width Joiner is normalized differently
-// between XmlFragment serialize and Y.Text, violating the bridge
-// invariant on round-trip. That issue is OUT OF SCOPE for the CI signal
-// quality spec (which is about CI tier structure, not md/PM conversion
-// correctness) but IS a legitimate finding for a follow-up spec on
-// Unicode normalization. Covered by a skipped point-test below to
-// preserve discoverability.
+// Note on arbitrary design: the initial draft excluded ZWJ-sequence emoji
+// (👨‍💻, 🏳️‍🌈) on the assumption they caused a bridge-invariant violation.
+// Subsequent investigation proved that assumption wrong — ZWJ emoji
+// round-trip correctly (verified via direct probe across 9 contexts:
+// alone, in-sentence, multiple, flag, at-end, at-start, mixed,
+// combining marks, Greek). The actual failing case was leading-
+// whitespace-in-paragraph, which the markdown parser normalizes away
+// (CommonMark-standard behavior). The arbitrary below therefore
+// trims/filters whitespace and INCLUDES ZWJ sequences.
 
 /**
  * Empty-YAML frontmatter arbitrary — `---\n---\n` with nothing between
@@ -807,15 +811,12 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
   );
 
   // Unicode / emoji coverage — exercises single-code-point emoji,
-  // BMP non-ASCII (Greek + Cyrillic), and precomposed combining marks
-  // through the conversion chain. A regression that drops a surrogate
-  // half or misnormalizes a combining mark fails here.
-  //
-  // ZWJ-sequence emoji are excluded from this PBT — see the comment
-  // next to `unicodeParagraph`. A `.todo()` marker below preserves the
-  // gap's discoverability.
+  // ZWJ-sequence emoji (family + flag-with-modifier), BMP non-ASCII
+  // (Greek + Cyrillic), and precomposed combining marks through the
+  // conversion chain. A regression that drops a surrogate half or
+  // misnormalizes a combining mark fails here.
   test(
-    'paired write: Unicode + simple emoji survive through both surfaces',
+    'paired write: Unicode + emoji (including ZWJ sequences) survive through both surfaces',
     () => {
       assertAcrossSeeds(
         fc.property(unicodeParagraph, (md) => {
@@ -823,10 +824,12 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
           applyPairedExternalChange(doc, fragment, ytext, md);
           // Bridge invariant still holds after Unicode/emoji round-trip.
           expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
-          // Spot-check: single-code-point emoji survive in both surfaces.
+          // Spot-check: emoji (including ZWJ sequences) survive in both
+          // surfaces. Stronger than token-based checks because it
+          // exercises surrogate-pair + ZWJ integrity specifically.
           const yText = ytext.toString();
           const fragText = serializeFragment(fragment);
-          const emojis = ['🎉', '🚀', '💡', '🔥', '✨'];
+          const emojis = ['🎉', '🚀', '💡', '🔥', '✨', '👨‍💻', '🏳️‍🌈'];
           for (const e of emojis) {
             if (md.includes(e)) {
               expect(yText.includes(e)).toBe(true);
@@ -839,31 +842,23 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
     PBT_TIMEOUT_MS,
   );
 
-  // Discoverability marker for the ZWJ-sequence gap surfaced by this PBT
-  // during the CI signal quality spec work. `.skip` marks the test as
-  // intentionally pending so readers know the coverage gap is deliberate
-  // and documented, not accidentally missed.
-  //
-  // TRACKING:
-  //   - Scope origin: `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-1 is
-  //     explicitly scoped to conversion-chain coverage at current
-  //     arbitraries — ZWJ normalization is NG11-class per CLAUDE.md and
-  //     belongs in a follow-up Unicode-normalization spec.
-  //   - Persisted: Ship Summary post-merge monitoring + state.json
-  //     `deferredScope[]` entry "ZWJ-sequence emoji handling in md/PM
-  //     conversion — follow-up spec on Unicode normalization".
-  //   - Reproducer: see Chain C smoke test above — counterexample
-  //     `"  👨‍💻\n"` fails the bridge-invariant after round-trip.
-  //   - To enable: remove `.skip` AFTER the follow-up spec lands a fix in
-  //     the md/PM conversion layer (parseWithFallback + schema.nodeFromJSON
-  //     + serializeFragment normalization symmetry).
-  test.skip('paired write: ZWJ-sequence emoji (👨‍💻, 🏳️‍🌈) — pre-existing md/PM gap, separate spec', () => {
-    // Intentionally skipped — see comment above. Uncommenting this test
-    // body would exercise the ZWJ round-trip once the underlying parser/
-    // serializer handles ZWJ symmetrically across XmlFragment and Y.Text.
-    const { doc, fragment, ytext } = freshDoc();
-    applyPairedExternalChange(doc, fragment, ytext, '👨‍💻\n');
-    expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
+  // ZWJ-sequence point check. Verified ZWJ emoji round-trip correctly
+  // across 9 contexts via direct probe — the earlier `test.skip` was a
+  // mis-attribution of a leading-whitespace issue surfaced during review.
+  // This test is deterministic (no PBT) because the concern is "does
+  // parseMd + schema + updateYFragment + serializeFragment preserve the
+  // exact ZWJ byte sequence" — a single canonical input per shape is
+  // enough to detect regression.
+  test('paired write: ZWJ-sequence emoji round-trip (family + flag)', () => {
+    const cases = ['👨‍💻\n', '🏳️‍🌈\n', 'Hello 👨‍💻 world\n', '👨‍💻 and 🏳️‍🌈\n'];
+    for (const md of cases) {
+      const { doc, fragment, ytext } = freshDoc();
+      applyPairedExternalChange(doc, fragment, ytext, md);
+      const yText = ytext.toString();
+      const fragText = serializeFragment(fragment);
+      expect(yText, `ytext should equal input for ${JSON.stringify(md)}`).toBe(md);
+      expect(fragText, `fragment should equal input for ${JSON.stringify(md)}`).toBe(md);
+    }
   });
 });
 
