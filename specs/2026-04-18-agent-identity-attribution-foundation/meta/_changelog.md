@@ -103,3 +103,31 @@ Updated FR-3 (UM scope extension), FR-5 (endpoint list expansion), §8.6 ref tab
 **ASK_FIRST cleanup.** All 6 previously-listed items resolved by locks D21-D54. ASK_FIRST now points to residual Q100-Q105 which are implementer-time considerations, not blockers.
 
 **Full spec state post-sweep.** 56 decisions locked. Footer updated: iterative loop substantially complete; ready for Audit phase (Task 9).
+
+## 2026-04-18 — Audit phase (Task 9-10): 4 parallel Opus audits + assess-findings
+
+**Dispatched:** 4 parallel general-purpose agent audits (Opus), each loading `eng:audit` skill, scoped to D21-D26 / D27-D32 / D33-D42 / D43-D56 respectively. Each verified decisions against actual code with adversarial stance (per directive). Findings written to `meta/audit-findings-batch-{a-um,b-lifecycle,c-history,d-product}.md`.
+
+**Raw tally:** 8 HIGH, 15 MEDIUM, 3 PRAGMATISM, 8 LOW across 34 findings.
+
+**Assessment (via `eng:assess-findings` at high fidelity):** All 14 prioritized findings held up under code verification. 0 DISMISS, 0 REOPEN, 0 ESCALATE. All classified as CORRECT (spec wording fix).
+
+**Applied corrections:**
+
+- **D26 rationale fix (Batch A H1).** Previous claim "Hocuspocus `unloadDocument` doesn't call `ydoc.destroy()`" was factually wrong. Verified: `Hocuspocus.ts:580 document.destroy();`. UM auto-destroys via Y.UndoManager's `doc.on('destroy')` listener. Real hazard is DirectConnection blocking `shouldUnloadDocument` via `getConnectionsCount() > 0`. Load-bearing primitive is `session.dc.disconnect()`, not explicit UM destroy.
+- **FR-11 rewrite (Batch A H2 / Batch D H2).** FR-11 still referenced `transaction.changed + stack-item-added`; D22 locked `YTextEvent.delta`. Rewritten FR-11 to align with D22.
+- **D42 / FR-5 expansion (Batch C H1).** Enumeration missed `handleSyncTrigger` (api-extension.ts:4012), `handleSyncSetEnabled` (4040), `handleSyncAbortMerge` (4165). Meta-test would fail day one. D42 expanded from 9 to 12 handlers.
+- **D35 classification-based sweep (Batch C H2).** Legacy-ref regex `$NF == "server"` would miss `refs/wip/<branch>/human-server` (actively written by `parkBranch(sessionId='server')` → shadow-repo.ts:722). Fix: sweep via `parseWriterId` classification, not regex.
+- **D19 refactor scope ownership (Batch C H3).** D39 previously framed park change as "one-line reorder." True refactor cost (per-session parkBranch loop + signature change + restore loop) belongs to D19+D40. D19 explicitly owns the refactor; D39 owns only the mutex ordering + transact wrap.
+- **D39 pragmatism upgrade (Batch C P1).** "Known tolerated microsecond-late transact" replaced with transact-wrapped isolation via new `PARK_SNAPSHOT_ORIGIN`. Race eliminated, not tolerated.
+- **D57 added (Batch D H3).** `Y.Map('activity')` renamed to `Y.Map('agent-flash')` — disambiguates from D49's server-side "activity log" store and D25's UM-scope `activityMap` reference. Three-way name conflation eliminated. 6 code sites update + D25's UM scope param name.
+- **D25 multi-agent `ignoreRemoteMapChanges` (Batch A M1).** Y.UndoManager default `false` would cause partial undos under concurrent Y.Map writes. Set `ignoreRemoteMapChanges: true` in UM config.
+- **D32 DirectConnection context gap (Batch B M1).** `openDirectConnection` accepts context but current call passes none. D32 updated to require threading session context + STOP rule against `dc.transact(fn)` (must use `dc.document.transact(fn, session.origin)`).
+- **D43 AgentFocusEntry enum extension (Batch D M).** Added `'undo' | 'rollback-apply'` to `writeKind` enum. Type schema change (additive) in `packages/core/src/types/awareness.ts`.
+- **D51/D56 gitignore scope reconcile (Batch D M).** D51 subsumed by D56's directory-wide `.open-knowledge/` gitignore entry. No separate single-file entry.
+- **D41 extend-existing lock (Batch C M).** Existing `recordContributor` already accepts any writer-id. D41 broadens signature semantics; no new function.
+- **D55 UI prose fix (Batch D M).** Actual UI surface is `TimelinePanel.tsx`, not a "History panel." Rationale dropped the "History panel" specific claim; kept `/api/history` + user mental model alignment.
+
+**Post-audit state.** 57 decisions locked (D1-D57). All high + medium audit findings resolved. Residual low findings are editorial (markdown symbol inconsistency, dense references, etc.) and tracked but not urgent.
+
+**Ready for Task 11:** Verify and finalize.
