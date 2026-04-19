@@ -34,10 +34,21 @@ export default defineConfig({
   testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
-  // D-Q5 LOCKED: retries absorb transient infra noise; failOnFlakyTests keeps
-  // the verdict strict — retry-success still fails the PR.
+  // D-Q5 revisited 2026-04-19 per specs/2026-04-19-ci-signal-quality/SPEC.md
+  // (FR-4 / D-Q3). Prior D-Q5 LOCKED (2026-04-17) set failOnFlakyTests: true
+  // so retry-success still failed the PR. Operational evidence over the
+  // following two weeks showed retry-pass promoting infrastructure noise
+  // (WebSocket EPIPE/ECONNRESET, transient CC1 broadcast jitter) to PR-red,
+  // compounding the architectural CRDT fuzz/stress residual into an effective
+  // ~22% PR-tier green rate on correct code. New decision locks
+  // failOnFlakyTests: false globally — retries absorb infra flake, and
+  // persistent flake detection moves to nightly-e2e-stability.yml's
+  // --repeat-each=3 --workers=1 sweep (which auto-opens GitHub issues
+  // labeled 'e2e-flake' on consistent failure). See
+  // specs/2026-04-17-e2e-observability-determinism/evidence/d-q5-amendment-2026-04-19.md
+  // for the full revisit rationale.
   retries: isCI ? 2 : 0,
-  failOnFlakyTests: isCI,
+  failOnFlakyTests: false,
   forbidOnly: isCI,
   // D-Q7 LOCKED at workers=4 on `ubuntu-64gb` (16+ vCPU / 64 GB RAM shared
   // runner). Calibration history:

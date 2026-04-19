@@ -865,7 +865,7 @@ export async function awaitDocQuiescence(doc: Y.Doc, opts?: { timeoutMs?: number
   `test:fuzz:bridge` task so the cache key is correct; `ci.yml` exports
   `STRESS_FUZZ_PR=1` on the PR matrix entry. The fuzz harness logs
   `[bridge-convergence fuzzer] mode=<pr|nightly|default|custom> seeds=<n>`
-  at startup so reviewers can verify coverage in CI logs.
+  at startup so reviewers can verify coverage in CI logs.<br>_[Corrected 2026-04-19 post-ship: D11's split-by-tier plan is obsolete — bridge fuzz was removed from CI entirely (ci.yml/nightly.yml/weekly.yml + turbo.json `test:fuzz:bridge` task + `packages/app/package.json` script all deleted) per `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-2 / D-Q1 LOCKED Option A. The architectural CRDT residual it sampled is intrinsic to the dual-CRDT topology (no automated detection pending D4 single-CRDT collapse, H2 2026+). Sample ad-hoc via `bun run measure:fuzz` — results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl` and git history is the trend record. Canonical replacement: `packages/app/scripts/measure-fuzz.sh` + AGENTS.md §Measurement scripts section.]_
 - **D12 (DELEGATED).** R0e determinism approach: full deterministic via scheduler DI +
   new `pauseOutbound` primitive on `ControllableWebSocket` (Challenge F7),
   OR probabilistic (run-many-times, rate-based acceptance). Spike during

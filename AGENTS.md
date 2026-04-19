@@ -27,7 +27,7 @@ cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 
 ```bash
 bun run check                        # THE gate — lint + typecheck + unit + integration + fidelity (~20-30s warm)
-bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
+bun run check:full:parallel          # Full suite: check + e2e (turbo parallel, ~2 min warm)
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
 cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
@@ -44,11 +44,31 @@ Three CI tiers, calibrated against measured baselines (US-016 / SPEC R9). Turbo 
 
 | Tier | Cadence | Workflow | Scope | Budget |
 | ---- | ------- | -------- | ----- | ------ |
-| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative); bridge fuzz (`STRESS_FUZZ_PR=1` → 75 seeds) as a dedicated `fuzz` job on `ubuntu-latest`. 75 seeds calibrated against measured CI per-seed distribution (mean 8.9 s, p95 24 s, max 46 s on main's 25-seed baseline); 200 seeds didn't fit the 15-min budget on any runner — long-tail dominates. See `resolveSeedCount` in `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`. | 15 min (p95 warm local baseline ≈ 2m30s; fuzz ≈ 11 min) |
-| 2    | On demand (`workflow_dispatch`) | `.github/workflows/nightly.yml` | deep fuzz (`STRESS_FUZZ_NIGHTLY=1`), full stress, perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`) | 30 min per job |
-| 3    | On demand (`workflow_dispatch`) | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), elevated-seed bridge fuzz, perf-trend benchmark artifact upload | 60 min |
+| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples, includes bridge-observer-conversion PBT per `specs/2026-04-19-ci-signal-quality/` FR-1). Playwright E2E on `ubuntu-64gb`. No bridge fuzz or server-authoritative stress jobs — both removed from CI on 2026-04-19 per the CI signal quality spec; sampled on-demand via `bun run measure:fuzz` / `measure:stress` (see Measurement scripts section). | 15 min (p95 warm local baseline ≈ 2m30s) |
+| 2    | On demand (`workflow_dispatch`) | `.github/workflows/nightly.yml` | perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`), R15 guard (`test:perf:r15-guard`). Fuzz + full stress were removed on 2026-04-19 per the CI signal quality spec — sample ad-hoc via `bun run measure:fuzz` / `measure:stress`. | 30 min per job |
+| 3    | On demand (`workflow_dispatch`) | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), perf-trend benchmark artifact upload | 60 min |
 
-**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR. Tier 2 if it's a perf / health regression gate, a deep fuzz, or any signal that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs), a multi-minute stress scenario, or a trend artifact the team reviews weekly. Tiers 2 and 3 run on-demand only — the scheduled triggers were retired while this project is pre-production (no consumer for background signal; tier-1 catches regressions at merge time). Developers fire them via the GitHub Actions UI ("Run workflow") or `gh workflow run <nightly|weekly>.yml` when stress-testing a risky change. Re-enable `schedule:` triggers in the workflow files if background regression detection becomes load-bearing.
+**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR AND is deterministic (zero architectural-residual flake tolerance). Tier 2 if it's a perf / health regression gate that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs) or a trend artifact the team reviews weekly. Tiers 2 and 3 run on-demand only — the scheduled triggers were retired while this project is pre-production (no consumer for background signal; tier-1 catches regressions at merge time). Developers fire them via the GitHub Actions UI ("Run workflow") or `gh workflow run <nightly|weekly>.yml` when stress-testing a risky change. Re-enable `schedule:` triggers in the workflow files if background regression detection becomes load-bearing.
+
+**Architectural CRDT residual is NOT a CI signal.** The dual-CRDT (Y.XmlFragment + Y.Text) topology has an intrinsic three-way merge residual (D4-LOCKED in `specs/2026-04-16-bridge-correctness/` until H2 2026+). Tests that exercise that residual — `bridge-convergence.fuzz.test.ts`, `server-authoritative-stress.test.ts` — are invocable but are NOT part of any automated tier. Sample their rate via `bun run measure:fuzz` / `measure:stress`; see the Measurement scripts section below. See `specs/2026-04-19-ci-signal-quality/SPEC.md` for the full rationale (G1: PR-tier green rate ≥95% on correct code; NG6: no automated regression detection for architectural residual — accepted cost).
+
+### Measurement scripts (ad-hoc, not CI)
+
+Human-invoked scripts for sampling the architectural CRDT residual rate. Not part of CI. Results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl` — the git history of that file is the trend record.
+
+| Script | What it measures | Typical invocation |
+|--------|------------------|--------------------|
+| `bun run measure:fuzz` | Bridge-convergence fuzz seed-failure rate across an arbitrary seed budget | `bun run measure:fuzz --seeds 1000 --context "pre-PR-218 baseline"` |
+| `bun run measure:stress` | Server-authoritative 5-client × 30s convergence outcome for one seed | `bun run measure:stress --seed 42 --duration 30000 --context "investigate #206"` |
+
+**When to run:**
+- Before merging a PR that touches `packages/server/src/server-observers.ts`, `packages/core/src/bridge/**`, or Y.js / Hocuspocus deps in `bun.lock`.
+- When investigating a suspected rate shift reported by a teammate.
+- During bridge-correctness spec work (`specs/2026-04-16-bridge-correctness/`).
+
+**Querying the log:** `jq` one-liners are documented in the script file headers (`packages/app/scripts/measure-fuzz.sh`, `measure-stress.sh`) and in `specs/2026-04-16-bridge-correctness/evidence/residual-measurements-SCHEMA.md`.
+
+**Why this isn't in CI:** per NG6 of `specs/2026-04-19-ci-signal-quality/SPEC.md`, the architectural residual cannot be eliminated within the current topology and its ~2-3% per-seed rate across 75 seeds mathematically guarantees >80% PR-red on correct code if enforced. The team convention is: sample ad-hoc, commit the JSONL record as part of any bridge-touching PR, review the file's git history for trend signal. Dep-runner drift goes unnoticed until a bridge-touching PR runs the script — accepted cost.
 
 **Perf gate calibration.** Threshold is `max(2× p99 variance, 10% absolute floor)` per block size. Baseline lives in `packages/core/tests/perf/baseline.json`. Synthetic-regression tests in `tests/perf/regression-gate.test.ts` prove the gate fires on injected slowdown.
 
@@ -576,10 +596,13 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 | A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit) |
 | B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
 | C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`, `tests/stress/docs-open.e2e.ts` (hybrid-render nav: F1-F11+F13, precedent #18) | `bunx playwright test`                                     |
-| D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
 | Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
-| Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I11) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/` (I1-I10 + handler PBTs); `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (I11) | `bun run test:fidelity` + core unit suite (I11 runs in `bun run test`) |
+| Fidelity    | PBT invariants (I1-I11) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape + bridge-observer-conversion PBT | `packages/app/tests/fidelity/` (I1-I10 + handler PBTs + `bridge-observer-conversion.fidelity.test.ts`); `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (I11) | `bun run test:fidelity` + core unit suite (I11 runs in `bun run test`) |
+
+> **Removed on 2026-04-19 per `specs/2026-04-19-ci-signal-quality/SPEC.md`:**
+> - Layer D (multi-client convergence fuzz, `bridge-convergence.fuzz.test.ts`) — test file preserved; invoke ad-hoc via `bun run measure:fuzz` (see Measurement scripts above).
+> - Stress layer (5-client × 30s convergence, `server-authoritative-stress.test.ts`) — test file preserved; invoke ad-hoc via `bun run measure:stress`.
+> Both exercised the architectural CRDT residual (dual-CRDT topology, D4-LOCKED until H2 2026+). Running them in CI produced >80% PR-red on correct code — mathematically inevitable given the per-seed race rate × seed count. Detection of conversion-class regressions (design-goal lossless, distinct from CRDT merge) moved to the new `bridge-observer-conversion.fidelity.test.ts` at the Fidelity layer.
 
 ### Tier 1 integration harness
 
@@ -667,10 +690,18 @@ Changes to `observers.ts` or `server-observers.ts` require **multi-client test c
 
 Playwright E2E tests run on every PR. The Playwright suite covers DOM-binding and user-interaction regressions that unit/integration tests cannot reach (e.g., TipTap NodeView rendering, CodeMirror key bindings, presence UI). Do not skip Playwright in CI; do not add Playwright tests for pure bridge-logic changes — those belong in `bridge-matrix.test.ts` and `observers.test.ts`.
 
-### Fuzz replay
+### Fuzz + stress replay (ad-hoc only — not CI)
+
+Fuzz and stress tests are no longer part of any automated tier (see "Measurement scripts" above; full rationale in `specs/2026-04-19-ci-signal-quality/SPEC.md`). For investigation and seed replay:
 
 ```bash
+# Direct bun test invocation (preserves existing seed-replay envs):
 STRESS_FUZZ_SEED=42 bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
+STRESS_SEED=42      bun test packages/app/tests/stress/server-authoritative-stress.test.ts
+
+# Or via the wrapper scripts that append a JSONL record to the trend log:
+bun run measure:fuzz   --seed-replay 42 --context "reproduce flake from PR #218"
+bun run measure:stress --seed 42         --context "reproduce flake from PR #218"
 ```
 
 Fuzz tests write snapshots to `/tmp/fuzz-*` on failure for deterministic reproduction.

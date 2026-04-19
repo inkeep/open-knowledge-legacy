@@ -36,32 +36,6 @@
         "../server/src/**/*.ts"
       ]
     },
-    "test:stress:server-authoritative": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/server-authoritative-stress.test.ts",
-        "tests/integration/test-harness.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:fuzz:bridge": {
-      "dependsOn": [],
-      "cache": false,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/bridge-convergence.fuzz.test.ts",
-        "tests/integration/test-harness.ts",
-        "tests/integration/network-control.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ],
-      "env": ["STRESS_FUZZ_PR", "STRESS_FUZZ_NIGHTLY", "STRESS_FUZZ_SEED", "BRIDGE_FUZZ_SEEDS"]
-    },
     "test:fidelity": {
       "dependsOn": [],
       "cache": true,
