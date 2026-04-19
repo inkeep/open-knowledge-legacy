@@ -18,6 +18,7 @@ export {
   test,
   type WorkerServer,
 } from './fixtures.ts';
+export { waitForGraphSimulationSettled } from './graph.ts';
 export {
   installClockAfterSync,
   type WaitForProviderOptions,

@@ -91,6 +91,7 @@ export {
 } from './managed-rename-rewrite.ts';
 export {
   getMetrics,
+  incrementCollabSocketFilteredError,
   incrementServerObserverFire,
   type ReconciliationMetrics,
   resetMetrics,

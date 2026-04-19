@@ -20,6 +20,7 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
+  incrementCollabSocketFilteredError,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
@@ -278,7 +279,10 @@ export function hocuspocusPlugin(): Plugin {
           // remaining visibility is catching + classifying the async emission
           // here. Drop the expected codes; surface everything else.
           socket.on('error', (err: NodeJS.ErrnoException) => {
-            if (err.code === 'EPIPE' || err.code === 'ECONNRESET') return;
+            if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+              incrementCollabSocketFilteredError(err.code);
+              return;
+            }
             console.error('[collab] Upgrade socket error:', err);
           });
 
@@ -293,7 +297,9 @@ export function hocuspocusPlugin(): Plugin {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
             ws.on('error', (err: NodeJS.ErrnoException) => {
-              if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+              if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+                incrementCollabSocketFilteredError(err.code);
+              } else {
                 console.error('[collab] WebSocket error:', err);
               }
               ws.terminate();

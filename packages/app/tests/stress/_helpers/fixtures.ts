@@ -197,9 +197,16 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           // duplicated across 4 workers and clutters CI logs.
           NO_COLOR: process.env.NO_COLOR ?? '1',
         },
-        // Inherit stderr so unexpected plugin errors surface; pipe stdout to
-        // avoid interleaved banner output across workers.
-        stdio: ['ignore', 'pipe', 'inherit'],
+        // Discard stdout entirely; inherit stderr so unexpected plugin errors
+        // still surface. `pipe` without a consumer is fragile — under
+        // high-output scenarios (Vite rebuild loops, verbose plugin output)
+        // the 64KB default pipe buffer fills and `bun` blocks on write
+        // indefinitely. 4 workers × that failure mode → a whole CI run can
+        // hang behind a single worker's stalled Vite. `'ignore'` routes
+        // stdout to `/dev/null` at the kernel level — no buffer, no
+        // backpressure, no risk. Stderr stays `'inherit'` so real errors
+        // land in the Playwright worker log for debugging.
+        stdio: ['ignore', 'ignore', 'inherit'],
       });
 
       proc.on('error', (err) => {
@@ -262,7 +269,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         }
       },
       async seedDocs(docs: Array<{ name: string; markdown: string }>): Promise<void> {
-        await fetch(`${baseURL}/api/test-reset`, { method: 'POST' });
+        // Use the error-throwing helper rather than a bare fetch. A silent
+        // test-reset failure (server not ready, transient error, alias
+        // collision) would otherwise let createPage/replaceDoc operate on
+        // stale CRDT state and produce a confusing intermittent failure
+        // with no signal about the actual fault. Surface the reset error
+        // loudly so triage finds it immediately.
+        await helpers.testReset();
         for (const d of docs) await helpers.createPage(`${d.name}.md`);
         for (const d of docs) await helpers.replaceDoc(d.name, d.markdown);
       },

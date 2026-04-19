@@ -35,6 +35,17 @@ export interface ReconciliationMetrics {
    *  checkpoints written via saveInMemoryCheckpoint. Bounds the rate a user
    *  might see in TimelinePanel; if high, R7c coalescing becomes worth adding. */
   bridgeMergeCheckpointCreated: number;
+  /** Collab WebSocket upgrade sockets emitting EPIPE from `ws.send()` AFTER
+   *  the call returned control — kernel-level TCP race against a peer that
+   *  has sent FIN. Filtered at the socket-boundary listener per precedent
+   *  §22 (known-safe at half-close). Counted for observability: a spike
+   *  indicates upstream network load or peer-disconnect patterns worth
+   *  investigating, even though individual events are expected. */
+  collabSocketEpipeCount: number;
+  /** Collab WebSocket upgrade sockets emitting ECONNRESET — peer-side
+   *  unclean close (RST). Same precedent §22 filter boundary; same
+   *  observability rationale as `collabSocketEpipeCount`. */
+  collabSocketEconnresetCount: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -57,6 +68,8 @@ const counters: ReconciliationMetrics = {
   persistenceDiskWrites: 0,
   bridgeMergeContentLoss: 0,
   bridgeMergeCheckpointCreated: 0,
+  collabSocketEpipeCount: 0,
+  collabSocketEconnresetCount: 0,
 };
 
 export function incrementReconcile(): void {
@@ -125,6 +138,16 @@ export function incrementBridgeMergeCheckpointCreated(): void {
   counters.bridgeMergeCheckpointCreated++;
 }
 
+/**
+ * Record a filtered collab-socket error. Use from every `/collab` upgrade
+ * error listener (dev + prod) per precedent §22. The filter returns early
+ * for EPIPE/ECONNRESET; this counter lets operators see the rate.
+ */
+export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
+  if (code === 'EPIPE') counters.collabSocketEpipeCount++;
+  else counters.collabSocketEconnresetCount++;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -153,4 +176,6 @@ export function resetMetrics(): void {
   counters.persistenceDiskWrites = 0;
   counters.bridgeMergeContentLoss = 0;
   counters.bridgeMergeCheckpointCreated = 0;
+  counters.collabSocketEpipeCount = 0;
+  counters.collabSocketEconnresetCount = 0;
 }

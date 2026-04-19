@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { type ApiHelpers, expect, test } from './_helpers';
+import { type ApiHelpers, expect, test, waitForGraphSimulationSettled } from './_helpers';
 
 type GraphHarness = {
   clickDoc: (docName: string) => boolean;
@@ -272,31 +272,6 @@ async function waitForGraphLinkClickPoint(
       intervals: [100, 250, 500],
     })
     .toBe(true);
-}
-
-/**
- * Block until the force-layout simulation has reached its cooldown terminus
- * — `react-force-graph-2d`'s `onEngineStop` fires, latching
- * `simulationSettledRef` to true in `GraphView.tsx`. Before this point, node
- * positions drift under active physics; a canvas click computed from a
- * pre-settlement snapshot lands in the wrong place (beta drifts ~24px in
- * ~500ms, vs a non-active 8px hit radius). See precedent §20(a) category C
- * (physics-simulation race sub-note). Required before any
- * `getGraphSurface(page).click({ position: ... })` call whose position was
- * captured via `getGraphNodeClickPoint` / `getGraphLinkClickPoint`.
- */
-async function waitForGraphSimulationSettled(page: Page) {
-  await page.waitForFunction(
-    () =>
-      (
-        window as Window &
-          typeof globalThis & {
-            __graphHarness?: GraphHarness;
-          }
-      ).__graphHarness?.isSimulationSettled() === true,
-    undefined,
-    { timeout: 10_000 },
-  );
 }
 
 async function expectGraphToFillAvailableHeight(page: Page) {
