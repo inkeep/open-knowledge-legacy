@@ -247,17 +247,12 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     };
   }, [editor]);
 
-  // Expose the active editor on window for E2E tests. Matches the existing
-  // observability convention (__activeProvider, __agentFlashState). Cleared
-  // on unmount so late tests against a dead editor fail fast rather than
-  // silently operating on a stale instance.
-  useEffect(() => {
-    if (!editor) return;
-    window.__activeEditor = editor;
-    return () => {
-      if (window.__activeEditor === editor) window.__activeEditor = undefined;
-    };
-  }, [editor]);
+  // Note: `window.__activeEditor` is exposed centrally from DocumentContext
+  // via `Object.defineProperty({get})` reading the `active-editor.ts`
+  // registry — populated by the `registerEditor`/`unregisterEditor` effect
+  // above. Direct assignment here used to collide with that getter-only
+  // accessor and throw "Cannot set property __activeEditor of #<Window>
+  // which has only a getter" on any doc open in DEV.
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -544,10 +539,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   );
 };
 
-// Expose flash state type on window for test access
+// Expose flash state type on window for test access.
+// `__activeEditor` is declared globally in env.d.ts (DocumentContext owns the
+// accessor); no duplicate Window augmentation here.
 declare global {
   interface Window {
     __agentFlashState?: AgentFlashState;
-    __activeEditor?: import('@tiptap/core').Editor;
   }
 }
