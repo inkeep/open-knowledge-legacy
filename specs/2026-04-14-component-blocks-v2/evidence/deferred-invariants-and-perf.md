@@ -1,5 +1,7 @@
 # Deferred — Invariant tests I13-I17 + Perf tests PF01/PF02 + DOM harness
 
+> **2026-04-19 update (post-scriptum).** The greenfield-directive `/assess-findings` pass on 2026-04-19 collapsed most of the deferred items into PR #165 itself. See "Post-scriptum: 2026-04-19 outcomes" at the bottom of this doc for the final disposition.
+
 **Produced:** 2026-04-16 by the PR #165 component-blocks-v2 agent, after landing commits 1-2 of a planned 6-commit follow-up series. Commits 3-6 are deferred to a stacked follow-up PR.
 
 **Purpose:** Full handoff context for the agent that picks up the deferred work — the scope gap between SPEC §7.1 + §6 (what PR #165 claimed it would ship) and the actually-shipped tree. All research, decisions, and reasoning captured here so the follow-up can execute without reconstructing context from scratch.
@@ -632,3 +634,44 @@ grep -c "^\s*test(" packages/app/tests/stress/component-blocks.perf.test.ts
 7. **I15 Observer B harness complexity** — the server-side Observer B test harness (`packages/server/src/server-observers.test.ts`) is complex. Make sure the reused test scaffolding in I15 correctly drains the observer debounce + handles scheduler DI.
 
 8. **I17 novelty tax** — this is the first DOM-rendered PBT in the codebase. Expect ~1-2 days of harness-stabilization even after the spike passes. Property shrinking on DOM docs is non-trivial (fast-check's default shrinkers don't understand DOM).
+
+---
+
+## Post-scriptum: 2026-04-19 outcomes
+
+Applied `/assess-findings` rigorously per user's greenfield directive ("NO
+DEFERRED TECH DEBT — optimize for best architecture + correctness"). The
+2026-04-16 deferral plan was re-evaluated. Outcomes:
+
+### Items landed in PR #165 (commits during 2026-04-19 session)
+
+| Item | File(s) | Outcome |
+|---|---|---|
+| A | `jsx-pristine-byte-identity.test.ts` | **Landed.** Refactored to consume `loadBuiltInFixtures()`. 21 tests pass (18 block + 3 inline from fixtures + 3 γ dirty-path edge cases). |
+| B | `ng-pinned.test.ts` | **Landed.** NG12 section added, iterates `loadNgPinnedCases()`, asserts idempotence per-case + pinned `expectedOutput` when non-null. 12 tests pass (2 existing + 10 NG12). |
+| C | `invariant-i13.test.ts` | **Landed.** PBT over 18 built-ins × synthetic prop edits (string/boolean/identifier-expression/delete). String-attr values scoped to the NG12-accepted domain `/^[a-zA-Z0-9 _./:#-]{1,40}$/` — MDX special chars (`{ } " < > \n \\`) are I9/I14-class concerns, not I13's. 16 tests, 1005 expect calls. |
+| D | `invariant-i14.test.ts` | **Landed.** Byte-identity on rawMdxFallback content across 14 crash-taxonomy `clean-or-fallback` entries + 10 hand-authored malformed fixtures + 1 round-trip pin. **Architectural correction:** per Precedent #10 (opaque-but-content-bearing), rawMdxFallback stores source as a `text` child, not in `attrs.sourceRaw`. Test helper walks `content` accordingly. 25 tests pass. |
+| E | `invariant-i15.test.ts` | **Landed.** Layer A (mdManager) vs Layer B (Y.Doc + updateYFragment + yXmlFragmentToProsemirrorJSON) parity across 18 built-in fixtures + 10 NG12 cases. 28 tests pass. |
+| F | `invariant-i16.test.ts` | **Landed.** PBT over nested-container fixtures (Cards/Steps/Tabs/Accordion) × random dirty-descendant subsets × injected edit markers. Assert every injected marker appears in serialized output — regression gate for `hasDirtyDescendant`. 5 tests, 784 expect calls. |
+
+### Items declined with evidence (not deferred)
+
+| Item | Disposition | Evidence |
+|---|---|---|
+| G | **Declined.** DOM env not shipped. | 2026-04-19 spike (`_spike-dom-env.test.ts`, committed and deleted) proved `@happy-dom/global-registrator` + React 19.2 under `bun test` is incompatible: React's scheduler reads `window.event` at module-closure capture time, before `beforeAll` can shim. `window = globalThis` + `window.event = undefined` shims don't help because the scheduler closure is already bound. Workaround requires `bun test --preload` scaffolding — infrastructure cost disproportionate to marginal coverage since Playwright covers the same ground more faithfully. |
+| H | **Declined full DOM-PBT, landed STOP rule instead.** | `invariant-i17.test.ts` is a static STOP rule (Precedent #20 pattern) that greps `NODE_VIEW_SOURCES` for forbidden patterns (inline `display:none`, `hidden` attr, `aria-hidden="true"`, conditional `display:none` via ternary on NodeViewContent). Plus exemption-discipline pin for compound-wrappers.tsx's tab-panel exemption + audit-completeness test that lists every file using `<NodeViewContent>` JSX. Real-browser hiding (class-based CSS, layout, opacity) is covered by Playwright QA-001..QA-050 — STRONGER coverage than happy-dom DOM-PBT would have provided. |
+| I | **Declined Bun-tier, kept Playwright-tier.** | PF01 requires working React.Profiler under happy-dom + TipTap NodeView mount, which depends on item G. Real-browser Playwright performance assertion for the same render-isolation property is the right-sized gate per the evidence doc's own recommendation ("absolute ms belongs in Playwright, not Bun tests"). PF03/PF05/PF06 already ship. |
+| J | **Declined Bun-tier, kept Playwright-tier.** | PF02's ancestor-context-lookup timing requires the same DOM infrastructure. Same reasoning as PF01. |
+
+### Architectural takeaways
+
+1. **Precedent #10 clarification:** the evidence doc's original I17/I14 design referenced `attrs.sourceRaw` on `rawMdxFallback`. PR #165's actual implementation (correctly, per Precedent #10) stores source as `content[0].text`. I14 helper was corrected at implementation time.
+2. **Emulator middle-tier is not worth shipping.** happy-dom + React 19.2 compatibility + TipTap layout-mock cost + "novel DOM-PBT" implementation risk, all for coverage that Playwright provides better. STOP rule + Playwright is the right shape.
+3. **PBT scope-to-contract discipline.** I13's synthetic prop-edit PBT initially surfaced real counterexamples (`title="{"` etc) — but those are I9/I14/R23-class concerns (MDX special-char handling), not I13's NG12-accepted-edit domain. Narrowed the arbitrary to match NG12's coverage shape. PBT coverage should match the invariant's committed contract, not exceed it.
+4. **Fixture-first architecture works.** All five new tests (I13-I17) consume canonical fixtures (`loadBuiltInFixtures`, `loadNgPinnedCases`, `loadMdxCrashTaxonomy`). Single source of truth; no drift between inline test literals and JSON fixtures.
+
+### Residual deferred (genuinely out-of-PR-scope)
+
+- **Class-based CSS hiding in real browser** — Playwright supplementary test for forced-colors + CSS-utility-class hiding. Product-feature follow-up, not correctness gap.
+- **NG10 / NG13 / NG14** — SPEC-marked `[NOT NOW]` with user authorization. Preserved design docs in `evidence/`.
+- **Block-selection-indicator architecture** — research-backed feature work in `reports/block-selection-indicator-patterns/`. Stacks on this branch as its own PR.
