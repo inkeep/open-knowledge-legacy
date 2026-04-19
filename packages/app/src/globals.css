@@ -1144,6 +1144,16 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper {
   position: relative;
   border-radius: 0.375rem;
+  /* Establishes a stacking context for the behind-content halo (§7a).
+   * `position: relative` alone is NOT sufficient: with `z-index: auto`
+   * the wrapper doesn't open its own stacking context, so the `::after`
+   * at `z-index: -1` escapes to the viewport root and paints BEHIND
+   * `body { background-color: ... }` — the halo becomes invisible.
+   * `isolation: isolate` creates a stacking context without affecting
+   * z-index cascade for siblings, trapping the halo at -1 behind the
+   * wrapper's own content but above the body background. SPEC §3.3
+   * T10 evidence assumed `position: relative` was enough; it's not. */
+  isolation: isolate;
 }
 /* Child component drag prevention is handled via onDragStart={preventDefault}
    on the NodeViewWrapper in JsxComponentView.tsx. CSS-level -webkit-user-drag
