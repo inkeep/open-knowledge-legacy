@@ -10,7 +10,7 @@ name: CI
 # D-Q1/D-Q2 LOCKED Option A). Both sampled the dual-CRDT topology's
 # architectural residual race at a rate that mathematically guaranteed >80%
 # PR-red on correct code. Conversion-class signal moved to
-# `packages/app/tests/fidelity/bridge-observer-conversion.fidelity.test.ts`
+# `packages/app/tests/fidelity/bridge-observer-conversion.test.ts`
 # (deterministic, PR-blocking). Residual-rate sampling moved to ad-hoc
 # `bun run measure:fuzz` / `measure:stress` — see AGENTS.md §Measurement
 # scripts.

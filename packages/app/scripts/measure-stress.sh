@@ -61,7 +61,10 @@ while [[ $# -gt 0 ]]; do
     --context)
       CONTEXT="$2"; shift 2 ;;
     -h|--help)
-      sed -n '1,40p' "$0"; exit 0 ;;
+      # Print the full header comment block up to the first blank-comment-
+      # line sentinel `^$`. Sentinel-based extraction so --help stays
+      # accurate as the header grows.
+      sed -n '1,/^$/p' "$0"; exit 0 ;;
     *)
       echo "error: unknown flag: $1" >&2
       echo "run with --help for usage" >&2
@@ -72,6 +75,14 @@ done
 if [[ -z "$CONTEXT" ]]; then
   echo "error: --context is required (free-text annotation for JSONL record)" >&2
   echo "example: --context 'pre-PR-218 baseline'" >&2
+  exit 2
+fi
+
+# Validate --seed is numeric. Non-numeric values exported as STRESS_SEED
+# would coerce to NaN→1 at the test's Number() call, producing a
+# deterministic-looking run unrelated to the operator's request.
+if [[ -n "$SEED" && ! "$SEED" =~ ^-?[0-9]+$ ]]; then
+  echo "error: --seed must be an integer (got: $SEED)" >&2
   exit 2
 fi
 

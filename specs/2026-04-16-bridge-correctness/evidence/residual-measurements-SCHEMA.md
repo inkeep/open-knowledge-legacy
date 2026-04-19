@@ -12,8 +12,8 @@ The git history of `residual-measurements.jsonl` is the trend record for the arc
 
 | Producer | How invoked | script field |
 |----------|-------------|--------------|
-| `packages/app/scripts/measure-fuzz.sh` | `bun run measure:fuzz --seeds N --context "..."` or direct bash | `"deep-fuzz"` |
-| `packages/app/scripts/measure-stress.sh` | `bun run measure:stress [--seed N] [--duration MS] --context "..."` | `"deep-stress"` |
+| `packages/app/scripts/measure-fuzz.sh` | `bun run measure:fuzz --seeds N --context "..."` (add `--seed-replay SEED` for single-seed replay) | `"deep-fuzz"` |
+| `packages/app/scripts/measure-stress.sh` | `bun run measure:stress [--seed N] --context "..."` (duration is hard-coded 30s internally — no `--duration` override) | `"deep-stress"` |
 
 Both scripts append one record per invocation. They write through the same schema so records can be queried uniformly.
 
@@ -37,7 +37,7 @@ Every record MUST contain these fields. Missing fields are a producer bug.
 | `durationMs` | number (integer milliseconds) | `8912000` | Wall-clock duration of the invocation (not per-seed). |
 | `host` | string | `"local-macos"` | `"local-macos"`, `"local-linux"`, `"ci-<runner-label>"`, or the lowercased kernel name for other platforms. Context for runner-speed interpretation. |
 | `bunVersion` | string | `"1.3.11"` | Output of `bun --version`. Implementation drift in the runtime can shift the rate. |
-| `extra` | object | `{ "stressSeed": 42, "requestedDurationMs": 30000 }` | Script-specific fields. `deep-fuzz` currently emits `{}`; `deep-stress` emits `{ stressSeed, requestedDurationMs }`. Extending `extra` in either producer does NOT require a schema version bump — readers ignore unknown keys. |
+| `extra` | object | `{ "stressSeed": 42, "outcome": "pass" }` | Script-specific fields. `deep-fuzz` emits `{}` (no extra per-run state beyond the top-level fields). `deep-stress` emits `{ stressSeed: number \| null, outcome: "pass" \| "fail" \| "crash" }` — `stressSeed` is `null` on a crash-before-banner record where the seed is unknown, and `outcome: "crash"` is the triage filter for those records (distinct from `outcome: "fail"` which has a replayable seed). Extending `extra` in either producer does NOT require a schema version bump — readers ignore unknown keys. |
 
 Any field added to records in the future must also be added to this document in the same PR.
 

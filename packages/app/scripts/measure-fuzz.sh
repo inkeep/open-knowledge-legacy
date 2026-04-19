@@ -86,7 +86,11 @@ while [[ $# -gt 0 ]]; do
     --context)
       CONTEXT="$2"; shift 2 ;;
     -h|--help)
-      sed -n '1,35p' "$0"; exit 0 ;;
+      # Print the full header comment block — from line 1 through the
+      # first blank-comment-line sentinel `^$` after the `Query patterns`
+      # heading. Using a sentinel (rather than a fixed line range) keeps
+      # --help accurate when the header grows.
+      sed -n '1,/^$/p' "$0"; exit 0 ;;
     *)
       echo "error: unknown flag: $1" >&2
       echo "run with --help for usage" >&2
@@ -97,6 +101,19 @@ done
 if [[ -z "$CONTEXT" ]]; then
   echo "error: --context is required (free-text annotation for JSONL record)" >&2
   echo "example: --context 'pre-PR-218 baseline'" >&2
+  exit 2
+fi
+
+# Validate numeric inputs: non-numeric --seeds / --seed-replay would export
+# a non-numeric env to the child `bun test` and silently coerce to NaN→1
+# at the PRNG layer, producing deterministic-looking runs that have no
+# relationship to the requested seed. Fail loud instead.
+if [[ ! "$SEEDS" =~ ^[0-9]+$ ]]; then
+  echo "error: --seeds must be a non-negative integer (got: $SEEDS)" >&2
+  exit 2
+fi
+if [[ -n "$SEED_REPLAY" && ! "$SEED_REPLAY" =~ ^-?[0-9]+$ ]]; then
+  echo "error: --seed-replay must be an integer (got: $SEED_REPLAY)" >&2
   exit 2
 fi
 
@@ -185,40 +202,51 @@ END_MS="$(epoch_ms)"
 DURATION_MS=$(( END_MS - START_MS ))
 
 # ── Parse results ──────────────────────────────────────────────────────────
-# bun test prints a summary line near the end that looks like:
-#   "N pass" / "N fail" / " N test(s) ran"
-# The fuzzer itself prints seed numbers on failure via `expect.fail` messages.
-# We count seeds-failed by scanning for the "seed=<N>" pattern emitted by the
-# test file on convergence-oracle failures, falling back to the bun fail count.
+# Preferred signal: the machine-parseable RESULT line emitted by
+# `bridge-convergence.fuzz.test.ts`'s after-all hook:
+#   [fuzz] RESULT seeds=<n> passed=<n> failed=<n> failingSeeds=[<s1>,<s2>,...]
+# Written via `process.stdout.write`, stdout-only. Parsing this decouples
+# the script from bun's human-readable `N pass / N fail` format (which is
+# fragile to bun output drift and stderr conflation via 2>&1). Mirrors
+# `measure-stress.sh`'s RESULT-line strategy for sibling-script symmetry.
+#
+# Fallback (when RESULT is missing — the test crashed before the after-all
+# hook could run): count all seeds as failed conservatively, since we
+# cannot confirm any specific seed passed.
 
-SEEDS_PASSED_BUN="$(grep -E '^[[:space:]]*[0-9]+ pass' "$OUT_FILE" | tail -1 | awk '{print $1}' || echo 0)"
-SEEDS_FAILED_BUN="$(grep -E '^[[:space:]]*[0-9]+ fail' "$OUT_FILE" | tail -1 | awk '{print $1}' || echo 0)"
-SEEDS_PASSED_BUN="${SEEDS_PASSED_BUN:-0}"
-SEEDS_FAILED_BUN="${SEEDS_FAILED_BUN:-0}"
+FUZZ_RESULT_LINE="$(grep -oE '^\[fuzz\] RESULT seeds=[0-9]+ passed=[0-9]+ failed=[0-9]+ failingSeeds=\[[0-9,]*\]' "$OUT_FILE" | tail -1 || true)"
 
-# Extract failing seeds from test output. The fuzzer's failure messages embed
-# the seed in either `seed=<N>` or `STRESS_FUZZ_SEED=<N>` replay hints.
-FAILING_SEEDS_RAW="$(grep -oE '(seed=|STRESS_FUZZ_SEED=)[0-9]+' "$OUT_FILE" \
-  | awk -F= '{print $2}' | sort -u | head -100 || true)"
-
-# Compose failingSeeds JSON array
-if [[ -z "$FAILING_SEEDS_RAW" ]]; then
-  FAILING_SEEDS_JSON="[]"
+if [[ -n "$FUZZ_RESULT_LINE" ]]; then
+  # Parse the structured line via a single awk pass for robustness against
+  # future field reorderings (within reason — extending the format still
+  # requires updating this regex, but field-position changes don't).
+  RESULT_SEEDS="$(echo "$FUZZ_RESULT_LINE" | grep -oE 'seeds=[0-9]+' | awk -F= '{print $2}')"
+  RESULT_PASSED="$(echo "$FUZZ_RESULT_LINE" | grep -oE 'passed=[0-9]+' | awk -F= '{print $2}')"
+  RESULT_FAILED="$(echo "$FUZZ_RESULT_LINE" | grep -oE 'failed=[0-9]+' | awk -F= '{print $2}')"
+  RESULT_SEEDS_ARR="$(echo "$FUZZ_RESULT_LINE" | sed -E 's/.*failingSeeds=\[(.*)\]$/\1/')"
+  SEED_COUNT="$RESULT_SEEDS"
+  SEEDS_FAILED="$RESULT_FAILED"
+  SEEDS_PASSED="$RESULT_PASSED"
+  if [[ -z "$RESULT_SEEDS_ARR" ]]; then
+    FAILING_SEEDS_JSON="[]"
+  else
+    FAILING_SEEDS_JSON="[$RESULT_SEEDS_ARR]"
+  fi
 else
-  FAILING_SEEDS_JSON="$(printf '%s\n' "$FAILING_SEEDS_RAW" \
-    | jq -R 'tonumber' | jq -s '.')"
-fi
-
-# Determine final seedCount + seedsFailed. Trust bun's counts when no parse
-# issues; fall back to the seed budget when bun's summary line can't be found
-# (rare, usually indicates a crash before the summary).
-SEED_COUNT="$EFFECTIVE_SEED_COUNT"
-SEEDS_FAILED="$SEEDS_FAILED_BUN"
-
-# If the test crashed before reporting, use the bun exit code as failure
-# signal but leave failingSeeds as whatever we parsed.
-if [[ "$SEEDS_PASSED_BUN" == "0" && "$SEEDS_FAILED_BUN" == "0" && "$TEST_EXIT" -ne 0 ]]; then
-  SEEDS_FAILED="$SEED_COUNT"   # conservative: count all as failed if we couldn't parse
+  # Crash before the after-all emitted RESULT. Fall back to conservative
+  # all-failed accounting. failingSeeds is best-effort from whatever seed
+  # references the test file managed to print before crashing.
+  SEED_COUNT="$EFFECTIVE_SEED_COUNT"
+  SEEDS_FAILED="$SEED_COUNT"
+  SEEDS_PASSED=0
+  FAILING_SEEDS_RAW="$(grep -oE '(seed=|STRESS_FUZZ_SEED=)[0-9]+' "$OUT_FILE" \
+    | awk -F= '{print $2}' | sort -u | head -100 || true)"
+  if [[ -z "$FAILING_SEEDS_RAW" ]]; then
+    FAILING_SEEDS_JSON="[]"
+  else
+    FAILING_SEEDS_JSON="$(printf '%s\n' "$FAILING_SEEDS_RAW" \
+      | jq -R 'tonumber' | jq -s '.')"
+  fi
 fi
 
 # rate with 4-digit precision. Use awk for portability; Bun/bash arithmetic
@@ -275,13 +303,19 @@ echo "  durationMs:   $DURATION_MS"
 echo "  logFile:      $LOG_FILE"
 echo ""
 
-if [[ "$SEEDS_FAILED" != "0" && -n "$FAILING_SEEDS_RAW" ]]; then
-  echo "──────── failing seed replay commands ────────"
-  while IFS= read -r seed; do
-    [[ -z "$seed" ]] && continue
-    echo "  STRESS_FUZZ_SEED=$seed bun test $TEST_FILE  # in $APP_DIR"
-  done <<< "$FAILING_SEEDS_RAW"
-  echo ""
+if [[ "$SEEDS_FAILED" != "0" ]]; then
+  # Derive replay commands from FAILING_SEEDS_JSON (authoritative) rather
+  # than the raw grep output. Works whether the seeds came from the
+  # RESULT line or the fallback grep path.
+  FAILING_SEEDS_LIST="$(jq -r '.[]' <<< "$FAILING_SEEDS_JSON" 2>/dev/null || true)"
+  if [[ -n "$FAILING_SEEDS_LIST" ]]; then
+    echo "──────── failing seed replay commands ────────"
+    while IFS= read -r seed; do
+      [[ -z "$seed" ]] && continue
+      echo "  STRESS_FUZZ_SEED=$seed bun test $TEST_FILE  # in $APP_DIR"
+    done <<< "$FAILING_SEEDS_LIST"
+    echo ""
+  fi
 fi
 
 # Propagate test exit code so CI / users see failure signal.

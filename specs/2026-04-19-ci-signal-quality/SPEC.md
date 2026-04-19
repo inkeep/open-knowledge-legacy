@@ -112,7 +112,7 @@ Extend fidelity tier with bridge-observer-conversion coverage in single-process 
   - `applyExternalChange(doc, md)` — verify paired-write content preservation
 - Oracle assertions: I1–I11 invariants, content preservation, handler-specific (wikiLink / jsxComponent / rawMdxFallback)
 
-**Location:** `packages/app/tests/fidelity/bridge-observer-conversion.fidelity.test.ts` (new, per D-Q4)
+**Location:** `packages/app/tests/fidelity/bridge-observer-conversion.test.ts` (new, per D-Q4)
 
 **Runs under:** existing `bun run test:fidelity` turbo task — PR-blocking
 
@@ -286,7 +286,7 @@ Global `failOnFlakyTests: false`. Retry passes = check passes. Flake detection c
 
 ### D-Q4: Conversion PBT expansion scope — **LOCKED Option A**
 
-New file `packages/app/tests/fidelity/bridge-observer-conversion.fidelity.test.ts`. Runs under existing `test:fidelity` turbo task.
+New file `packages/app/tests/fidelity/bridge-observer-conversion.test.ts`. Runs under existing `test:fidelity` turbo task.
 
 - ✅ Pro: no new CI job, consistent with existing fidelity pattern, clear naming signals intent
 - Not chosen: Option B (new test tier — unnecessary CI complexity), Option C (inline into I1-I11 — conflates pure-conversion invariants with bridge-observer-invoked variants)
@@ -309,7 +309,7 @@ Obsolete given D-Q1 + D-Q2 + NG6 — no nightly automation = no threshold needed
 
 - **Likelihood:** Medium. PBT-generated markdown may not cover full op vocabulary (`chunked-source-paste`, `agent-patch` find/replace specifics).
 - **Severity:** Medium.
-- **Mitigation:** Review FR-1 coverage against the fuzz's 9 op kinds (in `bridge-convergence.fuzz.test.ts`). Iterate Arbitrary definitions until equivalent. Document coverage mapping in `bridge-observer-conversion.fidelity.test.ts` header.
+- **Mitigation:** Review FR-1 coverage against the fuzz's 9 op kinds (in `bridge-convergence.fuzz.test.ts`). Iterate Arbitrary definitions until equivalent. Document coverage mapping in `bridge-observer-conversion.test.ts` header.
 
 ### R3. `measure:*` scripts diverge from test semantics over time
 
@@ -345,7 +345,7 @@ Can ship as a single PR or split. Expected impact: PR-tier green rate 22% → ~8
 
 ### Phase 2 — FR-1 conversion PBT (4-8h)
 
-6. **PR:** add `packages/app/tests/fidelity/bridge-observer-conversion.fidelity.test.ts` per FR-1 spec
+6. **PR:** add `packages/app/tests/fidelity/bridge-observer-conversion.test.ts` per FR-1 spec
 7. Verify `bun run test:fidelity` picks it up; verify CI runs it in PR-tier `check`
 
 Expected impact: conversion regressions become PR-tier deterministic.

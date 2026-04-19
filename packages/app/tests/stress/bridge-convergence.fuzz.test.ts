@@ -529,6 +529,17 @@ if (FIXED_SEED === undefined) {
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
   let server: TestServer;
+  // Track per-seed outcomes so the after-all hook can emit a machine-
+  // parseable summary line for `packages/app/scripts/measure-fuzz.sh` to
+  // consume. The script grep-matches:
+  //   [fuzz] RESULT seeds=<total> passed=<n> failed=<n> failingSeeds=[<s1>,<s2>,...]
+  // Written via `process.stdout.write` so it's stdout-only and not subject
+  // to bun's human-summary formatting — mirrors the stress test's approach
+  // (`packages/app/tests/stress/server-authoritative-stress.test.ts`).
+  // Changing the format is a breaking change for the measurement script's
+  // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
+  const fuzzPassed: number[] = [];
+  const fuzzFailed: number[] = [];
 
   beforeAll(async () => {
     server = await createTestServer();
@@ -536,6 +547,9 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
   afterAll(async () => {
     await server?.cleanup();
+    process.stdout.write(
+      `[fuzz] RESULT seeds=${fuzzPassed.length + fuzzFailed.length} passed=${fuzzPassed.length} failed=${fuzzFailed.length} failingSeeds=[${fuzzFailed.join(',')}]\n`,
+    );
   });
 
   const seeds =
@@ -920,11 +934,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         error: err,
         clientStates: snapshotClients(clients),
       });
+      fuzzFailed.push(seed);
       throw err;
     } finally {
       for (const p of agentProbes) p.cleanup();
       for (const c of clients) await c.cleanup();
     }
+    // Only reached if the try-block completes without throwing — the catch
+    // re-throws after recording, so this is the pass path.
+    fuzzPassed.push(seed);
     // 120s per seed: the original 90s budget covered macOS scheduler jitter
     // locally (observed ~40s p50, 60s p99 on M-series hardware). On
     // ubuntu-latest CI runners the same seeds run ~40% slower under

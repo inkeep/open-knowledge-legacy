@@ -1,5 +1,5 @@
 /**
- * bridge-observer-conversion.fidelity.test.ts
+ * bridge-observer-conversion.test.ts
  *
  * FR-1 of specs/2026-04-19-ci-signal-quality/SPEC.md — deterministic PBT
  * coverage for the conversion paths invoked INSIDE the bridge observers.
