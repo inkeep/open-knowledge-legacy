@@ -57,9 +57,31 @@ All resolved under the directive + conversation:
 ### Current workflow state
 
 - Task 5 (Intake): completed.
-- Task 6 (Scaffold): completed at this commit.
-- Task 7 (Backlog): pending — systematic OQ extraction via three probes (walk-through, tensions, negative-space).
-- Task 8 (Iterate): pending — resolve Q1-Q11 through investigation + decision cycles.
-- Task 9 (Audit): pending.
+- Task 6 (Scaffold): completed.
+- Task 7 (Backlog): completed — 54 candidate questions extracted via three probes.
+- Task 8 (Iterate): in progress → substantially complete at this commit.
+- Task 9 (Audit): pending — ready to spawn.
 - Task 10 (Assess findings): pending.
 - Task 11 (Verify + finalize): pending.
+
+## 2026-04-18 — Iteration loop (D21-D54)
+
+Dispatched 3 parallel Opus investigations covering 27 technical + design questions from Task 7's extraction. Evidence persisted to:
+
+- `evidence/um-mechanics.md` — Y.UndoManager internals, effect-diff derivation, doc-op edge cases.
+- `evidence/session-lifecycle.md` — Keepalive correlation, WS close grace, subprocess reconnect, `getSession` race, `onStoreDocument` threading, remote-origin dispatch.
+- `evidence/shadow-git-and-sweep.md` — GPG split, ref cleanup, legacy migration, identity sanitization, L2 drain partitioning, park mutex, park ref conflict resolution, FR-5 enumeration, metadata UM scope, observability, testing, documentation.
+
+34 additional decisions locked (D21-D54). Summary:
+
+**UM mechanics (D21-D26):** Rely on UM auto-tracked origin; effect-diffs via `YTextEvent.delta`; `trackedOrigins` writes-only with `captureTransaction` defense; deep freeze origin; `captureTimeout = 500`; UM scope is `[ytext, metaMap, activityMap]`; explicit UM destroy on doc unload/delete/rename.
+
+**Session lifecycle (D27-D32):** Keepalive correlation via URL query `?connectionId=<UUID>`; 30s cancellable grace on WS close; subprocess restart = always new session; `getSession` in-flight promise dedup (fixes latent race); `onStoreDocument` one-file threading; remote-arrived origin structured dispatch.
+
+**Shadow git + sweep (D33-D48):** GPG/hooks split preserved (shadow plumbing, main-git porcelain); drop `human-` prefix; delete legacy `server` refs on first-run; `sanitizeGitIdentity()` utility; effect-diff fail-dev-throw + prod-swallow; L2 drain per-writer partition; park mutex moved; park on session refs (not `git-branch-switch`); `applyExternalChange` attributes to `file-system`; FR-5 covers 9 mutating endpoints + meta-test; observability conventions per-path; testing strategy per FR; docs land in AGENTS.md precedents + internals + inline.
+
+**Product decisions (D43-D45, D49-D54):** AgentFocus fires on agent-undo + rollback, not rename (Q37); closed-session UI removes from presence post-grace (Q42); non-git mode shadow-only (Q50); activity-log storage = Y.Map('agent-activity') on doc with 30d/500-entry eviction (Q1/Q10/Q11); human browser principal hoisting via `onAuthenticate` (Q2); principal.json gitignored by default (Q5); `openknowledge-service` as narrow fallback (Q7); subject-prefix target format (Q8); 30d per-writer GC TTL (Q3); legacy migration = delete (Q9); effect-diff encoding = YTextEvent.delta (Q4); keepalive correlation locked (Q6).
+
+All initial Q1-Q11 now CLOSED. New residual questions Q100-Q105 tracked for implementation-time resolution (mostly P2, one P0 empirical — Q104 on cross-session undo behavior, to be covered by fuzzer extension).
+
+Updated FR-3 (UM scope extension), FR-5 (endpoint list expansion), §8.6 ref table (drop `human-` prefix) to reflect decisions.
