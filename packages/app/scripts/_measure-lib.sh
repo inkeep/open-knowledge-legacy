@@ -161,9 +161,9 @@ append_jsonl_atomic() {
     # trap EXIT for this append scope (not a subshell — runs in the caller's
     # shell context; the caller scripts set their own EXIT traps BEFORE
     # sourcing this library, so the two don't collide because we restore
-    # with `trap - EXIT` at line 154 below). Guards against crashes between
-    # `mkdir` and `rmdir`: the lockdir would otherwise wedge until the next
-    # invocation's stale-lock recovery removed it.
+    # with `trap - EXIT` immediately after the rmdir below). Guards against
+    # crashes between `mkdir` and `rmdir`: the lockdir would otherwise wedge
+    # until the next invocation's stale-lock recovery removed it.
     trap "rmdir '$lockdir' 2>/dev/null || true" EXIT
     printf '%s\n' "$record" >> "$log"
     rmdir "$lockdir" 2>/dev/null || true
