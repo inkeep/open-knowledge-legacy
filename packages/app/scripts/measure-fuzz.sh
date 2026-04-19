@@ -53,8 +53,19 @@
 #     "durationMs":  8912000,
 #     "host":        "local-macos",
 #     "bunVersion":  "1.3.11",
-#     "extra":       {}                        // reserved for script-specific fields
+#     "extra":       { "outcome": "pass" }     // "pass" | "fail" | "crash"
 #   }
+#
+# outcome field (in extra)
+# ------------------------
+#   "pass"  — RESULT line emitted, seedsFailed == 0
+#   "fail"  — RESULT line emitted, seedsFailed >= 1 (replayable seeds in
+#             failingSeeds array)
+#   "crash" — RESULT line NOT emitted (harness crashed before afterAll —
+#             setup failure, OOM, worker death). failingSeeds is best-
+#             effort from pre-crash stdout. Filter crash records with
+#             jq 'select(.extra.outcome == "crash")' to distinguish them
+#             from real seed failures.
 #
 # Query patterns (same as script header for discoverability via `head`)
 # ---------------------------------------------------------------------
@@ -216,6 +227,15 @@ DURATION_MS=$(( END_MS - START_MS ))
 
 FUZZ_RESULT_LINE="$(grep -oE '^\[fuzz\] RESULT seeds=[0-9]+ passed=[0-9]+ failed=[0-9]+ failingSeeds=\[[0-9,]*\]' "$OUT_FILE" | tail -1 || true)"
 
+# 3-way outcome classifier (parallels measure-stress.sh's pass/fail/crash):
+#   "pass"  — RESULT line printed, failed=0, test exit 0
+#   "fail"  — RESULT line printed, failed>=1 (real seed failures with
+#             replayable seeds in failingSeeds array)
+#   "crash" — RESULT line NOT printed (harness crashed before afterAll
+#             could emit — setup failure, OOM, worker death). failingSeeds
+#             is best-effort from pre-crash stdout; outcome="crash" is the
+#             triage filter that distinguishes this from a real seed
+#             failure.
 if [[ -n "$FUZZ_RESULT_LINE" ]]; then
   # Parse the structured line via a single awk pass for robustness against
   # future field reorderings (within reason — extending the format still
@@ -232,10 +252,18 @@ if [[ -n "$FUZZ_RESULT_LINE" ]]; then
   else
     FAILING_SEEDS_JSON="[$RESULT_SEEDS_ARR]"
   fi
+  if [[ "$SEEDS_FAILED" == "0" ]]; then
+    OUTCOME="pass"
+  else
+    OUTCOME="fail"
+  fi
 else
-  # Crash before the after-all emitted RESULT. Fall back to conservative
-  # all-failed accounting. failingSeeds is best-effort from whatever seed
-  # references the test file managed to print before crashing.
+  # Crash before the after-all emitted RESULT. Conservative all-failed
+  # accounting — we cannot confirm any specific seed passed, but we also
+  # cannot attribute the failure to replayable seeds. outcome:"crash"
+  # keeps these records distinguishable from real seed failures when
+  # querying the log (e.g. `jq 'select(.extra.outcome == "fail")'`).
+  OUTCOME="crash"
   SEED_COUNT="$EFFECTIVE_SEED_COUNT"
   SEEDS_FAILED="$SEED_COUNT"
   SEEDS_PASSED=0
@@ -250,12 +278,21 @@ else
 fi
 
 # rate with 4-digit precision. Use awk for portability; Bun/bash arithmetic
-# doesn't do floats. Division-by-zero guard.
+# doesn't do floats. Division-by-zero guard. `LC_ALL=C` is load-bearing —
+# without it, awk's `%.4f` honors the current locale's LC_NUMERIC and emits
+# `0,0460` on e.g. de_DE.UTF-8, producing invalid JSON when jq reads the
+# record back. Force C locale for numeric formatting only.
 if [[ "$SEED_COUNT" == "0" ]]; then
-  RATE="0"
+  RATE="0.0000"
 else
-  RATE="$(awk -v a="$SEEDS_FAILED" -v b="$SEED_COUNT" 'BEGIN{ printf "%.4f", a/b }')"
+  RATE="$(LC_ALL=C awk -v a="$SEEDS_FAILED" -v b="$SEED_COUNT" 'BEGIN{ printf "%.4f", a/b }')"
 fi
+
+# ── Compose extra (script-specific fields) ─────────────────────────────────
+# `outcome` parallels measure-stress.sh so `jq 'select(.extra.outcome=="fail")'`
+# works uniformly across both producers. Per SCHEMA.md, extending `extra`
+# does not require a schema version bump — readers ignore unknown keys.
+EXTRA_JSON="$(jq -c -n --arg outcome "$OUTCOME" '{ outcome: $outcome }')"
 
 # ── Compose JSONL record ───────────────────────────────────────────────────
 RECORD="$(jq -c -n \
@@ -271,7 +308,7 @@ RECORD="$(jq -c -n \
   --argjson durationMs   "$DURATION_MS" \
   --arg host        "$HOST" \
   --arg bunVersion  "$BUN_VERSION" \
-  --argjson extra   '{}' \
+  --argjson extra   "$EXTRA_JSON" \
   '{
      timestamp: $timestamp,
      commit: $commit,
@@ -296,6 +333,7 @@ echo "──────── measure-fuzz summary ────────"
 echo "  context:      $CONTEXT"
 echo "  commit:       $COMMIT"
 echo "  host:         $HOST"
+echo "  outcome:      $OUTCOME"
 echo "  seedCount:    $SEED_COUNT"
 echo "  seedsFailed:  $SEEDS_FAILED"
 echo "  rate:         $RATE"

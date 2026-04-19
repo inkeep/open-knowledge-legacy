@@ -46,7 +46,8 @@
         "../core/src/**/*.ts",
         "../core/src/markdown/fixtures/**/*.json",
         "../../patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
-      ]
+      ],
+      "env": ["STRESS_FIDELITY"]
     },
     "test:e2e": {
       "dependsOn": ["^build"],

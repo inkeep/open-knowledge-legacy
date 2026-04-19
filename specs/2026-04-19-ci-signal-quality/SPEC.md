@@ -172,7 +172,7 @@ Introduce the `measure:*` npm script family, distinct from `test:*`, for ad-hoc 
 6. Appends to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl`
 7. Prints summary + reproduction commands for failing seeds
 
-**`packages/app/scripts/measure-stress.sh`** — analogous, wraps `STRESS_SEED=$SEED bun test tests/stress/server-authoritative-stress.test.ts`, CLI: `--seed N` (default random), `--duration MS` (default 30000), `--context "..."`.
+**`packages/app/scripts/measure-stress.sh`** — analogous, wraps `STRESS_SEED=$SEED bun test tests/stress/server-authoritative-stress.test.ts`, CLI: `--seed N` (default: omitted, test picks via `Date.now()`), `--context "..."`. The underlying test's run duration is hard-coded to 30s internally — per the "no config that lies" principle, the script exposes no `--duration` flag rather than silently ignoring one. If a future test parameterizes duration, wire the flag here and in the test body together.
 
 **No turbo integration.** `measure:*` scripts do not appear in `turbo.json`. They are one-off developer actions, not build-pipeline steps. Caching would invalidate the measurement.
 
@@ -191,7 +191,7 @@ Append-only file at `specs/2026-04-16-bridge-correctness/evidence/residual-measu
   "script": "deep-fuzz",                     // "deep-fuzz" | "deep-stress"
   "seedCount": 1000,                         // total seeds/runs attempted
   "seedsFailed": 23,                         // seeds that failed
-  "rate": 0.023,                             // seedsFailed / seedCount
+  "rate": 0.0230,                            // seedsFailed / seedCount (4-digit precision per SCHEMA.md)
   "invokedBy": "nick",                       // $USER or CI identifier
   "context": "pre-PR-218 baseline",          // free-text annotation
   "failingSeeds": [1776559905522],           // for replay
@@ -240,7 +240,7 @@ Results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measure
 | Script | What it measures | Typical invocation |
 |--------|------------------|--------------------|
 | `bun run measure:fuzz`   | Bridge-convergence fuzz seed failure rate         | `bun run measure:fuzz --seeds 1000 --context "pre-PR-218"` |
-| `bun run measure:stress` | Server-authoritative stress duplicate detection   | `bun run measure:stress --seed 42 --duration 120000` |
+| `bun run measure:stress` | Server-authoritative stress duplicate detection   | `bun run measure:stress --seed 42 --context "reproduce #206"` |
 
 **When to run:** before merging bridge-touching PRs; when investigating a
 suspected rate shift; during bridge-correctness spec work.

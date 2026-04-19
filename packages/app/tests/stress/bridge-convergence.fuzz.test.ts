@@ -546,10 +546,25 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
   });
 
   afterAll(async () => {
-    await server?.cleanup();
+    // Emit RESULT BEFORE cleanup. measure-fuzz.sh greps for this exact line
+    // as its only data source — if server.cleanup() threw first (handle leak,
+    // port teardown race), the summary would never reach the script and the
+    // run would be classified as a crash-before-banner with conservative all-
+    // seeds-failed accounting. Ordering this pre-cleanup makes the RESULT
+    // emission unconditional on cleanup outcome. Cleanup itself is wrapped in
+    // try/catch so a cleanup failure surfaces as a warn but does not destroy
+    // the observability signal we just wrote.
     process.stdout.write(
       `[fuzz] RESULT seeds=${fuzzPassed.length + fuzzFailed.length} passed=${fuzzPassed.length} failed=${fuzzFailed.length} failingSeeds=[${fuzzFailed.join(',')}]\n`,
     );
+    try {
+      await server?.cleanup();
+    } catch (err) {
+      console.warn(
+        '[bridge-convergence fuzzer] server.cleanup() failed after RESULT emission:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
   const seeds =
@@ -928,6 +943,13 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           );
         }
       }
+      // Record the seed as passing BEFORE the `finally` block so a cleanup
+      // throw cannot silently skew RESULT totals. If the try-block completed
+      // every assertion, the seed is a genuine pass; the cleanup machinery
+      // running after is teardown-only and its failure must not retroactively
+      // reclassify the outcome. Cleanup errors are swallowed+logged in the
+      // finally block below for the same reason.
+      fuzzPassed.push(seed);
     } catch (err) {
       writeFuzzSnapshot(seed, {
         ops: generateOps(createPRNG(seed), clientCount, opCount),
@@ -937,12 +959,27 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       fuzzFailed.push(seed);
       throw err;
     } finally {
-      for (const p of agentProbes) p.cleanup();
-      for (const c of clients) await c.cleanup();
+      for (const p of agentProbes) {
+        try {
+          p.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] agent-probe cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
+      for (const c of clients) {
+        try {
+          await c.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] client cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
     }
-    // Only reached if the try-block completes without throwing — the catch
-    // re-throws after recording, so this is the pass path.
-    fuzzPassed.push(seed);
     // 120s per seed: the original 90s budget covered macOS scheduler jitter
     // locally (observed ~40s p50, 60s p99 on M-series hardware). On
     // ubuntu-latest CI runners the same seeds run ~40% slower under

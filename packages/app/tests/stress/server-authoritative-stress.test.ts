@@ -174,7 +174,27 @@ describe('server-authoritative stress (US-013)', () => {
     // trend log's `stressSeed` and `failingSeeds` fields. Changing the
     // banner format is a breaking change for the measurement script's
     // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
-    const seed = process.env.STRESS_SEED ? Number(process.env.STRESS_SEED) : Date.now();
+    // Determinism contract: if STRESS_SEED is set, it MUST parse to a finite
+    // integer. `Number("abc")` silently returns NaN, which would propagate
+    // into XorShift and produce a non-deterministic run while the banner
+    // still printed `seed=NaN` — destroying the one guarantee this script
+    // sells. Throwing on malformed input keeps "I replayed seed 42" and
+    // "I typoed and got a fresh random seed" observably distinct.
+    // measure-stress.sh classifies this throw as a "crash" outcome.
+    let seed: number;
+    if (process.env.STRESS_SEED !== undefined) {
+      const raw = process.env.STRESS_SEED;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        throw new Error(
+          `STRESS_SEED must be a finite integer, got ${JSON.stringify(raw)}. ` +
+            `Example: STRESS_SEED=42 bun test tests/stress/server-authoritative-stress.test.ts`,
+        );
+      }
+      seed = parsed;
+    } else {
+      seed = Date.now();
+    }
     console.log(
       `[server-authoritative stress] seed=${seed}${process.env.STRESS_SEED ? ' (replay)' : ''}`,
     );
