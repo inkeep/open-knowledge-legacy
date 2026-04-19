@@ -2,6 +2,27 @@ import type { Identity } from '../types/identity';
 
 // --- Constants ---
 
+export const AGENT_COLORS = [
+  '#D97757', // claude
+  '#1B1912', // cursor
+  '#F9F3E9', // windsurf
+  '#7A9DFF', // openai/codex
+  '#8534F3', // github/copilot
+  '#9663F0', // cline
+  '#727CF3', // bot
+] as const;
+
+/** Per-icon color palette — one entry per known agent client type. */
+export const AGENT_ICON_COLORS: Record<string, string> = {
+  claude: '#D97757', // warm orange
+  cursor: '#1B1912', // dark (Cursor brand)
+  windsurf: '#0B100F', // dark (Windsurf brand)
+  openai: '#7A9DFF', // blue (Codex brand)
+  github: '#8534F3', // purple (Copilot brand)
+  cline: '#9663F0', // purple (Cline brand)
+  bot: '#727CF3', // indigo (generic agent fallback)
+};
+
 export const HUMAN_COLORS = [
   '#f0ece3', // warm gray
   '#fff5e1', // cream
@@ -11,6 +32,16 @@ export const HUMAN_COLORS = [
   '#dce8fa', // azure
   '#DBF3FB', // sky
 ] as const;
+
+/**
+ * Deterministic hex color from a stable palette for a given seed string.
+ * Shared between server (agent awareness) and app (TimelinePanel).
+ */
+export function colorFromSeed(seed: string): string {
+  let hash = 0;
+  for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+  return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
+}
 
 // --- Color derivation ---
 

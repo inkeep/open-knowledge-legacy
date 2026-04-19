@@ -1,12 +1,19 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useDocumentContext } from '@/editor/DocumentContext';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
+import { createNavigationRetryHandler } from '@/editor/navigation-retry';
+import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { AuthModal } from './AuthModal';
+import { CloneDialog } from './CloneDialog';
+import { ConflictBanner } from './ConflictBanner';
+import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import { TimelinePanel } from './TimelinePanel';
+import { NavigationPendingBar } from './NavigationPendingBar';
+import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePanel';
 
 /**
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
@@ -18,14 +25,22 @@ export type EditorMode = 'wysiwyg' | 'source' | 'diff';
 export function EditorPane() {
   const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
   const modeBeforeDiffRef = useRef<'wysiwyg' | 'source'>('wysiwyg');
+
+  const syncStatus = useGitSyncStatus();
 
   useEffect(() => {
     return () => {
@@ -33,7 +48,19 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeTarget, recycleDocument } = useDocumentContext();
+  const { openDocumentTransition, isPending } = useDocumentTransition();
+
+  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
+  // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
+  // handler always targets the currently-displayed doc, not a stale capture.
+  // `recycleDocument` is the one-shot reset — destroys the broken provider
+  // and recreates it before the new transition re-suspends DocumentBoundary.
+  const handleRetry = createNavigationRetryHandler({
+    recycleDocument,
+    openDocumentTransition,
+    getActiveDocName: () => activeDocName,
+  });
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -71,6 +98,31 @@ export function EditorPane() {
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
 
+  useEffect(() => {
+    if (activeTarget?.kind !== 'folder') return;
+    setPreviewEntry(null);
+    setTimelineOpen(false);
+    if (editorMode === 'diff') {
+      setEditorMode(modeBeforeDiffRef.current);
+    }
+  }, [activeTarget, editorMode]);
+
+  // Opt-in prompt (D36): show a dismissible toast the first time we detect
+  // a remote exists but sync is dormant (not yet enabled).
+  useEffect(() => {
+    if (!optInToastShownRef.current && syncStatus?.state === 'dormant' && syncStatus.hasRemote) {
+      optInToastShownRef.current = true;
+      toast.info('This project has a GitHub remote.', {
+        description: 'Sign in to enable automatic sync with your team.',
+        duration: 8000,
+        action: {
+          label: 'Sign in',
+          onClick: () => setAuthModalOpen(true),
+        },
+      });
+    }
+  }, [syncStatus?.state, syncStatus?.hasRemote]);
+
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);
   }
@@ -83,11 +135,15 @@ export function EditorPane() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      if (!res.ok) {
+      if (res.ok) {
+        toast.success('Checkpoint saved');
+      } else {
         console.error('[save-version] failed:', await res.text());
+        toast.error('Checkpoint failed — try again');
       }
     } catch (e) {
       console.error('[save-version] failed:', e);
+      toast.error('Checkpoint failed — try again');
     }
     setSaving(false);
   }
@@ -120,6 +176,7 @@ export function EditorPane() {
 
   return (
     <>
+      <ConflictBanner onOpenResolver={() => setConflictResolverOpen(true)} />
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
@@ -133,7 +190,25 @@ export function EditorPane() {
         onRestore={handleRestore}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
+        onSignIn={() => {
+          setAuthInitialStep('auth');
+          setAuthModalOpen(true);
+        }}
+        onSetIdentity={() => {
+          setAuthInitialStep('identity');
+          setAuthModalOpen(true);
+        }}
+        onOpenConflictResolver={() => setConflictResolverOpen(true)}
+        onOpenClone={() => setCloneDialogOpen(true)}
       />
+      {editorMode === 'diff' && previewEntry && (
+        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 justify-center">
+          <span className="truncate text-xs text-muted-foreground">
+            Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
+          </span>
+        </div>
+      )}
+      <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
         editorMode={editorMode}
         previewEntry={previewEntry}
@@ -146,6 +221,32 @@ export function EditorPane() {
         docName={activeDocName ?? ''}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
+      />
+      <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={(next) => {
+          setAuthModalOpen(next);
+          if (!next) setReturnToCloneAfterAuth(false);
+        }}
+        identityPrompt={authInitialStep === 'identity'}
+        onSuccess={() => {
+          setAuthModalOpen(false);
+          if (returnToCloneAfterAuth) {
+            setReturnToCloneAfterAuth(false);
+            setCloneDialogOpen(true);
+          }
+        }}
+      />
+      <CloneDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        onSignIn={() => {
+          setCloneDialogOpen(false);
+          setAuthInitialStep('auth');
+          setReturnToCloneAfterAuth(true);
+          setAuthModalOpen(true);
+        }}
       />
     </>
   );

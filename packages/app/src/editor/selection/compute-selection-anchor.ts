@@ -1,6 +1,6 @@
 /**
  * computeSelectionAnchor — pure virtual-element builder for Floating UI
- * (Precedent #19).
+ * (Precedent #31).
  *
  * Takes a PM view + the plugin-derived BlockSelection and returns a
  * reference object compatible with `@floating-ui/dom`'s `computePosition` +

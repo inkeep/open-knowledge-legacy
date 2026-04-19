@@ -21,9 +21,19 @@
  */
 
 import { Extension } from '@tiptap/core';
-import { Plugin } from '@tiptap/pm/state';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Mapping } from '@tiptap/pm/transform';
 import { ySyncPluginKey } from 'y-prosemirror';
+
+/**
+ * Stable PluginKey so consumers outside this file can locate the plugin
+ * (`sourceDirtyPluginKey.get(state)`) without relying on the plugin's
+ * array index. No PluginState is read through it today — the plugin's
+ * effect is a side-effect (setting the `sourceDirty` attr), not a
+ * readable state. The key is still exported so future consumers (e.g.,
+ * a status indicator showing "N unsaved blocks") have a stable hook.
+ */
+export const sourceDirtyPluginKey = new PluginKey('sourceDirty');
 
 export const SourceDirtyObserver = Extension.create({
   name: 'sourceDirtyObserver',
@@ -31,6 +41,7 @@ export const SourceDirtyObserver = Extension.create({
   addProseMirrorPlugins() {
     return [
       new Plugin({
+        key: sourceDirtyPluginKey,
         appendTransaction(transactions, oldState, newState) {
           // Skip if any transaction is from CRDT sync (not user-intent)
           const hasUserTransaction = transactions.some((tr) => {
@@ -54,6 +65,12 @@ export const SourceDirtyObserver = Extension.create({
           for (const tr of transactions) {
             combinedMapping.appendMapping(tr.mapping);
           }
+          // Invert once per observer firing. A fresh `invert()` allocates a
+          // new Mapping of inverse steps; calling it inside the descendants
+          // loop is O(nodes * steps) and shows up on docs with many
+          // jsxComponents. The mapping is constant for the scope of this
+          // appendTransaction call.
+          const invertedMapping = combinedMapping.invert();
 
           const updates: Array<{ pos: number }> = [];
 
@@ -62,7 +79,7 @@ export const SourceDirtyObserver = Extension.create({
             if (node.attrs.sourceDirty) return; // already dirty, skip
 
             // Map from newState position back to oldState position
-            const oldPos = combinedMapping.invert().map(pos);
+            const oldPos = invertedMapping.map(pos);
             const oldNode = oldState.doc.nodeAt(oldPos);
             if (!oldNode) {
               // Node is new (inserted) — mark dirty if it has content

@@ -4,7 +4,7 @@
  * Implements the canonical ProseMirror + CodeMirror pattern
  * (prosemirror.net/examples/codemirror/) adapted for TipTap's React NodeView.
  *
- * Architecture (Precedent #12 — direct PM dispatch, NOT y-codemirror.next):
+ * Architecture (Precedent #24 — direct PM dispatch, NOT y-codemirror.next):
  *   CM keystroke → forwardUpdate → PM transaction → y-prosemirror → CRDT
  *   PM change → NodeView.update(node) → computeChange → CM transaction
  *   Single `updating` boolean prevents feedback loops.
@@ -82,15 +82,25 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     const start = pos + 1;
     const end = pos + currentNode.nodeSize - 1;
 
+    // Always release the flag: if dispatch throws (e.g. position went stale
+    // under a concurrent transaction), leaving the flag true would pin the
+    // CM→PM bridge off for the rest of the NodeView's lifetime — the user
+    // keeps typing but keystrokes never reach PM. React Compiler does not
+    // support try/finally without a catch, so we catch/release/rethrow.
     updatingRef.current = true;
-    const tr = pmView.state.tr;
-    if (newText.length === 0) {
-      tr.delete(start, end);
-    } else {
-      const textNode = pmView.state.schema.text(newText);
-      tr.replaceWith(start, end, textNode);
+    try {
+      const tr = pmView.state.tr;
+      if (newText.length === 0) {
+        tr.delete(start, end);
+      } else {
+        const textNode = pmView.state.schema.text(newText);
+        tr.replaceWith(start, end, textNode);
+      }
+      pmView.dispatch(tr);
+    } catch (err) {
+      updatingRef.current = false;
+      throw err;
     }
-    pmView.dispatch(tr);
     updatingRef.current = false;
   };
 
@@ -151,21 +161,24 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
 
     cmViewRef.current = cmView;
 
-    // FR-32: forward markUserTyping for Observer B typing-defer
-    try {
-      if (ydoc) {
-        const mark = () => markUserTyping(ydoc);
-        const dom = cmView.contentDOM;
-        dom.addEventListener('keydown', mark);
-        dom.addEventListener('paste', mark);
-        dom.addEventListener('drop', mark);
-        dom.addEventListener('cut', mark);
-      }
-    } catch {
-      // No collaboration extension — typing-defer not wired
-    }
+    // FR-32: forward markUserTyping so SystemDocSubscriber's agent-focus
+    // typing guard sees keystrokes originating inside the embedded CM editor
+    // (global wall-clock timestamp; no per-doc state since precedent #14).
+    const mark = () => markUserTyping();
+    const dom = cmView.contentDOM;
+    dom.addEventListener('keydown', mark);
+    dom.addEventListener('paste', mark);
+    dom.addEventListener('drop', mark);
+    dom.addEventListener('cut', mark);
+    const teardownTypingListeners = () => {
+      dom.removeEventListener('keydown', mark);
+      dom.removeEventListener('paste', mark);
+      dom.removeEventListener('drop', mark);
+      dom.removeEventListener('cut', mark);
+    };
 
     return () => {
+      teardownTypingListeners();
       cmView.destroy();
       cmViewRef.current = null;
     };
@@ -192,10 +205,18 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     const change = computeChange(oldText, textContent);
     if (!change) return;
 
+    // Symmetric release with forwardUpdate: a CM dispatch throw must not
+    // strand the PM→CM bridge in the "skip" state forever. React Compiler
+    // does not support try/finally without a catch, so we catch/release/rethrow.
     updatingRef.current = true;
-    cmView.dispatch({
-      changes: { from: change.from, to: change.to, insert: change.text },
-    });
+    try {
+      cmView.dispatch({
+        changes: { from: change.from, to: change.to, insert: change.text },
+      });
+    } catch (err) {
+      updatingRef.current = false;
+      throw err;
+    }
     updatingRef.current = false;
   }, [textContent]);
 

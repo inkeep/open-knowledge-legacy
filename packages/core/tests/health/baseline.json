@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-04-16T08:20:00.000Z",
+  "runnerClass": "local-m-series",
+  "corpus": {
+    "commonmarkExamples": 652,
+    "gfmExamples": 20
+  },
+  "thresholds": {
+    "wholeDocMax": 0,
+    "blockLevelMax": 0
+  },
+  "observed": {
+    "parseFallback": {
+      "blockLevel": 0,
+      "wholeDoc": 0
+    }
+  }
+}

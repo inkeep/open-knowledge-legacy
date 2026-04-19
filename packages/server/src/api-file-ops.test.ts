@@ -106,6 +106,7 @@ async function callApi(
       options?.sessionManager ??
       ({
         closeSession: async () => {},
+        closeAllForDoc: async () => {},
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager']),
     contentDir,
     getFileIndex: () => buildFileIndex(contentDir),

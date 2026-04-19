@@ -1,11 +1,19 @@
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
+  type AgentSessionIdentity,
   AgentSessionManager,
-  DEFAULT_AGENT_ID,
-  syncTextToFragment,
+  applyAgentMarkdownWrite,
+  colorFromSeed,
+  iconFromClientName,
 } from './agent-sessions.ts';
-export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ApiExtensionOptions,
+  createApiExtension,
+  MANAGED_RENAME_ORIGIN,
+  ROLLBACK_ORIGIN,
+  safeSubdir,
+} from './api-extension.ts';
 export {
   type BacklinkEntry,
   BacklinkIndex,
@@ -28,7 +36,17 @@ export {
   type ContentFilterOptions,
   createContentFilter,
 } from './content-filter.ts';
-export { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
+export {
+  clearContributors,
+  contributorCount,
+  formatContributors,
+  recordContributor,
+} from './contributor-tracker.ts';
+export {
+  applyExternalChange,
+  createExternalChangeHandler,
+  FILE_WATCHER_ORIGIN,
+} from './external-change.ts';
 export {
   type AsyncSubscription,
   classifyEvents,
@@ -47,6 +65,11 @@ export {
   writeTracker,
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
+export {
+  type AttachIdleShutdownOptions,
+  attachIdleShutdown,
+  type IdleShutdownHandle,
+} from './idle-shutdown.ts';
 export {
   createLiveDerivedIndexExtension,
   LIVE_DERIVED_INDEX_DEBOUNCE_MS,
@@ -68,6 +91,9 @@ export {
 } from './managed-rename-rewrite.ts';
 export {
   getMetrics,
+  handleCollabSocketError,
+  incrementCollabSocketFilteredError,
+  incrementServerObserverFire,
   type ReconciliationMetrics,
   resetMetrics,
 } from './metrics.ts';
@@ -77,6 +103,18 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { isProcessAlive } from './process-alive.ts';
+export {
+  acquireProcessLock,
+  type LockName,
+  lockFilePath,
+  ProcessLockCollisionError,
+  type ProcessLockHandle,
+  type ProcessLockMetadata,
+  readProcessLock,
+  releaseProcessLock,
+  updateProcessLockPort,
+} from './process-lock.ts';
 export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
@@ -95,16 +133,37 @@ export {
   updateServerLockPort,
 } from './server-lock.ts';
 export {
+  createServerObserverExtension,
+  type ServerObserverExtensionOptions,
+} from './server-observer-extension.ts';
+export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
+export {
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  DEFAULT_CHECKPOINT_RETENTION,
+  gcCheckpointRefs,
+  type InMemoryCheckpointParams,
   initShadowRepo,
+  listRescueCheckpoints,
   type SafetyCheckpointParams,
   type SaveVersionResult,
   type ShadowHandle,
   type ShadowRef,
   safetyCheckpoint,
+  saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+export {
+  acquireUiLock,
+  readUiLock,
+  releaseUiLock,
+  UiLockCollisionError,
+  type UiLockMetadata,
+  updateUiLockPort,
+} from './ui-lock.ts';

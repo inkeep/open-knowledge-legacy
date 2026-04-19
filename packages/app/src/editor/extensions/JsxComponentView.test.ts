@@ -14,7 +14,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { PropDef } from '@inkeep/open-knowledge-core';
-import { extractPrimitiveProps } from './JsxComponentView.tsx';
+import { extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
 
 describe('extractPrimitiveProps', () => {
   test('passes through declared props', () => {
@@ -100,5 +100,38 @@ describe('extractPrimitiveProps', () => {
   test('handles missing props attr', () => {
     const result = extractPrimitiveProps({}, []);
     expect(result).toEqual({});
+  });
+});
+
+describe('stableHash', () => {
+  // Load-bearing invariant: the ErrorBoundary reset key depends on two props
+  // objects with identical (key, value) pairs hashing to the same string,
+  // regardless of insertion order. Without this, post-edit re-serialization
+  // reorders keys and the boundary remounts mid-typing, stealing focus. See
+  // the comment at JsxComponentView.tsx:196-204 for the original bug.
+  test('key-order independence — primary load-bearing invariant', () => {
+    expect(stableHash({ a: 1, b: 2 })).toBe(stableHash({ b: 2, a: 1 }));
+    expect(stableHash({ type: 'warn', title: 'x' })).toBe(stableHash({ title: 'x', type: 'warn' }));
+  });
+
+  test('recurses into nested objects — inner key order also normalized', () => {
+    expect(stableHash({ x: { b: 1, a: 2 } })).toBe(stableHash({ x: { a: 2, b: 1 } }));
+  });
+
+  test('arrays are order-sensitive — [1,2] and [2,1] hash distinctly', () => {
+    expect(stableHash([1, 2])).not.toBe(stableHash([2, 1]));
+  });
+
+  test('primitives and null round-trip via JSON.stringify', () => {
+    expect(stableHash(null)).toBe('null');
+    expect(stableHash(42)).toBe('42');
+    expect(stableHash('hello')).toBe('"hello"');
+    expect(stableHash(true)).toBe('true');
+  });
+
+  test('empty object + empty array + undefined have distinct hashes', () => {
+    expect(stableHash({})).toBe('{}');
+    expect(stableHash([])).toBe('[]');
+    expect(stableHash(undefined)).toBe(JSON.stringify(undefined));
   });
 });

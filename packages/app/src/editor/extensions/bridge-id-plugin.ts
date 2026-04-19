@@ -1,16 +1,25 @@
 /**
- * bridgeId PluginState (Q10 Option A, FR-29, Precedent #13).
+ * bridgeId PluginState — stable PM-side identity for jsxComponent nodes.
  *
- * Assigns stable unique `bridgeId` strings to jsxComponent PM nodes,
- * keyed by their backing Y.XmlElement identity from y-prosemirror.
- *
- * bridgeId is NOT a schema attr — lives entirely in PluginState.
- * This structurally prevents Observer B re-parse churn:
- *   - parse output has no attr to diff under y-prosemirror's equalYTypePNode
- *   - Y.XmlElement identity preserved by y-prosemirror for unchanged content
+ * Assigns a unique string `bridgeId` to every jsxComponent PM node, keyed
+ * by the backing Y.XmlElement identity from y-prosemirror. Kept in
+ * PluginState (not a schema attr) so the id survives Observer B re-parse
+ * cycles without flicking y-prosemirror's `equalYTypePNode` attr-diff:
+ *   - parse output has no attr for y-prosemirror to compare
+ *   - Y.XmlElement identity is preserved by y-prosemirror for unchanged content
  *   - WeakMap entry preserved → bridgeId stable across parse cycles
  *
- * jsxInline excluded per NG14 (no bridgeId, no Context Bridge).
+ * History. Originally landed for the Context Bridge Registry (Q10 Option A /
+ * FR-29), which was then deleted in favor of Fallback 2 (DOM data-attributes,
+ * precedent "Compound components use DOM data-attributes"). The stable-id
+ * primitive lives on because `SelectionStatePlugin` needs it: the
+ * `BlockSelection.ancestorChain` entries carry `bridgeId` so breadcrumb
+ * clicks survive collaborative position shifts (see precedent "Selection
+ * state as typed PM PluginState"). If a future consumer needs the same
+ * primitive (e.g. user-authored compounds), reuse this plugin — don't
+ * duplicate it.
+ *
+ * jsxInline is excluded (thin zero-attr shape by design).
  */
 
 import { Extension } from '@tiptap/core';

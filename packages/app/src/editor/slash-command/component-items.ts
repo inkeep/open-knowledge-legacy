@@ -9,10 +9,70 @@
  */
 
 import type { Editor } from '@tiptap/react';
-import { Box, type LucideIcon } from 'lucide-react';
+import {
+  Box,
+  ChevronDown,
+  ChevronsUpDown,
+  FileText,
+  Flag,
+  FolderOpen,
+  FolderTree,
+  GitGraph,
+  Hash,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  type LucideIcon,
+  MessageSquareWarning,
+  PanelTop,
+  Square,
+  SquareMousePointer,
+  Table,
+  Volume2,
+  ZoomIn,
+} from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
+
+/**
+ * Map of descriptor `icon` string names to their lucide-react React components.
+ * Named imports (not namespace import) so Vite's tree-shaking only ships the
+ * icons actually referenced — a namespace import would bundle all ~1800
+ * lucide icons and blow the bundle-size gate. New icons require adding both
+ * the import above and the map entry here; the registry stays React-free
+ * (`packages/core/`) by carrying icons as strings.
+ */
+const ICON_COMPONENTS: Record<string, LucideIcon> = {
+  ChevronDown,
+  ChevronsUpDown,
+  FileText,
+  Flag,
+  FolderOpen,
+  FolderTree,
+  GitGraph,
+  Hash,
+  LayoutGrid,
+  List,
+  ListOrdered,
+  MessageSquareWarning,
+  PanelTop,
+  Square,
+  SquareMousePointer,
+  Table,
+  Volume2,
+  ZoomIn,
+};
+
+/**
+ * Resolve a descriptor icon name (e.g., `'MessageSquareWarning'`) to its
+ * lucide-react component. Falls back to `Box` for unknown names or
+ * descriptors without an icon (wildcard).
+ */
+function resolveIcon(iconName: string | undefined): LucideIcon {
+  if (!iconName) return Box;
+  return ICON_COMPONENTS[iconName] ?? Box;
+}
 
 /**
  * FR-14a: compute default props for slash-inserted components.
@@ -40,7 +100,7 @@ export function getDefaultProps(descriptor: JsxComponentDescriptor): Record<stri
 
 /**
  * Build the PM content JSON for a component node with default props.
- * Used by: slash-command insertion, SideMenu "+" container child insertion,
+ * Used by: slash-command insertion, BlockDragHandle "+" container child insertion,
  * empty-container placeholder, and "add child" button — single source of truth.
  * Derives everything from the descriptor; zero component-specific logic.
  */
@@ -62,20 +122,42 @@ export function createChildNode(childName: string): Record<string, unknown> {
 }
 
 /**
- * Module-level flag: a component was just inserted and should auto-open
- * its PropPanel. The NEXT jsxComponent NodeView that renders with
- * `selected=true` consumes this flag.
+ * Pending auto-open queue, keyed by the inserted NodeSelection's document
+ * position. A boolean flag used to break under rapid successive slash
+ * insertions — the second insertion set the flag before the first
+ * consumed it, so the NodeView that mounted second stole the auto-open
+ * while the first never got one. Keying by position avoids that race:
+ * each insertion tracks its own pending-ness, and consumption is a
+ * `.delete(key)` — two different NodeViews can't collide.
+ *
+ * The map is bounded by typical usage (1–2 pending at a time under
+ * keyboard burst). An explicit cap would shed oldest entries; skipped
+ * because the set is effectively self-pruning (every NodeView that
+ * mounts calls `consumeAutoOpen` with its pos once).
  */
-let pendingAutoOpen = false;
-export function setPendingAutoOpen(): void {
-  pendingAutoOpen = true;
+const pendingAutoOpen = new Set<number>();
+
+export function setPendingAutoOpen(pos: number): void {
+  pendingAutoOpen.add(pos);
 }
-export function consumeAutoOpen(): boolean {
-  if (pendingAutoOpen) {
-    pendingAutoOpen = false;
-    return true;
+
+/**
+ * Consume the auto-open flag for the NodeView at `pos`. Returns true once;
+ * subsequent calls for the same pos return false. Legacy callers that pass
+ * no argument drain any pending flag (used by the slash-insert path where
+ * the NodeView doesn't yet know its final position).
+ */
+export function consumeAutoOpen(pos?: number): boolean {
+  if (typeof pos === 'number') {
+    return pendingAutoOpen.delete(pos);
   }
-  return false;
+  // No position provided — legacy drain behavior for callers that cannot
+  // resolve their getPos() yet. Takes an arbitrary entry; safe because
+  // the caller only checks the flag's truthiness, not identity.
+  const iter = pendingAutoOpen.values().next();
+  if (iter.done) return false;
+  pendingAutoOpen.delete(iter.value);
+  return true;
 }
 
 /**
@@ -93,7 +175,7 @@ export function focusInsertedComponent(
   );
 
   if (hasEditableProps) {
-    setPendingAutoOpen();
+    setPendingAutoOpen(insertPos);
     requestAnimationFrame(() => {
       editor.commands.setNodeSelection(insertPos);
     });
@@ -126,7 +208,7 @@ export function getComponentItems(): SlashCommandItem[] {
   return descriptors.map((desc) => ({
     name: `component-${desc.name}`,
     label: desc.displayName ?? desc.name,
-    icon: Box as LucideIcon,
+    icon: resolveIcon(desc.icon),
     category: desc.category ?? 'content',
     command: createInsertCommand(desc),
     aliases: desc.searchTerms,

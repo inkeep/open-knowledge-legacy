@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { usePageList } from '@/components/PageListContext';
 import {
   Panel,
   PanelBody,
@@ -8,9 +9,12 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import { hashFromDocName } from '@/lib/doc-hash';
+import { resolveTargetNavigationIntent } from './target-navigation-intent';
 
 interface BacklinkItem {
   source: string;
+  anchor: string | null;
   title: string;
   snippet: string | null;
 }
@@ -36,6 +40,7 @@ export function BacklinksPanel({
   docName: string;
   className?: string;
 }) {
+  const { folderPaths, pages, loading } = usePageList();
   const {
     data: backlinks = [],
     isLoading,
@@ -43,6 +48,7 @@ export function BacklinksPanel({
   } = useQuery({
     queryKey: ['backlinks', docName],
     queryFn: () => fetchBacklinks(docName),
+    enabled: !loading && pages.has(docName),
   });
 
   return (
@@ -67,7 +73,13 @@ export function BacklinksPanel({
                 type="button"
                 className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => {
-                  window.location.hash = `#/${backlink.source}`;
+                  const navigationIntent = resolveTargetNavigationIntent(backlink.source, {
+                    pages,
+                    folderPaths,
+                  });
+                  window.location.assign(
+                    hashFromDocName(navigationIntent.hashDocName, backlink.anchor),
+                  );
                 }}
               >
                 <div className="truncate text-sm font-medium">{backlink.title}</div>

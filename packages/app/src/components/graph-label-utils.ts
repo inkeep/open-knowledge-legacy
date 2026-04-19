@@ -16,7 +16,8 @@ export function buildGraphLabelDescriptors(nodes: GraphNode[]): Map<string, Grap
   for (const node of nodes) {
     const fullLabel = normalizeLabel(node.label || node.id);
     const cleanedLabel = stripTrailingAsides(fullLabel);
-    const pathLabel = compressPathLikeLabel(node.id);
+    const pathSource = node.kind === 'doc' ? (node.docName ?? node.id) : (node.url ?? node.id);
+    const pathLabel = compressPathLikeLabel(pathSource);
     const pathLikeLabel = looksPathLikeLabel(cleanedLabel);
     const primaryLabel = pathLikeLabel ? compressPathLikeLabel(cleanedLabel) : cleanedLabel;
     const segments = pathLikeLabel ? [] : splitStructuredSegments(cleanedLabel);

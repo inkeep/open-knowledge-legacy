@@ -1,6 +1,6 @@
 /**
  * useSelectionAnchoredPopover — canonical positioning primitive for any
- * UI that floats relative to the current block selection (Precedent #19).
+ * UI that floats relative to the current block selection (Precedent #31).
  *
  * Wraps `@floating-ui/dom`'s primitives (`computePosition`, `autoUpdate`,
  * `offset`, `flip`, `shift`, `hide`) + the `computeSelectionAnchor`

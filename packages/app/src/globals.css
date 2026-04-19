@@ -1,8 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
 @plugin "tailwind-scrollbar";
 
 /* Tell Tailwind v4 to scan fumadocs-ui dist for utility class generation.
@@ -213,6 +211,110 @@
   }
 }
 
+/* OK Blob mascot */
+.ok-blob-body {
+  fill: var(--color-azure-blue);
+  animation: ok-blob-squish 6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+.dark .ok-blob-body {
+  fill: var(--color-sky-blue);
+}
+
+.ok-blob-eye {
+  fill: var(--color-azure-blue);
+  animation: ok-blob-blink 6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.dark .ok-blob-eye {
+  fill: var(--color-sky-blue);
+}
+.ok-blob-eye-right {
+  animation-delay: 0.04s;
+}
+
+/* Single blink then long pause */
+@keyframes ok-blob-blink {
+  0%,
+  28%,
+  34%,
+  100% {
+    transform: scaleY(1);
+  }
+  30%,
+  32% {
+    transform: scaleY(0.05);
+  }
+}
+
+/* Body squish synced to the blink */
+@keyframes ok-blob-squish {
+  0%,
+  28%,
+  38%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  30% {
+    transform: scaleY(0.97) scaleX(1.02);
+  }
+  33% {
+    transform: scaleY(1.02) scaleX(0.99);
+  }
+  36% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Click — happy ^^ eyes + bounce */
+.ok-blob-eye-hidden {
+  opacity: 0;
+}
+
+.ok-blob-happy-eye {
+  stroke: var(--color-azure-blue);
+  transition: opacity 100ms ease;
+}
+.dark .ok-blob-happy-eye {
+  stroke: var(--color-sky-blue);
+}
+
+@keyframes ok-blob-click-bounce {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  20% {
+    transform: scaleY(0.9) scaleX(1.08);
+  }
+  45% {
+    transform: scaleY(1.06) scaleX(0.96);
+  }
+  70% {
+    transform: scaleY(0.98) scaleX(1.01);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.ok-blob-clicked {
+  animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ok-blob-eye {
+    animation: none;
+  }
+  .ok-blob-body {
+    animation: none;
+  }
+  .ok-blob-clicked {
+    animation: none;
+  }
+}
+
 /* Collaboration cursor styles (WYSIWYG — TipTap) */
 .collaboration-cursor__caret {
   position: relative;
@@ -274,7 +376,7 @@
 /* Editor layout — grid on wrapper; content column max 1024px (lg), side rails minmax(gutter, 1fr) */
 .tiptap-editor {
   --content-max-width: 1024px;
-  --margin-width: 3rem;
+  --margin-width: 4rem;
   display: grid;
   width: 100%;
   grid-template-columns:
@@ -282,7 +384,6 @@
     [content-start] minmax(0, min(var(--content-max-width), 100%))
     [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
     [full-end];
-  @apply lg:[--margin-width:8rem];
 }
 
 .tiptap-editor > div {
@@ -576,53 +677,21 @@
   @apply text-muted-foreground/60;
 }
 
-/* SideMenu — drag handle + "+" button (FR-15, FR-16) */
-.ok-side-menu {
+/* DragHandlePlugin container — absolutely positioned flex row of grip + "+"
+   created imperatively by `BlockDragHandle` (see
+   `packages/app/src/editor/extensions/drag-handle.ts`). Per FR-15 / FR-16. */
+.ok-block-controls {
+  position: absolute;
   display: flex;
-  flex-direction: column;
   align-items: center;
   gap: 2px;
-  transition: opacity 100ms var(--ease-out-strong);
   opacity: 1;
-  z-index: 10;
-}
-
-.ok-side-menu[style*="visibility: hidden"],
-.ok-side-menu[style*="visibility:hidden"] {
-  opacity: 0;
-}
-
-/* Drag handle (grip icon) */
-.ok-drag-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  cursor: grab;
-  color: oklch(0.72 0 0);
-  border-radius: 3px;
+  transition: opacity 100ms var(--ease-out-strong);
   user-select: none;
 }
 
-.ok-drag-handle:hover {
-  background-color: oklch(0 0 0 / 6%);
-}
-
-.ok-drag-handle:active {
-  cursor: grabbing;
-}
-
-.dark .ok-drag-handle {
-  color: oklch(0.5 0 0);
-}
-
-.dark .ok-drag-handle:hover {
-  background-color: oklch(1 0 0 / 8%);
-}
-
-/* Plus button */
-.ok-plus-button {
+/* + button */
+.ok-add-block-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -632,22 +701,50 @@
   color: oklch(0.72 0 0);
   border-radius: 3px;
   border: none;
-  background: none;
+  background: transparent;
   padding: 0;
+  transition: background-color 100ms var(--ease-out-strong);
 }
-
-.ok-plus-button:hover {
+.ok-add-block-btn:hover {
   background-color: oklch(0 0 0 / 6%);
-  color: oklch(0.5 0 0);
 }
 
-.dark .ok-plus-button {
-  color: oklch(0.5 0 0);
+/* Drag grip */
+.ok-drag-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+}
+.ok-drag-grip:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+.ok-drag-grip:active {
+  cursor: grabbing;
 }
 
-.dark .ok-plus-button:hover {
+/* Visibility fade — DragHandlePlugin sets inline visibility: hidden */
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
+}
+
+/* Dark mode */
+.dark .ok-add-block-btn {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-add-block-btn:hover {
   background-color: oklch(1 0 0 / 8%);
-  color: oklch(0.7 0 0);
+}
+.dark .ok-drag-grip {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-drag-grip:hover {
+  background-color: oklch(1 0 0 / 8%);
 }
 
 /* CodeMirror polish */
@@ -759,6 +856,7 @@ button:active:not(:disabled) {
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -864,8 +962,12 @@ button:active:not(:disabled) {
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(
+    0.3773 0.1488 264.94 /
+    4%
+  ); /* based off of azure-900 with lower opacity */
+  --sidebar-accent-foreground: var(--color-azure-600);
+  --sidebar-hover: oklch(0.97 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 }
@@ -898,8 +1000,9 @@ button:active:not(:disabled) {
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.274 0.006 286.033);
+  --sidebar-accent-foreground: var(--color-sky-blue);
+  --sidebar-hover: oklch(0.269 0 0 / 50%);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 }
@@ -1070,7 +1173,7 @@ button:active:not(:disabled) {
  *
  * Per-type tuning is opt-in via --selection-halo-* custom properties scoped
  * under [data-component-type="..."] — extends the existing --color-fd-*
- * token bridge pattern (Precedent #17). */
+ * token bridge pattern (Precedent #29). */
 .ProseMirror .jsx-component-wrapper {
   /* Default halo tokens (overridden per component type below). */
   --selection-halo-inset: -4px;
@@ -1305,6 +1408,8 @@ button:active:not(:disabled) {
   color: var(--accent-foreground);
 }
 
+/* Sidebar: separate hover (neutral gray) from active (blue accent) */
+
 /* Dark overrides — ProseMirror content surfaces */
 .dark .ProseMirror blockquote {
   border-color: var(--color-gray-600);
@@ -1416,4 +1521,57 @@ button:active:not(:disabled) {
 .dark .ProseMirror .selectedCell::after {
   background: var(--color-azure-900);
   opacity: 0.4;
+}
+
+/* ========================================================================
+   Source-view minimal polish
+   ======================================================================== */
+
+/* Strikethrough — line-through, no color change. */
+.cm-del {
+  text-decoration: line-through;
+}
+
+/* List hanging-indent: wrapped continuation aligns under item text.
+   padding-inline-start pushes ALL visual lines right; text-indent pulls
+   only the FIRST visual line back — so the marker stays at its natural x
+   and wrapped continuations start under the item's text. */
+.cm-list-item {
+  padding-inline-start: var(--list-hang, 2ch);
+  text-indent: calc(-1 * var(--list-hang, 2ch));
+}
+
+/* Fenced code — wrap-preserve-indent via padding-inline-start only (no text-indent).
+   The ViewPlugin sets --line-indent per-line to the leading-whitespace count.
+   NO tint, NO border — the code block visually blends with paragraph text
+   except for monospace font and syntax-highlight colors (already applied by CM). */
+.cm-fenced-code-line {
+  padding-inline-start: calc(var(--line-indent, 0) * 1ch);
+}
+
+/* Broken link affordance — wavy red underline (LSP convention).
+   Single canonical definition for both broken link-refs and broken
+   wikilinks — the "broken" concept has one visual form. The light-theme
+   red (55% L) loses contrast against the dark canvas (14.5% L background,
+   muted-fg at 70.8% L), so .dark lightens it to 72% L. */
+.cm-link-ref-broken,
+.cm-wiki-link-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: var(--broken-link-color, oklch(55% 0.15 25));
+}
+
+.dark .cm-link-ref-broken,
+.dark .cm-wiki-link-broken {
+  --broken-link-color: oklch(72% 0.18 25);
+}
+
+/* Tables — hanging indent only. Wrapped row continuation aligns under the
+   first cell's content, not under `|`. No background, no border, no accent
+   bar, no cell bands, NO font-size change — table lines read as the same
+   size as surrounding paragraph text. Compactness was cut as stylistic
+   (see SPEC §6.6, §11 D4). */
+.cm-table-row,
+.cm-table-header {
+  padding-inline-start: calc(8px + 2ch);
+  text-indent: -2ch;
 }

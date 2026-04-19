@@ -17,6 +17,12 @@ export default defineConfig({
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
   retries: 0,
+  // Fail when baselines are missing rather than silently auto-blessing the
+  // first run. Baseline updates require the explicit `test:visual:update`
+  // script (which passes `--update-snapshots`) — same protocol as
+  // `perf-baseline.json` updates. Prevents a regression authored in the same
+  // changeset from becoming the golden.
+  updateSnapshots: 'none',
   use: {
     baseURL,
     headless: true,

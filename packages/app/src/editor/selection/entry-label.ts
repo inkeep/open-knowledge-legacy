@@ -1,7 +1,7 @@
 /**
  * Shared label resolver for `BlockChainEntry` consumers (Breadcrumb,
  * SelectionAnnouncer, and any future selection-consuming UI — link editor,
- * image caption, collaborator presence pin, per Precedent #19).
+ * image caption, collaborator presence pin, per Precedent #31).
  *
  * Fallback ladder:
  *   1. registered descriptor's `displayName`

@@ -10,13 +10,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { Context } from 'react';
 import * as Y from 'yjs';
-import { sharedExtensions } from '../../../../packages/core/src/extensions/shared.js';
-import { MarkdownManager } from '../../../../packages/core/src/markdown/index.js';
-
-/** Fake React Context for store testing (avoids React runtime dependency) */
-const fakeContext = {} as Context<unknown>;
+import { sharedExtensions } from '../../../../packages/core/src/extensions/shared.ts';
+import { MarkdownManager } from '../../../../packages/core/src/markdown/index.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -130,66 +126,10 @@ describe('PF05: Y.Item growth under jsxInline typing', () => {
   });
 });
 
-// ── PF06: Store publish/unpublish throughput under load ────────
-
-describe('PF06: Context Bridge store throughput', () => {
-  test('50 compounds mounted simultaneously — all publishes settle within 16ms', async () => {
-    // Import store dynamically to avoid React dependency at module level
-    const { createContextBridgeStore } = await import('../../src/editor/context-bridge/store.js');
-
-    const store = createContextBridgeStore();
-    const COMPOUND_COUNT = 50;
-
-    // Simulate 50 compound component publishes
-    const publishStart = performance.now();
-    for (let i = 0; i < COMPOUND_COUNT; i++) {
-      const entries = [
-        { context: fakeContext, value: { id: i, state: 'active' } },
-        { context: fakeContext, value: { items: [1, 2, 3] } },
-      ];
-      store.publish(`b${i}`, entries);
-    }
-    const publishElapsed = performance.now() - publishStart;
-    console.log(`PF06 publish: ${publishElapsed.toFixed(2)}ms for ${COMPOUND_COUNT} compounds`);
-
-    // All publishes should settle within one frame (16ms)
-    expect(publishElapsed).toBeLessThan(16);
-
-    // Verify all entries stored
-    for (let i = 0; i < COMPOUND_COUNT; i++) {
-      const entries = store.get(`b${i}`);
-      expect(entries).toBeDefined();
-      expect(entries?.length).toBe(2);
-    }
-
-    // Simulate 50 unpublishes
-    const unpublishStart = performance.now();
-    for (let i = 0; i < COMPOUND_COUNT; i++) {
-      store.unpublish(`b${i}`);
-    }
-    const unpublishElapsed = performance.now() - unpublishStart;
-    console.log(`PF06 unpublish: ${unpublishElapsed.toFixed(2)}ms for ${COMPOUND_COUNT} compounds`);
-
-    expect(unpublishElapsed).toBeLessThan(16);
-
-    // Verify all entries removed
-    for (let i = 0; i < COMPOUND_COUNT; i++) {
-      expect(store.get(`b${i}`)).toBeUndefined();
-    }
-
-    // Subscription notification count should be exactly COMPOUND_COUNT * 2
-    // (one per publish + one per unpublish)
-    let notificationCount = 0;
-    const unsubscribe = store.subscribe(() => {
-      notificationCount++;
-    });
-
-    // Re-publish and verify no dropped subscriptions
-    for (let i = 0; i < COMPOUND_COUNT; i++) {
-      store.publish(`b${i}`, [{ context: fakeContext, value: i }]);
-    }
-    expect(notificationCount).toBe(COMPOUND_COUNT);
-
-    unsubscribe();
-  });
-});
+// PF06 (Context Bridge store throughput) removed: the Context Bridge
+// infrastructure it benchmarked (packages/app/src/editor/context-bridge/,
+// bridge-id-plugin.ts) was deleted as dormant. Compound components use the
+// DOM data-attribute pattern (Fallback 2 from SPEC §9.15.7 R1 cascade) and
+// do not go through a publish/subscribe store. When the Context Bridge
+// architecture is revived for accessible Radix bridging, restore this
+// benchmark alongside the store.

@@ -1,6 +1,6 @@
 /**
  * SelectionAnnouncer — `aria-live="polite"` region that announces block
- * selection changes to assistive technologies (SPEC §3.6, Precedent #20).
+ * selection changes to assistive technologies (SPEC §3.6, Precedent #32).
  *
  * Renders a single visually-hidden `<div role="status" aria-live="polite">`
  * whose `textContent` updates 200ms after each selection change. Debounce

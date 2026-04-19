@@ -8,12 +8,13 @@
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
 | [Block-Level Selection Indicator Patterns in Rich-Text …](block-selection-indicator-patterns/REPORT.md) | 2026-04-16 | 6 files | block selection UX, focus indicato… | Notion, Tiptap, Lexical, Anytype, … |
+| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-15 | 18 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
 | [Storybook Ecosystem Survey — Component Blocks v2 Reuse…](storybook-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 7 files | component registration patterns, p… | Storybook 8.x, argTypes, Controls … |
+| [MCP Agent Attribution — Implementation Paths](mcp-agent-attribution-implementation/REPORT.md) | 2026-04-14 | 5 files | agent attribution, MCP identity, m… | Model Context Protocol, Open Knowl… |
 | [CodeMirror Markdown Source-View Rendering: Primitives,…](codemirror-markdown-source-view-rendering/REPORT.md) | 2026-04-14 | 8 files | CodeMirror 6 primitives, line wrap… | CodeMirror 6, Obsidian, SilverBull… |
 | [V0 Day-Zero Delight: What Would Make Our Launch Feel S…](v0-day-zero-delight/REPORT.md) | 2026-04-14 | 4 files | v0 launch strategy, day-0 delight,… | Open Knowledge, Obsidian, Notion, … |
 | [Clone-from-GitHub Onboarding Mechanics for On-Device E…](open-from-github-onboarding-mechanics/REPORT.md) | 2026-04-14 | 10 files | clone from github, oauth device fl… | VSCode, GitHub Desktop, Zed, Obsid… |
 | [Markdown Source-View Per-Construct Rendering: Evidence…](markdown-source-view-constructs/REPORT.md) | 2026-04-14 | 13 files | markdown source view, CodeMirror p… | CodeMirror 6, @lezer/markdown, @co… |
-| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-14 | 8 files | git lifecycle UX, staging and comm… | VS Code, GitHub Desktop, lazygit, … |
 | [Fumadocs Ecosystem Survey for Component Blocks v2 Reus…](fumadocs-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 5 files | MDX component editing, descriptor … | Fumadocs, MDXEditor, TinaCMS, Keys… |
 | [Storybook Alternatives and Adjacent Component Playgrou…](storybook-alternatives-component-playgrounds/REPORT.md) | 2026-04-14 | 8 files | component playgrounds, prop editin… | Ladle, Histoire, Playroom, React C… |
 | [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md) | 2026-04-14 | 8 files | table rendering, prose column layo… | TipTap, BlockNote, Milkdown, Plate… |
@@ -107,6 +108,17 @@
 - **Evidence files:** 6
 - **Warnings:** 1
 
+### [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond](git-lifecycle-push-pull-merge-patterns/REPORT.md)
+
+> How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff…
+
+- **Created:** 2026-04-14
+- **Updated:** 2026-04-15
+- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum, sync engine architecture, offline affordances, progress reporting, failure taxonomy, sustained auth lifecycle, auto-sync scheduling, retry and backoff patterns, file sync dynamics, workflow automation
+- **Subjects:** Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync, iCloud Drive, Dropbox, Stripe API, gRPC, Tower, VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan, n8n, Temporal, Prefect, Airbyte, Apache Airflow, Syncthing, Rclone, Nextcloud, git-annex, OneDrive
+- **Evidence files:** 18
+- **Warnings:** 2
+
 ### [Storybook Ecosystem Survey — Component Blocks v2 Reuse Assessment](storybook-ecosystem-component-blocks-reuse/REPORT.md)
 
 > End-to-end survey of the Storybook ecosystem (core, addons, community, adjacent projects) identifying utilities, patterns, and primitives analogous to what the Component Blocks v2 spec builds. Covers reuse decisions, pattern adoption, failure-mode lessons, and spec amendments.
@@ -115,6 +127,16 @@
 - **Topics:** component registration patterns, prop editing architecture, visual editor controls, type extraction, component playground tools, failure modes
 - **Subjects:** Storybook 8.x, argTypes, Controls addon, react-docgen-typescript, CSF3, MDX3, Framer propertyControls, Plasmic registerComponent, Builder.io, MDXEditor, Ladle, Playroom, React Cosmos, react-live, Sandpack, Leva
 - **Evidence files:** 7
+
+### [MCP Agent Attribution — Implementation Paths](mcp-agent-attribution-implementation/REPORT.md)
+
+> How to wire agent identity from MCP client connections through to CRDT writes and shadow repo commits in Open Knowledge. Covers SDK extraction, pipeline threading, multi-agent sessions, and cross-harness compatibility.
+
+- **Created:** 2026-04-14
+- **Topics:** agent attribution, MCP identity, multi-agent collaboration
+- **Subjects:** Model Context Protocol, Open Knowledge, Hocuspocus
+- **Evidence files:** 5
+
 
 ### [CodeMirror Markdown Source-View Rendering: Primitives, Patterns, and Ecosystem Practice](codemirror-markdown-source-view-rendering/REPORT.md)
 
@@ -154,15 +176,23 @@
 - **Subjects:** CodeMirror 6, @lezer/markdown, @codemirror/lang-markdown, Obsidian, SilverBullet, codemirror-rich-markdoc, HedgeDoc, Zettlr, VS Code, Typora, MDXEditor, Marktext, Milkdown, HackMD, Foam, Dendron, Markdoc
 - **Evidence files:** 13
 
-### [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond](git-lifecycle-push-pull-merge-patterns/REPORT.md)
+### [Fumadocs Ecosystem Survey for Component Blocks v2 Reuse Assessment](fumadocs-ecosystem-component-blocks-reuse/REPORT.md)
 
-> How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff…
+> End-to-end survey of the fumadocs ecosystem (core, mdx, ui, mdx-remote, community plugins, adjacent tools) mapped against Component Blocks v2 spec primitives. Identifies what to reuse, what to learn from, and what to build from scratch — with concrete spec amendment recommendations.
 
 - **Created:** 2026-04-14
-- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum
-- **Subjects:** VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan
+- **Topics:** MDX component editing, descriptor registry patterns, source fidelity preservation, CRDT collaboration, ecosystem reuse assessment
+- **Subjects:** Fumadocs, MDXEditor, TinaCMS, Keystatic, Plate, BlockNote, Storybook, mdast-util-mdx-jsx
+- **Evidence files:** 5
+
+### [Storybook Alternatives and Adjacent Component Playground Tools](storybook-alternatives-component-playgrounds/REPORT.md)
+
+> Primary-source survey of 7 tools (Ladle, Histoire, Playroom, React Cosmos, Docusaurus live code/react-live, Sandpack, and additional projects) covering maintenance status, component registration models, prop editing architectures, and relevance to in-editor component block systems with inline prop …
+
+- **Created:** 2026-04-14
+- **Topics:** component playgrounds, prop editing architecture, live preview rendering, component registration
+- **Subjects:** Ladle, Histoire, Playroom, React Cosmos, Sandpack, react-live, Docusaurus, react-styleguidist
 - **Evidence files:** 8
-- **Warnings:** 1
 
 ### [Fumadocs Ecosystem Survey for Component Blocks v2 Reuse Assessment](fumadocs-ecosystem-component-blocks-reuse/REPORT.md)
 

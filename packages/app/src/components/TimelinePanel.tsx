@@ -6,8 +6,15 @@
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
  */
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { ChevronDown, ChevronRight, Diamond, RotateCcw } from 'lucide-react';
+import { colorFromSeed, type TimelineEntry } from '@inkeep/open-knowledge-core';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Diamond,
+  FileArchive,
+  RotateCcw,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -44,35 +51,49 @@ export function formatRelativeTime(isoString: string): string {
   return date.toLocaleDateString();
 }
 
-/** Map internal author names to user-friendly display names. */
+/** Map internal author names to user-friendly display names. Uses structured contributors when available. */
 export function displayAuthor(entry: TimelineEntry): string {
   if (entry.type === 'upstream') return 'Upstream sync';
+  if (entry.contributors.length === 1) return entry.contributors[0].name;
+  if (entry.contributors.length > 1) return entry.contributors.map((c) => c.name).join(', ');
+  // Pre-attribution fallback
   if (entry.author === 'openknowledge-server' || entry.author === 'server') return 'Auto-save';
   return entry.author;
 }
 
-/** Dot color by entry type / author heuristic. */
-function getAuthorColor(entry: TimelineEntry): string {
-  if (entry.type === 'upstream') return 'bg-muted-foreground/50';
+/**
+ * Dot color for an entry. Returns either a Tailwind className or an inline hex color.
+ * Structured contributors take precedence; pre-attribution entries use the existing heuristic.
+ */
+function getAuthorColor(
+  entry: TimelineEntry,
+): { className: string; hex?: undefined } | { hex: string; className?: undefined } {
+  if (entry.contributors.length > 0) {
+    const c = entry.contributors[0];
+    return { hex: colorFromSeed(c.colorSeed ?? c.name) };
+  }
+  if (entry.type === 'upstream') return { className: 'bg-muted-foreground/50' };
   if (entry.authorEmail.includes('openknowledge.local') || entry.type === 'wip') {
-    // Agent writes typically have openknowledge.local domain
     if (
       entry.authorEmail.includes('agent') ||
       entry.author.includes('agent') ||
       entry.authorEmail.includes('cursor') ||
       entry.authorEmail.includes('claude')
     ) {
-      return 'bg-[--color-agent]';
+      return { className: 'bg-[--color-agent]' };
     }
   }
-  // Human = blue
-  return 'bg-[--color-azure-blue]';
+  return { className: 'bg-[--color-azure-blue]' };
 }
 
 function authorDot(entry: TimelineEntry) {
   const color = getAuthorColor(entry);
   return (
-    <span aria-hidden="true" className={`inline-block size-2 rounded-full shrink-0 ${color}`} />
+    <span
+      aria-hidden="true"
+      style={color.hex ? { backgroundColor: color.hex } : undefined}
+      className={`inline-block size-2 rounded-full shrink-0 ${color.className ?? ''}`}
+    />
   );
 }
 
@@ -116,6 +137,60 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupP
   );
 }
 
+// ─── Checkpoint kind → label + icon (bridge-correctness SPEC §6 R7c) ────────
+//
+// Three distinct visual treatments for checkpoint rows:
+//   'Save Version'            — ordinary user-initiated save. Diamond icon.
+//   'Before concurrent merge' — bridge-merge-loss silent rescue (US-005).
+//                               AlertTriangle so a skimming user can find it
+//                               after they notice a merge-conflict loss.
+//   'External change recovered'
+//                             — external-change-rescue (US-007 migration).
+//                               FileArchive to signal "offline/backup" origin.
+//
+// Falls back to 'Save Version' rendering when the row has no checkpoint
+// metadata (pre-R7a saves, malformed body, etc.) — degrades gracefully.
+
+type CheckpointVariant = 'save' | 'bridge-merge-loss' | 'external-change-rescue';
+
+export function checkpointVariant(entry: TimelineEntry): CheckpointVariant {
+  if (!entry.checkpoint) return 'save';
+  return entry.checkpoint.kind;
+}
+
+/**
+ * Checkpoint headline label — user-outcome language rather than implementation
+ * speak (bridge-correctness review iteration 5; SPEC §G amended). The timestamp
+ * lives on the row's relative-time chip already, so the headline itself leads
+ * with the affordance ("this is a restore point"), not the mechanism.
+ *
+ * For rescue-kind rows, the optional byte-size hint from the checkpoint
+ * metadata (`docSize`) is surfaced to let users gauge "how much" without
+ * opening the row — "Auto-saved before a concurrent edit (1.2 KB)" reads
+ * as a recoverable snapshot on first glance.
+ */
+export function checkpointHeadlineLabel(entry: TimelineEntry): string {
+  const variant = checkpointVariant(entry);
+  if (variant === 'save') return 'Save Version';
+  const size = entry.checkpoint?.size ?? null;
+  const sizeSuffix = size != null && size > 0 ? ` (${formatBytes(size)})` : '';
+  if (variant === 'bridge-merge-loss') {
+    return `Auto-saved before a concurrent edit${sizeSuffix}`;
+  }
+  // external-change-rescue
+  return `Recovered from an external change${sizeSuffix}`;
+}
+
+/**
+ * Pretty byte-size for the headline's inline hint. Deliberately coarse —
+ * the TimelinePanel row is a navigation affordance, not a debug surface.
+ */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
+  return `${Math.round(n / 104857.6) / 10} MB`;
+}
+
 // ─── Entry row ────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
@@ -127,6 +202,8 @@ interface EntryRowProps {
 
 function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
+  const authorName = displayAuthor(entry);
+  const allDocs = entry.contributors.flatMap((c) => c.docs);
 
   return (
     <button
@@ -141,7 +218,26 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
       onClick={() => onSelect?.(entry)}
     >
       {prominent ? (
-        <Diamond className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        (() => {
+          const variant = checkpointVariant(entry);
+          if (variant === 'bridge-merge-loss') {
+            return (
+              <AlertTriangle
+                className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                aria-hidden="true"
+              />
+            );
+          }
+          if (variant === 'external-change-rescue') {
+            return (
+              <FileArchive
+                className="mt-0.5 size-3.5 shrink-0 text-sky-600 dark:text-sky-400"
+                aria-hidden="true"
+              />
+            );
+          }
+          return <Diamond className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />;
+        })()
       ) : (
         <div className="mt-1.5 flex shrink-0 items-center">{authorDot(entry)}</div>
       )}
@@ -149,15 +245,23 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
       <div className="min-w-0 flex-1">
         {prominent && (
           <div className="mb-0.5 flex items-center gap-1.5">
-            <span className="text-xs font-medium text-foreground">Save Version</span>
+            <span className="text-xs font-medium text-foreground">
+              {checkpointHeadlineLabel(entry)}
+            </span>
             {authorDot(entry)}
-            <span className="truncate text-xs text-muted-foreground">{entry.author}</span>
+            <span className="truncate text-xs text-muted-foreground">{authorName}</span>
           </div>
         )}
-        {!prominent && <p className="truncate text-xs text-foreground">{entry.author}</p>}
-        <p className="truncate text-xs text-muted-foreground" title={entry.message}>
-          {entry.message}
-        </p>
+        {!prominent && <p className="truncate text-xs text-foreground">{authorName}</p>}
+        {allDocs.length > 0 ? (
+          <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
+            {allDocs.join(', ')}
+          </p>
+        ) : (
+          <p className="truncate text-xs text-muted-foreground" title={entry.message}>
+            {entry.message}
+          </p>
+        )}
       </div>
 
       <time
@@ -277,6 +381,8 @@ export function TimelinePanel({
                     authorEmail: '',
                     type: 'wip',
                     message: '',
+                    contributors: [],
+                    checkpoint: null,
                   })
                 }
                 className="text-xs text-muted-foreground"
@@ -290,7 +396,12 @@ export function TimelinePanel({
         <div className="flex-1 overflow-y-auto">
           {/* Loading skeleton */}
           {loading && (
-            <div className="flex flex-col gap-2 p-4">
+            <div
+              className="flex flex-col gap-2 p-4"
+              role="status"
+              aria-busy="true"
+              aria-label="Loading timeline history"
+            >
               {[1, 2, 3, 4].map((i) => (
                 <div key={i} className="flex items-center gap-2.5">
                   <Skeleton className="size-3.5 rounded-full" />
@@ -365,7 +476,7 @@ export function TimelinePanel({
         {/* Restore hint when entry selected */}
         {selectedSha && (
           <div className="border-t p-3 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Viewing historical version</span>
+            <span className="text-xs text-muted-foreground ">Viewing historical version</span>
             <Button
               variant="ghost"
               size="xs"
@@ -377,6 +488,8 @@ export function TimelinePanel({
                   authorEmail: '',
                   type: 'wip',
                   message: '',
+                  contributors: [],
+                  checkpoint: null,
                 })
               }
             >

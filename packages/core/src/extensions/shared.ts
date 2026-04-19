@@ -7,6 +7,7 @@ import Image from '@tiptap/extension-image';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
+import { CodeMarkFidelity } from './code-mark-fidelity.ts';
 import { EmphasisFidelity, StrongFidelity } from './emphasis-fidelity.ts';
 import { EscapeMark } from './escape-mark.ts';
 import { HardBreakFidelity } from './hard-break-fidelity.ts';
@@ -40,6 +41,11 @@ export const sharedExtensions = [
   // as 'bold'/'italic' because those are TipTap extension keys, not schema names.
   EmphasisFidelity,
   StrongFidelity,
+  // R24 (US-017): override @tiptap/extension-code's `excludes: '_'`
+  // so the Code mark can coexist with emphasis/strong on the same span.
+  // CommonMark allows it; the upstream exclusion broke round-trip for
+  // `*a \`*\`*` and `_a \`_\`_` inputs.
+  CodeMarkFidelity,
   CodeBlockFidelity,
   HeadingFidelity,
   // D17: horizontalRule→thematicBreak (node name)
@@ -57,6 +63,7 @@ export const sharedExtensions = [
     listItem: false,
     italic: false,
     bold: false,
+    code: false,
     codeBlock: false,
     heading: false,
     horizontalRule: false,

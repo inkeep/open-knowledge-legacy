@@ -7,19 +7,22 @@ import {
   ALLOWED_IMAGE_MIME_TYPES,
   sharedExtensions as coreExtensions,
 } from '@inkeep/open-knowledge-core';
-import { DragHandle } from '@tiptap/extension-drag-handle';
 import FileHandler from '@tiptap/extension-file-handler';
-import Placeholder from '@tiptap/extension-placeholder';
-import { KeyboardNav } from '../block-ux/KeyboardNav';
+import { KeyboardNav } from '../block-ux/keyboard-nav';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 // BridgeIdPlugin re-enabled — SelectionStatePlugin consumes it to resolve
-// stable ancestor-chain IDs across PM re-renders (Precedent #13 + #15).
-// Plugin falls back to pos-derived synthetic IDs if this plugin is absent
-// (unit-test path), but production wants the real Y.XmlElement-keyed IDs.
+// stable ancestor-chain IDs across PM re-renders (see Precedent "Selection
+// state as typed PM PluginState"). Plugin falls back to pos-derived
+// synthetic IDs if absent (unit-test path); production wants the real
+// Y.XmlElement-keyed IDs. The Context Bridge Registry that originally
+// consumed this was deleted in favor of Fallback 2 (see AGENTS.md
+// "Compound components use DOM data-attributes"); bridge-id-plugin lives
+// on as a standalone stable-identity primitive.
 import { BridgeIdPlugin } from './bridge-id-plugin';
+import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
@@ -62,16 +65,14 @@ export const sharedExtensions = [
     },
   }),
   HeadingAnchors,
-  // Commands-only DragHandle — provides lockDragHandle/unlockDragHandle commands
-  // without registering a PM plugin. The actual drag-handle plugin is created by
-  // the React <DragHandle> component in SideMenu.tsx to avoid double-registration.
-  DragHandle.extend({
-    addProseMirrorPlugins() {
-      return [];
-    },
-  }).configure({
-    render: () => document.createElement('div'),
-  }),
+  // BlockDragHandle — drag grip + "+" button in the left margin on block hover.
+  // Registers DragHandlePlugin imperatively (bare DOM container, NOT a React
+  // component) so Activity mode flips don't trigger React's removeChild
+  // reconciliation error. The `lockDragHandle` / `unlockDragHandle` commands
+  // that other surfaces (PropPanel, slash menu) used to get from the stock
+  // `DragHandle.extend({...})` are still available — `DragHandlePlugin`
+  // registers them as part of the plugin.
+  BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,
   TypedChildrenGuard,
@@ -79,10 +80,8 @@ export const sharedExtensions = [
   // Selection layer — must come after BridgeIdPlugin so ancestor-chain
   // lookups resolve stable IDs. Order is load-bearing only wrt BridgeId;
   // KeyboardNav is orthogonal.
+  // Placeholder moved to TiptapEditor.tsx (new-doc affordances, PR #157)
+  // so it can be configured per-editor-instance with context-aware text.
   BridgeIdPlugin,
   SelectionStatePlugin,
-  Placeholder.configure({
-    placeholder: "Type '/' for commands",
-    showOnlyCurrent: true,
-  }),
 ];

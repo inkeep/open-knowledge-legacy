@@ -8,14 +8,15 @@
  *      editor's config file, preserving any existing entries. Idempotent: skips
  *      if an `open-knowledge` entry is already present, unless `--force`.
  *
- * Supports Claude Code, Cursor, VS Code, and Windsurf. When run interactively
+ * Supports Claude Code, Cursor, VS Code, Codex, and Windsurf. When run interactively
  * (TTY) without `--editor`, prompts the user to select which editors to
  * configure. When `--editor` is passed or stdin is not a TTY, uses the flag
  * value directly (defaults to `claude`).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
   initContent,
@@ -23,6 +24,7 @@ import {
   upsertRootInstructions,
 } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -37,11 +39,11 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Read an existing MCP config file (if any) and return its parsed shape.
+ * Read an existing JSON MCP config file (if any) and return its parsed shape.
  * Returns an empty object if the file doesn't exist or is empty.
  * Throws on invalid JSON or permission errors.
  */
-function readMcpConfig(path: string): Record<string, unknown> {
+function readJsonConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   const raw = readFileSync(path, 'utf-8');
   const trimmed = raw.trim();
@@ -61,13 +63,46 @@ function readMcpConfig(path: string): Record<string, unknown> {
 }
 
 /**
+ * Read an existing TOML MCP config file (if any) and return its parsed shape.
+ * Returns an empty object if the file doesn't exist or is empty.
+ * Throws on invalid TOML or permission errors.
+ */
+function readTomlConfig(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const raw = readFileSync(path, 'utf-8');
+  const trimmed = raw.trim();
+  if (trimmed === '') return {};
+  try {
+    const parsed = parseToml(trimmed);
+    if (isObject(parsed)) {
+      return parsed;
+    }
+    throw new Error(`${path} root must be a TOML table`);
+  } catch (err) {
+    throw new Error(
+      `${path} contains invalid TOML: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * Write the config to disk as pretty-printed JSON with a trailing newline.
  * Creates parent directories if missing.
  */
-function writeMcpConfig(path: string, config: Record<string, unknown>): void {
+function writeJsonConfig(path: string, config: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
   const serialized = `${JSON.stringify(config, null, 2)}\n`;
   writeFileSync(path, serialized, 'utf-8');
+}
+
+/**
+ * Write the config to disk as TOML with a trailing newline.
+ * Creates parent directories if missing.
+ */
+function writeTomlConfig(path: string, config: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const serialized = stringifyToml(config);
+  writeFileSync(path, serialized.endsWith('\n') ? serialized : `${serialized}\n`, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +122,7 @@ export interface InitCommandOptions {
   mcp?: boolean;
   force?: boolean;
   editors?: EditorId[];
-  /** Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md (default: true). */
+  /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
   /** Override home directory (test-only, for Windsurf global path). */
   home?: string;
@@ -98,15 +133,151 @@ export interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
-  /** Per-file root-instructions (CLAUDE.md / AGENTS.md) results. Empty when `--no-root-instructions`. */
+  /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
   rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
+  /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
+  launchJson?: LaunchJsonResult;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code launch.json scaffolding
+// ---------------------------------------------------------------------------
+
+const LAUNCH_JSON_VERSION = '0.0.1';
+const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
+
+export type LaunchJsonAction =
+  | 'created'
+  | 'merged'
+  | 'skipped-existing'
+  | 'skipped-stale'
+  | 'failed';
+
+export interface LaunchJsonResult {
+  action: LaunchJsonAction;
+  configPath: string;
+  error?: string;
+  /**
+   * When `action === 'skipped-stale'`: fields that differ between the existing
+   * entry and the target entry. Surfaced to the user so they know to re-run
+   * with `--force` to pick up the new defaults.
+   */
+  staleFields?: string[];
+}
+
+/**
+ * Compare an existing launch-json entry against the current target shape and
+ * return the names of fields that differ. Empty array ⇒ entries match (safe
+ * to skip). Non-empty ⇒ user has an outdated entry (typically from a prior
+ * `ok init` before Zero-Ceremony Resume) and should re-run with `--force`.
+ *
+ * Only the fields we actively manage are compared — `name` is intentionally
+ * excluded because it's the identity key, and any user-added fields (env,
+ * cwd, etc.) are ignored so hand-edits are not flagged as stale.
+ */
+function diffLaunchEntry(
+  existing: Record<string, unknown>,
+  target: {
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+  },
+): string[] {
+  const stale: string[] = [];
+  if (existing.runtimeExecutable !== target.runtimeExecutable) {
+    stale.push('runtimeExecutable');
+  }
+  const existingArgs = existing.runtimeArgs;
+  const argsMatch =
+    Array.isArray(existingArgs) &&
+    existingArgs.length === target.runtimeArgs.length &&
+    existingArgs.every((a, i) => a === target.runtimeArgs[i]);
+  if (!argsMatch) stale.push('runtimeArgs');
+  if (existing.port !== target.port) stale.push('port');
+  return stale;
+}
+
+/**
+ * Scaffold or merge a `.claude/launch.json` entry so that Claude Code's
+ * built-in preview browser can start the Open Knowledge dev server via
+ * `preview_start("open-knowledge-ui")`.
+ *
+ * `runtimeArgs` launches `open-knowledge ui` (not `open-knowledge start`) —
+ * the UI sibling-process is what the preview pane renders; collab runs in a
+ * separate `open-knowledge start` process auto-spawned by `ok ui` via the
+ * MCP stdio path.
+ *
+ * - File missing        → create with the OK entry
+ * - File exists, no OK  → merge the entry into configurations
+ * - File exists, has OK → skip (unless force)
+ */
+function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
+  const configPath = join(cwd, '.claude', 'launch.json');
+  const entry = {
+    name: LAUNCH_CONFIG_NAME,
+    runtimeExecutable: 'npx',
+    // Use the fully-qualified package name so `npx` resolves against the npm
+    // registry on a cold cache. `open-knowledge` alone is a bin name that only
+    // works if the package is already installed (local or global).
+    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+    port: 3000,
+  };
+
+  try {
+    if (!existsSync(configPath)) {
+      mkdirSync(dirname(configPath), { recursive: true });
+      const content = { version: LAUNCH_JSON_VERSION, configurations: [entry] };
+      writeFileSync(configPath, `${JSON.stringify(content, null, 2)}\n`, 'utf-8');
+      return { action: 'created', configPath };
+    }
+
+    const raw = readFileSync(configPath, 'utf-8').trim();
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!isObject(parsed)) {
+      return { action: 'failed', configPath, error: 'launch.json root is not an object' };
+    }
+
+    const configs: unknown[] = Array.isArray(parsed.configurations) ? parsed.configurations : [];
+    const existingIdx = configs.findIndex(
+      (c) => isObject(c) && (c as Record<string, unknown>).name === LAUNCH_CONFIG_NAME,
+    );
+
+    if (existingIdx >= 0 && !force) {
+      const existingEntry = configs[existingIdx] as Record<string, unknown>;
+      const staleFields = diffLaunchEntry(existingEntry, entry);
+      if (staleFields.length > 0) {
+        return { action: 'skipped-stale', configPath, staleFields };
+      }
+      return { action: 'skipped-existing', configPath };
+    }
+
+    if (existingIdx >= 0) {
+      configs[existingIdx] = entry;
+    } else {
+      configs.push(entry);
+    }
+
+    const updated = {
+      ...parsed,
+      version: parsed.version ?? LAUNCH_JSON_VERSION,
+      configurations: configs,
+    };
+    writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
+    return { action: existingIdx >= 0 ? 'merged' : 'merged', configPath };
+  } catch (err) {
+    return {
+      action: 'failed',
+      configPath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +294,7 @@ function writeEditorMcpConfig(
 
   let config: Record<string, unknown>;
   try {
-    config = readMcpConfig(configPath);
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
   } catch (err) {
     return {
       editorId: target.id,
@@ -155,7 +326,11 @@ function writeEditorMcpConfig(
   };
 
   try {
-    writeMcpConfig(configPath, nextConfig);
+    if (target.format === 'toml') {
+      writeTomlConfig(configPath, nextConfig);
+    } else {
+      writeJsonConfig(configPath, nextConfig);
+    }
   } catch (err) {
     return {
       editorId: target.id,
@@ -216,9 +391,22 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
   }
 
-  // 3. Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md
+  // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
+  const hasClaude = editorIds.includes('claude');
+  const launchJson =
+    hasClaude && options.mcp !== false
+      ? scaffoldLaunchJson(cwd, options.force ?? false)
+      : undefined;
+
+  // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
+  const extraInstructionFiles = targets
+    .map((t) => t.instructionsPath?.(cwd))
+    .filter((p): p is string => p !== undefined)
+    .map((p) => (isAbsolute(p) ? relative(cwd, p) : p));
   const rootInstructions =
-    options.rootInstructions === false ? [] : upsertRootInstructions(cwd, options.force ?? false);
+    options.rootInstructions === false
+      ? []
+      : upsertRootInstructions(cwd, options.force ?? false, extraInstructionFiles);
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
@@ -232,6 +420,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     contentSkipped: contentResult.skipped,
     editors: editorResults,
     rootInstructions,
+    launchJson,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -310,7 +499,42 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
     }
 
-    // Root instructions (CLAUDE.md / AGENTS.md) summary
+    // Claude Code launch.json summary
+    if (result.launchJson) {
+      const lj = result.launchJson;
+      const displayPath = lj.configPath.startsWith(cwd)
+        ? relative(cwd, lj.configPath)
+        : lj.configPath;
+      switch (lj.action) {
+        case 'created':
+          lines.push(
+            `  launch.json   ${displayPath}  created (preview_start("${LAUNCH_CONFIG_NAME}") ready)`,
+          );
+          break;
+        case 'merged':
+          lines.push(`  launch.json   ${displayPath}  merged open-knowledge entry`);
+          break;
+        case 'skipped-existing':
+          lines.push(`  launch.json   ${displayPath}  already has open-knowledge entry`);
+          break;
+        case 'skipped-stale':
+          lines.push(
+            `  launch.json   ${displayPath}  ${warning('\u26a0 existing open-knowledge entry is out of date')}`,
+          );
+          if (lj.staleFields && lj.staleFields.length > 0) {
+            lines.push(
+              `                ${warning(`${lj.staleFields.join(', ')} differ from current defaults`)}`,
+            );
+          }
+          lines.push(`                ${warning('re-run with --force to update')}`);
+          break;
+        case 'failed':
+          lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);
+          break;
+      }
+    }
+
+    // Root instructions (AGENTS.md) summary
     if (result.rootInstructions.length > 0) {
       const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
       if (visible.length > 0) {
@@ -380,6 +604,30 @@ function parseEditorFlag(value: string): EditorId[] {
   return ids;
 }
 
+/**
+ * Detect every editor whose MCP config directory already exists. The parent
+ * directory of each editor's `configPath` is the probe location so an empty
+ * editor install (no `mcp.json` yet) still counts as detected. Covers both
+ * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
+ * Code `.vscode/`, Codex `.codex/config.toml`) and Windsurf's user-global
+ * `~/.codeium/windsurf/`.
+ *
+ * Used by the Commander action to default to all detected editors in both
+ * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
+ * D-013.
+ */
+export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
+  const detected: EditorId[] = [];
+  for (const id of ALL_EDITOR_IDS) {
+    const target = EDITOR_TARGETS[id];
+    const configPath = target.configPath(cwd, home);
+    if (existsSync(dirname(configPath))) {
+      detected.push(id);
+    }
+  }
+  return detected;
+}
+
 export function initCommand(): Command {
   return new Command('init')
     .description(
@@ -390,7 +638,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated)',
+      'Target editor(s): claude, cursor, vscode, codex, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -407,8 +655,18 @@ export function initCommand(): Command {
           return;
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
-        // Interactive prompt
+        // Interactive prompt — pre-select every detected editor regardless of
+        // scope. Empty detection set shows all five unselected alongside a
+        // hint (D-019) so the user can still pick manually or cancel and use
+        // --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
+
+        const detected = new Set(detectInstalledEditors(cwd));
+        if (detected.size === 0) {
+          process.stdout.write(
+            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|cursor|vscode|codex|windsurf>.\n',
+          );
+        }
 
         const editorChoices = ALL_EDITOR_IDS.map((id) => {
           const target = EDITOR_TARGETS[id];
@@ -416,14 +674,11 @@ export function initCommand(): Command {
             target.scope === 'global'
               ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
               : relative(cwd, target.configPath(cwd));
-          // Pre-select editors whose config directory already exists
-          const dirExists =
-            target.scope === 'project' && existsSync(dirname(target.configPath(cwd)));
           return {
             value: id,
             label: target.label,
             hint,
-            initialValue: dirExists || id === 'claude',
+            initialValue: detected.has(id),
           };
         });
 
@@ -440,8 +695,16 @@ export function initCommand(): Command {
 
         editors = selected as EditorId[];
       } else {
-        // Non-interactive fallback
-        editors = ['claude'];
+        // Non-interactive fallback — default to every detected editor.
+        // Zero detected: exit 1 with a helpful hint (D-019).
+        editors = detectInstalledEditors(cwd);
+        if (editors.length === 0) {
+          process.stderr.write(
+            'No MCP-capable editors detected. Use --editor <all|claude|cursor|vscode|codex|windsurf> to force.\n',
+          );
+          process.exitCode = 1;
+          return;
+        }
       }
 
       const result = runInit({

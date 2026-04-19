@@ -23,7 +23,19 @@ export const wildcardMeta: JsxComponentMeta = {
 };
 
 export interface ComponentRegistry {
-  get(name: string): JsxComponentMeta;
+  /**
+   * Return the registered descriptor for `name`, or `undefined` if no
+   * descriptor is registered under that name. Callers that want the
+   * wildcard-fallback semantic should use `getOrWildcard`.
+   */
+  get(name: string): JsxComponentMeta | undefined;
+  /**
+   * Return the registered descriptor for `name`, or the wildcard `'*'`
+   * descriptor on miss. Use this when you need a descriptor to render
+   * against — the wildcard gives you sane defaults (`hasChildren: true`,
+   * empty `props`) for unregistered components.
+   */
+  getOrWildcard(name: string): JsxComponentMeta;
   set(name: string, meta: JsxComponentMeta): void;
   has(name: string): boolean;
   entries(): IterableIterator<[string, JsxComponentMeta]>;
@@ -46,16 +58,19 @@ export function createRegistry(): ComponentRegistry {
   }
 
   return {
-    get(name: string): JsxComponentMeta {
+    get(name) {
+      return map.get(name);
+    },
+    getOrWildcard(name) {
       return map.get(name) ?? (map.get('*') as JsxComponentMeta);
     },
-    set(name: string, meta: JsxComponentMeta): void {
+    set(name, meta) {
       map.set(name, meta);
     },
-    has(name: string): boolean {
+    has(name) {
       return map.has(name);
     },
-    entries(): IterableIterator<[string, JsxComponentMeta]> {
+    entries() {
       return map.entries();
     },
   };

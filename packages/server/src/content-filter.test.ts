@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -291,6 +291,57 @@ describe('ContentFilter', () => {
 
       expect(filter.isDirExcluded('src')).toBe(false);
       expect(filter.isDirExcluded('docs')).toBe(false);
+    });
+
+    test('excludes built-in skip dirs even without a .gitignore entry', () => {
+      // BUILTIN_SKIP_DIRS prunes package-manager, runtime, and build-output directories
+      // regardless of user config — prevents broken symlinks and avoids walking large trees.
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Package managers / runtimes
+      expect(filter.isDirExcluded('node_modules')).toBe(true);
+      expect(filter.isDirExcluded('node_modules/some-pkg')).toBe(true);
+      expect(filter.isDirExcluded('.venv')).toBe(true);
+      expect(filter.isDirExcluded('vendor')).toBe(true);
+      // Build output
+      expect(filter.isDirExcluded('dist')).toBe(true);
+      expect(filter.isDirExcluded('build')).toBe(true);
+      expect(filter.isDirExcluded('.next')).toBe(true);
+      expect(filter.isDirExcluded('.turbo')).toBe(true);
+      expect(filter.isDirExcluded('coverage')).toBe(true);
+      // VCS
+      expect(filter.isDirExcluded('.git')).toBe(true);
+      // Normal dirs still pass
+      expect(filter.isDirExcluded('docs')).toBe(false);
+      expect(filter.isDirExcluded('src')).toBe(false);
+    });
+
+    test('does not descend into node_modules during populateDirCount even with a symlink inside', () => {
+      // Create a node_modules dir with a broken symlink (simulates pnpm layout)
+      const nmDir = join(projectDir, 'node_modules');
+      mkdirSync(nmDir);
+      // Broken symlink — target does not exist
+      symlinkSync(join(nmDir, 'nonexistent-target'), join(nmDir, 'broken-link'));
+      // A real .md inside node_modules — if populateDirCount descends, the dir
+      // would count as having an included doc, making its sibling assets pass.
+      writeFileSync(join(nmDir, 'README.md'), '# Pkg\n');
+      writeFileSync(join(projectDir, 'docs.md'), '# Docs\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // node_modules was skipped: the .md inside it was NOT counted, so the
+      // sibling-asset rule does not apply and its assets remain excluded.
+      expect(filter.isExcluded('node_modules/logo.png')).toBe(true);
     });
   });
 

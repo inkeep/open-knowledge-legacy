@@ -1,15 +1,28 @@
 import {
+  classifyWikiLinkTarget,
   getWikiLinkText,
-  type HeadingEntry,
   normalizeNullableString,
   renderWikiLink,
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { CircleAlert, Ellipsis, File, Loader2, Pencil, Trash2 } from 'lucide-react';
+import {
+  CircleAlert,
+  Ellipsis,
+  File,
+  FilePlus2,
+  FolderOpen,
+  Loader2,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
 import { defaultInitialDir } from '../../components/file-tree-utils';
+import {
+  folderIndexCreateSeed,
+  resolveLinkTargetIntent,
+} from '../../components/link-target-intent';
 import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
@@ -24,38 +37,15 @@ import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { docNameFromHash } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
+import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-link-helpers';
 import { LinkTooltipHint } from '../link-tooltip';
-import { isResolvedWikiLinkTarget, wikiLinkSuggestedFilename } from './wiki-link-helpers';
-
-// ── Heading picker ────────────────────────────────────────────────────────────
-
-/** Fetch headings for a resolved page. Returns null while loading, [] when none. */
-function useHeadings(docName: string, enabled: boolean): HeadingEntry[] | null {
-  const [headings, setHeadings] = useState<HeadingEntry[] | null>(null);
-
-  useEffect(() => {
-    if (!enabled || !docName) {
-      setHeadings(null);
-      return;
-    }
-    setHeadings(null);
-    const controller = new AbortController();
-    fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`, {
-      signal: controller.signal,
-    })
-      .then((r) => r.json() as Promise<{ ok: boolean; headings?: HeadingEntry[] }>)
-      .then((data) => {
-        if (data.ok && Array.isArray(data.headings)) setHeadings(data.headings);
-        else setHeadings([]);
-      })
-      .catch(() => {
-        setHeadings([]);
-      });
-    return () => controller.abort();
-  }, [docName, enabled]);
-
-  return headings;
-}
+import { ExternalLinkChip } from './ExternalLinkChip';
+import { useHeadings } from './use-headings';
+import {
+  getWikiLinkResolutionCandidates,
+  isResolvedWikiLinkTarget,
+  wikiLinkSuggestedFilename,
+} from './wiki-link-helpers';
 
 // ── Edit dialog ───────────────────────────────────────────────────────────────
 
@@ -225,45 +215,65 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const anchor = normalizeNullableString(node.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
-  const { pages, loading } = usePageList();
+  const { folderPaths, pages, loading } = usePageList();
+  const classifiedTarget = classifyWikiLinkTarget(target, anchor);
+  const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
+  const linkIntent = resolveLinkTargetIntent(target, {
+    pages,
+    folderPaths,
+    fallbackTargets: getWikiLinkResolutionCandidates(target),
+  });
 
-  const resolutionState =
-    loading && pages.size === 0
+  const resolutionState = externalTarget
+    ? 'external'
+    : loading && pages.size === 0
       ? 'loading'
-      : isResolvedWikiLinkTarget(target, pages)
-        ? 'resolved'
-        : 'unresolved';
+      : linkIntent.kind === 'create'
+        ? 'unresolved'
+        : linkIntent.displayState === 'folder'
+          ? 'folder'
+          : 'resolved';
   const resolved = resolutionState === 'resolved';
+  const folderResolved = resolutionState === 'folder';
   const unresolved = resolutionState === 'unresolved';
 
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const folderCreateSeed = folderIndexCreateSeed(linkIntent);
 
   /** Primary click: navigate (resolved/loading) or open create dialog (unresolved). */
-  function handlePrimaryClick() {
-    if (unresolved) {
-      setCreateDialogOpen(true);
+  function handlePrimaryClick(event?: { metaKey: boolean; ctrlKey: boolean }) {
+    if (externalTarget) {
+      window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (linkIntent.kind === 'create') {
+      setCreateDialogMode('missing');
+      return;
+    }
+    if (event && shouldOpenInNewTab(event)) {
+      openInternalHashHrefInNewTab({ docName: linkIntent.hashDocName, anchor });
       return;
     }
     if (anchor) {
       const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
       const currentDoc = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
-      if (currentDoc === target) {
+      if (currentDoc === linkIntent.hashDocName) {
         const el = document.getElementById(anchor);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
+          window.location.hash = `#/${linkIntent.hashDocName}?anchor=${encodeURIComponent(anchor)}`;
           return;
         }
       }
-      window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
+      window.location.hash = `#/${linkIntent.hashDocName}?anchor=${encodeURIComponent(anchor)}`;
       return;
     }
-    window.location.hash = `#/${target}`;
+    window.location.hash = `#/${linkIntent.hashDocName}`;
   }
 
   function handleCreated(docName: string) {
-    if (docName !== target) {
+    if (createDialogMode === 'missing' && docName !== target) {
       updateAttributes({ target: docName, alias: alias ?? label });
     }
     // Navigation is handled by NewItemDialog after creation
@@ -271,6 +281,43 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
 
   function handleSaveEdit(newTarget: string, newAlias: string | null, newAnchor: string | null) {
     updateAttributes({ target: newTarget, alias: newAlias, anchor: newAnchor });
+  }
+
+  if (externalTarget) {
+    return (
+      <>
+        <NodeViewWrapper as="span" contentEditable={false}>
+          <ExternalLinkChip
+            editor={editor}
+            href={externalTarget.url}
+            tooltipHref={externalTarget.url}
+            label={label}
+            onNavigate={handlePrimaryClick}
+            onEdit={() => setEditDialogOpen(true)}
+            onRemove={deleteNode}
+            wrapperProps={{
+              'data-target': target,
+              'data-alias': alias ?? '',
+              'data-anchor': anchor ?? '',
+              'data-resolved': 'false',
+              'data-resolution-state': resolutionState,
+              'data-external-link': '',
+              'data-link-kind': 'wiki',
+            }}
+          />
+        </NodeViewWrapper>
+
+        <EditWikiLinkDialog
+          open={editDialogOpen}
+          target={target}
+          alias={alias}
+          anchor={anchor}
+          pages={pages}
+          onOpenChange={setEditDialogOpen}
+          onSave={handleSaveEdit}
+        />
+      </>
+    );
   }
 
   return (
@@ -282,7 +329,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
            * and the ⋯ trigger as siblings. Nesting <button> inside <button> is
            * invalid HTML and causes React hydration warnings.
            *
-           * Tooltip surfaces the Cmd/Ctrl+click affordance (shared with
+           * Tooltip surfaces the underlying link target (shared with
            * InternalLinkView via LinkTooltipHint). 400 ms delay so hover over
            * dense wiki-linked text doesn't spam tooltips.
            */}
@@ -319,14 +366,17 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={(e) => {
                     e.preventDefault();
-                    handlePrimaryClick();
+                    handlePrimaryClick(e);
                   }}
                 >
                   {resolutionState === 'loading' && (
-                    <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
                   )}
-                  {resolved && <File className="size-3.5 shrink-0" />}
-                  {unresolved && <CircleAlert className="size-3.5 shrink-0" />}
+                  {resolved && <File className="size-3.5 shrink-0" aria-hidden="true" />}
+                  {folderResolved && (
+                    <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  {unresolved && <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />}
                   {label}
                 </a>
 
@@ -350,7 +400,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                     }}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Ellipsis className="size-3" />
+                    <Ellipsis className="size-3" aria-hidden="true" />
                   </button>
                 </DropdownMenuTrigger>
               </span>
@@ -358,6 +408,8 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
             <TooltipContent side="top" sideOffset={4}>
               {unresolved ? (
                 <div>This page cannot be found.</div>
+              ) : folderResolved ? (
+                <div>This target is a folder. Use link options to create an index note.</div>
               ) : (
                 <LinkTooltipHint href={source} />
               )}
@@ -374,8 +426,17 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               editor.commands.focus();
             }}
           >
+            {folderResolved ? (
+              <>
+                <DropdownMenuItem onSelect={() => setCreateDialogMode('folder-index')}>
+                  <FilePlus2 aria-hidden="true" />
+                  Create index note
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
-              <Pencil />
+              <Pencil aria-hidden="true" />
               Edit link
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -383,7 +444,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               className="text-red-600 focus:text-red-600 focus:bg-red-50"
               onSelect={deleteNode}
             >
-              <Trash2 />
+              <Trash2 aria-hidden="true" />
               Remove
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -391,15 +452,36 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
       </NodeViewWrapper>
 
       <NewItemDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
+        open={createDialogMode !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreateDialogMode(null);
+        }}
         kind="file"
-        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
-        suggestedName={wikiLinkSuggestedFilename(target)}
+        initialDir={
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.initialDir
+            : linkIntent.kind === 'create'
+              ? linkIntent.initialDir
+              : defaultInitialDir(docNameFromHash(window.location.hash) ?? '')
+        }
+        suggestedName={
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.suggestedName
+            : linkIntent.kind === 'create'
+              ? linkIntent.suggestedName
+              : wikiLinkSuggestedFilename(target)
+        }
         description={
-          <>
-            Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
-          </>
+          createDialogMode === 'folder-index' && folderCreateSeed ? (
+            <>
+              Create an index note for{' '}
+              <span className="font-medium text-foreground">{folderCreateSeed.initialDir}/</span>
+            </>
+          ) : (
+            <>
+              Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
+            </>
+          )
         }
         onCreated={handleCreated}
       />

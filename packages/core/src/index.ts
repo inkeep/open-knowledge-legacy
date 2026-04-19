@@ -40,7 +40,14 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+export {
+  HTML_MAX_BYTES,
+  HtmlPayloadTooLargeError,
+  htmlToMdast,
+  mdastToMarkdown,
+} from './markdown/html-to-mdast.ts';
 export { MarkdownManager } from './markdown/index.ts';
+export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
@@ -50,6 +57,7 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+
 // Registry
 export {
   builtInComponents,
@@ -67,24 +75,69 @@ export type {
   PropDefReactNode,
   PropDefString,
 } from './registry/types.ts';
+
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
 // (D22/FR20 — CLI read path and server write path are the only consumers.)
 
+// Bridge — observer/CRDT-bridge shared utilities (precedent #14)
+export {
+  applyFastDiff,
+  applyIncrementalDiff,
+  assertContentPreservation,
+  BridgeMergeContentLossError,
+  type BridgeMergeContentLossInfo,
+  type BridgeMergeContentLossLogPayload,
+  type BridgeMergeContentLossSide,
+  type BridgeMergeContentLossWhich,
+  type DiffChange,
+  defaultScheduler,
+  diffLinesFast,
+  getFrontmatter,
+  mergeThreeWay,
+  normalizeBridge,
+  type Scheduler,
+} from './bridge/index.ts';
 // Types
-export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
+export type {
+  ActivityEntry,
+  AgentFocusEntry,
+  AwarenessState,
+  AwarenessUser,
+} from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
-export type { DiffLine, DiffLineType, EntryType, TimelineEntry } from './types/timeline.ts';
+export type {
+  DiffLine,
+  DiffLineType,
+  EntryType,
+  ShadowContributor,
+  TimelineEntry,
+} from './types/timeline.ts';
 
 // Utils
+export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
+export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export {
+  AGENT_COLORS,
+  AGENT_ICON_COLORS,
+  colorFromSeed,
   deriveIconColor,
   generateRandomColor,
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
 } from './utils/identity.ts';
+export {
+  type AnchorLinkTarget,
+  buildRelativeMarkdownHref,
+  type ClassifiedLinkTarget,
+  classifyMarkdownHref,
+  classifyWikiLinkTarget,
+  type DocLinkTarget,
+  type ExternalLinkTarget,
+  isExternalHref,
+} from './utils/link-targets.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,

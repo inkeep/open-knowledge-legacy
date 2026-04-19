@@ -136,6 +136,65 @@ export function extractPageTitle(content: string, filename: string): string {
   return filename;
 }
 
+export interface FrontmatterMetadata {
+  cluster: string | undefined;
+  category: string | undefined;
+  tags: string[] | undefined;
+}
+
+/**
+ * Parse frontmatter metadata fields relevant to graph display.
+ * Accepts the raw YAML string (with or without `---` delimiters).
+ * Uses regex-based extraction — no yaml dependency.
+ */
+export function parseFrontmatterMetadata(rawYaml: string): FrontmatterMetadata {
+  if (!rawYaml?.trim()) {
+    return { cluster: undefined, category: undefined, tags: undefined };
+  }
+
+  const cluster = extractFrontmatterScalar(rawYaml, 'cluster') ?? undefined;
+  const category = extractFrontmatterScalar(rawYaml, 'category') ?? undefined;
+  const tags = extractFrontmatterArray(rawYaml, 'tags');
+
+  return { cluster, category, tags };
+}
+
+function extractFrontmatterArray(frontmatter: string, key: string): string[] | undefined {
+  const prefix = `${key}:`;
+  const lines = splitFrontmatterLines(frontmatter);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line?.startsWith(prefix)) continue;
+
+    const value = line.slice(prefix.length).trim();
+    if (value) {
+      if (value.startsWith('[') && value.endsWith(']')) {
+        const items = parseInlineAliases(value.slice(1, -1));
+        return items.length > 0 ? items : undefined;
+      }
+      const scalar = normalizeFrontmatterScalar(value);
+      return scalar ? [scalar] : undefined;
+    }
+
+    const items: string[] = [];
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+      const nextLine = lines[nextIndex];
+      if (!nextLine?.trim()) continue;
+      if (/^\s*-\s+/.test(nextLine)) {
+        const item = normalizeFrontmatterScalar(nextLine.replace(/^\s*-\s+/, ''));
+        if (item) items.push(item);
+        continue;
+      }
+      if (/^[^\s][^:]*:\s*/.test(nextLine)) break;
+      break;
+    }
+    return items.length > 0 ? items : undefined;
+  }
+
+  return undefined;
+}
+
 export function extractPageIdentity(content: string, docName: string): PageIdentity {
   const title = extractPageTitle(content, docName);
   const aliases = extractPageAliases(content);

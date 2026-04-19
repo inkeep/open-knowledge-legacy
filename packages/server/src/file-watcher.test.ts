@@ -635,6 +635,42 @@ describe('startWatcher symlink handling', () => {
     }
   });
 
+  test('skips symlink-to-excluded-dir (node_modules inside contentDir) during startup walk', async () => {
+    // node_modules lives inside contentDir — NOT a symlink-escape, so the escape
+    // check does not fire. Only isDirExcluded() stops traversal.
+    const realNm = resolve(contentDir, 'node_modules');
+    mkdirSync(realNm, { recursive: true });
+    // Broken symlink inside — traversal would throw if isDirExcluded check is missing
+    symlinkSync(resolve(realNm, 'nonexistent'), resolve(realNm, 'broken-pkg'));
+    writeFileSync(resolve(realNm, 'README.md'), '# Pkg\n');
+
+    // Sub-package symlinking back to root node_modules (pnpm-style hoisting).
+    // Exercises the symlink → directory path at file-watcher.ts:455-459.
+    const subPkg = resolve(contentDir, 'packages', 'foo');
+    mkdirSync(subPkg, { recursive: true });
+    symlinkSync(realNm, resolve(subPkg, 'node_modules'));
+
+    writeFileSync(resolve(contentDir, 'docs.md'), '# Docs\n');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      includePatterns: ['**/*.md'],
+      excludePatterns: [],
+    });
+
+    const handle = await startWatcher(contentDir, async () => {}, filter);
+    try {
+      const index = handle.getFileIndex();
+      // docs.md indexed; node_modules contents are not
+      expect(index.has('docs')).toBe(true);
+      expect(index.has('node_modules/README')).toBe(false);
+      expect(index.has('packages/foo/node_modules/README')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
   test('handles cyclic symlink directories without infinite loop', async () => {
     const dirA = resolve(contentDir, 'dir-a');
     const dirB = resolve(contentDir, 'dir-b');

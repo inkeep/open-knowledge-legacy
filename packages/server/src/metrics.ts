@@ -17,6 +17,35 @@ export interface ReconciliationMetrics {
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
   cc1LastSeq: Record<string, number>;
+  serverObserverFiresA: number;
+  serverObserverFiresB: number;
+  serverObserverErrorsA: number;
+  serverObserverErrorsB: number;
+  /** Count of successful atomic disk writes from persistence.onStoreDocument.
+   *  Used as the Mutation F regression gate: if OBSERVER_SYNC_ORIGIN drops
+   *  skipStoreHooks, onStoreDocument fires on every observer write and
+   *  produces amplified disk I/O. Under skipStoreHooks: true, a single
+   *  agent-write produces exactly one persistence disk write. */
+  persistenceDiskWrites: number;
+  /** Bridge-correctness SPEC §6 R9 — count of Observer A Path B
+   *  content-preservation post-condition violations. Calibration signal
+   *  for the parallel single-CRDT-collapse exploration. */
+  bridgeMergeContentLoss: number;
+  /** Bridge-correctness SPEC §6 R9 — count of successful silent rescue
+   *  checkpoints written via saveInMemoryCheckpoint. Bounds the rate a user
+   *  might see in TimelinePanel; if high, R7c coalescing becomes worth adding. */
+  bridgeMergeCheckpointCreated: number;
+  /** Collab WebSocket upgrade sockets emitting EPIPE from `ws.send()` AFTER
+   *  the call returned control — kernel-level TCP race against a peer that
+   *  has sent FIN. Filtered at the socket-boundary listener per precedent
+   *  §23 (known-safe at half-close). Counted for observability: a spike
+   *  indicates upstream network load or peer-disconnect patterns worth
+   *  investigating, even though individual events are expected. */
+  collabSocketEpipeCount: number;
+  /** Collab WebSocket upgrade sockets emitting ECONNRESET — peer-side
+   *  unclean close (RST). Same precedent §23 filter boundary; same
+   *  observability rationale as `collabSocketEpipeCount`. */
+  collabSocketEconnresetCount: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -32,6 +61,15 @@ const counters: ReconciliationMetrics = {
   cc1BroadcastDropCount: 0,
   cc1SubscriberCount: 0,
   cc1LastSeq: {},
+  serverObserverFiresA: 0,
+  serverObserverFiresB: 0,
+  serverObserverErrorsA: 0,
+  serverObserverErrorsB: 0,
+  persistenceDiskWrites: 0,
+  bridgeMergeContentLoss: 0,
+  bridgeMergeCheckpointCreated: 0,
+  collabSocketEpipeCount: 0,
+  collabSocketEconnresetCount: 0,
 };
 
 export function incrementReconcile(): void {
@@ -78,6 +116,75 @@ export function setCC1SubscriberCount(count: number): void {
   counters.cc1SubscriberCount = count;
 }
 
+export function incrementServerObserverFire(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverFiresA++;
+  else counters.serverObserverFiresB++;
+}
+
+export function incrementPersistenceDiskWrite(): void {
+  counters.persistenceDiskWrites++;
+}
+
+export function incrementServerObserverError(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverErrorsA++;
+  else counters.serverObserverErrorsB++;
+}
+
+export function incrementBridgeMergeContentLoss(): void {
+  counters.bridgeMergeContentLoss++;
+}
+
+export function incrementBridgeMergeCheckpointCreated(): void {
+  counters.bridgeMergeCheckpointCreated++;
+}
+
+/**
+ * Record a filtered collab-socket error. Prefer `handleCollabSocketError`
+ * at call sites — it pairs the classify + counter update atomically so the
+ * two can't drift. This low-level function is exported for tests.
+ */
+export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET'): void {
+  if (code === 'EPIPE') counters.collabSocketEpipeCount++;
+  else counters.collabSocketEconnresetCount++;
+}
+
+/**
+ * Classify a collab-socket error. Returns `true` if the error is a
+ * known-safe kernel TCP-teardown signal (EPIPE or ECONNRESET) that should
+ * be filtered out of logs per precedent §23. As a side effect, increments
+ * the corresponding per-code metric counter so operators can see the rate
+ * during incident triage.
+ *
+ * Returns `false` for any other error code — the caller surfaces those
+ * via their normal logging path.
+ *
+ * Contract: callers MUST use this helper rather than re-implementing the
+ * `code === 'EPIPE' || code === 'ECONNRESET'` check inline. Centralizing
+ * the filter surface prevents future skew (e.g., if ETIMEDOUT or ECONNABORTED
+ * become known-safe, the decision flips in one place).
+ *
+ * Usage shape:
+ *
+ *   socket.on('error', (err: NodeJS.ErrnoException) => {
+ *     if (handleCollabSocketError(err)) return;
+ *     log.error({ err }, 'Upgrade socket error');
+ *   });
+ *
+ *   ws.on('error', (err: NodeJS.ErrnoException) => {
+ *     if (!handleCollabSocketError(err)) {
+ *       log.error({ err }, 'WebSocket error');
+ *     }
+ *     ws.terminate();
+ *   });
+ */
+export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
+  if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+    incrementCollabSocketFilteredError(err.code);
+    return true;
+  }
+  return false;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -99,4 +206,13 @@ export function resetMetrics(): void {
   counters.cc1BroadcastDropCount = 0;
   counters.cc1SubscriberCount = 0;
   counters.cc1LastSeq = {};
+  counters.serverObserverFiresA = 0;
+  counters.serverObserverFiresB = 0;
+  counters.serverObserverErrorsA = 0;
+  counters.serverObserverErrorsB = 0;
+  counters.persistenceDiskWrites = 0;
+  counters.bridgeMergeContentLoss = 0;
+  counters.bridgeMergeCheckpointCreated = 0;
+  counters.collabSocketEpipeCount = 0;
+  counters.collabSocketEconnresetCount = 0;
 }

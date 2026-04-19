@@ -37,7 +37,11 @@ function connectSystemDoc(port: number): {
     onStateless: ({ payload }) => {
       try {
         const parsed = JSON.parse(payload) as CC1Signal;
-        signals.push(parsed);
+        // Only track 'files' channel signals — backlinks/graph signals from
+        // server observer processing should not affect file-event assertions.
+        if (parsed.ch === 'files') {
+          signals.push(parsed);
+        }
       } catch {
         // ignore malformed payloads
       }

@@ -5,50 +5,36 @@
  * Per D14/D18/FR18:
  *   - `just-bash` owns parsing, pipes, globs, quoting — we never hand input
  *     to a host shell.
- *   - `ReadWriteFs` sandboxes I/O to `projectDir`; traversal outside is
- *     rejected at the filesystem layer (EACCES from `resolveAndValidate`).
+ *   - `ReadWriteFs` sandboxes I/O to the caller-supplied cwd; traversal
+ *     outside it is rejected at the filesystem layer (EACCES from
+ *     `resolveAndValidate`).
  *   - Shadow-repo history is read via `simple-git` in `src/content/shadow-log.ts`,
  *     NOT through this module.
  *
- * **IMPORTANT:** `ReadWriteFs` presents the host directory as the virtual
- * root `/` inside the interpreter. Agent-supplied paths like
- * `articles/auth.md` resolve relative to `cwd: '/'`, which maps to
- * `<projectDir>/articles/auth.md` on disk. Passing `cwd: projectDir`
- * (the host path) causes "No such file or directory" because the sandbox
- * has no knowledge of that absolute path.
+ * **cwd is caller-supplied and per-call.** No module-level singleton. The
+ * MCP server resolves the effective cwd from client roots / explicit args
+ * and passes it in. `ReadWriteFs` uses that cwd as the virtual root `/`
+ * inside the interpreter — agent-supplied paths like `articles/auth.md`
+ * resolve relative to that root, which maps to `<cwd>/articles/auth.md`
+ * on disk. Traversal above the cwd is rejected.
  *
  * Public surface:
- *   - setProjectDir / getProjectDir — module state set once at startup
- *   - shellEscape — POSIX-safe arg quoting (retained for callers building
- *     display strings)
- *   - createBashInstance(projectDir?) — a fresh `Bash` scoped to projectDir
+ *   - shellEscape — POSIX-safe arg quoting
+ *   - createBashInstance(cwd) — a fresh `Bash` scoped to the given host
+ *     directory. `cwd` must be an absolute host path.
  *   - execBash(bash, command) — run a pre-validated command string
  *   - StdoutOverflowError — thrown when output exceeds the 16 MB cap
- *   - grep(pattern, opts?) — internal helper for `search`, implemented
+ *   - grep(pattern, cwd, opts?) — internal helper for `search`, implemented
  *     on top of just-bash so there's no host `/usr/bin/grep` dependency
  *
  * Spec: SPEC.md FR18 + D14 + D15.
  */
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { Bash, ReadWriteFs } from 'just-bash';
 import { shellEscape } from './shell-escape.ts';
 
 /** Hard cap on stdout bytes returned by `execBash` (16 MB per FR19/D9). */
 const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
-
-// ── Module-level state ─────────────────────────────────────────────────
-
-let projectDir: string = process.cwd();
-
-/** Set the project directory the Bash instance scopes I/O against. Call once at startup. */
-export function setProjectDir(dir: string): void {
-  projectDir = resolve(dir);
-}
-
-/** Get the current project directory. */
-export function getProjectDir(): string {
-  return projectDir;
-}
 
 // ── POSIX shell escape (retained for display/tool-description use) ──────
 // Lives in `./shell-escape.ts` so the pure parse-command module can import
@@ -78,17 +64,21 @@ export class StdoutOverflowError extends Error {
 }
 
 /**
- * Create a fresh `Bash` instance scoped to the given project directory.
+ * Create a fresh `Bash` instance scoped to the given host directory.
  * Callers wanting per-call isolation should create a new instance each call.
  *
- * See the file header for the `cwd: '/'` rationale — do NOT pass the host
- * path as `cwd`, it will produce "No such file or directory" for every path.
+ * `cwd` must be an absolute host path. `ReadWriteFs` uses that cwd as its
+ * sandbox root (mapped to virtual `/` inside the interpreter), so agent
+ * paths like `articles/auth.md` resolve to `<cwd>/articles/auth.md`, and
+ * traversal above the cwd (`..`, absolute `/etc/passwd`, etc.) is blocked.
  */
-export function createBashInstance(dir: string = projectDir): Bash {
-  const root = resolve(dir);
+export function createBashInstance(cwd: string): Bash {
+  if (!isAbsolute(cwd)) {
+    throw new Error(`createBashInstance: cwd must be absolute (got: ${cwd})`);
+  }
   return new Bash({
     cwd: '/',
-    fs: new ReadWriteFs({ root, allowSymlinks: false }),
+    fs: new ReadWriteFs({ root: resolve(cwd), allowSymlinks: false }),
   });
 }
 
@@ -126,7 +116,7 @@ export interface GrepMatch {
 
 export interface GrepOptions {
   caseInsensitive?: boolean;
-  /** Absolute or project-relative paths to search. Defaults to project root. */
+  /** Absolute or cwd-relative paths to search. Defaults to `.` (the cwd). */
   paths?: string[];
   /** Glob patterns to include (passed to grep --include). */
   include?: string[];
@@ -140,20 +130,45 @@ export interface GrepOptions {
  * Fixed-string recursive grep implemented via just-bash. Preserves the
  * `GrepMatch[]` contract the `search` MCP tool depends on.
  *
- * Paths passed in `opts.paths` are interpreted relative to the sandbox
- * root — i.e., `.` (default) resolves to projectDir.
+ * `cwd` must be an absolute host path — the grep runs with that cwd, so
+ * paths in `opts.paths` are interpreted relative to it (or literally if
+ * absolute).
  */
-export async function grep(pattern: string, opts: GrepOptions = {}): Promise<GrepMatch[]> {
-  const bash = createBashInstance(projectDir);
+/**
+ * Strip the leading `**\/` from a picomatch-style include/exclude glob so
+ * just-bash's grep (which only matches basenames) can apply it. `**\/*.md` ->
+ * `*.md`; `docs/**\/*.md` stays unchanged (loses the directory constraint —
+ * a known limitation; use `opts.paths` to scope instead).
+ */
+function normalizeGrepGlob(pat: string): string {
+  return pat.startsWith('**/') ? pat.slice(3) : pat;
+}
+
+export async function grep(
+  pattern: string,
+  cwd: string,
+  opts: GrepOptions = {},
+): Promise<GrepMatch[]> {
+  const bash = createBashInstance(cwd);
 
   const flags: string[] = ['-rn', '-F']; // recursive, line numbers, fixed-string
   if (opts.caseInsensitive ?? true) flags.push('-i');
+  // just-bash's grep has two quirks the space-separated form doesn't survive:
+  // (1) `--include PATTERN` (space) is silently ignored — the equals form
+  //     `--include=PATTERN` is required.
+  // (2) `--include` matches the file basename only, with glob patterns that
+  //     DON'T support `**`. A config value like `**/*.md` never matches any
+  //     file (no basename starts with `**/`). Strip the `**/` prefix so the
+  //     picomatch-style config globs used elsewhere in the app work here too.
+  //     Complex path-constrained globs (`docs/**/*.md`) lose the directory
+  //     constraint at this layer — accept as a known limitation; restrict
+  //     via `opts.paths` instead.
   for (const inc of opts.include ?? []) {
-    flags.push('--include', shellEscape(inc));
+    flags.push(`--include=${shellEscape(normalizeGrepGlob(inc))}`);
   }
   for (const exc of opts.exclude ?? []) {
-    flags.push('--exclude', shellEscape(exc));
-    flags.push('--exclude-dir', shellEscape(exc));
+    flags.push(`--exclude=${shellEscape(normalizeGrepGlob(exc))}`);
+    flags.push(`--exclude-dir=${shellEscape(normalizeGrepGlob(exc))}`);
   }
 
   const searchPaths = opts.paths?.length ? opts.paths.map(shellEscape) : ['.'];

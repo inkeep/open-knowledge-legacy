@@ -1,0 +1,28 @@
+/**
+ * `open-knowledge push` — push only.
+ *
+ * Delegates to POST /api/sync/trigger { op: 'push' } when a live server is
+ * running. Falls back to simple-git push when no server is found.
+ */
+import { Command } from 'commander';
+import type { Config } from '../index.ts';
+import { runSync } from './sync.ts';
+
+export function pushCommand(getConfig: () => Config): Command {
+  return new Command('push')
+    .description('Push commits to the remote')
+    .option('--json', 'Output JSONL progress events', false)
+    .action(async (opts: { json: boolean }) => {
+      try {
+        await runSync({ json: opts.json, op: 'push' }, getConfig());
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (opts.json) {
+          process.stdout.write(`${JSON.stringify({ type: 'error', message: msg })}\n`);
+        } else {
+          process.stderr.write(`✗ push failed: ${msg}\n`);
+        }
+        process.exit(1);
+      }
+    });
+}

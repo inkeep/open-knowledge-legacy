@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { extractPageAliases, extractPageIdentity, extractPageTitle } from './page-identity.ts';
+import {
+  extractPageAliases,
+  extractPageIdentity,
+  extractPageTitle,
+  parseFrontmatterMetadata,
+} from './page-identity.ts';
 
 describe('extractPageIdentity', () => {
   test('uses frontmatter title and aliases as reusable match labels', () => {
@@ -54,6 +59,111 @@ describe('extractPageAliases', () => {
     );
 
     expect(extractPageAliases(content)).toEqual(['Alpha', 'Project, A']);
+  });
+});
+
+describe('parseFrontmatterMetadata', () => {
+  test('extracts all fields from valid frontmatter', () => {
+    const raw = [
+      '---',
+      'title: Vector Search',
+      'description: How vector search works',
+      'tags: [retrieval, embeddings, ANN]',
+      'category: method',
+      'cluster: retrieval',
+      '---',
+    ].join('\n');
+
+    expect(parseFrontmatterMetadata(raw)).toEqual({
+      cluster: 'retrieval',
+      category: 'method',
+      tags: ['retrieval', 'embeddings', 'ANN'],
+    });
+  });
+
+  test('returns undefined for missing individual fields', () => {
+    const raw = ['---', 'title: Some Page', 'cluster: planning', '---'].join('\n');
+
+    const result = parseFrontmatterMetadata(raw);
+    expect(result.cluster).toBe('planning');
+    expect(result.category).toBeUndefined();
+    expect(result.tags).toBeUndefined();
+  });
+
+  test('handles block array syntax for tags', () => {
+    const raw = [
+      '---',
+      'tags:',
+      '  - memory',
+      '  - consolidation',
+      '  - long-term',
+      'category: concept',
+      '---',
+    ].join('\n');
+
+    const result = parseFrontmatterMetadata(raw);
+    expect(result.tags).toEqual(['memory', 'consolidation', 'long-term']);
+    expect(result.category).toBe('concept');
+  });
+
+  test('handles inline array syntax for tags', () => {
+    const raw = ['---', 'tags: [sparse, dense, hybrid]', 'cluster: retrieval', '---'].join('\n');
+
+    expect(parseFrontmatterMetadata(raw).tags).toEqual(['sparse', 'dense', 'hybrid']);
+  });
+
+  test('handles empty frontmatter without throwing', () => {
+    expect(parseFrontmatterMetadata('')).toEqual({
+      cluster: undefined,
+      category: undefined,
+      tags: undefined,
+    });
+
+    expect(parseFrontmatterMetadata('---\n---')).toEqual({
+      cluster: undefined,
+      category: undefined,
+      tags: undefined,
+    });
+  });
+
+  test('handles malformed YAML without throwing', () => {
+    const raw = '---\nthis is not: valid: yaml: at all\n---';
+    const result = parseFrontmatterMetadata(raw);
+    expect(result.cluster).toBeUndefined();
+    expect(result.category).toBeUndefined();
+    expect(result.tags).toBeUndefined();
+  });
+
+  test('handles quoted scalar values', () => {
+    const raw = ['---', 'cluster: "long-term-memory"', "category: 'concept'", '---'].join('\n');
+
+    expect(parseFrontmatterMetadata(raw)).toEqual({
+      cluster: 'long-term-memory',
+      category: 'concept',
+      tags: undefined,
+    });
+  });
+
+  test('handles tags with quoted items', () => {
+    const raw = ['---', 'tags: ["graph theory", \'knowledge bases\', plain]', '---'].join('\n');
+
+    expect(parseFrontmatterMetadata(raw).tags).toEqual([
+      'graph theory',
+      'knowledge bases',
+      'plain',
+    ]);
+  });
+
+  test('returns undefined for empty tags array', () => {
+    const raw = ['---', 'tags: []', '---'].join('\n');
+    expect(parseFrontmatterMetadata(raw).tags).toBeUndefined();
+  });
+
+  test('handles frontmatter without delimiters', () => {
+    const raw = 'cluster: evaluation\ncategory: benchmark';
+    const result = parseFrontmatterMetadata(raw);
+    expect(result.cluster).toBe('evaluation');
+    expect(result.category).toBe('benchmark');
   });
 });
 

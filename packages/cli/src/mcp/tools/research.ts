@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import { textPlusStructured } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
   return `Research this topic and write provisional findings inside the project content directory. Research is **provisional, not canonical** — it captures findings, trade-offs, and open questions at a point in time. Promoting to canonical articles is a deliberate later step (via the \`consolidate\` tool).
@@ -56,8 +56,8 @@ If a fetch fails for a source you specifically need, stop and ask the user to pa
 Read each ingested source carefully. Also read:
 
 - **Existing canonical articles** on the topic — use \`exec("cat <path>")\` (rich enrichment: frontmatter + shadow-repo activity + project git history + backlinks in one call)
-- **Prior research** on adjacent topics — same: \`exec("cat <path>")\` for wiki files
-- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic) — native \`Read\` is fine for non-wiki code files
+- **Prior research** on adjacent topics — same: \`exec("cat <path>")\` for Open Knowledge markdown
+- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic) — native \`Read\` is fine for \`.ts\` / \`.js\` / etc.; use \`exec\` for \`.md\` / \`.mdx\` under \`content.include\`
 - **Project context** — project-root docs, \`specs/\`, \`reports/\`, or wherever the project organizes design material
 
 Take notes on:
@@ -184,10 +184,15 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export function register(server: ServerInstance, config: Config): void {
+  // previewUrl is null per FR-2.1: research is a workflow primer keyed on a
+  // `topic` — the target research doc's path is chosen by the agent during the
+  // prompt's Step 4. There is no single canonical document to preview at call
+  // time. Uniform with ingest / consolidate / save_version.
   server.tool(
     'research',
     DESCRIPTION,
     { topic: z.string().describe('The topic, question, or anchor URL to research') },
-    (args: { topic: string }) => textResult(buildBody(args.topic, config.content.dir)),
+    (args: { topic: string }) =>
+      textPlusStructured(buildBody(args.topic, config.content.dir), { previewUrl: null }),
   );
 }

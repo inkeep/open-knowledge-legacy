@@ -24,7 +24,6 @@ export const LinkFidelity = Link.extend({
       HTMLAttributes: {
         target: '_blank',
         rel: 'noopener noreferrer',
-        class: null as string | null,
       },
       isAllowedUri: (url: string) => {
         try {
@@ -43,8 +42,8 @@ export const LinkFidelity = Link.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
-      linkStyle: { default: 'inline' },
-      refLabel: { default: null },
+      linkStyle: { default: 'inline', rendered: false },
+      refLabel: { default: null, rendered: false },
     };
   },
 });

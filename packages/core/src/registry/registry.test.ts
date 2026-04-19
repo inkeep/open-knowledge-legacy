@@ -10,18 +10,24 @@ describe('createRegistry', () => {
     expect(entries.length).toBe(19);
   });
 
-  test('getDescriptor returns registered component by name', () => {
+  test('get returns registered component by name', () => {
     const registry = createRegistry();
     const callout = registry.get('Callout');
-    expect(callout.name).toBe('Callout');
-    expect(callout.hasChildren).toBe(true);
-    expect(callout.props.length).toBeGreaterThan(0);
-    expect(callout.category).toBe('content');
+    expect(callout).toBeDefined();
+    expect(callout?.name).toBe('Callout');
+    expect(callout?.hasChildren).toBe(true);
+    expect(callout?.props.length).toBeGreaterThan(0);
+    expect(callout?.category).toBe('content');
   });
 
-  test('getDescriptor returns wildcard for unregistered names', () => {
+  test('get returns undefined for unregistered names', () => {
     const registry = createRegistry();
-    const unknown = registry.get('DataViz');
+    expect(registry.get('DataViz')).toBeUndefined();
+  });
+
+  test('getOrWildcard returns wildcard meta for unregistered names', () => {
+    const registry = createRegistry();
+    const unknown = registry.getOrWildcard('DataViz');
     expect(unknown.name).toBe('*');
     expect(unknown.hasChildren).toBe(true);
     expect(unknown.props.length).toBe(0);
@@ -30,8 +36,9 @@ describe('createRegistry', () => {
   test('registry.set() followed by get() picks up new descriptor (M3 hot-add)', () => {
     const registry = createRegistry();
 
-    // Before: DataViz returns wildcard
-    expect(registry.get('DataViz').name).toBe('*');
+    // Before: DataViz is unregistered
+    expect(registry.get('DataViz')).toBeUndefined();
+    expect(registry.getOrWildcard('DataViz').name).toBe('*');
 
     // Hot-add
     const dataVizMeta: JsxComponentMeta = {
@@ -47,9 +54,10 @@ describe('createRegistry', () => {
 
     // After: DataViz returns the new descriptor
     const result = registry.get('DataViz');
-    expect(result.name).toBe('DataViz');
-    expect(result.props.length).toBe(1);
-    expect(result.props[0].name).toBe('chartType');
+    expect(result).toBeDefined();
+    expect(result?.name).toBe('DataViz');
+    expect(result?.props.length).toBe(1);
+    expect(result?.props[0].name).toBe('chartType');
   });
 
   test("wildcard has name '*', hasChildren:true, empty props", () => {

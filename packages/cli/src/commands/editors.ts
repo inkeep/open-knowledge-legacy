@@ -8,9 +8,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export type EditorId = 'claude' | 'cursor' | 'vscode' | 'windsurf';
+export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf';
 
-export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'cursor', 'vscode', 'windsurf'];
+export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'cursor', 'vscode', 'codex', 'windsurf'];
 
 const MCP_SERVER_COMMAND = 'npx';
 const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
@@ -21,12 +21,21 @@ export interface EditorMcpTarget {
   label: string;
   /** Resolve the absolute path to the MCP config file. */
   configPath: (cwd: string, home?: string) => string;
+  /** On-disk config format for this editor. */
+  format: 'json' | 'toml';
   /** Top-level JSON key that holds the server map. */
-  topLevelKey: 'mcpServers' | 'servers';
+  topLevelKey: 'mcpServers' | 'servers' | 'mcp_servers';
   /** Build the server entry object for this editor. */
   buildEntry: () => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
+  /**
+   * Project-local agent instruction file to inject the Open Knowledge section
+   * into, if any. Claude reads CLAUDE.md; every other editor picks up the
+   * tool-agnostic root AGENTS.md which `open-knowledge init` always writes.
+   * Only declared for editors that can't read AGENTS.md directly.
+   */
+  instructionsPath?: (cwd: string) => string;
 }
 
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
@@ -34,14 +43,17 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'claude',
     label: 'Claude Code',
     configPath: (cwd) => join(cwd, '.mcp.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
+    instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   },
   cursor: {
     id: 'cursor',
     label: 'Cursor',
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
@@ -50,14 +62,25 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'vscode',
     label: 'VS Code',
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
+    format: 'json',
     topLevelKey: 'servers',
     buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'project',
+  },
+  codex: {
+    id: 'codex',
+    label: 'Codex',
+    configPath: (cwd) => join(cwd, '.codex', 'config.toml'),
+    format: 'toml',
+    topLevelKey: 'mcp_servers',
+    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   windsurf: {
     id: 'windsurf',
     label: 'Windsurf',
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',

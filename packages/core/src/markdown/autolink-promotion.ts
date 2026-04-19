@@ -50,8 +50,13 @@ export function autolinkPromotionPlugin() {
  * Walk a parent node's children looking for text nodes that contain
  * `<scheme:uri>` patterns. Split them into: preceding text, link node,
  * trailing text. Mutates `parent.children` in place.
+ *
+ * Exported for use in the R17 merged post-parse walker — that walker
+ * invokes the same promotion logic per parent-visit without re-walking
+ * the tree. The standalone `autolinkPromotionPlugin` above is preserved
+ * for legacy callers and unit tests that exercise the plugin surface.
  */
-function promoteInParent(parent: Parent): void {
+export function promoteInParent(parent: Parent): void {
   const newChildren: Parent['children'] = [];
   let changed = false;
 

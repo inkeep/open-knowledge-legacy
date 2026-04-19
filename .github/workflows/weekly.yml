@@ -1,0 +1,94 @@
+name: Weekly elevated-sample tests
+
+# Tier 3 per SPEC §6 R9 (US-016). Runs the fidelity PBT suite at 10K samples
+# (vs 1K default; `STRESS_FIDELITY=1`) plus a perf trend artifact. Budget: 60
+# min (generous — elevated-sample runs are minutes, not sub-minute).
+#
+# The bridge-convergence elevated-seed fuzz job was removed on 2026-04-19 per
+# `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2; D-Q1 LOCKED Option A).
+# Sample the architectural CRDT residual ad-hoc via `bun run measure:fuzz`
+# — see AGENTS.md §Measurement scripts for the invocation convention.
+#
+# On-demand only. Same rationale as nightly: pre-production project, no
+# consumer for weekly signal, tier-1 catches regressions at merge time.
+# Developers who want elevated-sample coverage or a perf trend snapshot run
+# this workflow from the GitHub Actions UI ("Run workflow") or via
+# `gh workflow run weekly.yml`. Re-enable the `schedule:` trigger when
+# background elevated-sample detection becomes load-bearing.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # Elevated-sample PBT: STRESS_FIDELITY=1 bumps fast-check numRuns from 1K to
+  # 10K per `packages/app/tests/fidelity/helpers.ts` + PBT_TIMEOUT_MS from
+  # 30s to 90s. Fidelity invariants I1-I10 plus the 6 new US-014 handler PBTs
+  # run at elevated sample depth via `test:fidelity` (scoped to
+  # `packages/app/tests/fidelity/**`). I11 (R23 guard precision, colocated
+  # with the guard at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts`)
+  # has its own STRESS_FIDELITY guard but is NOT re-run by this job — it
+  # executes in the core unit suite at default sampling.
+  elevated-fidelity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+          cache: true
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-weekly-fidelity-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-weekly-fidelity-
+      - run: bun install --frozen-lockfile
+      - env:
+          STRESS_FIDELITY: "1"
+        run: bunx turbo run test:fidelity
+
+  # Elevated-seed fuzz was removed on 2026-04-19 per
+  # `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2 / D-Q1). The
+  # bridge-convergence fuzzer is no longer invoked by any scheduled workflow —
+  # the architectural CRDT residual it samples is intrinsic to the dual-CRDT
+  # topology and cannot be eliminated until the single-CRDT collapse
+  # (D4-LOCKED in `specs/2026-04-16-bridge-correctness/` until H2 2026+).
+  # Sample ad-hoc via `bun run measure:fuzz` — see AGENTS.md §Measurement scripts.
+
+  # Perf trend: runs the full benchmark harness (tier-2 R4 also runs it, but
+  # gates only on regression). The weekly job uploads the raw results JSON as
+  # a workflow artifact so per-week drift at the tail is inspectable without
+  # being a gating signal.
+  perf-trend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+          cache: true
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-weekly-perf-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-weekly-perf-
+      - run: bun install --frozen-lockfile
+      - env:
+          RUN_BENCH: "1"
+        run: bunx turbo run test:perf:bench
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: perf-trend-${{ github.sha }}
+          path: packages/core/tests/perf/results.*.json
+          retention-days: 90

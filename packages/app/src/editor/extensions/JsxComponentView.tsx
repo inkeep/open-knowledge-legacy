@@ -9,9 +9,9 @@
  *   Branch 1 (Wildcard): hover-revealed name badge + editable NodeViewContent.
  *   Branch 2 (Registered healthy): live React component + hover chrome
  *     (badge, gear→Popover PropPanel, add-child pill) + NodeViewContent.
- *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #14).
+ *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #26).
  *
- * Per Precedent #14: NodeViewContent is ALWAYS rendered, never display:none.
+ * Per Precedent #26: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
 import type { NodeViewProps } from '@tiptap/core';
@@ -30,8 +30,8 @@ import {
   createChildNode,
   focusInsertedComponent,
 } from '../slash-command/component-items.ts';
-import { getYDoc } from '../utils/get-ydoc.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
+import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
 
@@ -84,6 +84,25 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
  * Passes through ALL keys from attrs.props — undeclared attrs reach the
  * component to prevent crashes on components requiring non-PropDef attrs.
  */
+/**
+ * Insertion-order-independent stringification. Sorts keys recursively so
+ * `{a:1, b:2}` and `{b:2, a:1}` hash to the same string.
+ *
+ * Does NOT dedupe circular references — PM attr trees are acyclic by
+ * construction, so a cycle here would be a bug worth surfacing.
+ */
+export function stableHash(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableHash).join(',')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableHash(v)}`).join(',')}}`;
+}
+
 export function extractPrimitiveProps(
   attrs: Record<string, unknown>,
   descriptorProps: import('@inkeep/open-knowledge-core').PropDef[],
@@ -97,7 +116,11 @@ export function extractPrimitiveProps(
     if (reactnodeNames.has(key)) continue;
     result[key] = value;
   }
-  return result;
+  // Render-layer XSS mitigation: strip javascript:/vbscript:/data: URLs from
+  // URL-typed props (href, src, action, ...) before they reach live React.
+  // Storage (Y.Text, XmlFragment, shadow repo) retains the raw bytes per the
+  // NG4 fidelity contract — only the live render is sanitized.
+  return sanitizeComponentProps(result);
 }
 
 // ── Main NodeView ───────────────────────────────────────────────────────
@@ -122,13 +145,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         siblingCount = $pos.parent.childCount;
       }
     }
-  } catch {
-    // Position resolution can fail during teardown
+  } catch (err) {
+    // PM `doc.resolve(pos)` throws RangeError when the position is outside
+    // the current doc — happens during teardown (getPos() returns a stale
+    // position after the node was detached) and during the recycle race
+    // where the ProseMirror view rebuilds mid-render. Both are expected;
+    // re-throwing would blow up the ErrorBoundary and mask real bugs.
+    // Anything other than RangeError is unexpected — surface it.
+    if (!(err instanceof RangeError)) throw err;
   }
   const canMoveUp = isChildOfComponent && siblingIndex > 0;
   const canMoveDown = isChildOfComponent && siblingIndex < siblingCount - 1;
 
-  // Selection layer (Precedent #15): read canonical block-selection state
+  // Selection layer (Precedent #27): read canonical block-selection state
   // from SelectionStatePlugin and derive this wrapper's role.
   //
   //  - isInnermostSelected: THIS wrapper is the selected block. Paints halo.
@@ -136,7 +165,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   //                         Gets `data-has-child-selected` so the CSS layer
   //                         can hide its own halo in favor of the innermost
   //                         (Gutenberg-style innermost-wins, store-driven
-  //                         rather than `:has()`-based — Precedent #18).
+  //                         rather than `:has()`-based — Precedent #30).
   //  - selectionOrigin:     How the user arrived at this selection
   //                         ('keyboard' | 'pointer' | 'programmatic').
   //                         Plumbed-through for future keyboard-only focus-
@@ -190,14 +219,23 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // ref prevents double-fire under Strict Mode; explicit deps ensure the
   // effect only runs when one of the watched values actually changes.
   useEffect(() => {
-    if (selected && !wasSelected.current && hasEditableProps && consumeAutoOpen()) {
+    if (selected && !wasSelected.current && hasEditableProps && consumeAutoOpen(pos)) {
       setPopoverOpen(true);
     }
     wasSelected.current = selected;
-  }, [selected, hasEditableProps]);
+  }, [selected, hasEditableProps, pos]);
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
-  const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
+  // Stable reset key for the ErrorBoundary. `JSON.stringify` on an arbitrary
+  // props object produced a string whose content was key-order-sensitive
+  // across engines — combined with the post-edit re-serialization that
+  // mutates `primitiveProps`'s property insertion order (spread + overwrite),
+  // the key changed between renders even when the prop values didn't, and
+  // the ErrorBoundary (and therefore PropPanel) remounted mid-typing,
+  // stealing focus from the active input. Sort keys so two objects with the
+  // same (key, value) pairs hash to the same string regardless of insertion
+  // order.
+  const resetKey = `${descriptor.name}::${stableHash(primitiveProps)}`;
 
   // Shared: compute child insertion position (inside container, after last child)
   const insertChildAt = () => {
@@ -230,15 +268,30 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       node.type.schema.text(source),
     );
 
-    // Defer to next frame to avoid dispatching during render
-    requestAnimationFrame(() => {
+    // Defer to next frame to avoid dispatching during render. Tracked + cancelled
+    // on cleanup so an unmount between schedule and fire (e.g., parent tree
+    // replaced by a remote peer edit) does not dispatch against a stale view.
+    const frameId = requestAnimationFrame(() => {
       try {
         editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
-      } catch {
-        // Position may have changed if other transactions fired — safe to ignore
+      } catch (err) {
+        // Position may have changed if other transactions fired.
+        // Log as a structured event so recurring failures are visible in
+        // telemetry — the convertedRef guard prevents re-entry, but a
+        // swallowed exception here would otherwise leave the user on the
+        // "opening source editor..." placeholder with no signal.
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-auto-convert-failed',
+            component: node.attrs.componentName,
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
     });
-  }, [needsConversion, descriptor.name, descriptor.displayName, renderError, node, editor, getPos]);
+
+    return () => cancelAnimationFrame(frameId);
+  }, [needsConversion, node, editor, getPos, descriptor, renderError]);
 
   // Show placeholder while conversion is pending
   if (needsConversion) {
@@ -289,7 +342,8 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   // ARIA: role="group" for typed-children containers, with a descriptive
   // aria-label summarizing content. Screen readers announce on focus/select.
-  // See Precedent #20 (a11y codified in the selection plugin / its consumers).
+  // See precedent "A11y codified in the selection plugin, not retrofitted
+  // per-block" and its consumers (Breadcrumb, SelectionAnnouncer).
   // TODO(i18n): pluralization is English-only (`+ 's'` heuristic) — this
   // breaks for irregular plurals (Foot → Foots) and any non-English locale.
   // When i18n lands, route through `Intl.PluralRules` + a localized message
@@ -302,6 +356,25 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       ? `${componentLabel} with ${node.childCount} ${(descriptor.emptyChildName as string).toLowerCase()}${node.childCount === 1 ? '' : 's'}`
       : `${componentLabel} (empty)`
     : undefined;
+
+  // WCAG 2.1.1 keyboard-equivalent to the click-to-select path. When the
+  // block is NodeSelected (via arrow-key L2 nav in KeyboardNav), pressing
+  // Enter/Space opens the PropPanel if the descriptor has editable props —
+  // mirroring what clicking the gear does with a mouse. For container
+  // components with editable children, the default NodeSelection → Enter
+  // PM behavior (enter the content hole) is preserved by only handling
+  // the key when editable props exist.
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!selected) return;
+    if (!hasEditableProps) return;
+    // Allow keystrokes inside the chrome / child inputs to bubble normally.
+    const target = e.target as HTMLElement;
+    if (target.closest('.jsx-component-chrome')) return;
+    if (target.closest('input, textarea, select, button')) return;
+    e.preventDefault();
+    setPopoverOpen(true);
+  };
 
   return (
     <NodeViewWrapper
@@ -330,6 +403,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
       onClick={handleBodyClick}
+      onKeyDown={handleKeyDown}
     >
       {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
@@ -463,7 +537,13 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 <Settings2 size={12} />
               </button>
             </PopoverTrigger>
-            <PopoverContent side="right" align="start" sideOffset={8} className="w-64 p-3">
+            {/* z-[60] overrides the shadcn popover base (z-50) so the
+                PropPanel reliably sits above other z-50 surfaces (wiki-link
+                Dialog overlays, sonner toasts, internal-link Dialogs). The
+                chrome bar in globals.css also uses z-50; a PopoverContent
+                at the same level is ordered by render-order, which isn't a
+                stable guarantee — an explicit bump makes it deterministic. */}
+            <PopoverContent side="right" align="start" sideOffset={8} className="w-64 p-3 z-[60]">
               <div className="text-xs font-medium text-muted-foreground mb-2">
                 {descriptor.displayName ?? descriptor.name} Properties
               </div>
@@ -492,8 +572,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                       sourceDirty: true,
                     }),
                   );
-                  const ydoc = getYDoc(editor);
-                  if (ydoc) markUserTyping(ydoc);
+                  markUserTyping();
                 }}
               />
             </PopoverContent>

@@ -18,6 +18,7 @@
  * `register(...)` export, then import and call it from here.
  */
 import type { Config } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
@@ -48,6 +49,10 @@ import {
   DESCRIPTION as GET_ORPHANS_DESCRIPTION,
   register as registerGetOrphans,
 } from './get-orphans.ts';
+import {
+  DESCRIPTION as GET_PREVIEW_URL_DESCRIPTION,
+  register as registerGetPreviewUrl,
+} from './get-preview-url.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as INIT_CONTENT_DESCRIPTION,
@@ -75,7 +80,7 @@ import {
   DESCRIPTION as SAVE_VERSION_DESCRIPTION,
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
-import type { ServerInstance } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   register as registerSuggestLinks,
   DESCRIPTION as SUGGEST_LINKS_DESCRIPTION,
@@ -110,51 +115,132 @@ export const TOOL_DESCRIPTIONS = {
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
+  get_preview_url: GET_PREVIEW_URL_DESCRIPTION,
 } as const;
 
+/**
+ * Per-call cwd resolver. Returns the absolute host directory that the
+ * current tool call should operate against. Priority:
+ *   1. explicit `cwd` arg from the tool call
+ *   2. first MCP root advertised by the client
+ *   3. server startup cwd (fallback)
+ */
+export type ResolveCwd = (explicit?: string) => Promise<string>;
+
 export interface RegisterAllToolsOptions {
-  serverUrl?: string;
-  projectDir: string;
+  /**
+   * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
+   * lazy resolver that re-discovers per-call from the live project root. The
+   * resolver variant is what makes writes work when the MCP process is spawned
+   * before the user starts the Hocuspocus server, or when `cwd` at spawn time
+   * doesn't match the project root (e.g. Claude Desktop launches with `cwd=/`).
+   */
+  serverUrl?: ServerUrlOrResolver;
+  /** Resolves the cwd for a given tool call (see `ResolveCwd` docs). */
+  resolveCwd: ResolveCwd;
+  /** Server startup cwd — used only as a test/fallback identity anchor. */
+  startupCwd: string;
   config: Config;
+  identityRef?: { current: AgentIdentity };
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
   // exec — the primary surface (V0-24 / L2-aggressive per D2).
   registerExec(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     serverUrl: opts.serverUrl,
+    config: opts.config,
   });
 
   // Workflow tools — return instructional text, no server connection needed
-  registerInitContent(server, opts.config);
+  registerInitContent(server, {
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
   registerIngest(server, opts.config);
   registerResearch(server, opts.config);
   registerConsolidate(server, opts.config);
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
-  registerSuggestLinks(server, opts.serverUrl);
+  registerSuggestLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
 
   // Document tools — make HTTP calls to Hocuspocus
-  registerWriteDocument(server, opts.serverUrl);
-  registerEditDocument(server, opts.serverUrl);
-  registerRenameDocument(server, opts.serverUrl);
-  registerGetHistory(server, opts.serverUrl);
-  registerSaveVersion(server, opts.serverUrl);
-  registerRollbackToVersion(server, opts.serverUrl);
-  registerListDocuments(server, opts.serverUrl);
-  registerGetBacklinks(server, opts.serverUrl);
-  registerGetForwardLinks(server, opts.serverUrl);
-  registerGetOrphans(server, opts.serverUrl);
-  registerGetHubs(server, opts.serverUrl);
-  registerGetDeadLinks(server, opts.serverUrl);
+  registerWriteDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
+  });
+  registerEditDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
+  });
+  registerRenameDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetHistory(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerSaveVersion(server, opts.serverUrl, opts.identityRef);
+  registerRollbackToVersion(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerListDocuments(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetBacklinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetForwardLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetOrphans(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetHubs(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetDeadLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+
+  // Preview URL — no Hocuspocus dependency; reads config + server.lock directly.
+  registerGetPreviewUrl(server, {
+    resolveCwd: opts.resolveCwd,
+    config: opts.config,
+  });
 }

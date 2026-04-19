@@ -1,7 +1,7 @@
 /**
  * computeSelectionAnchor unit tests — pure virtual-element builder.
  *
- * Validates the hook's anchor contract (Precedent #19, US-006). Covers:
+ * Validates the hook's anchor contract (Precedent #31, US-006). Covers:
  *   (a) null selection → returns null
  *   (b) NodeSelection on jsxComponent with resolvable DOM → rect tracks
  *       the wrapper's DOM node

@@ -106,7 +106,7 @@ The forward-compatibility mention: "the `createNestedCMExtensions` factory accep
 **Trade-off:** Reframing costs zero implementation effort. It strengthens the rationale by making the investment proportional to its actual scope (foundational infrastructure for all future per-block editing, not just a degraded-state UX improvement).
 
 **Status:** CHALLENGED
-**Suggested resolution:** Restructure §9.14's opening to lead with: "Establishes the foundational CM-in-PM infrastructure (Architectural Precedent #12) that serves both rawMdxFallback (P0) and future per-block source-mode toggle (NG10). The investment is proportional to the platform primitive it creates, not just the rawMdxFallback use case."
+**Suggested resolution:** Restructure §9.14's opening to lead with: "Establishes the foundational CM-in-PM infrastructure (Architectural Precedent #24) that serves both rawMdxFallback (P0) and future per-block source-mode toggle (NG10). The investment is proportional to the platform primitive it creates, not just the rawMdxFallback use case."
 
 ---
 
