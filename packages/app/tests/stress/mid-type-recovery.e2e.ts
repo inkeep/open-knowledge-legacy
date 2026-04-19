@@ -90,6 +90,7 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   // Wait for content to render in WYSIWYG
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Top Heading'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -121,6 +122,7 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   // Wait for Y.Text to have the complete component
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('</Callout>'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -167,6 +169,7 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   // Wait for ProseMirror to render SOME content from the XmlFragment
   await page.waitForFunction(
     () => (document.querySelector('.ProseMirror')?.textContent?.length ?? 0) > 10,
+    null,
     { timeout: 10_000 },
   );
 
@@ -187,6 +190,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Header'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -214,6 +218,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
         ?.getText('source')
         ?.toString()
         ?.includes('<Foo>some text</Bar>'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -227,6 +232,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
       const pm = document.querySelector('.ProseMirror');
       return pm?.querySelectorAll('h1').length === 1 && pm?.querySelectorAll('h2').length === 1;
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -251,6 +257,7 @@ test('mid-type recovery: partial attribute does not collapse document', async ({
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Title'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -274,6 +281,7 @@ test('mid-type recovery: partial attribute does not collapse document', async ({
   // Wait for the text to appear in Y.Text
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('<Foo a='),
+    null,
     { timeout: 10_000 },
   );
 
@@ -284,6 +292,7 @@ test('mid-type recovery: partial attribute does not collapse document', async ({
   // Wait for ProseMirror to show the heading (Observer B freeze preserves it)
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.querySelectorAll('h1').length === 1,
+    null,
     { timeout: 10_000 },
   );
 

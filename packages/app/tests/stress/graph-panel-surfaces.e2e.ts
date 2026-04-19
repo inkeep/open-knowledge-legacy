@@ -115,7 +115,7 @@ async function openGraph(
   },
 ) {
   await page.goto(`/#/${docName}`);
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), null, {
     timeout: 15_000,
   });
   await page.getByRole('tab', { name: 'Graph' }).click();
@@ -129,12 +129,13 @@ async function openGraph(
             }
         ).__graphHarness,
       ),
+    null,
     { timeout: 10_000 },
   );
 
   if (fullscreen) {
     await page.getByLabel('Full screen').click();
-    await page.waitForFunction(() => Boolean(document.fullscreenElement), {
+    await page.waitForFunction(() => Boolean(document.fullscreenElement), null, {
       timeout: 5_000,
     });
   }
@@ -387,7 +388,7 @@ test('fullscreen graph selects a document before explicitly opening it', async (
   expect(await getGraphNodeVisualState(page, fixtures.beta)).toBe('selected');
 
   await selectedDoc.getByRole('button', { name: 'Open' }).click();
-  await page.waitForFunction(() => !document.fullscreenElement, {
+  await page.waitForFunction(() => !document.fullscreenElement, null, {
     timeout: 5_000,
   });
   await expect(page).toHaveURL(new RegExp(`#/${escapeRegex(fixtures.beta)}\\?anchor=deep-link$`));
@@ -411,7 +412,7 @@ test('fullscreen graph selecting the active document shows the already-open stat
   expect(await getGraphNodeVisualState(page, fixtures.alpha)).toBe('active-selected');
 
   await selectedDoc.getByRole('button', { name: 'Open' }).click();
-  await page.waitForFunction(() => !document.fullscreenElement, {
+  await page.waitForFunction(() => !document.fullscreenElement, null, {
     timeout: 5_000,
   });
   await expect(page).toHaveURL(new RegExp(`#/${escapeRegex(fixtures.alpha)}$`));
@@ -441,7 +442,7 @@ test('graph canvas fills the available height in docked and fullscreen modes', a
   await expectGraphToFillAvailableHeight(page);
 
   await page.getByLabel('Full screen').click();
-  await page.waitForFunction(() => Boolean(document.fullscreenElement), {
+  await page.waitForFunction(() => Boolean(document.fullscreenElement), null, {
     timeout: 5_000,
   });
   await waitForGraphNode(page, fixtures.alpha);
@@ -579,12 +580,12 @@ test('fullscreen graph selection clears after exiting fullscreen', async ({
   await expect(selectedDoc).toBeVisible();
 
   await page.getByLabel('Exit fullscreen').click();
-  await page.waitForFunction(() => !document.fullscreenElement, {
+  await page.waitForFunction(() => !document.fullscreenElement, null, {
     timeout: 5_000,
   });
 
   await page.getByLabel('Full screen').click();
-  await page.waitForFunction(() => Boolean(document.fullscreenElement), {
+  await page.waitForFunction(() => Boolean(document.fullscreenElement), null, {
     timeout: 5_000,
   });
   await expect(selectedDoc).toHaveCount(0);

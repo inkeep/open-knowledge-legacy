@@ -36,9 +36,13 @@ async function resetEditor(api: ApiHelpers, page: Page, docName: string) {
   await page.waitForSelector('.ProseMirror');
   await waitForActiveProviderSynced(page);
   await page.click('.ProseMirror');
-  await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent === '', {
-    timeout: 5_000,
-  });
+  await page.waitForFunction(
+    () => document.querySelector('.ProseMirror')?.textContent === '',
+    null,
+    {
+      timeout: 5_000,
+    },
+  );
 }
 
 async function getEditorState(page: Page) {

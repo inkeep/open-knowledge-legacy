@@ -52,7 +52,7 @@ async function seedDoc(api: ApiHelpers, page: Page, baseURL: string): Promise<st
   const docName = `outline-${randomUUID().slice(0, 8)}`;
   await api.createPage(`${docName}.md`);
   await page.goto(`/#/${docName}`);
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), null, {
     timeout: 15_000,
   });
   await page.waitForSelector('.ProseMirror');
@@ -79,6 +79,7 @@ async function seedDoc(api: ApiHelpers, page: Page, baseURL: string): Promise<st
   await page.waitForFunction(
     () =>
       document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3').length === 3,
+    null,
     { timeout: 10_000 },
   );
 

@@ -68,8 +68,8 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
     // Both clients open the per-test doc via hash routing.
     await Promise.all([pageA.goto(`/#/${docName}`), pageB.goto(`/#/${docName}`)]);
     await Promise.all([
-      pageA.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
-      pageB.waitForFunction(() => Boolean(window.__activeProvider), { timeout: 15_000 }),
+      pageA.waitForFunction(() => Boolean(window.__activeProvider), null, { timeout: 15_000 }),
+      pageB.waitForFunction(() => Boolean(window.__activeProvider), null, { timeout: 15_000 }),
     ]);
     await Promise.all([
       pageA.waitForSelector('.ProseMirror'),
@@ -93,6 +93,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
             ?.getText('source')
             ?.toString()
             ?.includes('baseline-line'),
+        null,
         { timeout: 10_000 },
       ),
       pageB.waitForFunction(
@@ -101,6 +102,7 @@ test('QA-016: agent write + local WYSIWYG edit converge in DOM on both clients',
             ?.getText('source')
             ?.toString()
             ?.includes('baseline-line'),
+        null,
         { timeout: 10_000 },
       ),
     ]);

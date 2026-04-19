@@ -953,7 +953,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
 
     // Wait for SystemDocSubscriber's __system__ provider to sync.
     // The hook is registered inside the useEffect after sync.
-    await page.waitForFunction(() => typeof window.__test_injectAgentFocus === 'function', {
+    await page.waitForFunction(() => typeof window.__test_injectAgentFocus === 'function', null, {
       timeout: 10_000,
     });
 

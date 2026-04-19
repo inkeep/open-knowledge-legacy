@@ -36,7 +36,7 @@ test('S6: multi-turn stress — large content + user edits', async ({ page, api,
 
   // 3. Navigate directly to the per-test doc via hash routing.
   await page.goto(`/#/${docName}`);
-  await page.waitForFunction(() => Boolean(window.__activeProvider), {
+  await page.waitForFunction(() => Boolean(window.__activeProvider), null, {
     timeout: 15_000,
   });
   await page.waitForSelector('.ProseMirror');

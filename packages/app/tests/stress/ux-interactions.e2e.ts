@@ -52,14 +52,20 @@ const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual edi
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page, api }) => {
   await openFreshDoc(api, page, 'wysiwyg-to-source');
-  // Type in WYSIWYG mode. `.click()` + `toBeFocused()` is load-bearing under
-  // full-suite parallel load: `.focus()` does not await focus-transfer in
-  // Chromium, and keystrokes dispatched before focus lands can be reordered or
-  // misdelivered to the wrong target (the prior active element or body). The
-  // hard sync on `toBeFocused()` eliminates the race.
+  // Insert text in WYSIWYG mode. Two invariants:
+  //   1. `.click()` + `toBeFocused()` before any keyboard call — `.focus()`
+  //      does not await focus-transfer in Chromium, and events dispatched
+  //      before focus lands go to the prior active element. See precedent
+  //      §20(a) category C.
+  //   2. `keyboard.insertText` (atomic single `beforeinput`/`input` event)
+  //      instead of `keyboard.type` (per-character keydown/keypress/keyup).
+  //      Under full-suite parallel CPU contention, per-character dispatch
+  //      can reorder at CM6/PM's async input pipeline — characters can land
+  //      out of order in the editor's internal buffer. `insertText` bypasses
+  //      the per-character race entirely. See precedent §20(i).
   await page.locator('.ProseMirror').click();
   await expect(page.locator('.ProseMirror')).toBeFocused();
-  await page.keyboard.type('Hello from WYSIWYG', { delay: 10 });
+  await page.keyboard.insertText('Hello from WYSIWYG');
 
   // Wait for Observer A to sync to Y.Text
   await page.waitForFunction(
@@ -68,6 +74,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
         ?.getText('source')
         ?.toString()
         ?.includes('Hello from WYSIWYG'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -85,19 +92,24 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
-  // Type markdown in CodeMirror. See line 57 comment — `click()` + `toBeFocused()`
-  // is the canonical pattern; bare `.focus()` races with `keyboard.type` under
-  // full-suite parallel CI load and produces reordered/misdelivered keystrokes
-  // (evidence at commit 7e0f2c47's successor: CodeMirror rendered
-  // `#\n\nource Heading\n\nParagraph from source.\nS\n` on one CI run).
+  // Insert markdown in CodeMirror. See the comment at the first test's
+  // keyboard block — same two invariants apply: `.click()+toBeFocused()`
+  // for focus, `keyboard.insertText` for atomic input. Historical evidence
+  // for the keystroke-reorder race this avoids: CI run 24623506375 on PR
+  // #212 captured CodeMirror rendering `#\n\nource Heading\n\nParagraph
+  // from source.\nS\n` when `keyboard.type` was used — the `S` character
+  // reordered past the rest of the string. `insertText` dispatches one
+  // `beforeinput` event with the full payload, making the race
+  // structurally impossible. See precedent §20(i).
   await page.locator('.cm-content').click();
   await expect(page.locator('.cm-content')).toBeFocused();
-  await page.keyboard.type('# Source Heading\n\nParagraph from source.', { delay: 10 });
+  await page.keyboard.insertText('# Source Heading\n\nParagraph from source.');
 
   // Wait for Y.Text to have the content
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('Source Heading'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -118,6 +130,7 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
       const content = document.querySelector('.ProseMirror')?.textContent ?? '';
       return content.includes('Source Heading') && content.includes('Paragraph from source');
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -129,25 +142,30 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
 
 test('round-trip: edits in both modes survive toggle cycle', async ({ page, api }) => {
   await openFreshDoc(api, page, 'round-trip');
-  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  // Insert in WYSIWYG — `.click()+toBeFocused()` + `insertText` per the
+  // comment block at the first test in this file.
   await page.locator('.ProseMirror').click();
   await expect(page.locator('.ProseMirror')).toBeFocused();
-  await page.keyboard.type('WYSIWYG edit', { delay: 10 });
+  await page.keyboard.insertText('WYSIWYG edit');
 
   // Wait for sync
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('WYSIWYG edit'),
+    null,
     { timeout: 10_000 },
   );
 
-  // Switch to Source, type there
+  // Switch to Source, insert there
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
-  await page.locator('.cm-content').focus();
-  // Move to end before typing
+  await page.locator('.cm-content').click();
+  await expect(page.locator('.cm-content')).toBeFocused();
+  // Move to end before inserting. Bare `End` is end-of-line cross-platform
+  // (no modifier required); single-line content makes it equivalent to
+  // end-of-document here.
   await page.keyboard.press('End');
-  await page.keyboard.type('\n\nSource edit', { delay: 10 });
+  await page.keyboard.insertText('\n\nSource edit');
 
   // Wait for Y.Text to have both edits
   await page.waitForFunction(
@@ -155,6 +173,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page, api 
       const txt = window.__activeProvider?.document?.getText('source')?.toString();
       return txt?.includes('WYSIWYG edit') && txt?.includes('Source edit');
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -167,6 +186,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page, api 
       const content = document.querySelector('.ProseMirror')?.textContent ?? '';
       return content.includes('WYSIWYG edit') && content.includes('Source edit');
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -178,14 +198,16 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page, api 
 
 test('concurrent agent write: user + agent content coexist', async ({ page, api, baseURL }) => {
   const docName = await openFreshDoc(api, page, 'concurrent-agent');
-  // Type in WYSIWYG — see line 57 comment for the focus-race rationale.
+  // Insert in WYSIWYG — `.click()+toBeFocused()` + `insertText` per the
+  // comment block at the first test in this file.
   await page.locator('.ProseMirror').click();
   await expect(page.locator('.ProseMirror')).toBeFocused();
-  await page.keyboard.type('User typing', { delay: 10 });
+  await page.keyboard.insertText('User typing');
 
   // Wait for user content to sync
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('User typing'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -203,6 +225,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page, api,
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('Agent Section'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -306,6 +329,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
         ?.getText('source')
         ?.toString()
         ?.includes('[Beta page](beta.md)'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -352,6 +376,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
         ?.getText('source')
         ?.toString()
         ?.includes('[Beta page](./sidebar-folder/nested-doc.md)'),
+    null,
     { timeout: 10_000 },
   );
 
