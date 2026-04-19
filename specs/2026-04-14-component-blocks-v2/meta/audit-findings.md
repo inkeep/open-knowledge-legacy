@@ -124,8 +124,8 @@ All CM6 packages referenced in §9.14 (`@codemirror/view`, `@codemirror/state`, 
 
 | Check | Status |
 |---|---|
-| §9.0 Precedent #23 (Context Bridge Registry) consistent with §9.15 design body | CONFIRMED |
-| §9.0 Precedent #22 (Nested CodeMirror in ProseMirror) consistent with §9.14 design body | CONFIRMED |
+| §9.0 Precedent #25 (Context Bridge Registry) consistent with §9.15 design body | CONFIRMED |
+| §9.0 Precedent #24 (Nested CodeMirror in ProseMirror) consistent with §9.14 design body | CONFIRMED |
 | D12 (Context Bridge Registry) locked decision consistent with §9.15 | CONFIRMED |
 | D13 (CM-in-PM direct dispatch) locked decision consistent with §9.14 | CONFIRMED |
 | Q9 (React Compiler + dynamic Context.Provider chains) correctly identified as open | CONFIRMED |

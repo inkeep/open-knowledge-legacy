@@ -3,6 +3,7 @@ import { createContext, type ReactNode, use, useEffect, useState, useTransition 
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { useCollabUrl } from '@/lib/use-collab-url';
+import { getEditorForDoc } from './active-editor';
 import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
@@ -250,6 +251,20 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         get: () => p.getActive()?.provider ?? null,
         configurable: true,
       });
+      // Mirror of `__activeProvider` for the registered Editor instance.
+      // Resolving via `getActive()?.docName` keeps the getter consistent with
+      // `__activeProvider`'s active-entry semantics even when multiple editors
+      // are mounted concurrently (EditorActivityPool's ACTIVITY_MOUNT_LIMIT).
+      // Playwright reads this to poll PM `editor.state.selection` directly —
+      // see precedent §20(a) category C.
+      Object.defineProperty(window, '__activeEditor', {
+        get: () => {
+          const active = p.getActive();
+          if (!active) return null;
+          return getEditorForDoc(active.docName);
+        },
+        configurable: true,
+      });
       window.__test_rejectSyncPromise = (docName, kind) => __rejectSyncPromise(docName, kind);
       window.__test_armPendingRejection = (docName, kind) =>
         __test_armPendingRejection(docName, kind);
@@ -404,6 +419,7 @@ if (import.meta.hot) {
       try {
         delete (window as { __providerPool?: unknown }).__providerPool;
         delete (window as { __activeProvider?: unknown }).__activeProvider;
+        delete (window as { __activeEditor?: unknown }).__activeEditor;
         delete (window as { __test_rejectSyncPromise?: unknown }).__test_rejectSyncPromise;
         delete (window as { __test_armPendingRejection?: unknown }).__test_armPendingRejection;
         delete (window as { __test_closeActiveWebSocket?: unknown }).__test_closeActiveWebSocket;

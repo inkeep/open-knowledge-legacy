@@ -6,7 +6,7 @@
  *
  * FR-30..FR-35: NodeView embeds a CodeMirror 6 editor for inline editing
  * of raw MDX source, replacing the previous plain-text badge view.
- * Direct PM dispatch pattern (Precedent #22), NOT y-codemirror.next.
+ * Direct PM dispatch pattern (Precedent #24), NOT y-codemirror.next.
  */
 import { RawMdxFallback as BaseRawMdxFallback } from '@inkeep/open-knowledge-core';
 import { ReactNodeViewRenderer } from '@tiptap/react';

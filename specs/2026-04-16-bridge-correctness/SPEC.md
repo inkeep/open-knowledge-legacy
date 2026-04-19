@@ -230,7 +230,7 @@ and 10 000 seeds nightly (`STRESS_FUZZ_NIGHTLY=1`); any failure produces
 an op-sequence snapshot + a pinned regression test stub in
 `merge-three-way.test.ts`. Post-condition assertion in
 `mergeThreeWay` fires loudly with a `BridgeMergeContentLossError` naming
-the lost substring.
+the lost substring.<br>_[Corrected 2026-04-19 post-ship: same correction as the breadcrumb at §D11 below — bridge fuzz no longer runs in any CI tier. `bun run check` does NOT run the fuzzer; ad-hoc sampling via `bun run measure:fuzz` is the replacement. Post-condition + `BridgeMergeContentLossError` behavior is unchanged. Full rationale in `specs/2026-04-19-ci-signal-quality/SPEC.md`.]_
 
 ---
 
@@ -302,7 +302,7 @@ the lost substring.
 - **R2. Elevate fuzz sampling.** `bridge-convergence.fuzz.test.ts` runs 1000
   seeds per CI invocation (up from 25). Separate nightly CI job runs 10000
   seeds. Failing seeds reported per-seed with full op sequence for
-  reproduction.
+  reproduction.<br>_[Corrected 2026-04-19 post-ship: same correction as the breadcrumb at §J5 above — fuzz/stress retired from all CI tiers per `specs/2026-04-19-ci-signal-quality/` (FR-2 / D-Q1 LOCKED). Elevated sampling moved to ad-hoc `bun run measure:fuzz --seeds <N>`; results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl`. Authoritative replacement: `packages/app/scripts/measure-fuzz.sh` + AGENTS.md §Measurement scripts.]_
 - **R3. Pinned regression fixtures.** Every failing seed surfaced during or
   after this spec becomes a named test case (T8, T9, …) in
   `evidence/algorithm-comparison-experiment.md` and a pinned regression test
@@ -453,9 +453,9 @@ the lost substring.
 ## 7) Success metrics
 
 - **M1.** `bridge-convergence.fuzz.test.ts` passes 1000 consecutive seeds at
-  zero tolerance in CI, post-spec (R2).
+  zero tolerance in CI, post-spec (R2).<br>_[Corrected 2026-04-19 post-ship: M1 is obsolete as stated — the fuzzer no longer runs in CI. Functional replacement: `bun run measure:fuzz --seeds 1000` as an ad-hoc pre-merge convention on bridge-touching PRs; same correction as the breadcrumb at §J5 above. Full rationale in `specs/2026-04-19-ci-signal-quality/SPEC.md` §NG6.]_
 - **M2.** Nightly 10000-seed run: any failures are named regressions (T8+
-  fixtures exist), not surprise flakes (R3).
+  fixtures exist), not surprise flakes (R3).<br>_[Corrected 2026-04-19 post-ship: the nightly 10000-seed job was removed from `nightly.yml` in the same spec; elevated sampling is now `bun run measure:fuzz --seeds 10000` on demand. Same correction as §J5 above.]_
 - **M3.** Seed `1776386718697` failure-rate signal captured via telemetry
   — NOT gated on 100/100 pass (R0h honest framing). Residual rate feeds
   SS-1 urgency signal.
@@ -865,7 +865,7 @@ export async function awaitDocQuiescence(doc: Y.Doc, opts?: { timeoutMs?: number
   `test:fuzz:bridge` task so the cache key is correct; `ci.yml` exports
   `STRESS_FUZZ_PR=1` on the PR matrix entry. The fuzz harness logs
   `[bridge-convergence fuzzer] mode=<pr|nightly|default|custom> seeds=<n>`
-  at startup so reviewers can verify coverage in CI logs.
+  at startup so reviewers can verify coverage in CI logs.<br>_[Corrected 2026-04-19 post-ship: D11's split-by-tier plan is obsolete — bridge fuzz was removed from CI entirely (ci.yml/nightly.yml/weekly.yml + turbo.json `test:fuzz:bridge` task + `packages/app/package.json` script all deleted) per `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-2 / D-Q1 LOCKED Option A. The architectural CRDT residual it sampled is intrinsic to the dual-CRDT topology (no automated detection pending D4 single-CRDT collapse, H2 2026+). Sample ad-hoc via `bun run measure:fuzz` — results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl` and git history is the trend record. Canonical replacement: `packages/app/scripts/measure-fuzz.sh` + AGENTS.md §Measurement scripts section.]_
 - **D12 (DELEGATED).** R0e determinism approach: full deterministic via scheduler DI +
   new `pauseOutbound` primitive on `ControllableWebSocket` (Challenge F7),
   OR probabilistic (run-many-times, rate-based acceptance). Spike during

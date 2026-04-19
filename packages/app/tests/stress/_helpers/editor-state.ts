@@ -1,61 +1,17 @@
 /**
- * Editor / document seeding helpers.
+ * Editor / selection helpers.
  *
- * Mirrors the gold-standard pattern from `docs-open.e2e.ts:17-59`. Every E2E
- * test creates its own documents via `/api/create-page` and seeds content
- * with `position: 'replace'` on `/api/agent-write-md` — NEVER `mode: 'replace'`
- * (silent fallback to append, verified in PR #185).
+ * Document seeding (`createPage`, `replaceDoc`, `seedDocs`) moved to the
+ * worker-scoped `api` fixture in `fixtures.ts` so each worker addresses its
+ * own dev server via a closure over `baseURL` — no more ambient
+ * `process.env.VITE_PORT` lookup. Consumers access those via
+ * `test(async ({ api }) => ...)`.
  *
- * Each helper reads `VITE_PORT` at call time so parallel worker processes can
- * target their own dev server when Playwright's fullyParallel mode is enabled.
+ * This file retains only page-scoped selection/editor helpers that don't
+ * touch the server URL.
  */
 
 import type { Page } from '@playwright/test';
-
-const port = () => process.env.VITE_PORT || '5173';
-const base = () => `http://localhost:${port()}`;
-
-/**
- * Create an empty document at `path` (e.g. `"doc-a.md"` or `"nested/x.md"`).
- * Returns quietly on HTTP 409 (already exists) so tests can re-seed safely.
- */
-export async function createPage(path: string): Promise<void> {
-  const res = await fetch(`${base()}/api/create-page`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  });
-  if (res.status === 409) return;
-  if (!res.ok) {
-    throw new Error(`create-page failed for ${path}: ${res.status}`);
-  }
-}
-
-/**
- * Replace a document's entire contents with `markdown` via
- * `/api/agent-write-md`. The `position: 'replace'` body key is the PR #185
- * contract — do NOT pass `mode: 'replace'` (silent fallback to append).
- */
-export async function replaceDoc(docName: string, markdown: string): Promise<void> {
-  const res = await fetch(`${base()}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown, position: 'replace' }),
-  });
-  if (!res.ok) {
-    throw new Error(`agent-write-md failed for ${docName}: ${res.status}`);
-  }
-}
-
-/**
- * Reset the server and seed N unique docs. Every test that needs a clean
- * workspace should call this first.
- */
-export async function seedDocs(docs: Array<{ name: string; markdown: string }>): Promise<void> {
-  await fetch(`${base()}/api/test-reset`, { method: 'POST' });
-  for (const d of docs) await createPage(`${d.name}.md`);
-  for (const d of docs) await replaceDoc(d.name, d.markdown);
-}
 
 /**
  * Press the platform select-all chord in the focused editor view and yield
@@ -86,5 +42,45 @@ export async function selectAllAndWaitForSelection(page: Page, selector: string)
       new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
+  );
+}
+
+/**
+ * Wait until ProseMirror's `editor.state.selection` has an ancestor of the
+ * given `nodeType` name — i.e. the cursor is INSIDE that node type per PM's
+ * internal state, not merely per the DOM.
+ *
+ * Use this after a `click()` that should land the cursor inside a specific
+ * node (tableCell, listItem, codeBlock, ...) and BEFORE the subsequent
+ * `keyboard.press(...)` that reads PM state. Under `workers>1` CPU
+ * contention, PM's DOMObserver can lag behind the DOM selection update by
+ * tens of ms — a double-rAF yield reports "frame painted" but PM's state
+ * is still stale. The TipTap table extension's Tab handler reads
+ * `editor.state.selection`, sees no tableCell ancestor, calls
+ * `goToNextCell()` → returns false → falls through to `addRowAfter()`
+ * which creates an empty trailing row (the exact `list-keymap.e2e.ts:100`
+ * flake that surfaced under full-suite `workers=4`).
+ *
+ * Requires `window.__activeEditor` exposure from `DocumentContext.tsx`
+ * (DEV-gated — tree-shaken from production bundles). Category C per
+ * precedent §20(a).
+ */
+export async function waitForPmSelectionInNode(
+  page: Page,
+  nodeType: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  await page.waitForFunction(
+    (expected) => {
+      const editor = window.__activeEditor;
+      if (!editor) return false;
+      const $from = editor.state.selection.$from;
+      for (let d = $from.depth; d >= 0; d--) {
+        if ($from.node(d).type.name === expected) return true;
+      }
+      return false;
+    },
+    nodeType,
+    { timeout: timeoutMs },
   );
 }

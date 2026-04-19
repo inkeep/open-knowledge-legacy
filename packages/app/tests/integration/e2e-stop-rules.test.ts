@@ -214,4 +214,87 @@ describe('E2E STOP rule — zero allowlist', () => {
       );
     }
   });
+
+  test('no waitForFunction(fn, { timeout/polling }) — options must be 3rd arg (precedent §20(j))', () => {
+    // Playwright's `page.waitForFunction(pageFunction, arg?, options?)` is
+    // strictly positional (verified at node_modules/playwright-core/lib/
+    // client/frame.js:368). When a test writes
+    //   `waitForFunction(fn, { timeout: 10_000 })`
+    // the `{ timeout: 10_000 }` is bound to `arg`, not `options` — the
+    // intended timeout is silently ignored and the action falls back to
+    // the test-level timeout (typically 120s). Empirical probe:
+    // `waitForFunction(fn, { timeout: 200 })` takes 56_736ms vs 202ms for
+    // `waitForFunction(fn, null, { timeout: 200 })` — same fn, only the
+    // signature differs.
+    //
+    // Required shape: `waitForFunction(fn, null, { timeout: N })` — pass
+    // `null` (or `undefined`, or a real arg value) as the 2nd positional,
+    // options as the 3rd. See AGENTS.md precedent §20(j).
+    //
+    // Detection:
+    //   - Single-line:  `waitForFunction(...=>..., { timeout|polling: ...`
+    //   - Multi-line:   a line whose trim is `{ timeout: ...` or
+    //     `{ polling: ...` whose nearest previous non-blank, non-comment
+    //     line ends with `),` (function-body close directly followed by
+    //     options — no middle arg).
+    const singleLinePattern = /waitForFunction\s*\([^)]*?=>\s*[^,]*,\s*\{\s*(timeout|polling)\s*:/;
+    // Multi-line: accept both `{ timeout: ...` and `{ timeout: ..., ...`
+    // trimmed-first-char shapes. No-intermediate-arg detected by the
+    // preceding line ending in `),` (the function body's close).
+    const multiLineKeyword = /^\s*\{\s*(timeout|polling)\s*:/;
+    const fnBodyCloseTerminator = /\)\s*,\s*$/;
+
+    const violations: string[] = [];
+    for (const file of e2eFiles) {
+      for (let i = 0; i < file.lines.length; i++) {
+        const line = file.lines[i] ?? '';
+        if (singleLinePattern.test(line)) {
+          // Exclude the CORRECT multi-arg form where the arg is itself an
+          // object literal that happens to have a `timeout` field (rare
+          // but possible). Require: BEFORE the `{ timeout`/`{ polling`
+          // match, there is no bare `),` or `null,` / `undefined,` /
+          // `identifier,` argument sequence. Conservative approach: the
+          // single-line regex above already requires `=>` directly before
+          // the comma-options, which means the arrow function is the
+          // FIRST arg and the object is the SECOND — always buggy.
+          violations.push(`  ${file.path}:${i + 1}    ${line.trim()}`);
+          continue;
+        }
+        if (!multiLineKeyword.test(line)) continue;
+        // Find previous non-blank, non-comment-only line.
+        let p = i - 1;
+        while (p >= 0) {
+          const prev = (file.lines[p] ?? '').trim();
+          if (prev === '' || prev.startsWith('//') || prev.startsWith('*')) {
+            p--;
+            continue;
+          }
+          break;
+        }
+        if (p < 0) continue;
+        const prev = file.lines[p] ?? '';
+        if (!fnBodyCloseTerminator.test(prev)) continue;
+        // Guard: preceding line ends with `),` AND that `)` was a
+        // FUNCTION-BODY close (the arrow function's closing paren), not
+        // an argument value's closing. Approximate by: scan up to 8
+        // earlier lines; if a `waitForFunction(` occurs within the
+        // block, this is the buggy shape. Otherwise not a match.
+        let scanUp = p;
+        let foundCall = false;
+        for (let k = 0; k < 10 && scanUp >= 0; k++, scanUp--) {
+          if ((file.lines[scanUp] ?? '').includes('waitForFunction(')) {
+            foundCall = true;
+            break;
+          }
+        }
+        if (!foundCall) continue;
+        violations.push(`  ${file.path}:${i + 1}    ${line.trim()}`);
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        `waitForFunction(fn, { timeout/polling }) pattern — options as 2nd arg is bound to \`arg\` and silently ignored. Pass \`null\` as 2nd arg: \`waitForFunction(fn, null, { timeout: N })\`. See AGENTS.md §20(j):\n${violations.join('\n')}`,
+      );
+    }
+  });
 });

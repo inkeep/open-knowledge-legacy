@@ -12,7 +12,7 @@
  * `Failed to execute 'removeChild' on 'Node'` (see Debug Phase 5 root
  * cause, 2026-04-18). Using the plugin imperatively with a
  * `document.createElement` container sidesteps React entirely — no refs
- * for the plugin to move, no reconciliation to break. Precedent #25
+ * for the plugin to move, no reconciliation to break. Precedent #27
  * candidate (TBD): "DragHandle / Floating UI plugins that move DOM
  * externally must not be driven by React component wrappers when the
  * editor lives inside an `<Activity>` subtree."

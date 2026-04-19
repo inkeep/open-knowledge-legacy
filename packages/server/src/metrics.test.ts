@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   getMetrics,
+  handleCollabSocketError,
   incrementBatch,
   incrementBranchSwitch,
   incrementBridgeMergeCheckpointCreated,
   incrementBridgeMergeContentLoss,
+  incrementCollabSocketFilteredError,
   incrementConflict,
   incrementPark,
   incrementReconcile,
@@ -88,5 +90,100 @@ describe('reconciliation metrics', () => {
         expect(value).toBe(0);
       }
     }
+  });
+});
+
+describe('collab-socket error filter (precedent §23)', () => {
+  test('handleCollabSocketError filters EPIPE and increments epipe counter', () => {
+    resetMetrics();
+    const err = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }) as NodeJS.ErrnoException;
+    const filtered = handleCollabSocketError(err);
+    expect(filtered).toBe(true);
+    const m = getMetrics();
+    expect(m.collabSocketEpipeCount).toBe(1);
+    expect(m.collabSocketEconnresetCount).toBe(0);
+  });
+
+  test('handleCollabSocketError filters ECONNRESET and increments econnreset counter', () => {
+    resetMetrics();
+    const err = Object.assign(new Error('read ECONNRESET'), {
+      code: 'ECONNRESET',
+    }) as NodeJS.ErrnoException;
+    const filtered = handleCollabSocketError(err);
+    expect(filtered).toBe(true);
+    const m = getMetrics();
+    expect(m.collabSocketEpipeCount).toBe(0);
+    expect(m.collabSocketEconnresetCount).toBe(1);
+  });
+
+  test('handleCollabSocketError does NOT filter other error codes', () => {
+    // Exhaustive list of codes that are NOT the known-safe kernel TCP-teardown
+    // signals from precedent §23. Each one should surface (return false) so the
+    // caller's normal logging path fires. Adding a new known-safe code means
+    // adding it BOTH to `handleCollabSocketError` AND to this test's filtered
+    // set — the contract is mechanically enforced here.
+    resetMetrics();
+    const codes = [
+      'ETIMEDOUT',
+      'ECONNABORTED',
+      'ENOTCONN',
+      'ECONNREFUSED',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPROTO',
+      undefined, // err.code absent entirely
+    ];
+    for (const code of codes) {
+      const err = Object.assign(new Error(`simulated ${code ?? 'no-code'}`), {
+        code,
+      }) as NodeJS.ErrnoException;
+      const filtered = handleCollabSocketError(err);
+      expect(filtered).toBe(false);
+    }
+    // And none of these bumped the filtered-error counters.
+    const m = getMetrics();
+    expect(m.collabSocketEpipeCount).toBe(0);
+    expect(m.collabSocketEconnresetCount).toBe(0);
+  });
+
+  test('handleCollabSocketError counters accumulate across multiple calls', () => {
+    resetMetrics();
+    for (let i = 0; i < 5; i++) {
+      const err = Object.assign(new Error('EPIPE'), { code: 'EPIPE' }) as NodeJS.ErrnoException;
+      handleCollabSocketError(err);
+    }
+    for (let i = 0; i < 3; i++) {
+      const err = Object.assign(new Error('ECONNRESET'), {
+        code: 'ECONNRESET',
+      }) as NodeJS.ErrnoException;
+      handleCollabSocketError(err);
+    }
+    const m = getMetrics();
+    expect(m.collabSocketEpipeCount).toBe(5);
+    expect(m.collabSocketEconnresetCount).toBe(3);
+  });
+
+  test('incrementCollabSocketFilteredError low-level API still works (for test harnesses)', () => {
+    resetMetrics();
+    incrementCollabSocketFilteredError('EPIPE');
+    incrementCollabSocketFilteredError('EPIPE');
+    incrementCollabSocketFilteredError('ECONNRESET');
+    const m = getMetrics();
+    expect(m.collabSocketEpipeCount).toBe(2);
+    expect(m.collabSocketEconnresetCount).toBe(1);
+  });
+
+  test('getMetrics snapshot includes collab-socket fields (wire contract for /api/metrics/reconciliation)', () => {
+    // The /api/metrics/reconciliation endpoint returns `getMetrics()` directly,
+    // so this test verifies the wire contract the review asked about: operators
+    // querying the endpoint WILL see the two new counters with the documented
+    // names. If the names change, this test fails and the endpoint's consumers
+    // (dashboards, alerting) need explicit review.
+    resetMetrics();
+    const m = getMetrics();
+    expect(m).toHaveProperty('collabSocketEpipeCount');
+    expect(m).toHaveProperty('collabSocketEconnresetCount');
+    expect(typeof m.collabSocketEpipeCount).toBe('number');
+    expect(typeof m.collabSocketEconnresetCount).toBe('number');
   });
 });

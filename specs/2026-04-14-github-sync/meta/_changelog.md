@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-04-15 — Session 5: Opt-in UX + timing + conflict abort decisions (Q-OPTINUX, Q-TIMING, Q-ABORTUX resolved)
+
+**Trigger:** Miles design session. Analyzed how Tier A auth (silent `gh` delegation) creates a gap in the opt-in flow — no auth surface to attach an "enable sync?" prompt to.
+
+### Decision applied
+
+| # | Direction | Action |
+|---|-----------|--------|
+| D36 (new) | **Auth-tier-aware opt-in UX, non-interactive-init-friendly** | **LOCKED.** Three principles: (1) init is non-interactive — agents set `sync.enabled` via config or `--sync` flag, no prompts during init; (2) Tier A gets one-time prompt on first app open ("Auto-sync your changes? [Enable] / [Not now]"), Tier B/C gets sign-in prompt and auth completion auto-enables sync; (3) three-state config (absent = undecided/prompt-eligible, true = enabled, false = disabled) prevents repeat prompts. |
+| Q-OPTINUX | **RESOLVED** via D36 | Three originally proposed surfaces (init prompt, post-auth flow, config) replaced with auth-tier-aware design. Init prompt dropped (non-interactive init). Post-auth flow replaced with Tier B/C sign-in-as-opt-in. Config retained as primary agent path. |
+| D37 (new) | **Decoupled push/pull intervals: push=60s, pull=30s** | **LOCKED.** Nick's preference confirmed by Miles. Pulls are cheap reads — faster cadence means teammates see changes sooner. 60s push balances cloud-sync feel with load. Replaces single `sync.intervalSeconds: 120`. |
+| Q-TIMING | **RESOLVED** via D37 | Decoupled intervals locked. Config keys: `sync.pushIntervalSeconds` (default 60), `sync.pullIntervalSeconds` (default 30). ±15% jitter per FR21. |
+| D38 (new) | **Conflict abort: merge --abort + clear + paused + all-or-nothing** | **LOCKED.** Four sub-decisions: (1) `git merge --abort` reverts working tree; (2) `conflicts.json` cleared — retry re-merges from scratch; (3) sync paused until manual retry via badge popover — no auto-retry nag loop; (4) all-or-nothing — partial per-file/per-hunk resolutions discarded on abort (Future Work). Toast: "Merge canceled — your changes are safe. Sync paused until you're ready to resolve." |
+| Q-ABORTUX | **RESOLVED** via D38 | Full abort behavior locked. |
+| D21 (revised) | **"Save Version" → "Checkpoint version." Stays in header as icon-only button** | Original Nick direction demoted to overflow. Miles revised: keep in header, rename to "Checkpoint version," icon-only (no text label), tooltip on hover. "Checkpoint" avoids confusion with auto-sync's continuous save semantics. Resolves Q-M5 placement coordination. |
+| Q-M5 | **RESOLVED** via D21 revision | No demotion to overflow = no placement conflict. |
+
+### Spec edits applied
+
+- §6 FR21: updated interval description to decoupled push/pull with D37 defaults
+- §6 FR34: updated config keys to `sync.pushIntervalSeconds` / `sync.pullIntervalSeconds`
+- §9 Config schema: replaced `intervalSeconds: 120` with `pushIntervalSeconds: 60` + `pullIntervalSeconds: 30`
+- §10 D20: revised opt-in surfaces description to reflect auth-tier-aware design
+- §10 D34: revised to reference three-state config + auth-tier-aware prompts
+- §10 D36: new decision row (auth-tier-aware opt-in UX)
+- §10 D37: new decision row (decoupled push/pull intervals)
+- §11 Q-OPTINUX: marked RESOLVED 2026-04-15
+- §11 Q-TIMING: marked RESOLVED 2026-04-15
+- §10 D38: new decision row (conflict abort behavior)
+- §10 D21: revised — renamed "Save Version" → "Checkpoint version," stays in header as icon-only
+- §6 FR28: updated to reflect rename + icon-only header placement
+- §9 Architecture diagram: updated overflow menu reference
+- §11 Q-M5: marked RESOLVED 2026-04-15
+- §11 Q-ABORTUX: marked RESOLVED 2026-04-15
+- §11 Q6: updated to reflect D21 revision
+
+### Design rationale (from session discussion)
+
+1. **Tier A gap:** `gh` delegation is fully silent — no auth modal, no Device Flow, no PAT paste. The user never interacts with an auth surface. The previously proposed "post-auth flow" opt-in surface doesn't exist for these users.
+2. **Non-interactive init:** Optimizing for agent-driven setup (e.g., Claude Code running `open-knowledge init`) means no interactive prompts during init. Config is the only viable path.
+3. **Signing in IS opting in:** For Tier B/C users who go through Device Flow or PAT paste, the act of authenticating demonstrates intent to sync. A separate "enable sync?" step after auth is redundant friction.
+4. **Auth and sync are orthogonal:** Credential helper is wired up regardless of `sync.enabled`. Manual `open-knowledge sync/push/pull` works with auto-sync off. `sync.enabled` only controls the background engine.
+
+### Outstanding
+
+All P0 open questions resolved (Q-OPTINUX, Q-TIMING, Q-ABORTUX). Q-M5 also resolved via D21 revision. Only Q-M6 (`--dry-run` flag) remains — deferred to user demand.
+
+---
+
 ## 2026-04-15 — Merge: clone-from-github + post-clone-git-sync → github-sync
 
 **Trigger:** Nick directive. Co-development rationale: the two precursor specs share credential flow (Tier A/B/C), auth CLI subcommand group, trust-gate interaction, subprocess relay architecture, and testing infrastructure. Neither had shipped; co-developing resolves cross-cutting decisions jointly.
@@ -257,3 +306,67 @@ Traced every LOCKED decision + every FR. Categorized as:
 - **Q-M6 CLI `--dry-run`** — P2, deferred
 
 Once D27/D28 resolved via targeted research, spec passes completeness gate → run /audit + /spec-challenger → finalize.
+
+## 2026-04-15 — Session 4: Final direction lock + handoff preparation
+
+**Trigger:** Nick's final design directions before handoff to Miles.
+
+### Audit + design challenge results
+
+Ran /audit (10 findings: 3H 4M 3L) + /spec-challenger (7 findings: 2H 3M 2L). All audit findings were trust-cascade orphans — applied. Design challenge highlights:
+
+- **Challenger H1 (WIP noise on shared branches):** ACCEPTED → led to squash-before-push (D33) + shadow-at-L2/parent-at-push decoupling (D26 revised)
+- **Challenger H2 (race condition):** ACCEPTED → parentGitMutex (D32)
+- **Challenger M3 (unified-mode P1 dead end):** Nick clarified: per-hunk ours/theirs YES, manual edit NO. D27 revised.
+- **Challenger M4 (120s "cloud sync" expectation):** Timing left as OPEN QUESTION (Q-TIMING) for Miles.
+- **Challenger M5 (shadow-parallel reframing):** ACCEPTED → "shared-primitive reuse principle"
+- **Challenger L6 (trust revisit triggers):** ACCEPTED → added MCP + content-as-code vectors
+- **Challenger L7 (protected-branch P1 copy):** ACCEPTED → "Ask a teammate" framing
+
+### Full-auto git sync prevalence research
+
+Dispatched focused research on whether ANY production tool does full-auto bidirectional git sync. Finding: **NONE do by default.** Zero of 6 surveyed tools. Six structural reasons documented across issue threads + engineering blogs (merge conflicts, metadata churn, no mobile merge, push-is-public, no real-time channel, history bloat). Our CRDT layer mitigates #1 and #3; controlled metadata mitigates #2; squash-before-push mitigates #6.
+
+### Nick's final directions (cascaded as D32-D35)
+
+1. **Auto-sync is OPT-IN (D34).** Not default-on. User enables during init/auth/settings. Config `sync.enabled` defaults to `false`. Once enabled, full auto-sync. Reason: industry consensus that push is a public action requiring explicit intent; opt-in respects this while offering the capability.
+
+2. **Content-scope-only commits (D35).** Only files matching `content.include`/`content.exclude` are auto-committed. Not `git add .`. Reuses existing `ContentFilter` primitive.
+
+3. **Squash-before-push (D33).** One parent commit per push cycle, not N. Shadow retains per-edit granularity. Remote gets clean history. No force-push. ~50-100 LOC using existing plumbing.
+
+4. **parentGitMutex (D32).** Serialize all parent-git mutations through async queue. Prevents race conditions between sync-engine ops.
+
+5. **Shadow at L2, parent at push-time (D26 revised).** Not dual-write at L2. L2 only commits to shadow (unchanged). Parent commits happen in sync engine's push cycle. Decouples journal cadence from publish cadence.
+
+6. **Commit message: descriptive file-list (D25 revised).** Parent uses `"Auto-save: Updated X, Y"` (from tree diff). Shadow keeps timestamp-only. Different audiences, different messages.
+
+7. **Conflict v0: per-hunk Accept/Reject + no manual edit + abort (D27 revised).** Users can Accept/Reject per hunk via `@codemirror/merge mergeControls`. Cannot manually edit merged text. Abort exits merge + points to docs. Miles finalizes UX details.
+
+8. **Timing is OPEN (Q-TIMING).** Nick left push + pull intervals for Miles to decide. Research validated 30s/60s/120s all GitHub-safe. Prior art: SiYuan 30s, Logseq 60s, Obsidian-Git 10min (both disabled). Nick leans push=60s/pull=30s but not locked.
+
+### Spec state at handoff
+
+- **35 LOCKED decisions** (D1-D8, D10-D23, D25-D35; D9+D24 WITHDRAWN)
+- **46 FR IDs** (44 active + 2 WITHDRAWN)
+- **3 P0 open questions for Miles:** Q-TIMING (sync cadence), Q-OPTINUX (opt-in UX), Q-ABORTUX (conflict abort UX)
+- **3 P2 open questions:** Q-M5 (Save Version UI coordination), Q-M6 (CLI --dry-run), Q-new-12 through Q-new-15 (tuning details)
+- **Research report:** `reports/git-lifecycle-push-pull-merge-patterns/REPORT.md` at 1269 lines with 22 evidence files across 5 Path C passes (initial 8-dimension landscape + failure taxonomy/sync-engine prior art + auto-sync scheduler dynamics + @codemirror/merge fitness + credential refresh strategy + full-auto prevalence)
+- **Pre-merge originals:** `specs/_archive/2026-04-15-pre-merge/` (clone-from-github + post-clone-git-sync)
+
+### Key research artifacts for Miles
+
+| Report | Path | What it covers |
+|--------|------|---------------|
+| Git lifecycle UX patterns | `reports/git-lifecycle-push-pull-merge-patterns/REPORT.md` | 1269 lines: 8+10 dimensions of post-clone git UX in 15+ editors + 6 sync-engine apps + 4 workflow tools + 4 file-sync tools. 8 themes including scheduler maturity gradient + failure-mode gradient. 22 evidence files. |
+| Clone-from-GitHub onboarding | `reports/open-from-github-onboarding-mechanics/REPORT.md` | 11-dimension clone mechanics landscape. 10 evidence files. |
+| Shadow pipeline reusability | `specs/2026-04-14-github-sync/evidence/shadow-pipeline-reusability.md` | Map of every shadow function to its parent-git equivalent. GitHandle unification. |
+| mergeControls fitness | `reports/.../evidence/codemirror-merge-controls-fitness.md` | Source-level @codemirror/merge v6.12.1 analysis. Custom render function, per-hunk granularity, unified mode. |
+| Token refresh strategy | `reports/.../evidence/credential-helper-token-refresh.md` | Git credential protocol extensions, GCM + hickford patterns, per-forge token behavior. v1 without refresh. |
+| Full-auto prevalence | `reports/.../evidence/why-full-auto-git-sync-rare.md` | Survey: 0/6 tools default to full-auto. 6 structural reasons. Our CRDT mitigates 3 of 6. |
+
+### What Miles should read first
+
+1. This spec's SPEC.md — start from §1 (problem), §5 (journeys), §6 (requirements), §10 (decision log)
+2. The shadow-pipeline-reusability evidence file — establishes the core architectural insight (same commitWip, different GitHandle)
+3. The full-auto prevalence evidence file — explains why we're doing something nobody else does and what structural advantages make it viable for us

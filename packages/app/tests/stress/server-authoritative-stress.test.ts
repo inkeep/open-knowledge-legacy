@@ -166,7 +166,38 @@ describe('server-authoritative stress (US-013)', () => {
   });
 
   test('5-client stress: 30s mixed WYSIWYG + source edits converge', async () => {
-    const seed = Date.now();
+    // Seed resolution: STRESS_SEED env wins (deterministic replay), otherwise
+    // Date.now() for a fresh sample per run. The banner below is emitted
+    // BEFORE any setup work so a pre-loop crash still leaves a seed trail in
+    // the stdout — ad-hoc measurement scripts (`packages/app/scripts/
+    // measure-stress.sh`) parse this exact banner to populate the JSONL
+    // trend log's `stressSeed` and `failingSeeds` fields. Changing the
+    // banner format is a breaking change for the measurement script's
+    // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
+    // Determinism contract: if STRESS_SEED is set, it MUST parse to a finite
+    // integer. `Number("abc")` silently returns NaN, which would propagate
+    // into XorShift and produce a non-deterministic run while the banner
+    // still printed `seed=NaN` — destroying the one guarantee this script
+    // sells. Throwing on malformed input keeps "I replayed seed 42" and
+    // "I typoed and got a fresh random seed" observably distinct.
+    // measure-stress.sh classifies this throw as a "crash" outcome.
+    let seed: number;
+    if (process.env.STRESS_SEED !== undefined) {
+      const raw = process.env.STRESS_SEED;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        throw new Error(
+          `STRESS_SEED must be a finite integer, got ${JSON.stringify(raw)}. ` +
+            `Example: STRESS_SEED=42 bun test tests/stress/server-authoritative-stress.test.ts`,
+        );
+      }
+      seed = parsed;
+    } else {
+      seed = Date.now();
+    }
+    console.log(
+      `[server-authoritative stress] seed=${seed}${process.env.STRESS_SEED ? ' (replay)' : ''}`,
+    );
     const rng = createPRNG(seed);
     const clientCount = 5;
     const docName = `stress-${crypto.randomUUID()}`;
@@ -306,6 +337,17 @@ describe('server-authoritative stress (US-013)', () => {
       console.log(
         `[stress] Complete: ${editCount} edits across ${clientCount} clients, ` +
           `convergence in ${convergenceMs}ms, seed=${seed}`,
+      );
+      // Machine-parseable result line — measure-stress.sh greps this to
+      // classify pass/fail without relying on bun test's human-readable
+      // `N pass / N fail` summary (which is fragile to bun output drift
+      // and sensitive to stderr conflation via `2>&1`). Format:
+      //   [stress] RESULT outcome=pass seed=<n> edits=<n> convergenceMs=<n>
+      // Always emitted via process.stdout.write (not console.log) so no
+      // extra formatting is appended; always on stdout (never stderr) so
+      // the script's stdout-only grep is unambiguous.
+      process.stdout.write(
+        `[stress] RESULT outcome=pass seed=${seed} edits=${editCount} convergenceMs=${convergenceMs}\n`,
       );
     } finally {
       for (const c of clients) await c.cleanup();
