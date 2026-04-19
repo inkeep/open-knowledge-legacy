@@ -22,6 +22,12 @@
  *      (regression — PR #168 merge collision: TiptapEditor direct
  *      assignment clashed with main PR #212's getter-only defineProperty
  *      and threw TypeError on any doc open in DEV)
+ *   9. `:has()` in selection-halo CSS rules (precedent #30 — innermost-wins
+ *      via plugin state, not `:has()` cascade; Firefox compat + large-doc
+ *      perf + SSR parity)
+ *  10. Selection halo transition uses bare `ease-out` instead of
+ *      `var(--ease-out-strong)` — consistency with the repo's custom
+ *      easing token (round-2 review fix in commit `4e9d96a5`)
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -346,6 +352,101 @@ describe('E2E STOP rule — zero allowlist', () => {
     if (violations.length > 0) {
       throw new Error(
         `window.__activeEditor must be published only by DocumentContext.tsx — additional writers collide with the getter-only accessor and throw TypeError on doc open in DEV. Delete the direct write and read through window.__activeEditor (the getter already resolves via the active-editor.ts registry, which TiptapEditor already populates via registerEditor/unregisterEditor):\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('selection-halo CSS rules use plugin-state propagation, not `:has()` (Precedent #30)', () => {
+    // Precedent #30: innermost-wins uses `data-has-child-selected` written
+    // by the SelectionStatePlugin, NOT a CSS `:has()` cascade. Reasons:
+    //   1. Firefox rollout gaps (Safari, Chrome, and Firefox all support
+    //      `:has()` now, but SSR environments + older browsers don't).
+    //   2. Large-doc perf — `:has()` can be quadratic on deep nested trees.
+    //   3. Debuggability — DOM `data-*` attrs are trivially inspectable;
+    //      a CSS `:has()` cascade is not.
+    //   4. SSR parity — plugin state survives without CSS support.
+    //
+    // Detection: match `:has(` on any line whose selector (i.e., the line
+    // itself or the containing selector block) includes a selection-related
+    // marker — `data-selected`, `data-has-child-selected`, or
+    // `--selection-halo`. Other `:has()` usages (chrome hover innermost-
+    // wins, slot hover, etc.) are out of scope — they don't govern
+    // selection state.
+    const cssPath = join(APP_SRC_DIR, 'globals.css');
+    const css = readFileSync(cssPath, 'utf-8');
+    const lines = css.split('\n');
+
+    const hasPattern = /:has\(/;
+    const selectionMarker =
+      /data-selected|data-has-child-selected|--selection-halo|selection-halo-opacity/;
+    const violations: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? '';
+      if (!hasPattern.test(line)) continue;
+
+      // Check the line itself AND the surrounding selector block (up to 3
+      // lines back for multi-line selectors like `.foo:not(\n  :has(...))`).
+      const windowStart = Math.max(0, i - 3);
+      const windowEnd = Math.min(lines.length, i + 4);
+      const selectorContext = lines.slice(windowStart, windowEnd).join('\n');
+
+      if (selectionMarker.test(selectorContext)) {
+        violations.push(`  packages/app/src/globals.css:${i + 1}    ${line.trim()}`);
+      }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        `Selection-halo CSS rules must not use \`:has()\` — precedent #30 requires innermost-wins via plugin-state propagation (\`data-has-child-selected\`). Move the cascade logic into SelectionStatePlugin's apply function and let JsxComponentView emit the attribute:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('selection-halo transition uses `var(--ease-out-strong)`, not bare `ease-out` (round-2 review fix)', () => {
+    // Round-2 cloud-review finding (commit 4e9d96a5): the halo opacity
+    // transition originally used bare `ease-out` but every other transition
+    // in globals.css (7 of them) uses `var(--ease-out-strong)`. Silent
+    // inconsistency regression is easy to re-introduce; guard statically.
+    const cssPath = join(APP_SRC_DIR, 'globals.css');
+    const css = readFileSync(cssPath, 'utf-8');
+    const lines = css.split('\n');
+
+    // Find the halo-architecture section and look for a transition-opacity
+    // or transition: opacity line that uses bare `ease-out`.
+    const haloStart = lines.findIndex((l) => /\/\*\s*7a\..*selection/i.test(l));
+    if (haloStart === -1) {
+      throw new Error(
+        `globals.css: expected "7a. Selection halo" section anchor not found — same rename/removal case as the :has() rule above.`,
+      );
+    }
+    const sectionHeaderPattern = /\/\*\s*(?:7b|8|9)\./i;
+    let haloEnd = lines.length;
+    for (let i = haloStart + 1; i < lines.length; i++) {
+      if (sectionHeaderPattern.test(lines[i] ?? '')) {
+        haloEnd = i;
+        break;
+      }
+    }
+
+    // Match `transition:*ease-out` (bare, no leading `-` or `--ease`) on the
+    // same line. Not a match: `var(--ease-out-strong)`, `ease-out-strong`.
+    // Is a match: `transition: opacity 180ms ease-out;` (what round-2 fixed).
+    const violations: string[] = [];
+    for (let i = haloStart; i < haloEnd; i++) {
+      const line = lines[i] ?? '';
+      if (!line.includes('transition')) continue;
+      // Strip CSS custom property usage (`var(--ease-out-strong)`) so the
+      // bare-`ease-out` detector doesn't false-positive on the correct form.
+      const stripped = line.replace(/var\([^)]*\)/g, '');
+      if (/\bease-out\b/.test(stripped)) {
+        violations.push(`  packages/app/src/globals.css:${i + 1}    ${line.trim()}`);
+      }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        `Selection-halo transition uses bare \`ease-out\` — use \`var(--ease-out-strong)\` for consistency with the repo's 7 other transitions (round-2 review fix, commit 4e9d96a5):\n${violations.join('\n')}`,
       );
     }
   });
