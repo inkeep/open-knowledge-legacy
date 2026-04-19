@@ -5,6 +5,24 @@
  * Hand-authored PropDef arrays (react-docgen-typescript has known extraction
  * failures with ForwardRefExoticComponent, Omit<>/Pick<>, and generic <T> —
  * see FR-28). Generated props can supplement these via build-registry.ts.
+ *
+ * ── Intent-of-ship ───────────────────────────────────────────────────────
+ *
+ * This manifest is the shipped default for the fumadocs-ui consumer (the
+ * `@inkeep/open-knowledge-app` frontend). If open-knowledge is embedded in
+ * a non-fumadocs shell, that consumer should build an alternative manifest
+ * via `createRegistry()` + `.set(...)` rather than extend or mutate this
+ * one. The decision to adopt the fumadocs vocabulary as the shipped default
+ * is locked in SPEC §9 and rests on: (1) the first-party consumer renders
+ * fumadocs-ui; (2) precedent #5 (contract-first) favors one authoritative
+ * vocabulary over a menu of optional ones; (3) the greenfield directive
+ * forbids shipping empty-scaffolding registries.
+ *
+ * When a second first-party consumer materializes (editor embedded in a
+ * non-fumadocs shell), split this file into a separate
+ * `@inkeep/open-knowledge-fumadocs-components` workspace package and keep
+ * `packages/core/src/registry/` down to the factory + types. Re-evaluating
+ * before that materializes would be a premature abstraction.
  */
 import type { JsxComponentMeta, PropDef } from './types.ts';
 

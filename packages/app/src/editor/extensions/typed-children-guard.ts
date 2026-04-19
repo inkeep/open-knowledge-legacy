@@ -25,8 +25,37 @@
 import { Extension } from '@tiptap/core';
 import type { Transaction } from '@tiptap/pm/state';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { toast } from 'sonner';
 import { ySyncPluginKey } from 'y-prosemirror';
 import { getDescriptor } from '../registry/index.ts';
+
+/**
+ * Debounce map for the user-visible rejection toast. Without this, a paste
+ * that produces N non-Step nodes (or a concurrent drag-and-drop stream)
+ * fires N console.warns AND N toasts, overflowing the sonner queue and
+ * producing a visual stutter far worse than the silent reject. Keyed by
+ * `${containerName}::${insertedType}` so a user who drops a paragraph
+ * into Steps and immediately drops a heading into Steps gets both hints
+ * (different inserted-type) but a second paragraph drop within 3s is
+ * deduped (same signature).
+ */
+const lastRejectionAt = new Map<string, number>();
+const REJECTION_TOAST_DEBOUNCE_MS = 3000;
+
+function surfaceRejection(containerName: string, insertedType: string): void {
+  const key = `${containerName}::${insertedType}`;
+  const now = Date.now();
+  const last = lastRejectionAt.get(key) ?? 0;
+  if (now - last < REJECTION_TOAST_DEBOUNCE_MS) return;
+  lastRejectionAt.set(key, now);
+
+  const descriptor = getDescriptor(containerName);
+  const allowed = descriptor.emptyChildName ?? 'component';
+  toast.info(`<${containerName}> only accepts <${allowed}> children`, {
+    description: `Ignored "${insertedType}" — try inserting a ${allowed} via the + button or \`/${allowed.toLowerCase()}\`.`,
+    duration: 3500,
+  });
+}
 
 const typedChildrenGuardKey = new PluginKey('typedChildrenGuard');
 
@@ -81,6 +110,7 @@ export function shouldRejectTypedChildrenInsertion(tr: Transaction): boolean {
                       componentName,
                       `(posDepth=${$pos.depth}, containerDepth=${depth})`,
                     );
+                    surfaceRejection(componentName, insertedNode.type.name);
                     dominated = true;
                   }
                 });
