@@ -18,6 +18,10 @@
  *   5. `test.skip(browserName === 'webkit'` — D-Q10/AC-5 ratchet
  *   6. Inner-file helper imports     — D-Q11 barrel contract
  *   7. Ungated `window.__` writes outside the allowlist (US-006/US-026)
+ *   8. `window.__activeEditor` writes outside DocumentContext.tsx
+ *      (regression — PR #168 merge collision: TiptapEditor direct
+ *      assignment clashed with main PR #212's getter-only defineProperty
+ *      and threw TypeError on any doc open in DEV)
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -294,6 +298,54 @@ describe('E2E STOP rule — zero allowlist', () => {
     if (violations.length > 0) {
       throw new Error(
         `waitForFunction(fn, { timeout/polling }) pattern — options as 2nd arg is bound to \`arg\` and silently ignored. Pass \`null\` as 2nd arg: \`waitForFunction(fn, null, { timeout: N })\`. See AGENTS.md §20(j):\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('window.__activeEditor is published only by DocumentContext.tsx (regression — PR #168 merge collision)', () => {
+    // `DocumentContext.tsx` owns `window.__activeEditor` via
+    // `Object.defineProperty(window, '__activeEditor', { get: ... })` —
+    // a getter-only accessor that derives the active editor from the
+    // `active-editor.ts` registry (populated by `registerEditor` /
+    // `unregisterEditor` in `TiptapEditor.tsx`). V8 rejects bare
+    // assignment to a getter-only accessor: any `window.__activeEditor = x`
+    // anywhere else throws `TypeError: Cannot set property __activeEditor
+    // of #<Window> which has only a getter` on the next editor mount in
+    // DEV, surfaced as an app-level error boundary crash.
+    //
+    // History: commit 3b12b6a3 (US-010/US-011 E2E infra) added a direct
+    // assignment in TiptapEditor.tsx that was harmless in isolation. It
+    // collided with main's PR #212 (commit 0ae6cc8d) which introduced the
+    // getter-only defineProperty. Neither branch alone had the bug — it
+    // emerged in merge commit cacaa06b. Both sites touched different
+    // files, so git produced zero conflict markers. Fixed in 504f2746 by
+    // deleting the direct-assignment useEffect.
+    //
+    // This test enforces the invariant at the static-scan layer so a
+    // future contributor cannot reintroduce a second publication path
+    // for the same global.
+    const srcFiles = listAppSrcTsFiles();
+    const directAssignPattern = /window\.__activeEditor\s*=/;
+    // Exclude equality comparisons (`window.__activeEditor === editor`).
+    const equalityPattern = /window\.__activeEditor\s*===?/;
+    const definePropertyPattern =
+      /Object\.defineProperty\s*\(\s*window\s*,\s*['"]__activeEditor['"]/;
+    const ownerFile = 'packages/app/src/editor/DocumentContext.tsx';
+
+    const violations: string[] = [];
+    for (const file of srcFiles) {
+      if (file.path === ownerFile) continue;
+      for (let i = 0; i < file.lines.length; i++) {
+        const line = file.lines[i] ?? '';
+        const isAssign = directAssignPattern.test(line) && !equalityPattern.test(line);
+        const isDefine = definePropertyPattern.test(line);
+        if (!isAssign && !isDefine) continue;
+        violations.push(`  ${file.path}:${i + 1}    ${line.trim()}`);
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        `window.__activeEditor must be published only by DocumentContext.tsx — additional writers collide with the getter-only accessor and throw TypeError on doc open in DEV. Delete the direct write and read through window.__activeEditor (the getter already resolves via the active-editor.ts registry, which TiptapEditor already populates via registerEditor/unregisterEditor):\n${violations.join('\n')}`,
       );
     }
   });
