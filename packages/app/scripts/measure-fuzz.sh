@@ -325,7 +325,43 @@ RECORD="$(jq -c -n \
      extra: $extra
    }')"
 
-echo "$RECORD" >> "$LOG_FILE"
+# Atomic append under concurrent invocation. `>>` in shell is a single
+# `write(2)` only for payloads ≤ PIPE_BUF (4096 bytes on Linux) and is NOT
+# atomic at any size on macOS. A fuzz record with many failing seeds +
+# long --context can exceed 4 KB and would interleave with a concurrent
+# measure:stress run appending to the same log, corrupting the JSONL.
+# Guard with flock on Linux; fall back to mkdir-based mutex on macOS
+# (flock is not present in the BSD toolchain).
+append_jsonl_atomic() {
+  local log="$1"
+  local record="$2"
+  if command -v flock >/dev/null 2>&1; then
+    # Acquire exclusive lock on the log file itself (fd 9). Releases on
+    # subshell exit. 10s timeout so a stuck-lock never hangs measurement.
+    (
+      flock -x -w 10 9 || { echo "warn: could not acquire log lock; writing without lock" >&2; }
+      printf '%s\n' "$record" >> "$log"
+    ) 9>> "$log"
+  else
+    # macOS fallback: mkdir is atomic on the same filesystem. Retry for up
+    # to 10 seconds with 100ms backoff, then proceed without the lock
+    # (atomic enough for ad-hoc dev use; concurrent CI invocation is
+    # accepted-cost per NG6).
+    local lockdir="${log}.lock"
+    local i=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+      i=$((i + 1))
+      if (( i >= 100 )); then
+        echo "warn: could not acquire log lock after 10s; writing without lock" >&2
+        break
+      fi
+      sleep 0.1
+    done
+    printf '%s\n' "$record" >> "$log"
+    rmdir "$lockdir" 2>/dev/null || true
+  fi
+}
+append_jsonl_atomic "$LOG_FILE" "$RECORD"
 
 # ── Summary ────────────────────────────────────────────────────────────────
 echo ""

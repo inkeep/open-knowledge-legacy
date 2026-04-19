@@ -267,7 +267,34 @@ RECORD="$(jq -c -n \
      extra: $extra
    }')"
 
-echo "$RECORD" >> "$LOG_FILE"
+# Atomic append under concurrent invocation. See measure-fuzz.sh for the
+# rationale — same guard is applied verbatim here to keep the producer
+# pair symmetric. Concurrent measure:fuzz + measure:stress runs against
+# the same log would otherwise interleave partial lines > PIPE_BUF bytes.
+append_jsonl_atomic() {
+  local log="$1"
+  local record="$2"
+  if command -v flock >/dev/null 2>&1; then
+    (
+      flock -x -w 10 9 || { echo "warn: could not acquire log lock; writing without lock" >&2; }
+      printf '%s\n' "$record" >> "$log"
+    ) 9>> "$log"
+  else
+    local lockdir="${log}.lock"
+    local i=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+      i=$((i + 1))
+      if (( i >= 100 )); then
+        echo "warn: could not acquire log lock after 10s; writing without lock" >&2
+        break
+      fi
+      sleep 0.1
+    done
+    printf '%s\n' "$record" >> "$log"
+    rmdir "$lockdir" 2>/dev/null || true
+  fi
+}
+append_jsonl_atomic "$LOG_FILE" "$RECORD"
 
 # ── Summary ────────────────────────────────────────────────────────────────
 echo ""
