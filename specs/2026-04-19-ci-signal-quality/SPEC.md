@@ -163,7 +163,7 @@ Introduce the `measure:*` npm script family, distinct from `test:*`, for ad-hoc 
 }
 ```
 
-**`packages/app/scripts/measure-fuzz.sh`** — bash wrapper, ~40-60 lines:
+**`packages/app/scripts/measure-fuzz.sh`** — bash wrapper script. Sizing is not prescribed — the script grew to ~330 lines during implementation to cover robust arg parsing, jq composition, atomic JSONL append via shared `_measure-lib.sh`, numeric validation, outcome classification (pass/fail/crash), portable epoch-ms, and end-of-run summary + replay commands. The spec fixes the contract (inputs + side effects) rather than the size. Responsibilities:
 1. Parses CLI args: `--seeds N` (default 500), `--seed-replay SEED` (single-seed mode), `--context "free-text"` (for log annotation)
 2. Invokes `BRIDGE_FUZZ_SEEDS=$N bun test tests/stress/bridge-convergence.fuzz.test.ts` (or `STRESS_FUZZ_SEED=$SEED` for replay)
 3. Parses output for `N pass / M fail` counts and failing seeds

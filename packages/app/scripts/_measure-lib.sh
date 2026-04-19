@@ -106,6 +106,19 @@ assert_numeric_flag() {
 # (a Ctrl-C between mkdir and rmdir would leave this behind). Remove it
 # and retry once before giving up. 60s is conservative — a real writer
 # completes its jsonl append in well under a second.
+#
+# flock vs mkdir-mutex asymmetry (both paths hit the same 10-second
+# timeout budget):
+#   - `flock -w 10`: kernel-managed wait, no CPU cost while blocked.
+#     Cheapest and preferred. Linux-only (flock is not in the BSD
+#     toolchain).
+#   - mkdir-mutex (macOS fallback): busy-waits with `sleep 0.1`
+#     (100ms) polling, up to 100 iterations. CPU cost is negligible
+#     at this polling frequency but NOT zero — the shell wakes ~10×/s
+#     to re-attempt mkdir. Functional parity with flock for
+#     correctness; lower efficiency under contention. Not worth
+#     optimizing (concurrent measurement runs are rare and the budget
+#     is bounded).
 append_jsonl_atomic() {
   local log="$1"
   local record="$2"
@@ -145,9 +158,12 @@ append_jsonl_atomic() {
       fi
       sleep 0.1
     done
-    # trap EXIT on subshell so crashes between mkdir and rmdir don't wedge
-    # the lockdir. If the rmdir here fails we still exit 0 for the append,
-    # but the next invocation's stale-lock recovery will clean up.
+    # trap EXIT for this append scope (not a subshell — runs in the caller's
+    # shell context; the caller scripts set their own EXIT traps BEFORE
+    # sourcing this library, so the two don't collide because we restore
+    # with `trap - EXIT` at line 154 below). Guards against crashes between
+    # `mkdir` and `rmdir`: the lockdir would otherwise wedge until the next
+    # invocation's stale-lock recovery removed it.
     trap "rmdir '$lockdir' 2>/dev/null || true" EXIT
     printf '%s\n' "$record" >> "$log"
     rmdir "$lockdir" 2>/dev/null || true
