@@ -37,18 +37,37 @@
  *   8. wait                  — idle tick for debounce settling
  *   9. chunked-source-paste  — large Y.Text insert across chunk boundaries
  *
- * Conversion-tier coverage in THIS file:
+ * Conversion-tier coverage in THIS file — describe blocks:
  *
  *   Chain A: parseMd → updateYFragment                — covers ops (1), (4)
  *                                                        (any md → PM → fragment)
- *   Chain B: serializeFragment → applyFastDiff         — covers ops (2), (9)
- *                                                        (any fragment → serialized → Y.Text diff)
+ *   Chain B: serializeFragment → applyFastDiff /      — covers op (2)
+ *            applyIncrementalDiff / mergeThreeWay       (any fragment → serialized → Y.Text diff,
+ *                                                        the three Observer A conversion functions)
  *   Chain C: paired updateYFragment + applyFastDiff    — covers ops (3), (5)
- *                                                        (applyExternalChange's inner transact)
+ *                                                        (applyExternalChange's inner transact,
+ *                                                        including stripFrontmatter + parseWithFallback)
+ *   Chain D: frontmatter strip/prepend round-trip      — Observer B → Observer A frontmatter path
+ *                                                        (the conversion primitives; metadata-map
+ *                                                        plumbing stays in integration tests)
+ *   Handler-specific survivability                     — wikiLink, jsxComponent, rawMdxFallback
+ *                                                        run through Chain A + Chain C deterministically
+ *   Meta — PBT harness is live                         — NUM_RUNS floor checks (default + stress mode)
+ *   Error-path anchor                                  — BridgeMergeContentLossError importable,
+ *                                                        assertContentPreservation throws on violation
+ *                                                        (deep behavioral coverage lives in core's
+ *                                                        merge-three-way.test.ts; this is the anchor)
  *
  * Ops (6)/(7)/(8) are timing/network scheduling — not conversion — so they
  * have no fidelity-tier analogue; they remain the exclusive domain of
  * integration/stress tests.
+ *
+ * Op (9) chunked-source-paste — the chunking-boundary behavior (>500KB
+ * Y.Text inserts) is covered by `packages/core/src/utils/chunked-insert.test.ts`
+ * and `packages/app/tests/stress/paste-fidelity.e2e.ts`; the generators in
+ * this file stay below the chunking threshold, so op (9) is NOT directly
+ * exercised here. This is deliberate — chunked-insert is a separate
+ * conversion surface with its own dedicated coverage.
  *
  * Deterministic design
  * --------------------
@@ -86,6 +105,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   applyFastDiff,
   applyIncrementalDiff,
+  assertContentPreservation,
+  BridgeMergeContentLossError,
   MarkdownManager,
   mergeThreeWay,
   prependFrontmatter,
@@ -160,24 +181,40 @@ function applyMdToFragment(doc: Y.Doc, fragment: Y.XmlFragment, md: string): voi
 }
 
 /**
- * The paired-write pattern from `applyExternalChange`: update the fragment
- * from parsed markdown AND apply a character-level diff to Y.Text, all in
- * one transaction with PairedWriteOrigin semantics.
+ * The paired-write pattern from `applyExternalChange` — mirrors the exact
+ * production sequence in `packages/server/src/external-change.ts`:
+ *   1. `stripFrontmatter(content)` — body vs YAML frontmatter.
+ *   2. `parseWithFallback(body)` — tolerant MDX parsing (unlike `parse`
+ *      which throws on crash-class input; production uses fallback so the
+ *      observer path degrades gracefully rather than aborting the write).
+ *   3. `updateYFragment(doc, fragment, pmNode, meta)` — body only.
+ *   4. `applyFastDiff(ytext, currentText, content)` — full original
+ *      content including frontmatter; the Y.Text surface is the
+ *      user-visible source markdown and must contain the frontmatter so
+ *      round-trips via CodeMirror don't drop it.
+ * All steps execute inside one `doc.transact(..., PairedWriteOrigin)`.
+ *
+ * The frontmatter metadata-map plumbing in production writes the parsed
+ * frontmatter scalars to `doc.getMap('metadata').set('frontmatter', ...)`;
+ * this fidelity-tier helper skips that branch because integration tests
+ * (packages/app/tests/integration/c*.test.ts) cover the metadata map,
+ * and the PBT focus here is on the conversion functions themselves.
  */
 function applyPairedExternalChange(
   doc: Y.Doc,
   fragment: Y.XmlFragment,
   ytext: Y.Text,
-  md: string,
+  content: string,
 ): void {
-  const json = mdManager.parse(md);
-  const pmNode = schema.nodeFromJSON(json);
+  const { body } = stripFrontmatter(content);
+  const parsedJson = mdManager.parseWithFallback(body);
+  const pmNode = schema.nodeFromJSON(parsedJson);
   const meta = { mapping: new Map(), isOMark: new Map() };
   doc.transact(() => {
     updateYFragment(doc, fragment, pmNode, meta);
     const currentText = ytext.toString();
-    if (currentText !== md) {
-      applyFastDiff(ytext, currentText, md);
+    if (currentText !== content) {
+      applyFastDiff(ytext, currentText, content);
     }
   }, TEST_PAIRED_ORIGIN);
 }
@@ -860,5 +897,70 @@ describe('Meta — PBT harness is live', () => {
     if (process.env.STRESS_FIDELITY === '1') {
       expect(NUM_RUNS).toBeGreaterThanOrEqual(1000);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Error-path anchor — BridgeMergeContentLossError wiring
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `mergeThreeWay` calls `assertContentPreservation` internally; a violation
+// throws `BridgeMergeContentLossError`. Deep behavioral coverage of the
+// throw shape (which/side/missing fields, substring vs. order violations)
+// lives in `packages/core/src/bridge/merge-three-way.test.ts` and runs at
+// PR tier via `turbo run test`.
+//
+// This block is a minimal anchor at the fidelity tier asserting that (a)
+// the error class is importable from the `@inkeep/open-knowledge-core`
+// surface this test file builds on, and (b) constructing a synthetic
+// content-loss scenario does throw. If a future refactor accidentally
+// removes the throw (or changes the exported error class), fidelity tier
+// fails loudly rather than silently degrading the one-permitted-catch-site
+// invariant documented in AGENTS.md precedent #11(b) + CLAUDE.md STOP rule.
+describe('Error-path anchor — BridgeMergeContentLossError', () => {
+  test('BridgeMergeContentLossError is exported and instantiable', () => {
+    expect(typeof BridgeMergeContentLossError).toBe('function');
+    const err = new BridgeMergeContentLossError({
+      baseline: 'a',
+      userText: 'b',
+      agentText: 'c',
+      result: 'd',
+      lostSubstrings: ['xyz'],
+      which: 'substring',
+      side: 'user',
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(BridgeMergeContentLossError);
+    expect(err.name).toBe('BridgeMergeContentLossError');
+    expect(err.info.which).toBe('substring');
+    expect(err.info.side).toBe('user');
+    expect(err.info.lostSubstrings).toEqual(['xyz']);
+  });
+
+  test('assertContentPreservation throws when result drops a user-side line', () => {
+    // Minimum repro: user added a unique line, result omits it.
+    // Baseline "a\n", user added "user-only-line\n" → "a\nuser-only-line\n",
+    // agent left baseline unchanged, but a buggy merger returns just "a\n".
+    expect(() => {
+      assertContentPreservation(
+        /* baseline */ 'a\n',
+        /* userText */ 'a\nuser-only-line\n',
+        /* agentText */ 'a\n',
+        /* result */ 'a\n',
+      );
+    }).toThrow(BridgeMergeContentLossError);
+  });
+
+  test('assertContentPreservation passes when result preserves both sides', () => {
+    // Non-overlapping edit shape: user adds a line at the end, agent leaves
+    // baseline unchanged — merge result contains both.
+    expect(() => {
+      assertContentPreservation(
+        /* baseline */ 'a\n',
+        /* userText */ 'a\nb\n',
+        /* agentText */ 'a\n',
+        /* result */ 'a\nb\n',
+      );
+    }).not.toThrow();
   });
 });

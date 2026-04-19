@@ -21,6 +21,8 @@
     "tier1": "bun run check",
     "tier2": "bun run tier1 && turbo run test:perf:regression:unit test:health:unit test:health test:e2e",
     "tier3": "STRESS_FIDELITY=1 bun run tier2",
+    "measure:fuzz": "cd packages/app && bun run measure:fuzz",
+    "measure:stress": "cd packages/app && bun run measure:stress",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
     "changeset": "changeset",
     "version": "changeset version",

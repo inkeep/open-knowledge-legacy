@@ -150,13 +150,21 @@ END_MS="$(epoch_ms)"
 DURATION_MS=$(( END_MS - START_MS ))
 
 # ── Parse results ──────────────────────────────────────────────────────────
-# The stress test prints its active seed via
-#   [server-authoritative stress] seed=<n>(...
-# Capture it so the JSONL record reflects the actual seed even when the
-# caller didn't supply one. Three source-of-truth ordering: captured-from-
-# banner first (authoritative), then the explicit --seed override the caller
-# passed, then empty (distinguishable from a literal seed of 0 — never
-# conflate "unknown" with "0", per reviewer feedback on log-poisoning).
+# Two stable signals the stress test emits:
+#
+#   (1) Startup banner — printed BEFORE any setup work in the test body:
+#         [server-authoritative stress] seed=<n>
+#         [server-authoritative stress] seed=<n> (replay)
+#       Emitted even on pre-loop crash. Primary source for stressSeed.
+#
+#   (2) Machine-parseable result line — printed AFTER all assertions pass:
+#         [stress] RESULT outcome=pass seed=<n> edits=<n> convergenceMs=<n>
+#       Written via `process.stdout.write`, stdout-only (never stderr), so
+#       the grep below is unambiguous and insensitive to bun output drift.
+#
+# Parsing the test's own structured lines — not bun test's human summary —
+# decouples the script from bun's output format (Minor #3 fix).
+
 ACTUAL_SEED_BANNER="$(grep -oE '\[server-authoritative stress\] seed=[0-9]+' "$OUT_FILE" \
   | awk -F= '{print $2}' | head -1 || true)"
 if [[ -n "$ACTUAL_SEED_BANNER" ]]; then
@@ -167,20 +175,25 @@ else
   ACTUAL_SEED=""
 fi
 
-SEEDS_PASSED_BUN="$(grep -E '^[[:space:]]*[0-9]+ pass' "$OUT_FILE" | tail -1 | awk '{print $1}' || echo 0)"
-SEEDS_FAILED_BUN="$(grep -E '^[[:space:]]*[0-9]+ fail' "$OUT_FILE" | tail -1 | awk '{print $1}' || echo 0)"
-SEEDS_PASSED_BUN="${SEEDS_PASSED_BUN:-0}"
-SEEDS_FAILED_BUN="${SEEDS_FAILED_BUN:-0}"
+# Machine-parseable result line — only emitted on a successful run (after
+# all assertions pass). Absence = test failed or crashed before reaching
+# the summary.
+HAS_RESULT_PASS="$(grep -cE '^\[stress\] RESULT outcome=pass' "$OUT_FILE" || true)"
+HAS_RESULT_PASS="${HAS_RESULT_PASS:-0}"
 
 # Classify outcome:
-#   "pass"  — exit 0 AND bun reports 0 fail
-#   "fail"  — exit != 0 AND the test printed its seed banner (real test
+#   "pass"  — test exit 0 AND the RESULT line printed
+#   "fail"  — test exit != 0 AND the seed banner printed (real test
 #             failure with a known seed for replay)
-#   "crash" — exit != 0 AND the seed banner never printed (setup failure,
-#             OOM, or pre-banner assertion — seed is unknown, no replay
-#             command should suggest a specific value)
+#   "crash" — test exit != 0 AND the seed banner did NOT print (setup
+#             failure, OOM, or pre-banner assertion — seed is unknown,
+#             no replay command should suggest a specific value)
+#
+# Note: on a successful run, exit code alone is not sufficient — a bun
+# test that ran but reported an assertion failure still has exit != 0.
+# The RESULT line is the authoritative pass marker.
 SEED_COUNT=1
-if [[ "$TEST_EXIT" -eq 0 && "$SEEDS_FAILED_BUN" == "0" ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$HAS_RESULT_PASS" -ge 1 ]]; then
   OUTCOME="pass"
   SEEDS_FAILED=0
   RATE="0.0000"
