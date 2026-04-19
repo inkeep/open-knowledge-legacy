@@ -104,14 +104,14 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
     }>;
   }
 
-  // 20s per-test budget: the two `await` stages (file-watcher index population,
-  // then backlink-index body parse) each have a 15s primitive-level timeout.
-  // Under CI concurrent-job CPU contention on the shared runner the 5s default
-  // bun:test budget was tight enough that the primitive's inner 50ms polling
-  // loop plus `agent-write-md` post time crossed 5000ms (observed 5001.03ms
-  // and 5000.96ms in separate CI runs). 20s gives comfortable headroom while
-  // still fast-failing a real bug.
-  const ORPHAN_HINT_TEST_TIMEOUT_MS = 20_000;
+  // 45s per-test budget: the two `await` stages (file-watcher index population,
+  // then backlink-index body parse) each have a 30s primitive-level timeout
+  // (bumped from 15s after PR #165 observed consecutive CI failures at exactly
+  // 15000ms — CI runner contention pushes backlink indexing past the original
+  // margin on heavy-workload branches; local completes in <1s). Outer budget
+  // must exceed each primitive so the helper's specific error surfaces rather
+  // than bun:test's generic timeout. 45s still fast-fails a real bug.
+  const ORPHAN_HINT_TEST_TIMEOUT_MS = 45_000;
 
   test(
     'orphan doc in folder with a hub gets a hint',
