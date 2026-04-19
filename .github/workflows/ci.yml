@@ -2,12 +2,22 @@ name: CI
 
 # Tier 1 per SPEC §6 R9 (US-016). Runs the canonical `bun run check`
 # composition (lint + typecheck + unit + integration + conversion + fidelity)
-# plus opt-in coverage (fuzz + stress + Playwright) since those match what
-# CLAUDE.md documents as the PR-time expectation. Budget: 15 min (p95 warm
-# baseline ≈ 2m30s on local M3 Max; CI runners are ~2× slower; 1.5× headroom).
+# plus Playwright E2E. Budget: 15 min (p95 warm baseline ≈ 2m30s on local M3
+# Max; CI runners are ~2× slower; 1.5× headroom).
+#
+# Bridge-convergence fuzz and server-authoritative stress were removed on
+# 2026-04-19 per `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2/FR-3;
+# D-Q1/D-Q2 LOCKED Option A). Both sampled the dual-CRDT topology's
+# architectural residual race at a rate that mathematically guaranteed >80%
+# PR-red on correct code. Conversion-class signal moved to
+# `packages/app/tests/fidelity/bridge-observer-conversion.fidelity.test.ts`
+# (deterministic, PR-blocking). Residual-rate sampling moved to ad-hoc
+# `bun run measure:fuzz` / `measure:stress` — see AGENTS.md §Measurement
+# scripts.
+#
 # Tier 2 (perf regression gate, parse-health gate, parseWithFallback 5× bound)
-# runs in `nightly.yml`. Tier 3 (elevated-sample PBT + fuzz + perf trend)
-# runs in `weekly.yml`.
+# runs in `nightly.yml`. Tier 3 (elevated-sample PBT + perf trend) runs in
+# `weekly.yml`.
 
 on:
   pull_request:

@@ -83,13 +83,27 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { applyFastDiff, MarkdownManager } from '@inkeep/open-knowledge-core';
+import {
+  applyFastDiff,
+  applyIncrementalDiff,
+  MarkdownManager,
+  mergeThreeWay,
+  prependFrontmatter,
+  sharedExtensions,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 
-import { sharedExtensions } from '../../src/editor/extensions/shared';
+// Import sharedExtensions + conversion functions from `@inkeep/open-knowledge-core`
+// — the same source the server-side production path uses (see
+// `packages/server/src/md-manager.ts`). CLAUDE.md "Key constraint:
+// sharedExtensions MUST stay in sync between core, server, and app — drift
+// causes silent data corruption" applies here: testing against core's
+// canonical array is what would surface a future app-side divergence.
+// Other fidelity tests in this directory follow the same convention.
 
 import {
   blockquote,
@@ -184,16 +198,22 @@ function bridgeNorm(s: string): string {
 }
 
 /**
- * Extract "content tokens" — alphanumeric runs of length ≥2 — from a markdown
- * input. These are the survivable payload that MUST appear in both the
- * serialized fragment and ytext after conversion. Markdown syntax (`#`, `*`,
- * leading `> `, etc.) is NOT part of this set because it can be normalized or
- * re-emitted by the serializer.
+ * Extract the set of distinct alphanumeric runs (≥2 chars) present in a
+ * markdown input. These are the survivable payload that MUST appear at least
+ * once in the converted output — markdown syntax (`#`, `*`, leading `> `) is
+ * not part of this set because it can be normalized or re-emitted by the
+ * serializer.
+ *
+ * Named `presentInputTokens` (not `contentTokens`) to make the semantic
+ * explicit: this is a presence-preservation oracle, not a multiplicity-
+ * preservation oracle. If a token appears N times in input and M times in
+ * output, the assertion is satisfied for any M≥1. Multiplicity preservation
+ * for individual markdown constructs is the domain of `invariant-i1.test.ts`
+ * (identity round-trip) and the corpus tests — this file's oracle is
+ * specifically about conversion-chain *content survival*.
  */
-function contentTokens(md: string): string[] {
+function presentInputTokens(md: string): string[] {
   const tokens = md.match(/[A-Za-z0-9]{2,}/g) ?? [];
-  // Deduplicate so the assertion doesn't get confused by a repeated token
-  // appearing only once downstream (e.g., list marker normalization).
   return Array.from(new Set(tokens));
 }
 
@@ -298,7 +318,7 @@ describe('Chain A — parseMd → updateYFragment preserves content', () => {
     () => {
       assertAcrossSeeds(
         fc.property(paragraphsOnly, (md) => {
-          const tokens = contentTokens(md);
+          const tokens = presentInputTokens(md);
           const { doc, fragment } = freshDoc();
           applyMdToFragment(doc, fragment, md);
           const serialized = serializeFragment(fragment);
@@ -388,6 +408,163 @@ describe('Chain B — serializeFragment → applyFastDiff aligns Y.Text to targe
     },
     PBT_TIMEOUT_MS,
   );
+
+  // ─── applyIncrementalDiff — Observer A in-sync path (precedent #11(a)) ───
+  //
+  // When Observer A runs and Y.Text is already in sync with the XmlFragment
+  // baseline, it takes the incremental path rather than the canonicalizing
+  // path. This test exercises that branch directly via `applyIncrementalDiff`.
+  // Regression here surfaces content-comparison-gate bugs (D7) where a
+  // delete+insert replacement is skipped incorrectly.
+
+  test(
+    'applyIncrementalDiff converges Y.Text to target (in-sync baseline path)',
+    () => {
+      assertAcrossSeeds(
+        fc.property(paragraphsOnly, paragraphsOnly, (baseMd, nextMd) => {
+          const { doc, ytext } = freshDoc();
+          // Seed Y.Text with baseline content so `currentText` matches ytext
+          // at call time — the function's precondition.
+          doc.transact(() => {
+            ytext.insert(0, baseMd);
+          });
+          doc.transact(() => {
+            applyIncrementalDiff(ytext, baseMd, nextMd);
+          });
+          expect(ytext.toString()).toBe(nextMd);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'applyIncrementalDiff is a no-op when current === next',
+    () => {
+      assertAcrossSeeds(
+        fc.property(paragraphsOnly, (md) => {
+          const { doc, ytext } = freshDoc();
+          doc.transact(() => {
+            ytext.insert(0, md);
+          });
+          const lenBefore = ytext.length;
+          doc.transact(() => {
+            applyIncrementalDiff(ytext, md, md);
+          });
+          expect(ytext.toString()).toBe(md);
+          expect(ytext.length).toBe(lenBefore);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  // ─── mergeThreeWay — Observer A divergent path (precedent #11(b)/(c)) ───
+  //
+  // mergeThreeWay is the load-bearing conflict path: it merges three markdown
+  // strings (baseline / userEdits / agentEdits) via line-level diff3 + DMP.
+  // Its post-condition asserts content preservation; on failure it throws
+  // `BridgeMergeContentLossError` (or in production, emits structured
+  // telemetry + saves a rescue checkpoint). The tests below exercise the
+  // common cases at fidelity tier so conversion regressions in the merge
+  // algorithm surface as deterministic fidelity failures, not architectural
+  // fuzz flake.
+
+  test(
+    'mergeThreeWay is identity when user and agent both equal baseline',
+    () => {
+      assertAcrossSeeds(
+        fc.property(paragraphsOnly, (baseline) => {
+          const result = mergeThreeWay(baseline, baseline, baseline);
+          expect(result).toBe(baseline);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'mergeThreeWay preserves user edits when agent leaves baseline unchanged',
+    () => {
+      assertAcrossSeeds(
+        fc.property(paragraphsOnly, paragraphsOnly, (baseline, userEdit) => {
+          const result = mergeThreeWay(baseline, userEdit, baseline);
+          expect(result).toBe(userEdit);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'mergeThreeWay preserves agent edits when user leaves baseline unchanged',
+    () => {
+      assertAcrossSeeds(
+        fc.property(paragraphsOnly, paragraphsOnly, (baseline, agentEdit) => {
+          const result = mergeThreeWay(baseline, baseline, agentEdit);
+          expect(result).toBe(agentEdit);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'mergeThreeWay preserves both sides on non-overlapping line-level edits',
+    () => {
+      // Content preservation under non-overlapping edits is the tractable
+      // invariant for mergeThreeWay at PBT scale. K-K-P 2007 impossibility
+      // means overlapping edits on the same line cannot preserve all tokens
+      // from both sides; the algorithm is only guaranteed to preserve
+      // maximal-unique-line-substrings via its post-condition
+      // (BridgeMergeContentLossError fires on violation). Non-overlapping
+      // line-level edits ARE preserved without conflict — the common case
+      // in production bridge traffic.
+      //
+      // Construction: baseline has N≥2 lines; user edits line 0;
+      // agent edits the LAST line. Line indices are disjoint, so neither
+      // edit touches the other's region.
+      assertAcrossSeeds(
+        fc.property(
+          fc.array(paragraph, { minLength: 2, maxLength: 4 }),
+          paragraph,
+          paragraph,
+          (baseLines, userReplacement, agentReplacement) => {
+            // Skip if the random replacements happen to collide with baseline
+            // content (generator noise) — we're testing the merge shape, not
+            // the fast-check arbitraries' uniqueness.
+            if (baseLines.includes(userReplacement) || baseLines.includes(agentReplacement)) {
+              return;
+            }
+            const baseline = `${baseLines.join('\n\n')}\n`;
+            const userLines = [...baseLines];
+            userLines[0] = userReplacement;
+            const userEdit = `${userLines.join('\n\n')}\n`;
+            const agentLines = [...baseLines];
+            agentLines[agentLines.length - 1] = agentReplacement;
+            const agentEdit = `${agentLines.join('\n\n')}\n`;
+
+            const result = mergeThreeWay(baseline, userEdit, agentEdit);
+            // User's replacement survives.
+            for (const token of presentInputTokens(userReplacement)) {
+              expect(result.includes(token)).toBe(true);
+            }
+            // Agent's replacement survives.
+            for (const token of presentInputTokens(agentReplacement)) {
+              expect(result.includes(token)).toBe(true);
+            }
+            // Middle lines (untouched by either edit) survive.
+            for (let i = 1; i < baseLines.length - 1; i++) {
+              for (const token of presentInputTokens(baseLines[i])) {
+                expect(result.includes(token)).toBe(true);
+              }
+            }
+          },
+        ),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -443,13 +620,19 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
     // fails loudly.
     const { doc, fragment, ytext } = freshDoc();
     let observedOrigin: unknown = null;
-    doc.on('afterTransaction', (tx: Y.Transaction) => {
+    // Store the listener in a named variable so `doc.off` can remove it by
+    // reference identity — Y.js `Observable.off` matches by listener
+    // identity, so a fresh arrow passed to `.off` would be a structural
+    // no-op (listener stays attached). Not load-bearing for this test
+    // because the Y.Doc goes out of scope and is GC'd at test end, but the
+    // pattern is copied into future bridge tests where it IS load-bearing
+    // (reused docs, closures capturing non-trivial state).
+    const onAfterTx = (tx: Y.Transaction) => {
       observedOrigin = tx.origin;
-    });
+    };
+    doc.on('afterTransaction', onAfterTx);
     applyPairedExternalChange(doc, fragment, ytext, '# Hello\n\nworld\n');
-    doc.off('afterTransaction', () => {
-      /* noop — cleanup is best-effort; Y.Doc is GC'd at test end */
-    });
+    doc.off('afterTransaction', onAfterTx);
     expect(observedOrigin).toBe(TEST_PAIRED_ORIGIN);
     const contextMarker = (observedOrigin as { context?: { paired?: boolean } } | null)?.context
       ?.paired;
@@ -461,7 +644,7 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
     () => {
       assertAcrossSeeds(
         fc.property(paragraphsOnly, (md) => {
-          const tokens = contentTokens(md);
+          const tokens = presentInputTokens(md);
           const { doc, fragment, ytext } = freshDoc();
           applyPairedExternalChange(doc, fragment, ytext, md);
           const fragText = serializeFragment(fragment);
@@ -486,6 +669,128 @@ describe('Chain C — paired external-change preserves bridge invariant', () => 
 // PBT over arbitrary wikilink/JSX input is high-return-on-investment noise
 // (most generated cases are syntactically invalid); we cover the representative
 // shapes and lean on corpus tests for broader coverage.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chain D: frontmatter strip/prepend — Observer A/B's shared metadata path
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Production Observer B reads `stripFrontmatter(md)` and writes the parsed
+// frontmatter to `doc.getMap('metadata').set('frontmatter', ...)`. Production
+// Observer A reads that map on serialize and prepends frontmatter back onto
+// the body when the fragment is converted to markdown. The bridge invariant
+// treats "full markdown" as `frontmatter + body`, so these two pure string
+// functions are load-bearing for the round-trip — a bug in either breaks
+// frontmatter preservation across the dual-CRDT boundary.
+//
+// This chain tests the two pure string functions (`stripFrontmatter`,
+// `prependFrontmatter`) as the contract they expose to the observer path,
+// plus a composed round-trip that mirrors Observer B-then-Observer-A.
+// The metadata-map plumbing itself is covered by integration tests; this
+// tier asserts the conversion primitives are correct.
+
+/**
+ * Arbitrary: YAML-style frontmatter with 1-3 scalar key-value pairs.
+ * Deliberately limited to safe keys/values (no colons, quotes, or multiline)
+ * to stay within stripFrontmatter's YAML-subset tolerance; broader YAML
+ * compatibility is the domain of integration tests + corpus fixtures.
+ */
+const frontmatterBlock = fc
+  .array(
+    fc.tuple(
+      fc.stringMatching(/^[a-z][a-z0-9_]{1,10}$/),
+      fc.stringMatching(/^[A-Za-z0-9 \-_]{1,20}$/),
+    ),
+    { minLength: 1, maxLength: 3 },
+  )
+  .map((pairs) => {
+    const body = pairs.map(([k, v]) => `${k}: ${v}`).join('\n');
+    return `---\n${body}\n---\n`;
+  });
+
+const bodyOnly = paragraphsOnly;
+
+const mdWithFrontmatter = fc.tuple(frontmatterBlock, bodyOnly).map(([fm, body]) => `${fm}${body}`);
+
+describe('Chain D — frontmatter strip/prepend conversion', () => {
+  test(
+    'stripFrontmatter returns empty frontmatter + unchanged body for body-only input',
+    () => {
+      assertAcrossSeeds(
+        fc.property(bodyOnly, (body) => {
+          const { frontmatter, body: stripped } = stripFrontmatter(body);
+          expect(frontmatter).toBe('');
+          expect(stripped).toBe(body);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'stripFrontmatter → prependFrontmatter round-trip is identity',
+    () => {
+      assertAcrossSeeds(
+        fc.property(mdWithFrontmatter, (full) => {
+          const { frontmatter, body } = stripFrontmatter(full);
+          const reconstituted = prependFrontmatter(frontmatter, body);
+          expect(reconstituted).toBe(full);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'stripFrontmatter output parses via the body through parseMd without error',
+    () => {
+      // Observer B feeds the stripped body into the markdown parser and the
+      // fragment builder. Any syntactic artifact stripFrontmatter leaves
+      // behind would surface here. The test asserts the parser accepts the
+      // stripped body — not a specific AST shape, since parsing-stability
+      // tests live at packages/core/tests/.
+      assertAcrossSeeds(
+        fc.property(mdWithFrontmatter, (full) => {
+          const { body } = stripFrontmatter(full);
+          // Should not throw; round-trip through parse+serialize is a
+          // cheap sanity check that the body is well-formed markdown.
+          const json = mdManager.parse(body);
+          expect(json).toBeDefined();
+          const serialized = mdManager.serialize(json);
+          expect(typeof serialized).toBe('string');
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'Observer B→A composite: stripFrontmatter → body-through-fragment → prependFrontmatter preserves tokens',
+    () => {
+      assertAcrossSeeds(
+        fc.property(mdWithFrontmatter, (full) => {
+          const { frontmatter, body } = stripFrontmatter(full);
+          // Simulate Observer B: body → fragment (metadata map set elsewhere)
+          const { doc, fragment } = freshDoc();
+          applyMdToFragment(doc, fragment, body);
+          // Simulate Observer A: fragment → markdown → prepend stored frontmatter
+          const bodyOut = serializeFragment(fragment);
+          const fullOut = prependFrontmatter(frontmatter, bodyOut);
+          // Frontmatter scalars present in the input MUST survive.
+          const inputFmTokens = presentInputTokens(frontmatter);
+          for (const token of inputFmTokens) {
+            expect(fullOut.includes(token)).toBe(true);
+          }
+          // Body tokens present in the input MUST survive.
+          const inputBodyTokens = presentInputTokens(body);
+          for (const token of inputBodyTokens) {
+            expect(fullOut.includes(token)).toBe(true);
+          }
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+});
 
 describe('Handler-specific survivability (chains A+C)', () => {
   const handlerCases: Array<{ label: string; md: string }> = [
@@ -519,7 +824,7 @@ describe('Handler-specific survivability (chains A+C)', () => {
       // Must be deterministic and lossless through the chain: content tokens
       // from the input (alphanumeric runs ≥2 chars) appear in the serialized
       // fragment. Exact formatting may differ — the assertion is on meaning.
-      for (const token of contentTokens(md)) {
+      for (const token of presentInputTokens(md)) {
         expect(serialized.includes(token)).toBe(true);
       }
     });
@@ -528,7 +833,7 @@ describe('Handler-specific survivability (chains A+C)', () => {
       const { doc, fragment, ytext } = freshDoc();
       applyPairedExternalChange(doc, fragment, ytext, md);
       expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
-      for (const token of contentTokens(md)) {
+      for (const token of presentInputTokens(md)) {
         expect(ytext.toString().includes(token)).toBe(true);
       }
     });
@@ -547,5 +852,13 @@ describe('Meta — PBT harness is live', () => {
   test('NUM_RUNS is a positive integer ≥100', () => {
     expect(Number.isFinite(NUM_RUNS)).toBe(true);
     expect(NUM_RUNS).toBeGreaterThanOrEqual(100);
+  });
+
+  test('STRESS_FIDELITY=1 bumps NUM_RUNS to ≥1000 (self-documenting contract)', () => {
+    // Guards against a future contributor bumping the default NUM_RUNS floor
+    // without remembering the stress-mode multiplier documented in helpers.ts.
+    if (process.env.STRESS_FIDELITY === '1') {
+      expect(NUM_RUNS).toBeGreaterThanOrEqual(1000);
+    }
   });
 });

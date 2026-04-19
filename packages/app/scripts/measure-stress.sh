@@ -16,7 +16,7 @@
 #
 # Usage
 # -----
-#   bash scripts/measure-stress.sh --seed 42 --duration 30000 --context "pre-PR-218 baseline"
+#   bash scripts/measure-stress.sh --seed 42 --context "pre-PR-218 baseline"
 #   bash scripts/measure-stress.sh --context "investigate 2026-04 rate shift"
 #   bun run measure:stress --seed 1776381158793 --context "reproduce CI flake"
 #
@@ -24,20 +24,26 @@
 # -----
 #   --seed N          STRESS_SEED override. Default: omitted (test uses its
 #                     internal Date.now() seed, recorded in the JSONL).
-#   --duration MS     Informational only — the test's internal duration is
-#                     hard-coded to 30s. Recorded in extra.durationMs for
-#                     future use; warning emitted if != 30000.
 #   --context "..."   Free-text annotation for the JSONL record's context
 #                     field (required).
+#
+# The underlying test's run duration is hard-coded to 30s internally. There is
+# no run-time override flag for duration — the script enforces no knob that
+# the test does not honor, per feedback-driven principle "no config that lies."
+# If a future test parameterizes duration, add a flag here that sets the
+# corresponding env var.
 #
 # Output
 # ------
 # Same JSONL schema as measure-fuzz.sh, with these differences:
 #   - script:       "deep-stress"
 #   - seedCount:    1  (one run per invocation)
-#   - seedsFailed:  0 on pass, 1 on fail
-#   - failingSeeds: [<seed>] on failure, [] on pass
-#   - extra:        { stressSeed: <seed>, durationMs: <requested> }
+#   - seedsFailed:  0 on pass, 1 on fail-or-crash
+#   - outcome:      "pass" | "fail" | "crash" (inside extra)
+#   - failingSeeds: [<seed>] on a real test failure where the seed banner
+#                   was captured; [] on pass OR on crash before banner
+#                   (to avoid poisoning the log with a phantom seed 0)
+#   - extra:        { stressSeed: <seed-or-null>, outcome: "pass"|"fail"|"crash" }
 #
 # See measure-fuzz.sh for the full schema + query pattern examples.
 
@@ -45,7 +51,6 @@ set -euo pipefail
 
 # ── Defaults ───────────────────────────────────────────────────────────────
 SEED=""
-DURATION=30000
 CONTEXT=""
 
 # ── Arg parsing ────────────────────────────────────────────────────────────
@@ -53,8 +58,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed)
       SEED="$2"; shift 2 ;;
-    --duration)
-      DURATION="$2"; shift 2 ;;
     --context)
       CONTEXT="$2"; shift 2 ;;
     -h|--help)
@@ -70,11 +73,6 @@ if [[ -z "$CONTEXT" ]]; then
   echo "error: --context is required (free-text annotation for JSONL record)" >&2
   echo "example: --context 'pre-PR-218 baseline'" >&2
   exit 2
-fi
-
-if [[ "$DURATION" != "30000" ]]; then
-  echo "warning: --duration is informational only; the test's internal duration is 30s." >&2
-  echo "         Your value ($DURATION ms) will be recorded in extra.durationMs but not enforced." >&2
 fi
 
 # ── Environment ────────────────────────────────────────────────────────────
@@ -155,11 +153,18 @@ DURATION_MS=$(( END_MS - START_MS ))
 # The stress test prints its active seed via
 #   [server-authoritative stress] seed=<n>(...
 # Capture it so the JSONL record reflects the actual seed even when the
-# caller didn't supply one.
-ACTUAL_SEED="$(grep -oE '\[server-authoritative stress\] seed=[0-9]+' "$OUT_FILE" \
+# caller didn't supply one. Three source-of-truth ordering: captured-from-
+# banner first (authoritative), then the explicit --seed override the caller
+# passed, then empty (distinguishable from a literal seed of 0 — never
+# conflate "unknown" with "0", per reviewer feedback on log-poisoning).
+ACTUAL_SEED_BANNER="$(grep -oE '\[server-authoritative stress\] seed=[0-9]+' "$OUT_FILE" \
   | awk -F= '{print $2}' | head -1 || true)"
-if [[ -z "$ACTUAL_SEED" ]]; then
-  ACTUAL_SEED="${SEED:-0}"
+if [[ -n "$ACTUAL_SEED_BANNER" ]]; then
+  ACTUAL_SEED="$ACTUAL_SEED_BANNER"
+elif [[ -n "$SEED" ]]; then
+  ACTUAL_SEED="$SEED"
+else
+  ACTUAL_SEED=""
 fi
 
 SEEDS_PASSED_BUN="$(grep -E '^[[:space:]]*[0-9]+ pass' "$OUT_FILE" | tail -1 | awk '{print $1}' || echo 0)"
@@ -167,23 +172,45 @@ SEEDS_FAILED_BUN="$(grep -E '^[[:space:]]*[0-9]+ fail' "$OUT_FILE" | tail -1 | a
 SEEDS_PASSED_BUN="${SEEDS_PASSED_BUN:-0}"
 SEEDS_FAILED_BUN="${SEEDS_FAILED_BUN:-0}"
 
-# seedCount=1 always (one run per invocation). seedsFailed=0|1.
+# Classify outcome:
+#   "pass"  — exit 0 AND bun reports 0 fail
+#   "fail"  — exit != 0 AND the test printed its seed banner (real test
+#             failure with a known seed for replay)
+#   "crash" — exit != 0 AND the seed banner never printed (setup failure,
+#             OOM, or pre-banner assertion — seed is unknown, no replay
+#             command should suggest a specific value)
 SEED_COUNT=1
 if [[ "$TEST_EXIT" -eq 0 && "$SEEDS_FAILED_BUN" == "0" ]]; then
+  OUTCOME="pass"
   SEEDS_FAILED=0
   RATE="0.0000"
   FAILING_SEEDS_JSON="[]"
-else
+elif [[ -n "$ACTUAL_SEED_BANNER" ]]; then
+  OUTCOME="fail"
   SEEDS_FAILED=1
   RATE="1.0000"
   FAILING_SEEDS_JSON="$(jq -c -n --argjson s "$ACTUAL_SEED" '[$s]')"
+else
+  OUTCOME="crash"
+  SEEDS_FAILED=1
+  RATE="1.0000"
+  # Crash before banner — no known seed to attribute the failure to. Emit
+  # an empty failingSeeds array so grep'ing the log for real seed failures
+  # stays sharp; `outcome: "crash"` is the triage filter.
+  FAILING_SEEDS_JSON="[]"
 fi
 
 # ── Compose extra (script-specific fields) ─────────────────────────────────
-EXTRA_JSON="$(jq -c -n \
-  --argjson stressSeed "$ACTUAL_SEED" \
-  --argjson durationMs "$DURATION" \
-  '{ stressSeed: $stressSeed, requestedDurationMs: $durationMs }')"
+# stressSeed is JSON null when unknown (crash before banner, no --seed given).
+# Consumers query `.extra.stressSeed != null` to filter to records with a
+# replayable seed.
+if [[ -z "$ACTUAL_SEED" ]]; then
+  EXTRA_JSON="$(jq -c -n --arg outcome "$OUTCOME" \
+    '{ stressSeed: null, outcome: $outcome }')"
+else
+  EXTRA_JSON="$(jq -c -n --argjson stressSeed "$ACTUAL_SEED" --arg outcome "$OUTCOME" \
+    '{ stressSeed: $stressSeed, outcome: $outcome }')"
+fi
 
 # ── Compose JSONL record ───────────────────────────────────────────────────
 RECORD="$(jq -c -n \
@@ -224,15 +251,21 @@ echo "──────── measure-stress summary ────────"
 echo "  context:      $CONTEXT"
 echo "  commit:       $COMMIT"
 echo "  host:         $HOST"
-echo "  stressSeed:   $ACTUAL_SEED"
-echo "  outcome:      $([ $SEEDS_FAILED -eq 0 ] && echo PASS || echo FAIL)"
+echo "  stressSeed:   ${ACTUAL_SEED:-<unknown — crash before banner>}"
+echo "  outcome:      $OUTCOME"
 echo "  durationMs:   $DURATION_MS"
 echo "  logFile:      $LOG_FILE"
 echo ""
 
-if [[ "$SEEDS_FAILED" == "1" ]]; then
+if [[ "$OUTCOME" == "fail" ]]; then
   echo "──────── failure replay command ────────"
   echo "  STRESS_SEED=$ACTUAL_SEED bun test $TEST_FILE  # in $APP_DIR"
+  echo ""
+elif [[ "$OUTCOME" == "crash" ]]; then
+  echo "──────── crash diagnostic ────────"
+  echo "  The test crashed before printing its seed banner. Seed is unknown."
+  echo "  Rerun with an explicit seed to reproduce deterministically:"
+  echo "    bun run measure:stress --seed <n> --context 're-investigating crash'"
   echo ""
 fi
 

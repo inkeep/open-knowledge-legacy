@@ -1,10 +1,13 @@
 name: Weekly elevated-sample tests
 
 # Tier 3 per SPEC §6 R9 (US-016). Runs the fidelity PBT suite at 10K samples
-# (vs 1K on tier-2) and the bridge convergence fuzzer with elevated-seed mode
-# enabled. Also produces a perf trend artifact — the benchmark harness JSON is
-# uploaded so drift over weeks is reviewable post-hoc. Budget: 60 min (generous
-# — elevated-sample runs are minutes, not sub-minute).
+# (vs 1K default; `STRESS_FIDELITY=1`) plus a perf trend artifact. Budget: 60
+# min (generous — elevated-sample runs are minutes, not sub-minute).
+#
+# The bridge-convergence elevated-seed fuzz job was removed on 2026-04-19 per
+# `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2; D-Q1 LOCKED Option A).
+# Sample the architectural CRDT residual ad-hoc via `bun run measure:fuzz`
+# — see AGENTS.md §Measurement scripts for the invocation convention.
 #
 # On-demand only. Same rationale as nightly: pre-production project, no
 # consumer for weekly signal, tier-1 catches regressions at merge time.

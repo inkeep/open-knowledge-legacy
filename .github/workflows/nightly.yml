@@ -1,19 +1,26 @@
 name: Nightly deep tests
 
-# Tier 2 per SPEC §6 R9 (US-016). Runs the fuzz + stress + perf regression gate
-# + parse-health gate that the PR-time `ci.yml` (tier 1) does not. Budget: 30 min
-# total per job (see calibration note in turbo.json top-of-file comment).
+# Tier 2 per SPEC §6 R9 (US-016). Runs the perf regression gate, parse-health
+# gate, `parseWithFallback` perf bound, and R15 guard that the PR-time
+# `ci.yml` (tier 1) does not. Budget: 30 min total per job.
+#
+# Bridge-convergence deep fuzz and full stress were removed on 2026-04-19 per
+# `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2/FR-3). Those signals
+# sampled the dual-CRDT architectural residual race; the spec explicitly
+# accepts that residual-rate detection is ad-hoc-only (NG6) via
+# `bun run measure:fuzz` / `measure:stress`. See AGENTS.md §Measurement
+# scripts for the invocation convention.
 
 on:
   # On-demand only. The scheduled trigger was retired while this project is
   # pre-production — nobody is on-call for nightly signal and automated
   # compute has no consumer. Tier 1 (`ci.yml`) catches regressions at merge
-  # time via the 200-seed fuzz + full stress + fidelity gates. Developers
-  # who want to stress-test a risky change run this workflow from the
-  # GitHub Actions UI ("Run workflow" button on the Nightly deep tests
-  # page), or via `gh workflow run nightly.yml`. If the project reaches a
-  # stage where background regression detection is load-bearing, re-enable
-  # the `schedule:` trigger with a calibrated off-minute cron.
+  # time via the deterministic fidelity + integration + conversion suites.
+  # Developers run this workflow from the GitHub Actions UI ("Run workflow"
+  # button on the Nightly deep tests page), or via
+  # `gh workflow run nightly.yml`. If the project reaches a stage where
+  # background regression detection is load-bearing, re-enable the
+  # `schedule:` trigger with a calibrated off-minute cron.
   workflow_dispatch: {}
 
 permissions:
