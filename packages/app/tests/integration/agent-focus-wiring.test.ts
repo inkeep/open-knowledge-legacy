@@ -104,42 +104,59 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
     }>;
   }
 
-  test('orphan doc in folder with a hub gets a hint', async () => {
-    const folder = `orph-${crypto.randomUUID().slice(0, 8)}`;
-    // Seed a hub doc on disk so the file watcher + backlink index pick it up.
-    // Condition-based wait on the server's file index — replaces the prior
-    // `await wait(400)` wall-clock sleep which was occasionally insufficient
-    // under CI file-watcher backend latency (chokidar / @parcel/watcher
-    // batching). See the `awaitFileWatcherIndexed` JSDoc for the pattern.
-    seedDoc(server.contentDir, `${folder}/README`, '# README\n\nHub of the folder.\n');
-    await awaitFileWatcherIndexed(server, `${folder}/README`);
+  // 20s per-test budget: the two `await` stages (file-watcher index population,
+  // then backlink-index body parse) each have a 15s primitive-level timeout.
+  // Under CI concurrent-job CPU contention on the shared runner the 5s default
+  // bun:test budget was tight enough that the primitive's inner 50ms polling
+  // loop plus `agent-write-md` post time crossed 5000ms (observed 5001.03ms
+  // and 5000.96ms in separate CI runs). 20s gives comfortable headroom while
+  // still fast-failing a real bug.
+  const ORPHAN_HINT_TEST_TIMEOUT_MS = 20_000;
 
-    const orphanName = `${folder}/orphan`;
-    const body = await postWrite(orphanName, '# Orphan body without any wiki-links');
-    expect(body.ok).toBe(true);
-    expect(body.hints).toBeDefined();
-    expect(body.hints?.length).toBe(1);
-    expect(body.hints?.[0].type).toBe('orphan');
-    expect(body.hints?.[0].parentCandidates).toContain(`${folder}/README`);
-    expect(body.hints?.[0].message).toContain('[[');
-  });
+  test(
+    'orphan doc in folder with a hub gets a hint',
+    async () => {
+      const folder = `orph-${crypto.randomUUID().slice(0, 8)}`;
+      // Seed a hub doc on disk so the file watcher + backlink index pick it up.
+      // Condition-based wait on the server's file index — replaces the prior
+      // `await wait(400)` wall-clock sleep which was occasionally insufficient
+      // under CI file-watcher backend latency (chokidar / @parcel/watcher
+      // batching). See the `awaitFileWatcherIndexed` JSDoc for the pattern.
+      seedDoc(server.contentDir, `${folder}/README`, '# README\n\nHub of the folder.\n');
+      await awaitFileWatcherIndexed(server, `${folder}/README`);
 
-  test('doc with an existing backlink gets no hint', async () => {
-    const folder = `bl-${crypto.randomUUID().slice(0, 8)}`;
-    // A hub exists AND it already links to the target — so target is not orphaned
-    const target = `${folder}/linked`;
-    seedDoc(server.contentDir, `${folder}/README`, `# README\n\nSee [[${target}]].\n`);
-    seedDoc(server.contentDir, target, '# Linked\n\nBody.\n');
-    // Two-stage wait: file watcher must index README, AND backlink index
-    // must process the [[target]] link so target has a recorded backlink.
-    // `awaitBacklinkIndexed` gates on the exact invariant `computeOrphanHints`
-    // depends on — target is non-orphan iff its backlinks list is non-empty.
-    await awaitBacklinkIndexed(server, target, `${folder}/README`);
+      const orphanName = `${folder}/orphan`;
+      const body = await postWrite(orphanName, '# Orphan body without any wiki-links');
+      expect(body.ok).toBe(true);
+      expect(body.hints).toBeDefined();
+      expect(body.hints?.length).toBe(1);
+      expect(body.hints?.[0].type).toBe('orphan');
+      expect(body.hints?.[0].parentCandidates).toContain(`${folder}/README`);
+      expect(body.hints?.[0].message).toContain('[[');
+    },
+    ORPHAN_HINT_TEST_TIMEOUT_MS,
+  );
 
-    const body = await postWrite(target, '# Linked body v2');
-    expect(body.ok).toBe(true);
-    expect(body.hints).toBeUndefined();
-  });
+  test(
+    'doc with an existing backlink gets no hint',
+    async () => {
+      const folder = `bl-${crypto.randomUUID().slice(0, 8)}`;
+      // A hub exists AND it already links to the target — so target is not orphaned
+      const target = `${folder}/linked`;
+      seedDoc(server.contentDir, `${folder}/README`, `# README\n\nSee [[${target}]].\n`);
+      seedDoc(server.contentDir, target, '# Linked\n\nBody.\n');
+      // Two-stage wait: file watcher must index README, AND backlink index
+      // must process the [[target]] link so target has a recorded backlink.
+      // `awaitBacklinkIndexed` gates on the exact invariant `computeOrphanHints`
+      // depends on — target is non-orphan iff its backlinks list is non-empty.
+      await awaitBacklinkIndexed(server, target, `${folder}/README`);
+
+      const body = await postWrite(target, '# Linked body v2');
+      expect(body.ok).toBe(true);
+      expect(body.hints).toBeUndefined();
+    },
+    ORPHAN_HINT_TEST_TIMEOUT_MS,
+  );
 
   test('orphan in folder without a hub gets no hint', async () => {
     const folder = `nohub-${crypto.randomUUID().slice(0, 8)}`;
