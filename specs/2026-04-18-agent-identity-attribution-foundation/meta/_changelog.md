@@ -131,3 +131,35 @@ Updated FR-3 (UM scope extension), FR-5 (endpoint list expansion), §8.6 ref tab
 **Post-audit state.** 57 decisions locked (D1-D57). All high + medium audit findings resolved. Residual low findings are editorial (markdown symbol inconsistency, dense references, etc.) and tracked but not urgent.
 
 **Ready for Task 11:** Verify and finalize.
+
+## 2026-04-18 — Audit Round 2 + Challenger + Assess-findings
+
+**Dispatched:** fresh auditor + independent challenger on the post-correction spec. Both received the full spec + evidence + prior-round findings as context.
+
+**Round-2 auditor** (12 findings: 3 HIGH, 5 MEDIUM, 1 PRAGMATISM, 3 LOW): verified prior corrections, surfaced new issues:
+- **R2-H1:** §7 (Current state) contained post-rename filenames after my bulk replace_all; must revert to pre-rename names since §7 describes CURRENT code state, not target state.
+- **R2-H2:** D35 "classification-based via `parseWriterId`" was unsafe — `parseWriterId` only recognizes `agent-`, `human-`, `upstream`, `server` (not the new `principal-*`, `file-system`, `git-*`, `openknowledge-service` taxonomy). Would catastrophically delete new-taxonomy refs as `unknown`. Switched to explicit allowlist-based sweep.
+- **R2-H3:** D57 off-by-one — 7 code sites not 6, plus `ActivityEntry` type rename at `awareness.ts:44` → `AgentFlashEntry`.
+- Plus MEDIUM findings on FR-3 legacy name, NFR-6 ambiguity, terminology drift.
+
+**Round-1 challenger** (10 findings: 3 HIGH, 5 MEDIUM, 2 LOW): independent design challenge. Key:
+- **Ch-H1:** D49 could use bounded Y.Map ring-buffer (50 entries per doc) vs server-side store + CC1 + REST. Escalated to user.
+- **Ch-H2:** Claims P1/P3/P4 journeys describe Option B semantics. Dismissed on re-read — journeys are Option A compatible (UM-based undo, ref-walking for when-actor-wrote).
+- **Ch-H3:** D1 two-slot actor tuple should be three-slot with `delegator?` for future agents-of-agents. Escalated to user.
+- **Ch-M4:** No FR for agent-type aggregation primitive despite journey reference. Added FR-20 (render-layer derivation contract).
+- **Ch-M5/M6/M7/M8:** Dismissed after verification (history-vs-journal already adjudicated; D57 rename is clean-precedents not pragmatism; D56 git self-containment argument weak; live per-line attribution rejected per NG1).
+
+**Applied corrections (this pass):**
+- §7 reverted to pre-rename filenames with explicit note clarifying "CURRENT code" vs target state.
+- D35 switched to allowlist-based sweep (`server`, `human-<*>`) — no more parseWriterId dependency.
+- D57 expanded to 7 code sites + `ActivityEntry` type rename + agent-sim references.
+- FR-3 updated to `Y.Map('agent-flash')` + `ignoreRemoteMapChanges: true`.
+- NFR-6 locked: delete-not-rewrite.
+- FR-20 NEW: agent-type aggregation render contract.
+
+**Escalations for user adjudication:**
+- **E1 (from Ch-H1):** D49 activity-log architecture. Server-side + CC1 + REST vs bounded Y.Map ring-buffer. UX-scope dependent — if timeline needs long retention, server-side; if "live feed last few mins" is enough, Y.Map ring-buffer is simpler.
+- **E2 (from Ch-H3):** D1 actor tuple — should `delegator?: SessionId` be added now for future nested-agents (Q103), even though Q103 is deferred P2? Trade-off: over-engineering vs additive-now-safer-later.
+- **E3 (from Ch-M5 reopening):** "History" vs "journal" naming. Already adjudicated in prior conversation but challenger reopens. User previously picked "history" explicitly.
+
+**Post-audit state.** 57 decisions + FR-20. Round-2 + challenger findings applied or escalated. Changelog carries full audit trail.
