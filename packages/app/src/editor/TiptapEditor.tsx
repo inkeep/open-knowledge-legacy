@@ -14,6 +14,13 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
+
+// Module-level WeakMap storing the `performance.now()` anchor captured in
+// `onBeforeCreate` and consumed in `onCreate`. Scoped per-Editor instance so
+// StrictMode double-invoke and provider-pool churn don't cross-contaminate
+// measurements. WeakMap auto-GCs when the Editor is destroyed.
+const editorCtorStartTimes = new WeakMap<object, number>();
+
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { mark } from '@/lib/perf';
 import { useIdentity } from '../presence/identity';
@@ -123,19 +130,21 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     };
   });
 
-  // US-007 S7-T1 (2026-04-20): instrument the TipTap Editor construct+attach
-  // window so the ~250ms attribution in the S2 warm-switch diagnosis is
-  // directly measured instead of inferred by elimination. `useRef(initialValue)`
-  // evaluates the initializer exactly once per mount — giving us a stable
-  // anchor that captures wall-clock at render start. The `onCreate` callback
-  // fires after the Editor's `create` event (schema build + Yjs Collaboration
-  // bind + DOM attach + initial y-prosemirror sync all complete), so the
-  // delta measures the entire commit-phase Editor construction cost.
-  const createEditorStartRef = useRef<number>(performance.now());
-
+  // Instrument the TipTap Editor construct+attach window. The start anchor is
+  // captured in `onBeforeCreate` (which fires synchronously inside
+  // `new Editor()` before the heavy `mount()`) and keyed by the editor
+  // instance in a module-level WeakMap. The WeakMap is GC-correct on editor
+  // destroy. React Compiler rejects `useRef<T>(performance.now())` because
+  // `performance.now` is impure, and it also rejects mutation of a useState
+  // return value — using a module-scope side-effect store bypasses both.
   const editor = useEditor({
-    onCreate: () => {
-      const start = createEditorStartRef.current;
+    onBeforeCreate: ({ editor }) => {
+      editorCtorStartTimes.set(editor, performance.now());
+    },
+    onCreate: ({ editor }) => {
+      const start = editorCtorStartTimes.get(editor);
+      editorCtorStartTimes.delete(editor);
+      if (start == null) return;
       const now = performance.now();
       mark(
         'ok/editor/create-tiptap',

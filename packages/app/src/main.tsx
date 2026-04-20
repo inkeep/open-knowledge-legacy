@@ -5,12 +5,19 @@ import { createRoot } from 'react-dom/client';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { initWebVitals } from '@/lib/perf';
+import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './globals.css';
 import { App } from './App';
 
-if (import.meta.env.DEV) {
+// Install cold-mount instrumentation BEFORE any editor module loads — the
+// prototype patches must be in place before the first `new Editor(...)` call.
+// Marks emit only in DEV/test; production `mark()` helper no-ops its collector
+// push (per CLAUDE.md precedent #24). Controlled via `OK_COLD_MOUNT_INSTR` env
+// flag on the Vite side for opt-out in case of overhead concerns.
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
+  installColdMountInstrumentation();
   initWebVitals();
 }
 
