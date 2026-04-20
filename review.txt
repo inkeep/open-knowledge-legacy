@@ -1,0 +1,19 @@
+• Findings
+
+  1. High: the new routing contract requires an explicit cwd whenever the client has zero or multiple roots, but most routed tools still give the caller no way to provide one. createProjectRoutingResolver now throws on that path (packages/cli/src/mcp/
+     server.ts:92-110), and tools like get_preview_url (packages/cli/src/mcp/tools/get-preview-url.ts:49-62, :109-110), write_document (packages/cli/src/mcp/tools/write-document.ts:42-58), list_documents (packages/cli/src/mcp/tools/list-documents.ts:36-
+     50), save_version (packages/cli/src/mcp/tools/save-version.ts:37-40), and init-content (packages/cli/src/mcp/tools/init-content.ts:135-143) all resolve project context without exposing a cwd parameter. The same pattern repeats across edit_document,
+     rename_document, get_history, get_*links, rollback_to_version, suggest_links, ingest, research, and consolidate. In practice that makes the advertised multi-project mode unusable for core workflows, and it completely blocks writes because
+     write_document/edit_document require get_preview_url first.
+  2. Medium: open-knowledge init now treats any extra user-managed MCP fields as a conflict, even when the managed part of the entry is already correct. mcpEntriesEqual does full deep equality on the entire object (packages/cli/src/commands/init.ts:155-
+     169), and writeEditorMcpConfig uses that to decide between skipped-existing and skipped-conflict (packages/cli/src/commands/init.ts:307-327). That means perfectly valid additions like cwd, env, or editor-specific metadata will force a conflict, and
+     --force then rewrites the entry from buildEntry() (packages/cli/src/commands/editors.ts:81-117), dropping those custom fields. The nearby launch.json code explicitly avoids this class of bug by ignoring user-added fields (packages/cli/src/commands/
+     init.ts:178-180), so the MCP path looks accidentally stricter than intended.
+  3. Medium: the keepalive socket never attaches in the new explicit-cwd multi-project flow. The keepalive resolver still calls bare resolveCwd() (packages/cli/src/mcp/server.ts:376-386), so in the same zero-root / multi-root cases from packages/cli/src/
+     mcp/server.ts:92-110 it just returns undefined and never opens a keepalive connection, even if individual tool calls succeed via explicit cwd. That defeats D-034 for the new routing model: project servers can still idle-shutdown during an active MCP
+     session.
+
+  Assumptions
+  Line references above are against committed HEAD for origin/main...HEAD. The worktree is dirty in several MCP files, so I did not treat runtime results from the current checkout as authoritative for the reviewed diff.
+Token usage: total=142,937 input=125,987 (+ 1,769,728 cached) output=16,950 (reasoning 12,029)
+To continue this session, run codex resume 019dab6b-ff7e-7e70-9395-1c634e2f08e3

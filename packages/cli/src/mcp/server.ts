@@ -23,9 +23,9 @@ import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/ty
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
 import { PREVIEW_GUIDANCE } from '../content/init.ts';
-import { dim } from '../ui/colors.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import type { AgentIdentity } from './agent-identity.ts';
+import { createMcpLogger, type McpLogger } from './logger.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 import type { ConfigOrResolver, ServerUrlOrResolver } from './tools/shared.ts';
 
@@ -52,11 +52,16 @@ export interface ProjectRoutingResolver {
   invalidateRoots: () => void;
 }
 
+export interface KeepaliveProjectState {
+  resolveCwdForTools: (explicit?: string) => Promise<string>;
+  getKeepaliveCwd: () => Promise<string | undefined>;
+}
+
 interface CreateProjectRoutingResolverOptions {
   startupCwd: string;
   listRoots: () => Promise<RootsListResult>;
   bypassProjectSelection?: boolean;
-  log?: (msg: string) => void;
+  logger?: McpLogger;
 }
 
 export function createProjectRoutingResolver(
@@ -79,7 +84,7 @@ export function createProjectRoutingResolver(
         );
         const roots = [...new Set(normalizedRoots.filter((root): root is string => root !== null))];
         cachedRoots = roots;
-        opts.log?.(roots.length > 0 ? `roots: ${roots.join(', ')}` : 'roots: none');
+        opts.logger?.info('roots resolved', { roots, count: roots.length });
         return roots;
       })().finally(() => {
         pendingRootsLoad = null;
@@ -90,16 +95,24 @@ export function createProjectRoutingResolver(
 
   return {
     async resolveCwd(explicit?: string): Promise<string> {
-      if (explicit) return await normalizeCwd(explicit);
+      if (explicit) {
+        const cwd = await normalizeCwd(explicit);
+        opts.logger?.debug('cwd resolved', { cwd, routing: 'explicit' });
+        return cwd;
+      }
       if (opts.bypassProjectSelection) {
-        return await startupCwdPromise;
+        const cwd = await startupCwdPromise;
+        opts.logger?.debug('cwd resolved', { cwd, routing: 'bypass' });
+        return cwd;
       }
 
       let roots: string[];
       try {
         roots = await loadRoots();
       } catch (err) {
-        opts.log?.(`roots/list unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        opts.logger?.warn('roots/list unavailable', {
+          error: err instanceof Error ? err.message : String(err),
+        });
         throw new ProjectRoutingError(ROOTS_UNAVAILABLE_ERROR);
       }
 
@@ -109,20 +122,46 @@ export function createProjectRoutingResolver(
       if (roots.length > 1) {
         throw new ProjectRoutingError(MULTIPLE_ROOTS_ERROR);
       }
+      opts.logger?.debug('cwd resolved', { cwd: roots[0], routing: 'single-root' });
       return roots[0];
     },
     invalidateRoots(): void {
       cachedRoots = null;
       pendingRootsLoad = null;
-      opts.log?.('roots cache invalidated');
+      opts.logger?.info('roots cache invalidated');
     },
   };
 }
 
-/** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
-function log(msg: string): void {
-  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
+interface CreateKeepaliveProjectStateOptions {
+  startupCwd: string;
+  resolveCwd: (explicit?: string) => Promise<string>;
+  bypassProjectSelection?: boolean;
 }
+
+export function createKeepaliveProjectState(
+  opts: CreateKeepaliveProjectStateOptions,
+): KeepaliveProjectState {
+  const normalizedStartupCwdPromise = normalizeCwd(opts.startupCwd);
+  let activeProjectCwd: string | undefined;
+
+  return {
+    async resolveCwdForTools(explicit?: string): Promise<string> {
+      const cwd = await opts.resolveCwd(explicit);
+      activeProjectCwd = cwd;
+      return cwd;
+    },
+    async getKeepaliveCwd(): Promise<string | undefined> {
+      if (opts.bypassProjectSelection) {
+        return await normalizedStartupCwdPromise;
+      }
+      return activeProjectCwd;
+    },
+  };
+}
+
+/** Module-level logger; initialized in `startMcpServer`. */
+let logger: McpLogger | undefined;
 
 export function buildInstructions(config: Config, opts?: { dynamicConfig?: boolean }): string {
   const { dir, include, exclude } = config.content;
@@ -238,7 +277,7 @@ ${Object.entries(TOOL_DESCRIPTIONS)
 `;
 }
 
-async function detectHocuspocus(serverUrl: string): Promise<boolean> {
+async function detectHocuspocus(serverUrl: string, log: McpLogger): Promise<boolean> {
   try {
     const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
     const res = await fetch(`${httpUrl}/api/agent-undo-status`, {
@@ -246,7 +285,10 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
     });
     return res.ok;
   } catch (err) {
-    log(`Hocuspocus check failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn('Hocuspocus probe failed', {
+      serverUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
@@ -262,18 +304,21 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     bypassProjectSelection = false,
   } = options;
 
-  // Detect Hocuspocus (non-blocking, informational). An explicit string URL is
-  // probed immediately; a lazy resolver means discovery / auto-start happens
-  // per effective cwd on demand.
+  logger = createMcpLogger();
+  logger.info('MCP server starting', {
+    startupCwd,
+    bypassProjectSelection,
+    serverUrlType: typeof serverUrl === 'string' ? 'explicit' : 'lazy',
+  });
+
   if (typeof serverUrl === 'string') {
-    const hocuspocusAvailable = await detectHocuspocus(serverUrl);
-    log(
-      hocuspocusAvailable
-        ? `Hocuspocus detected at ${serverUrl}`
-        : `Hocuspocus not available at ${serverUrl} — using disk-only mode`,
-    );
+    const hocuspocusAvailable = await detectHocuspocus(serverUrl, logger);
+    logger.info('Hocuspocus detection complete', {
+      serverUrl,
+      available: hocuspocusAvailable,
+    });
   } else {
-    log('No explicit server URL — will discover/autostart lazily per effective cwd');
+    logger.info('server discovery is lazy per effective cwd');
   }
 
   const server = new McpServer(
@@ -301,9 +346,14 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     startupCwd,
     bypassProjectSelection,
     listRoots: () => server.server.listRoots(),
-    log,
+    logger,
   });
-  const resolveCwd = routing.resolveCwd;
+  const keepaliveProjectState = createKeepaliveProjectState({
+    startupCwd,
+    resolveCwd: routing.resolveCwd,
+    bypassProjectSelection,
+  });
+  const resolveCwdForTools = keepaliveProjectState.resolveCwdForTools;
 
   server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
     routing.invalidateRoots();
@@ -319,7 +369,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     if (typeof serverUrl === 'string') {
       return serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
     }
-    const effectiveCwd = cwd ?? (await resolveCwd());
+    const effectiveCwd = cwd ?? (await resolveCwdForTools());
     const wsUrl = typeof serverUrl === 'function' ? await serverUrl(effectiveCwd) : serverUrl;
     return wsUrl?.replace('ws://', 'http://').replace('wss://', 'https://');
   };
@@ -349,19 +399,23 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       displayName: label ?? clientInfo?.name ?? 'Agent',
       colorSeed: label ?? clientInfo?.name ?? connectionId,
     };
-    log(`Agent identity: ${identityRef.current.displayName} (${connectionId.slice(0, 8)})`);
+    logger?.info('agent identity established', {
+      displayName: identityRef.current.displayName,
+      connectionId: connectionId.slice(0, 8),
+      clientName: clientInfo?.name,
+    });
   };
 
   registerAllTools(server, {
     serverUrl: resolveServerUrlForTools,
-    resolveCwd,
+    resolveCwd: resolveCwdForTools,
     config,
     identityRef,
   });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log('MCP server running (stdio)');
+  logger.info('MCP server running on stdio');
 
   // D-034 — keep-alive WebSocket to `/collab/keepalive`.
   //
@@ -374,22 +428,18 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const { startKeepalive } = await import('./keepalive.ts');
   const keepaliveHandle = startKeepalive({
     resolveWsUrl: async () => {
-      let cwd: string;
-      try {
-        cwd = await resolveCwd();
-      } catch (err) {
-        if (err instanceof ProjectRoutingError) return undefined;
-        throw err;
-      }
+      const cwd = await keepaliveProjectState.getKeepaliveCwd();
+      if (!cwd) return undefined;
       const httpUrl = await resolveServerUrlForTools(cwd);
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },
-    log,
+    logger: logger.child('keepalive'),
   });
 
   // Cleanup on exit
-  const shutdown = (): void => {
+  const shutdown = (signal: string): void => {
+    logger?.info('MCP server shutting down', { signal });
     try {
       keepaliveHandle.close();
     } catch {
@@ -397,6 +447,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     }
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }

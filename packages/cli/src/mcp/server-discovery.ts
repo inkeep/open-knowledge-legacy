@@ -10,6 +10,7 @@ import { resolveSelfSpawn } from '../commands/self-spawn.ts';
 import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
+import type { McpLogger } from './logger.ts';
 
 /** Default deadline for the post-spawn `server.lock` poll. */
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
@@ -119,6 +120,8 @@ export interface EnsureServerRunningOptions {
   portOverride: string | undefined;
   envAutoStart: string | undefined;
   configAutoStart: boolean;
+  /** Structured logger for observability. */
+  logger?: McpLogger;
   /** Injectable — defaults to `node:child_process#spawn`. */
   spawn?: typeof nativeSpawn;
   /** Injectable — defaults to reading `server.lock` via the server package. */
@@ -173,6 +176,12 @@ export async function ensureServerRunning(
     isAlive,
   });
 
+  opts.logger?.info('auto-start decision', {
+    action: decision.action,
+    message: decision.message,
+    contentDir: opts.contentDir,
+  });
+
   if (decision.action === 'connect') {
     return { serverUrl: decision.url, message: decision.message };
   }
@@ -199,6 +208,11 @@ export async function ensureServerRunning(
   // of whether Node chose sync-throw or async-emit for this particular failure.
   let asyncSpawnError: string | undefined;
   const self = resolveSelfSpawn();
+  opts.logger?.info('spawning server', {
+    command: self.command,
+    cwd: opts.contentDir,
+    timeoutMs,
+  });
   try {
     try {
       child = spawnFn(self.command, [...self.prefixArgs, 'start'], {
@@ -225,12 +239,14 @@ export async function ensureServerRunning(
   while (Date.now() < deadline) {
     if (asyncSpawnError) {
       const stderr = readErrorLog(stderrPath);
+      opts.logger?.error('spawn failed', undefined, { error: asyncSpawnError, stderr });
       throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
     }
     await sleep(pollIntervalMs);
     const lock = readLock();
     if (lock && lock.port > 0 && isAlive(lock.pid)) {
       const url = `ws://localhost:${lock.port}`;
+      opts.logger?.info('server ready after spawn', { url, pid: lock.pid });
       return {
         serverUrl: url,
         message: `spawned ok start; connected at ${url} (pid ${lock.pid})`,
@@ -247,14 +263,14 @@ export async function ensureServerRunning(
   // matching late-written stderr are both captured together.
   if (asyncSpawnError) {
     const stderr = readErrorLog(stderrPath);
+    opts.logger?.error('spawn failed (post-deadline)', undefined, {
+      error: asyncSpawnError,
+      stderr,
+    });
     throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
   }
   const stderr = readErrorLog(stderrPath);
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);
-  // Distinguish slow-start from crashed-start: if the child pid is still
-  // alive, the server is slow (big machine, cold cache, contended IO) —
-  // operators can raise `OK_MCP_SPAWN_TIMEOUT_MS`. If the child is gone,
-  // something crashed before the poll could catch it — they want stderr.
   const childPid = child?.pid;
   let livenessHint = '';
   if (typeof childPid === 'number') {
@@ -262,6 +278,12 @@ export async function ensureServerRunning(
       ? ` child pid=${childPid} is still running — raise OK_MCP_SPAWN_TIMEOUT_MS if this is a slow boot.`
       : ` child pid=${childPid} exited — check last-spawn-error.log.`;
   }
+  opts.logger?.error('spawn poll timeout', undefined, {
+    timeoutMs,
+    childPid,
+    childAlive: typeof childPid === 'number' ? isAlive(childPid) : undefined,
+    stderr: stderr || undefined,
+  });
   throw new Error(
     `OK: server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
   );
@@ -277,6 +299,8 @@ export interface CreateProjectServerUrlResolverOptions {
   host: string;
   portOverride: string | undefined;
   envAutoStart: string | undefined;
+  /** Structured logger for observability. */
+  logger?: McpLogger;
   timeoutMs?: number;
   pollIntervalMs?: number;
   cacheMs?: number;
@@ -315,8 +339,12 @@ export function createProjectServerUrlResolver(
     const effectiveCwd = await normalizeCwd(cwd ?? opts.startupCwd);
     const now = Date.now();
     const cached = cache.get(effectiveCwd);
-    if (cached && cached.expiresAt > now) return cached.url;
+    if (cached && cached.expiresAt > now) {
+      opts.logger?.debug('server url cache hit', { cwd: effectiveCwd, url: cached.url });
+      return cached.url;
+    }
 
+    opts.logger?.debug('server url cache miss', { cwd: effectiveCwd });
     const config = await opts.resolveConfig(effectiveCwd);
     const contentDir = resolveContentDir(config, effectiveCwd);
     const lockDir = resolveLockDir(contentDir);
@@ -329,6 +357,7 @@ export function createProjectServerUrlResolver(
       portOverride: undefined,
       envAutoStart: opts.envAutoStart,
       configAutoStart: config.mcp.autoStart,
+      logger: opts.logger,
       timeoutMs: opts.timeoutMs,
       pollIntervalMs: opts.pollIntervalMs,
       spawn: opts.spawn,

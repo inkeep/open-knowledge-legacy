@@ -7,6 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ConfigSchema } from '../config/schema.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import {
+  createKeepaliveProjectState,
   createProjectRoutingResolver,
   MULTIPLE_ROOTS_ERROR,
   NO_CLIENT_ROOTS_ERROR,
@@ -225,5 +226,70 @@ describe('createProjectRoutingResolver', () => {
 
     await expect(resolver.resolveCwd()).resolves.toBe(await normalizeCwd(realRoot));
     await expect(resolver.resolveCwd(symlinkRoot)).resolves.toBe(await normalizeCwd(realRoot));
+  });
+});
+
+describe('createKeepaliveProjectState', () => {
+  test('keeps keepalive dormant until a tool resolves a project', async () => {
+    const onlyRoot = join(tmpRoot, 'only-root');
+    mkdirSync(onlyRoot, { recursive: true });
+    let listRootsCalls = 0;
+    const routing = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        return { roots: [{ uri: pathToFileURL(onlyRoot).href }] };
+      },
+    });
+    const keepaliveState = createKeepaliveProjectState({
+      startupCwd: tmpRoot,
+      resolveCwd: routing.resolveCwd,
+    });
+
+    await expect(keepaliveState.getKeepaliveCwd()).resolves.toBeUndefined();
+    expect(listRootsCalls).toBe(0);
+
+    await expect(keepaliveState.resolveCwdForTools()).resolves.toBe(await normalizeCwd(onlyRoot));
+    expect(listRootsCalls).toBe(1);
+    await expect(keepaliveState.getKeepaliveCwd()).resolves.toBe(await normalizeCwd(onlyRoot));
+  });
+
+  test('tracks the most recent tool-resolved cwd', async () => {
+    const projectA = join(tmpRoot, 'project-a');
+    const projectB = join(tmpRoot, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    const keepaliveState = createKeepaliveProjectState({
+      startupCwd: tmpRoot,
+      resolveCwd: async (explicit?: string) => {
+        if (!explicit) throw new Error('explicit cwd required for this test');
+        return await normalizeCwd(explicit);
+      },
+    });
+
+    await expect(keepaliveState.resolveCwdForTools(projectA)).resolves.toBe(
+      await normalizeCwd(projectA),
+    );
+    await expect(keepaliveState.getKeepaliveCwd()).resolves.toBe(await normalizeCwd(projectA));
+
+    await expect(keepaliveState.resolveCwdForTools(projectB)).resolves.toBe(
+      await normalizeCwd(projectB),
+    );
+    await expect(keepaliveState.getKeepaliveCwd()).resolves.toBe(await normalizeCwd(projectB));
+  });
+
+  test('--port bypass path exposes the startup cwd immediately', async () => {
+    let resolveCalls = 0;
+    const keepaliveState = createKeepaliveProjectState({
+      startupCwd: tmpRoot,
+      bypassProjectSelection: true,
+      resolveCwd: async (explicit?: string) => {
+        resolveCalls += 1;
+        return await normalizeCwd(explicit ?? tmpRoot);
+      },
+    });
+
+    await expect(keepaliveState.getKeepaliveCwd()).resolves.toBe(await normalizeCwd(tmpRoot));
+    expect(resolveCalls).toBe(0);
   });
 });
