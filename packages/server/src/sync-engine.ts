@@ -22,7 +22,7 @@ import type { CC1Broadcaster } from './cc1-broadcast.ts';
 import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
-import { createGitInstance, withParentLock, type GitHandle } from './git-handle.ts';
+import { createGitInstance, type GitHandle, withParentLock } from './git-handle.ts';
 import { resolveGitIdentity } from './git-identity.ts';
 import { getLogger } from './logger.ts';
 import { computeRemainingMs } from './sync-timing.ts';
@@ -1086,9 +1086,7 @@ export class SyncEngine {
    * need a truly clean tree (e.g. before `git merge`) must also call
    * `checkTreeCleanAfterContentCommit` and pause if it's not.
    */
-  private async commitDirtyContentFilesToHead(
-    handle: GitHandle,
-  ): Promise<string | null> {
+  private async commitDirtyContentFilesToHead(handle: GitHandle): Promise<string | null> {
     const status = await handle.git.status();
     if (status.files.length === 0) return null;
 
@@ -1170,9 +1168,7 @@ export class SyncEngine {
    * `error`, transition to idle, and return false — caller must NOT proceed
    * with the merge.
    */
-  private async pauseIfNonContentDirty(
-    handle: GitHandle,
-  ): Promise<boolean> {
+  private async pauseIfNonContentDirty(handle: GitHandle): Promise<boolean> {
     // `diff-index --name-only HEAD` lists only TRACKED files whose working-
     // tree content differs from HEAD's. Untracked files are intentionally
     // excluded: `git merge` only refuses on untracked files when the merge
