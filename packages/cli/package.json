@@ -42,6 +42,7 @@
     "@napi-rs/keyring": "^1.2.0",
     "@octokit/auth-oauth-device": "^8.0.3",
     "@octokit/rest": "^22.0.1",
+    "@octokit/request": "^10.0.8",
     "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
     "just-bash": "^2.14.1",
