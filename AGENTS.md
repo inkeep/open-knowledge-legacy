@@ -371,6 +371,8 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 | `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
 | `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
 
+Bin names: the CLI ships two bins — `open-knowledge` (long form) and `ok` (short alias). Both point to the same entrypoint. Distribution strategy, install UX, telemetry posture, and related LOCKED / NEVER / NOT NOW decisions are codified in **`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`** — read it before making changes to `packages/cli/package.json` bin config, install docs, or anything telemetry-related.
+
 ### Config system
 
 Hierarchical YAML in `.open-knowledge/` directories:
