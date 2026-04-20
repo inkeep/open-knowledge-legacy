@@ -25,7 +25,7 @@ export function computeMoveDestinationPath(
   return joinContentPath(destinationFolderPath, lastSegment(source.path));
 }
 
-export type MoveValidationReason = 'self' | 'descendant' | 'no_op';
+type MoveValidationReason = 'self' | 'descendant' | 'no_op';
 
 export function validateMoveToFolder(
   source: Pick<FileTreeTarget, 'kind' | 'path'>,
