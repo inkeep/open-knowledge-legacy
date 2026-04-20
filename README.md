@@ -17,15 +17,20 @@ bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok 
 
 `init` writes MCP configuration at the correct per-editor path for every editor whose config directory exists on your machine:
 
-| Editor      | Config written to                     | Scope       |
-| ----------- | ------------------------------------- | ----------- |
-| Claude Code | `<project>/.mcp.json`                 | Project     |
-| Cursor      | `<project>/.cursor/mcp.json`          | Project     |
-| VS Code     | `<project>/.vscode/mcp.json`          | Project     |
-| Codex       | `<project>/.codex/config.toml`        | Project     |
-| Windsurf    | `~/.codeium/windsurf/mcp_config.json` | User-global |
+| Editor         | Config written to                                                                                                | Scope       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- | ----------- |
+| Claude Code    | `<project>/.mcp.json`                                                                                            | Project     |
+| Cursor         | `<project>/.cursor/mcp.json`                                                                                     | Project     |
+| VS Code        | `<project>/.vscode/mcp.json`                                                                                     | Project     |
+| Codex          | `<project>/.codex/config.toml`                                                                                   | Project     |
+| Windsurf       | `~/.codeium/windsurf/mcp_config.json`                                                                            | User-global |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) · `%APPDATA%\Claude\…` (Windows)       | User-global |
 
-Override with `--editor <name1,name2>` or `--editor all`. AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
+Override with `--editor <name1,name2>` or `--editor all` (aliases: `desktop` / `claude_desktop` → `claude-desktop`). AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
+
+**Global-scope editors (Claude Desktop, Windsurf) use project-qualified server keys.** Each project gets its own entry in the shared config file under `open-knowledge-<project-basename>` with `--cwd <abs-path>` baked into the args, so one global config can serve multiple projects on the same machine. Re-running `init` in a project you've already configured is a no-op. Claude Desktop requires a full **quit + relaunch** to pick up new MCP servers; Windsurf hot-reloads.
+
+Existing Windsurf users: on your next `init`, any legacy single `open-knowledge` entry (the pre-spec shape, no `--cwd`) is non-interactively migrated to the project-qualified form.
 
 ### Install globally (optional)
 
