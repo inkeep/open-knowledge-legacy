@@ -299,6 +299,306 @@ describe('runInit', () => {
     });
   });
 
+  describe('Claude Desktop', () => {
+    // The Claude Desktop config dir on macOS:
+    // <home>/Library/Application Support/Claude/claude_desktop_config.json
+    const desktopConfigPath = (home: string) =>
+      join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+
+    // Tests run on macOS or Linux dev hosts; gate the macOS-shaped path tests
+    // accordingly so the suite is portable. Windows path test mocks platform
+    // explicitly below. Linux unsupported-platform test does the same.
+    const skipDarwinPath = process.platform !== 'darwin';
+
+    /**
+     * Find the open-knowledge* key in a Claude Desktop config (there may be
+     * multiple after disambiguation). Returns the entries map keyed by suffix.
+     */
+    const findOkEntries = (config: Record<string, unknown>): Record<string, unknown> => {
+      const servers = (config.mcpServers as Record<string, unknown> | undefined) ?? {};
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(servers)) {
+        if (k.startsWith('open-knowledge')) out[k] = v;
+      }
+      return out;
+    };
+
+    it.skipIf(skipDarwinPath)(
+      'fresh write — emits open-knowledge-<slug> key with --cwd baked in',
+      () => {
+        const fakeHome = join(testDir, 'fakehome');
+        mkdirSync(fakeHome, { recursive: true });
+
+        const result = runInit({
+          cwd: testDir,
+          editors: ['claude-desktop'],
+          home: fakeHome,
+        });
+
+        expect(result.editors).toHaveLength(1);
+        expect(result.editors[0].editorId).toBe('claude-desktop');
+        expect(result.editors[0].action).toBe('written');
+        expect(result.editors[0].serverKey).toMatch(/^open-knowledge-/);
+        expect(result.editors[0].disambiguatedFrom).toBeUndefined();
+        expect(result.editors[0].migratedFromKey).toBeUndefined();
+
+        const configPath = desktopConfigPath(fakeHome);
+        expect(existsSync(configPath)).toBe(true);
+
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        const okEntries = findOkEntries(config);
+        const keys = Object.keys(okEntries);
+        expect(keys).toHaveLength(1);
+        expect(keys[0]).toBe(result.editors[0].serverKey);
+
+        const entry = okEntries[keys[0]] as { command: string; args: string[] };
+        expect(entry.command).toBe('npx');
+        expect(entry.args).toEqual(['@inkeep/open-knowledge', 'mcp', '--cwd', testDir]);
+      },
+    );
+
+    it.skipIf(skipDarwinPath)('multi-project keys coexist in the same config', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      // Two distinct project dirs with deterministic basenames.
+      const projA = join(testDir, 'projA');
+      const projB = join(testDir, 'projB');
+      mkdirSync(projA, { recursive: true });
+      mkdirSync(projB, { recursive: true });
+
+      const r1 = runInit({ cwd: projA, editors: ['claude-desktop'], home: fakeHome });
+      const r2 = runInit({ cwd: projB, editors: ['claude-desktop'], home: fakeHome });
+
+      expect(r1.editors[0].action).toBe('written');
+      expect(r1.editors[0].serverKey).toBe('open-knowledge-proja');
+      expect(r2.editors[0].action).toBe('written');
+      expect(r2.editors[0].serverKey).toBe('open-knowledge-projb');
+
+      const config = JSON.parse(readFileSync(desktopConfigPath(fakeHome), 'utf-8'));
+      const okEntries = findOkEntries(config);
+      expect(Object.keys(okEntries).sort()).toEqual([
+        'open-knowledge-proja',
+        'open-knowledge-projb',
+      ]);
+    });
+
+    it.skipIf(skipDarwinPath)(
+      'basename collision triggers -2 disambiguation with conflict hint',
+      () => {
+        const fakeHome = join(testDir, 'fakehome');
+        mkdirSync(fakeHome, { recursive: true });
+
+        // Two project dirs named the same ("notes") under different parents.
+        const aNotes = join(testDir, 'work', 'notes');
+        const bNotes = join(testDir, 'personal', 'notes');
+        mkdirSync(aNotes, { recursive: true });
+        mkdirSync(bNotes, { recursive: true });
+
+        const r1 = runInit({ cwd: aNotes, editors: ['claude-desktop'], home: fakeHome });
+        const r2 = runInit({ cwd: bNotes, editors: ['claude-desktop'], home: fakeHome });
+
+        expect(r1.editors[0].serverKey).toBe('open-knowledge-notes');
+        expect(r1.editors[0].disambiguatedFrom).toBeUndefined();
+        expect(r2.editors[0].action).toBe('written');
+        expect(r2.editors[0].serverKey).toBe('open-knowledge-notes-2');
+        expect(r2.editors[0].disambiguatedFrom).toBe('open-knowledge-notes');
+
+        const config = JSON.parse(readFileSync(desktopConfigPath(fakeHome), 'utf-8'));
+        const okEntries = findOkEntries(config);
+        expect(Object.keys(okEntries).sort()).toEqual([
+          'open-knowledge-notes',
+          'open-knowledge-notes-2',
+        ]);
+      },
+    );
+
+    it.skipIf(skipDarwinPath)('re-init with same cwd is idempotent (skipped-existing)', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const first = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+      expect(first.editors[0].action).toBe('written');
+
+      const second = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+      expect(second.editors[0].action).toBe('skipped-existing');
+      // Matched key is the same key the first run wrote.
+      expect(second.editors[0].serverKey).toBe(first.editors[0].serverKey);
+    });
+
+    it.skipIf(skipDarwinPath)(
+      'hand-crafted custom-keyed entry is matched by --cwd realpath',
+      () => {
+        const fakeHome = join(testDir, 'fakehome');
+        mkdirSync(fakeHome, { recursive: true });
+
+        // Pre-seed a hand-crafted entry under a non-default key, with --cwd
+        // pointing at the current project. Realpath-normalize for portability.
+        const configPath = desktopConfigPath(fakeHome);
+        mkdirSync(join(fakeHome, 'Library', 'Application Support', 'Claude'), {
+          recursive: true,
+        });
+        writeFileSync(
+          configPath,
+          JSON.stringify({
+            mcpServers: {
+              'open-knowledge-bim-tools': {
+                command: 'npx',
+                args: ['@inkeep/open-knowledge', 'mcp', '--cwd', testDir],
+              },
+            },
+            preferences: { theme: 'dark' },
+          }),
+        );
+
+        const result = runInit({
+          cwd: testDir,
+          editors: ['claude-desktop'],
+          home: fakeHome,
+        });
+
+        expect(result.editors[0].action).toBe('skipped-existing');
+        expect(result.editors[0].serverKey).toBe('open-knowledge-bim-tools');
+
+        // Hand-crafted entry survives untouched + preferences key preserved.
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        expect(Object.keys(findOkEntries(config))).toEqual(['open-knowledge-bim-tools']);
+        expect((config.preferences as { theme: string }).theme).toBe('dark');
+      },
+    );
+
+    it.skipIf(skipDarwinPath)('--force overwrites the matched entry', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      // First run lands the entry.
+      const first = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+      expect(first.editors[0].action).toBe('written');
+      const writtenKey = first.editors[0].serverKey;
+      if (writtenKey === undefined) throw new Error('expected serverKey on first run');
+
+      // Tamper with the entry's command so we can detect the overwrite.
+      const configPath = desktopConfigPath(fakeHome);
+      const tampered = JSON.parse(readFileSync(configPath, 'utf-8'));
+      tampered.mcpServers[writtenKey].command = 'tampered';
+      writeFileSync(configPath, JSON.stringify(tampered));
+
+      // Second run with --force should rewrite the entry.
+      const second = runInit({
+        cwd: testDir,
+        editors: ['claude-desktop'],
+        home: fakeHome,
+        force: true,
+      });
+      expect(second.editors[0].action).toBe('overwritten');
+      expect(second.editors[0].serverKey).toBe(writtenKey);
+
+      const reread = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(reread.mcpServers[writtenKey].command).toBe('npx');
+    });
+
+    it.skipIf(skipDarwinPath)('preserves unrelated top-level keys (e.g. preferences)', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const configPath = desktopConfigPath(fakeHome);
+      mkdirSync(join(fakeHome, 'Library', 'Application Support', 'Claude'), {
+        recursive: true,
+      });
+      writeFileSync(configPath, JSON.stringify({ preferences: { theme: 'dark', fontSize: 14 } }));
+
+      runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect((config.preferences as { theme: string; fontSize: number }).theme).toBe('dark');
+      expect((config.preferences as { theme: string; fontSize: number }).fontSize).toBe(14);
+      expect(Object.keys(findOkEntries(config))).toHaveLength(1);
+    });
+
+    describe('Windows path resolution', () => {
+      const originalPlatform = process.platform;
+      const originalAppData = process.env.APPDATA;
+
+      beforeEach(() => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+        if (originalAppData === undefined) delete process.env.APPDATA;
+        else process.env.APPDATA = originalAppData;
+      });
+
+      it('writes to %APPDATA%\\Claude\\claude_desktop_config.json on Windows', () => {
+        const fakeHome = join(testDir, 'fakehome');
+        const fakeAppData = join(fakeHome, 'AppData', 'Roaming');
+        mkdirSync(fakeAppData, { recursive: true });
+        process.env.APPDATA = fakeAppData;
+
+        const result = runInit({
+          cwd: testDir,
+          editors: ['claude-desktop'],
+          home: fakeHome,
+        });
+        expect(result.editors[0].action).toBe('written');
+
+        const configPath = join(fakeAppData, 'Claude', 'claude_desktop_config.json');
+        expect(existsSync(configPath)).toBe(true);
+
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        const okEntries = findOkEntries(config);
+        expect(Object.keys(okEntries)).toHaveLength(1);
+      });
+
+      it('falls back to <home>/AppData/Roaming when APPDATA is unset', () => {
+        const fakeHome = join(testDir, 'fakehome');
+        mkdirSync(join(fakeHome, 'AppData', 'Roaming'), { recursive: true });
+        delete process.env.APPDATA;
+
+        const result = runInit({
+          cwd: testDir,
+          editors: ['claude-desktop'],
+          home: fakeHome,
+        });
+        expect(result.editors[0].action).toBe('written');
+
+        const configPath = join(
+          fakeHome,
+          'AppData',
+          'Roaming',
+          'Claude',
+          'claude_desktop_config.json',
+        );
+        expect(existsSync(configPath)).toBe(true);
+      });
+    });
+
+    describe('unsupported platforms', () => {
+      const originalPlatform = process.platform;
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      });
+
+      it('refuses Claude Desktop target on Linux with a friendly message', () => {
+        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+
+        const result = runInit({ cwd: testDir, editors: ['claude-desktop'] });
+        expect(result.editors).toHaveLength(1);
+        expect(result.editors[0].action).toBe('failed');
+        expect(result.editors[0].error).toMatch(
+          /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
+        );
+      });
+    });
+  });
+
   describe('multi-editor', () => {
     it('writes Claude + Cursor configs in a single run', () => {
       const result = runInit({ cwd: testDir, editors: ['claude', 'cursor'] });

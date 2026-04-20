@@ -7,6 +7,7 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { globalScopeResolveServerKey } from './global-scope-entry.ts';
 
 export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf' | 'claude-desktop';
 
@@ -113,22 +114,38 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   'claude-desktop': {
     id: 'claude-desktop',
     label: 'Claude Desktop',
-    // Full wiring (macOS + Windows + unsupported-platform throw) lands in
-    // US-003. The stub returns a non-existent sentinel path so the registry
-    // is iterable by `detectInstalledEditors` without exercising real init
-    // logic — any real attempt to use the target before US-003 will fail at
-    // buildEntry.
-    configPath: (_cwd, home) =>
-      join(
-        home ?? homedir(),
-        '.open-knowledge-claude-desktop-stub-not-yet-implemented',
-        'config.json',
-      ),
+    // Anthropic ships Claude Desktop on macOS + Windows only; Linux is
+    // explicitly out of scope (D9 / NG4). Throw on other platforms rather
+    // than silently writing a ghost macOS-shaped path (D14 LOCKED).
+    configPath: (_cwd, home) => {
+      const platform = process.platform;
+      if (platform === 'darwin') {
+        return join(
+          home ?? homedir(),
+          'Library',
+          'Application Support',
+          'Claude',
+          'claude_desktop_config.json',
+        );
+      }
+      if (platform === 'win32') {
+        // Prefer the canonical %APPDATA% env var; fall back to a homedir-derived
+        // path on the rare clean-Windows install where APPDATA is unset.
+        const appData = process.env.APPDATA ?? join(home ?? homedir(), 'AppData', 'Roaming');
+        return join(appData, 'Claude', 'claude_desktop_config.json');
+      }
+      throw new Error(`Claude Desktop is not available on ${platform}. Supported: macOS, Windows.`);
+    },
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: (_cwd) => {
-      throw new Error('Claude Desktop target not yet implemented (pending US-003).');
-    },
+    buildEntry: (cwd) => ({
+      command: MCP_SERVER_COMMAND,
+      args: [...MCP_SERVER_ARGS, '--cwd', cwd],
+    }),
+    // Claude Desktop has no legacy state to migrate (this is its first
+    // appearance in `init`); only Windsurf needs `detectLegacy: true` (US-004).
+    resolveServerKey: (existingServers, cwd) =>
+      globalScopeResolveServerKey(existingServers, cwd, { detectLegacy: false }),
     scope: 'global',
   },
 };
