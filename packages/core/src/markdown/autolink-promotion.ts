@@ -20,8 +20,7 @@
  * non-whitespace non-bracket content. Same regex as AUTOLINK_RE in the
  * preprocessor.
  */
-import type { Link, Nodes, Parent, Root, Text } from 'mdast';
-import { visit } from 'unist-util-visit';
+import type { Link, Parent, Text } from 'mdast';
 
 /**
  * CommonMark autolink pattern — matches `<scheme:uri>` in text content.

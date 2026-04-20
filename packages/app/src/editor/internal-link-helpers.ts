@@ -3,8 +3,6 @@ import {
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
   type DocLinkTarget,
-  type ResolvedInternalHref,
-  resolveInternalHref,
 } from '@inkeep/open-knowledge-core';
 import { hashFromDocName } from '../lib/doc-hash';
 
