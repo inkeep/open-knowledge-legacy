@@ -24,7 +24,7 @@ import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { incrementGitAutoSaveFailure } from './metrics.ts';
+import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
 
@@ -472,6 +472,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, canonicalPath);
         registerWrite(canonicalPath, contentHash(markdown));
+        // Increment disk-write counter after the atomic rename succeeds.
+        // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
+        // drops skipStoreHooks, observer writes trigger onStoreDocument
+        // and produce amplified disk writes per user/agent edit.
+        incrementPersistenceDiskWrite();
       } catch (e) {
         try {
           unlinkSync(tmpPath);

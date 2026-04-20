@@ -292,6 +292,7 @@
     "listItem",
     "emphasis",
     "strong",
+    "code",
     "codeBlock",
     "heading",
     "thematicBreak",

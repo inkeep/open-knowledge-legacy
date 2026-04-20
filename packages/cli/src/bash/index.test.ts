@@ -2,14 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  createBashInstance,
-  execBash,
-  grep,
-  StdoutOverflowError,
-  setProjectDir,
-  shellEscape,
-} from './index.ts';
+import { createBashInstance, execBash, grep, StdoutOverflowError, shellEscape } from './index.ts';
 
 describe('shellEscape', () => {
   it('leaves safe characters alone', () => {
@@ -29,7 +22,7 @@ describe('shellEscape', () => {
   });
 });
 
-describe('just-bash + ReadWriteFs', () => {
+describe('just-bash + ReadWriteFs (per-call cwd)', () => {
   let root: string;
 
   beforeAll(() => {
@@ -38,7 +31,6 @@ describe('just-bash + ReadWriteFs', () => {
     mkdirSync(join(root, 'sub'), { recursive: true });
     writeFileSync(join(root, 'file.txt'), 'hello\nworld\n');
     writeFileSync(join(root, 'sub', 'nested.md'), 'nested content\n');
-    setProjectDir(root);
   });
 
   afterAll(() => {
@@ -46,51 +38,35 @@ describe('just-bash + ReadWriteFs', () => {
   });
 
   describe('ReadWriteFs sandbox boundary', () => {
-    it('rejects path traversal via interpreter', async () => {
+    it('rejects path traversal via `..`', async () => {
       const bash = createBashInstance(root);
-      // Attempt to read a path outside the sandbox via `..`. ReadWriteFs should
-      // reject or return an error exit code — must NOT leak files from parent.
       const result = await execBash(bash, 'cat ../outside.txt');
-      // Either non-zero exit or stderr indicating denial. The guarantee is:
-      // no stdout content that could only come from reading above the sandbox.
       expect(result.stdout).not.toContain('SECRET');
       expect(result.exitCode).not.toBe(0);
     });
 
-    it('rejects absolute paths outside the sandbox root', async () => {
+    it('does not leak the host /etc/passwd (absolute paths resolve inside sandbox)', async () => {
       const bash = createBashInstance(root);
-      // Inside the sandbox, `/` maps to projectDir — so `/etc/passwd` is
-      // resolved against the sandbox, not the host. This test asserts that
-      // the host's /etc/passwd is unreachable.
       const result = await execBash(bash, 'cat /etc/passwd');
       expect(result.stdout).not.toContain('root:');
       expect(result.exitCode).not.toBe(0);
     });
-
-    it('rejects sibling-directory prefix-collision traversal', async () => {
-      // Sanity: the sandbox shouldn't let `../projectdir-evil/X` escape
-      // by exploiting a parent directory whose name starts with projectDir.
-      const bash = createBashInstance(root);
-      const result = await execBash(bash, 'cat ../../etc/hosts');
-      expect(result.stdout).not.toContain('localhost');
-      expect(result.exitCode).not.toBe(0);
-    });
   });
 
-  describe('createBashInstance + execBash', () => {
-    it('ls lists the sandbox root (cwd=/ maps to projectDir)', async () => {
+  describe('cwd semantics', () => {
+    it('relative paths resolve against the provided cwd', async () => {
+      const bash = createBashInstance(root);
+      const result = await execBash(bash, 'cat file.txt');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('hello\nworld\n');
+    });
+
+    it('ls lists the cwd contents', async () => {
       const bash = createBashInstance(root);
       const result = await execBash(bash, 'ls');
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('file.txt');
       expect(result.stdout).toContain('sub');
-    });
-
-    it('cat via interpreter returns file contents', async () => {
-      const bash = createBashInstance(root);
-      const result = await execBash(bash, 'cat file.txt');
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toBe('hello\nworld\n');
     });
 
     it('supports pipes between stages', async () => {
@@ -100,6 +76,10 @@ describe('just-bash + ReadWriteFs', () => {
       expect(result.exitCode).toBe(0);
       const lines = result.stdout.split('\n').filter(Boolean);
       expect(lines.length).toBe(2);
+    });
+
+    it('throws when cwd is not an absolute path', () => {
+      expect(() => createBashInstance('relative/path')).toThrow(/cwd must be absolute/);
     });
   });
 
@@ -116,7 +96,7 @@ describe('just-bash + ReadWriteFs', () => {
 
   describe('grep helper (via just-bash)', () => {
     it('finds matches and parses them', async () => {
-      const matches = await grep('hello');
+      const matches = await grep('hello', root);
       expect(matches.length).toBeGreaterThan(0);
       const match = matches.find((m) => m.path.includes('file.txt'));
       expect(match).toBeDefined();
@@ -125,7 +105,7 @@ describe('just-bash + ReadWriteFs', () => {
     });
 
     it('returns empty array when no matches', async () => {
-      const matches = await grep('nonexistent-string-xyz');
+      const matches = await grep('nonexistent-string-xyz', root);
       expect(matches).toEqual([]);
     });
 
@@ -134,7 +114,7 @@ describe('just-bash + ReadWriteFs', () => {
         join(root, 'many-grep.txt'),
         Array.from({ length: 10 }, (_, i) => `match ${i}`).join('\n'),
       );
-      const matches = await grep('match', { maxResults: 3 });
+      const matches = await grep('match', root, { maxResults: 3 });
       expect(matches.length).toBeLessThanOrEqual(3);
     });
   });

@@ -10,7 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import { parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint, parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
@@ -61,14 +61,16 @@ function parseGitLogOutput(raw: string): TimelineEntry[] {
       const parts = trimmed.split('\x00');
       const [sha = '', timestamp = '', author = '', authorEmail = '', message = '', rawBody = ''] =
         parts;
+      const type = classifyType(message);
       return {
         sha: sha.trim(),
         timestamp,
         author,
         authorEmail,
-        type: classifyType(message),
+        type,
         message,
         contributors: parseContributors(rawBody),
+        checkpoint: type === 'checkpoint' ? parseCheckpoint(rawBody) : null,
       };
     })
     .filter((e): e is TimelineEntry => e !== null && e.sha.length === 40);

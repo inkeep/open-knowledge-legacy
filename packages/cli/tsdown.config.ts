@@ -1,15 +1,14 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: ['src/**/*.ts', '!src/**/*.test.ts'],
-  unbundle: true,
+  entry: { cli: 'src/cli.ts', index: 'src/index.ts' },
+  unbundle: false,
   format: 'esm',
   dts: true,
   clean: true,
+  minify: true,
   deps: {
-    // Workspace packages must be bundled — they're private and won't be on npm
-    alwaysBundle: ['@inkeep/open-knowledge-core', '@inkeep/open-knowledge-server'],
-    // Native addons — must not be bundled
-    neverBundle: ['@parcel/watcher', 'simple-git'],
+    // Native addons must stay external — they ship .node binaries resolved at runtime
+    neverBundle: ['@parcel/watcher', 'chokidar', 'simple-git'],
   },
 });

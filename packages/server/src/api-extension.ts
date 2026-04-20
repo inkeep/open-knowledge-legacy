@@ -5,6 +5,7 @@
  * the standalone Server and the Vite dev plugin.
  */
 
+import { spawn } from 'node:child_process';
 import {
   closeSync,
   existsSync,
@@ -22,10 +23,10 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
+import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
-  applyByPrefixSuffix,
+  applyFastDiff,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -36,18 +37,32 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
-import { extractPageTitle } from './page-identity.ts';
+import { findHubCandidates } from './hub-candidates.ts';
+import {
+  extractPageTitle,
+  type FrontmatterMetadata,
+  parseFrontmatterMetadata,
+} from './page-identity.ts';
+import { readServerLock } from './server-lock.ts';
+import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
-import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
+import simpleGit from 'simple-git';
+import {
+  type BacklinkIndex,
+  type GraphNode as IndexedGraphNode,
+  isOrphanMode,
+} from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import type { ResolveStrategy } from './conflict-storage.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
@@ -55,7 +70,17 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { withParentLock } from './git-handle.ts';
+import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
+import {
+  checkLocalOpSecurity,
+  createConcurrencyGuard,
+  expandTilde,
+  isAllowedGitUrl,
+  isSafeLocalPath,
+} from './local-op-security.ts';
 import { getLogger } from './logger.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -73,34 +98,54 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import {
+  listRescueCheckpoints,
   type ShadowRef,
   safetyCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
+import type { SyncEngine } from './sync-engine.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
- * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
+ * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
- * skipStoreHooks: false — L1 persistence SHOULD fire after rollback so the
- * restored content reaches disk through the normal pipeline. The file-watcher's
- * registerWrite hash check prevents the self-write from re-triggering reconciliation.
+ * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
+ * restored content reaches disk through the normal pipeline. The
+ * file-watcher's registerWrite hash check prevents the self-write from
+ * re-triggering reconciliation.
+ *
+ * `paired: true` — rollback atomically writes both XmlFragment and Y.Text
+ * inside one `doc.transact()` block. `satisfies PairedWriteOrigin` gates the
+ * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'rollback-apply' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'rollback-apply', paired: true },
+} as const satisfies PairedWriteOrigin;
 
-const MANAGED_RENAME_ORIGIN = {
+/**
+ * Managed-rename origin — typed `PairedWriteOrigin`.
+ *
+ * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
+ * and so server observers can resolve `context.paired` without importing the
+ * object transitively (bridge-correctness SPEC §6 R0d).
+ *
+ * `paired: true` — the caller atomically writes BOTH XmlFragment (via
+ * `updateYFragment`) and Y.Text (via `applyFastDiff`) inside one transact
+ * block. `satisfies PairedWriteOrigin` is the compile-time gate.
+ */
+export const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'managed-rename' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'managed-rename', paired: true },
+} as const satisfies PairedWriteOrigin;
 
 const log = getLogger('api');
 
@@ -398,6 +443,41 @@ export interface ApiExtensionOptions {
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  /**
+   * Optional. When present, agent write handlers publish the active doc on
+   * `__system__` awareness so clients can push-navigate to follow the agent.
+   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document). The handler is expected to be cheap and idempotent —
+   * the CLI uses it to open the browser on the first agent edit per session.
+   */
+  onAgentWrite?: () => void;
+  /**
+   * Getter for the active SyncEngine instance (may be null when dormant or if
+   * no remote was detected). Called per-request so it always reflects current state.
+   */
+  getSyncEngine?: () => SyncEngine | null;
+  /**
+   * CLI argv prefix used to spawn subprocesses for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (assumes CLI is on PATH).
+   * Pass [process.execPath, process.argv[1]] from the CLI start command to use
+   * the exact runtime that started this server.
+   *
+   * Example: ['bun', '/path/to/packages/cli/src/cli.ts'] in dev,
+   *          ['open-knowledge'] in production.
+   */
+  localOpCliArgs?: string[];
+  /**
+   * Path to the project's parent git working tree (i.e. the repo root, not the
+   * shadow git dir). When provided, `POST /api/save-version` and
+   * `POST /api/rollback` create an additional commit + `ok/v<N>` tag in the
+   * parent git repository to make checkpoints and restores team-visible.
+   * Parent-git operations are serialized through `parentGitMutex`.
+   */
+  projectDir?: string;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -469,7 +549,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     contentRoot,
     backlinkIndex,
     signalChannel,
+    agentFocusBroadcaster,
+    onAgentWrite,
+    getSyncEngine,
+    localOpCliArgs = ['open-knowledge'],
+    projectDir,
   } = options;
+
+  // Concurrency guard: at most 1 in-flight request per local-op endpoint
+  const localOpGuard = createConcurrencyGuard();
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -491,8 +579,117 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  const EMPTY_METADATA: FrontmatterMetadata = {
+    cluster: undefined,
+    category: undefined,
+    tags: undefined,
+  };
+
+  function readFrontmatterMetadataForDocName(docName: string): FrontmatterMetadata {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      if (doc) {
+        const metaMap = doc.getMap('metadata');
+        const fm = metaMap.get('frontmatter');
+        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+      }
+    } catch {
+      /* fall through to disk */
+    }
+    try {
+      const filePath = resolveDocPath(docName);
+      if (!filePath || !existsSync(filePath)) return EMPTY_METADATA;
+      const content = readFileSync(filePath, 'utf-8');
+      const { frontmatter } = stripFrontmatter(content);
+      if (!frontmatter) return EMPTY_METADATA;
+      return parseFrontmatterMetadata(frontmatter);
+    } catch {
+      return EMPTY_METADATA;
+    }
+  }
+
+  /**
+   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
+   * hub candidate exists in its folder tree, attach a hint suggesting the
+   * hub. Returns `undefined` when any prerequisite is unavailable (no
+   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
+   * Non-throwing — a hint-computation failure must not fail the write.
+   */
+  function computeOrphanHints(
+    docName: string,
+  ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
+    if (!backlinkIndex) return undefined;
+    try {
+      const backlinks = backlinkIndex.getBacklinks(docName);
+      if (backlinks.length > 0) return undefined;
+      // This runs on every write — if hub-candidate walking becomes pathological
+      // on very large file indexes, we want an observable signal. 5ms is well
+      // above the typical <1ms cost for a small-to-medium repo.
+      const start = performance.now();
+      const candidates = findHubCandidates(docName, getFileIndex());
+      const elapsed = performance.now() - start;
+      if (elapsed > 5) {
+        log.debug(
+          { docName, elapsedMs: elapsed, candidateCount: candidates.length },
+          '[orphan-hint] findHubCandidates slow',
+        );
+      }
+      if (candidates.length === 0) return undefined;
+      const wikiLinks = candidates.map((c) => `[[${c}]]`).join(', ');
+      return [
+        {
+          type: 'orphan',
+          parentCandidates: candidates,
+          message: `This doc has no backlinks yet. To make it discoverable, consider linking from a parent hub doc (index/overview files in the folder tree): ${wikiLinks}.`,
+        },
+      ];
+    } catch (err) {
+      console.warn('[orphan-hint] computeOrphanHints failed:', err);
+      return undefined;
+    }
+  }
+
   function resolveAlias(docName: string): string {
     return getAliasMap?.().get(docName) ?? docName;
+  }
+
+  /**
+   * Return the number of live browser/editor connections currently subscribed
+   * to the given Hocuspocus document. Zero means the agent is writing to a
+   * room nobody is watching — the MCP tool surfaces that as a warning so the
+   * user can open the preview.
+   *
+   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
+   */
+  function getSubscriberCount(docName: string): number {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Fire-and-forget L1 → L2 flush for a single document.
+   *
+   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
+   * other documents are undisturbed.
+   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
+   * up-to-date before the shadow-repo commit.
+   *
+   * The returned promise is intentionally not awaited by callers — the HTTP
+   * response fires immediately after the CRDT transaction; persistence is
+   * best-effort background work.
+   */
+  function flushDocToGit(docName: string, label: string): void {
+    const debounceId = `onStoreDocument-${docName}`;
+    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+      ? hocuspocus.debouncer.executeNow(debounceId)
+      : Promise.resolve();
+    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
+      log.warn({ err }, `[${label}] post-write flush failed`);
+    });
   }
 
   function collectAdmittedDocNames(): Set<string> {
@@ -667,7 +864,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
       // replaces the deleted syncTextToFragment helper). Parse new markdown →
       // updateYFragment (preserves user-content Items at matching positions) →
-      // mirror Y.Text via applyByPrefixSuffix (minimal CRDT mutation).
+      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
       const parsedJson = mdManager.parseWithFallback(body);
       const pmNode = schema.nodeFromJSON(parsedJson);
@@ -675,7 +872,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         mapping: new Map(),
         isOMark: new Map(),
       });
-      applyByPrefixSuffix(ytext, currentText, result.markdown);
+      applyFastDiff(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
@@ -805,6 +1002,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
+  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
+  const AGENT_NAME_MAX_LEN = 128;
+
   /** Extract agent identity fields shared across the three write endpoints. */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
@@ -813,15 +1013,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     colorSeed: string;
     clientName: string | undefined;
   } {
-    const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
+      rawAgentId = undefined;
+    }
     const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
-    const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
-    const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    const agentName =
+      typeof body.agentName === 'string'
+        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
+        : 'Claude';
+    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    if (clientName !== undefined) {
+      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+    }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
     const colorSeed =
       typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed
+        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
     return { rawAgentId, agentId, agentName, colorSeed, clientName };
   }
@@ -887,6 +1096,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
+
+      flushDocToGit(docName, 'agent-write');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -971,7 +1182,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
-      json(res, 200, { ok: true, timestamp });
+      flushDocToGit(resolvedDocName, 'agent-write-md');
+
+      // Publish agent focus on __system__ awareness so browser clients can
+      // push-navigate to the doc just written. Uses per-write agentId from
+      // attribution (PR #134).
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: resolvedDocName,
+        writeKind: 'write',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+      // backlinks and a plausible hub exists in its folder tree, suggest the
+      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+      const hints = computeOrphanHints(resolvedDocName);
+
+      const subscriberCount = getSubscriberCount(resolvedDocName);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(hints ? { hints } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1094,6 +1330,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
         source: entry.source,
+        anchor: entry.anchor,
         title: readPageTitleForDocName(entry.source),
         snippet: entry.snippet,
       }));
@@ -1101,6 +1338,42 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       console.error('[backlinks]', e);
       json(res, 500, { ok: false, error: 'Failed to read backlinks' });
+    }
+  }
+
+  /**
+   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
+   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * (exec ls/grep/find slim enrichment) that need connection density per file
+   * without N-amplifying the single-doc `/api/backlinks` endpoint.
+   * docNames failing `isSafeDocName` are silently dropped from `counts`.
+   */
+  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const raw = url.searchParams.get('docNames');
+      if (!raw) {
+        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
+        return;
+      }
+      const counts: Record<string, number> = {};
+      for (const docName of raw.split(',')) {
+        const trimmed = docName.trim();
+        if (!trimmed || !isSafeDocName(trimmed)) continue;
+        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+      }
+      json(res, 200, { ok: true, counts });
+    } catch (e) {
+      console.error('[backlink-counts]', e);
+      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
     }
   }
 
@@ -1127,11 +1400,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, {
         ok: true,
         docName,
-        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) => ({
-          docName: entry.target,
-          title: readPageTitleForDocName(entry.target),
-          snippet: entry.snippet,
-        })),
+        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
+          entry.kind === 'doc'
+            ? {
+                kind: 'doc' as const,
+                docName: entry.target,
+                anchor: entry.anchor,
+                title: readPageTitleForDocName(entry.target),
+                snippet: entry.snippet,
+              }
+            : {
+                kind: 'external' as const,
+                url: entry.url,
+                title: entry.label ?? entry.url,
+                snippet: entry.snippet,
+              },
+        ),
       });
     } catch (e) {
       console.error('[forward-links]', e);
@@ -1162,7 +1446,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      let nodes: string[];
+      let nodes: IndexedGraphNode[];
       let links: Array<{ source: string; target: string }>;
 
       if (rawDegrees && docName) {
@@ -1177,10 +1461,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
-      const enrichedNodes = nodes.map((id) => ({
-        id,
-        label: readPageTitleForDocName(id),
-      }));
+      const enrichedNodes = nodes.map((node) => {
+        if (node.kind === 'doc') {
+          const meta = readFrontmatterMetadataForDocName(node.docName);
+          return {
+            id: node.id,
+            kind: 'doc' as const,
+            docName: node.docName,
+            anchor: node.anchor ?? null,
+            label: readPageTitleForDocName(node.docName),
+            cluster: meta.cluster ?? null,
+            category: meta.category ?? null,
+            tags: meta.tags ?? null,
+          };
+        }
+        return {
+          id: node.id,
+          kind: 'external' as const,
+          url: node.url,
+          label: node.label ?? node.url,
+        };
+      });
       json(res, 200, { ok: true, nodes: enrichedNodes, links });
     } catch (e) {
       console.error('[link-graph]', e);
@@ -1360,13 +1661,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
+          // Read current authoritative state. Search the FULL markdown
+          // (frontmatter + body) so agents can patch frontmatter fields
+          // (e.g. `title:`, `cluster:`) the same way they patch body text.
+          // XmlFragment is the authoritative body per precedent #12; the
+          // frontmatter lives in Y.Map('metadata') and must be composed
+          // in for the search surface to reflect the document as the
+          // agent sees it on disk.
           const xmlFragment = dc.document.getXmlFragment('default');
+          const metaMap = dc.document.getMap('metadata');
+          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
           const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+          const currentFull = prependFrontmatter(currentFm, currentBody);
+
           const pos =
             offset == null
-              ? currentBody.indexOf(find)
-              : currentBody.slice(offset, offset + find.length) === find
+              ? currentFull.indexOf(find)
+              : currentFull.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1377,8 +1688,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          const newBody =
-            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
+
+          // Splice at the character level. The result is the authoritative
+          // post-patch full document — if the patch deletes the FM region,
+          // metaMap must be cleared accordingly. Route through explicit
+          // split-then-write so empty-FM is distinguishable from
+          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          const newFull =
+            currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
+          if (newFm !== currentFm) {
+            metaMap.set('frontmatter', newFm);
+          }
           applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
           const activityMap = dc.document.getMap('activity');
@@ -1389,7 +1710,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        if (!notFound) recordContributor(docName, agentId, agentName, colorSeed);
+        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1405,7 +1726,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
-      json(res, 200, { ok: true, timestamp });
+
+      flushDocToGit(docName, 'agent-patch');
+
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: docName,
+        writeKind: 'edit',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      const subscriberCount = getSubscriberCount(docName);
+
+      json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1494,9 +1828,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers from body
+      // Parse optional writers + message from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
+      let userMessage: string | undefined;
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1504,6 +1839,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch {
           json(res, 400, { ok: false, error: 'Invalid JSON' });
           return;
+        }
+        if (typeof body.message === 'string' && body.message.trim()) {
+          userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
         if (Array.isArray(body.writers)) {
           writers = (body.writers as Array<Record<string, string>>).map((w) => {
@@ -1532,9 +1870,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[shadow] checkpoint ${result.checkpointRef}`);
 
+      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
+      let versionTag: string | undefined;
+      if (projectDir) {
+        try {
+          versionTag = await withParentLock(async () => {
+            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+            // Count existing ok/v* tags to derive N
+            const existing = await pg.tags(['--list', 'ok/v*']);
+            const n = existing.all.length + 1;
+            const tag = `ok/v${n}`;
+            const autoMsg = userMessage ?? `Checkpoint v${n}`;
+            // Stage content changes and create commit (allow-empty so a tag always lands)
+            const gitPathspec = resolvedContentRoot || '.';
+            await pg.add(gitPathspec);
+            await pg.commit(autoMsg, { '--allow-empty': null });
+            await pg.addTag(tag);
+            console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+            return tag;
+          });
+        } catch (e) {
+          console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+        }
+      }
+
       json(res, 200, {
         ok: true,
         checkpointRef: result.checkpointRef,
+        ...(versionTag ? { versionTag } : {}),
       });
     } catch (e) {
       console.error('[save-version]', e);
@@ -1730,7 +2093,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      const changes = diffLines(fromContent, toContent);
+      // Strip frontmatter from both sides so the diff shows only body changes.
+      // Git content includes frontmatter; Y.Text may or may not depending on
+      // sync state. Stripping both sides normalizes the comparison.
+      const fromBody = stripFrontmatter(fromContent).body;
+      const toBody = stripFrontmatter(toContent).body;
+      const changes = diffLines(fromBody, toBody);
 
       // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
@@ -1788,9 +2156,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const { docName: rawDocName, commitSha: rawSha } = body as Record<string, unknown>;
+    const {
+      docName: rawDocName,
+      commitSha: rawSha,
+      versionTag: rawVersionTag,
+    } = body as Record<string, unknown>;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
+    const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
 
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName required' });
@@ -1876,6 +2249,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
       );
 
+      // Parent-git commit for team-visible restore record (non-fatal)
+      if (projectDir) {
+        const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
+        const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
+        const resolvedContentRoot = contentRoot ?? 'content';
+        withParentLock(async () => {
+          const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+          const gitPathspec = resolvedContentRoot || '.';
+          await pg.add(gitPathspec);
+          await pg.commit(restoreMsg, { '--allow-empty': null });
+          console.log(`[rollback] parent-git commit: ${restoreMsg}`);
+        }).catch((e) => {
+          console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+        });
+      }
+
       json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
     } catch (e) {
       console.error('[rollback]', e);
@@ -1908,6 +2297,80 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Authorization runs BEFORE method dispatch: reversing the order turns the
+    // method check into a fingerprinting oracle for unauth callers (GET → 403,
+    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
+    // V4.1.1 — "perform access control on every request."
+    //
+    // Loopback-only: this endpoint discloses the absolute host filesystem path
+    // (including home directory / username). That's fine for the local-editing
+    // use case the rest of the API is designed for, but if the user configures
+    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
+    // want to leak the host shape over the network or to cross-origin fetches.
+    // All loopback clients (including requests from a browser on the same
+    // machine) pass — connections from other interfaces are refused.
+    //
+    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
+    // for any request that reached the socket via loopback, including requests
+    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
+    // The Host-header allowlist below enforces that the caller actually spoke
+    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
+    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
+    // editor app pass; cross-origin rebinding attempts are refused.
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem
+    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
+    // the workspace root are resolved via realpath so the path matches on-disk
+    // truth. We treat error kinds in line with the persistence layer's symlink
+    // contract (CLAUDE.md "Symlinks" §):
+    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
+    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
+    //     value when the directory was deleted between server start and this
+    //     request; the client decides whether to act on it.
+    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
+    //     persistence's stricter policy (cyclic symlinks are rejected
+    //     everywhere) and avoids handing the user a path that won't resolve.
+    const resolvedRoot = resolve(contentDir);
+    let resolvedContentDir = resolvedRoot;
+    let symlinkResolved = true;
+    try {
+      resolvedContentDir = realpathSync(resolvedRoot);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT') {
+        console.warn('[workspace] contentDir does not exist; returning unresolved path', {
+          path: resolvedRoot,
+        });
+        symlinkResolved = false;
+      } else {
+        console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
+        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        return;
+      }
+    }
+    // `pathSeparator` lets the client build full paths without guessing from
+    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
+    // and on POSIX folders that contain a literal backslash in the name).
+    json(res, 200, {
+      ok: true,
+      contentDir: resolvedContentDir,
+      pathSeparator: sep,
+      symlinkResolved,
+    });
+  }
+
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -1922,40 +2385,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    const now = Date.now();
+    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
+    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
+    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
+    // can treat both as interchangeable unless they need the checkpoint sha.
+    interface RescueRowFlat {
+      docName: string;
+      timestamp: string;
+      size: number;
+      source: 'flat';
+    }
+    interface RescueRowTimeline extends TimelineRescueEntry {
+      source: 'timeline';
+    }
+    const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
+
     const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
-    if (!existsSync(rescueDir)) {
-      json(res, 200, []);
-      return;
+    if (existsSync(rescueDir)) {
+      try {
+        const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
+        for (const file of files) {
+          const filePath = resolve(rescueDir, file);
+          const stat = statSync(filePath);
+          const age = now - stat.mtimeMs;
+
+          if (age > RESCUE_MAX_AGE_MS) {
+            try {
+              unlinkSync(filePath);
+            } catch (e) {
+              console.debug('[rescue] cleanup failed (non-critical):', e);
+            }
+            continue;
+          }
+
+          entries.push({
+            docName: stripDocExtension(file),
+            timestamp: stat.mtime.toISOString(),
+            size: stat.size,
+            source: 'flat',
+          });
+        }
+      } catch (e) {
+        console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+      }
     }
 
-    const now = Date.now();
-    const entries: { docName: string; timestamp: string; size: number }[] = [];
-
+    // Timeline-ref source — merged in so the unified response surfaces all
+    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
-      const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
-      for (const file of files) {
-        const filePath = resolve(rescueDir, file);
-        const stat = statSync(filePath);
-        const age = now - stat.mtimeMs;
-
-        if (age > RESCUE_MAX_AGE_MS) {
-          // Clean up expired rescue buffers
-          try {
-            unlinkSync(filePath);
-          } catch (e) {
-            console.debug('[rescue] cleanup failed (non-critical):', e);
-          }
-          continue;
-        }
-
-        entries.push({
-          docName: stripDocExtension(file),
-          timestamp: stat.mtime.toISOString(),
-          size: stat.size,
-        });
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      for (const t of timelineEntries) {
+        entries.push({ ...t, source: 'timeline' });
       }
     } catch (e) {
-      console.error('[rescue] Failed to list rescue buffers:', e);
+      console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
     }
 
     json(res, 200, entries);
@@ -1977,6 +2462,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
+    // this first — the flat-file path is how shutdown-flush delivers the
+    // most recent unflushed state, which is the most relevant artifact.
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
@@ -1984,31 +2472,59 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Invalid document name');
       return;
     }
-    if (!existsSync(filePath)) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-
-    // Check expiry
-    const stat = statSync(filePath);
-    if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath);
+      if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // ignore
+        }
+      } else {
+        const content = readFileSync(filePath, 'utf-8');
+        res.writeHead(200, {
+          'Content-Type': 'text/markdown',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(content);
+        return;
       }
-      res.writeHead(404);
-      res.end('Not found — rescue buffer expired');
-      return;
     }
 
-    const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, {
-      'Content-Type': 'text/markdown',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(content);
+    // Timeline-ref source — fall back to the most recent
+    // `external-change-rescue` checkpoint for this doc on the current
+    // branch (SPEC §6 R7f). Reads the blob via `git cat-file` so large
+    // docs stream directly from git object storage.
+    try {
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      // Most recent for this doc
+      const match = timelineEntries
+        .filter((e) => e.docName === docName)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+      if (match) {
+        const sg = shadowGit(shadowRef.current);
+        const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
+        // The blob is the single entry; extract its object SHA.
+        const firstLine = tree.split('\n')[0] ?? '';
+        const parts = firstLine.split(/\s+/);
+        const blobSha = parts[2];
+        if (blobSha) {
+          const content = await sg.raw('cat-file', '-p', blobSha);
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          res.end(content);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[rescue] timeline-ref fallback failed:', e);
+    }
+
+    res.writeHead(404);
+    res.end('Not found');
   }
 
   async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -2387,8 +2903,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string }[] = [];
-      for (const [docName] of index) {
+      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      for (const [docName, entry] of index) {
         let title = docName;
         try {
           const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
@@ -2397,7 +2913,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title });
+        pages.push({ docName, title, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
@@ -2561,10 +3077,1114 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
+  // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
+
+  const LOCAL_OP_CLONE_KEY = '/api/local-op/clone';
+  const LOCAL_OP_OPEN_KEY = '/api/local-op/open';
+  /** Wall-clock timeout for clone subprocess (10 min). */
+  const LOCAL_OP_TIMEOUT_MS = 10 * 60 * 1000;
+  /** Max time to wait for a spawned server's lock file to show a port > 0. */
+  const LOCAL_OP_OPEN_TIMEOUT_MS = 45_000;
+
+  /**
+   * POST /api/local-op/clone
+   *
+   * Body: { url: string, dir: string }
+   * Spawns: open-knowledge clone --json --dir <dir> <url>
+   * Streams: NDJSON lines via chunked HTTP.
+   */
+  async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    // Parse request body
+    let url: string;
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { url?: unknown; dir?: unknown };
+      if (typeof parsed.url !== 'string' || !parsed.url) {
+        json(res, 400, { ok: false, error: 'Missing or invalid url' });
+        return;
+      }
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      url = parsed.url;
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: URL protocol allowlist
+    if (!isAllowedGitUrl(url)) {
+      json(res, 400, { ok: false, error: 'URL protocol not allowed' });
+      return;
+    }
+
+    // Security: dir must be within user home dir (no traversal)
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard: reject concurrent requests to this endpoint
+    if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
+      json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
+      return;
+    }
+
+    // Start chunked NDJSON response
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
+    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
+    const targetDir = expandTilde(dir);
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
+
+    let timedOut = false;
+    let settled = false;
+    // The CLI emits `{type:'complete', dir}` on success, but the browser
+    // client expects `{type:'complete', port}`. We intercept the CLI's
+    // complete event, boot a server at the cloned dir, then emit a rewritten
+    // complete with the port. Non-terminal events (progress / error) flow
+    // through unchanged.
+    let cloneCompleteDir: string | null = null;
+    let stdoutBuffer = '';
+
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let parsed: { type?: unknown; dir?: unknown } | null = null;
+        try {
+          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
+        } catch {
+          /* non-JSON — ignore */
+        }
+        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
+          // Swallow this line; we'll emit our own complete after starting the server.
+          cloneCompleteDir = parsed.dir;
+          continue;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
+      }
+    });
+
+    // Buffer stderr so we can surface it when the clone fails; also log.
+    const stderrChunks: Buffer[] = [];
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
+      if (settled) {
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        return;
+      }
+      settled = true;
+
+      void (async () => {
+        try {
+          if (timedOut && !res.writableEnded) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
+            );
+          } else if (code !== 0 && !res.writableEnded) {
+            if (stderrOutput) {
+              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
+            }
+            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
+            );
+          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
+            // Chain into server-start so the client can redirect.
+            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+            if (!res.writableEnded) {
+              if ('port' in result) {
+                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
+              } else {
+                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
+              }
+            }
+          }
+        } finally {
+          if (!res.writableEnded) res.end();
+          localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        }
+      })();
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    });
+  }
+
+  /**
+   * Spawn a detached Open Knowledge server at `dir` and poll the server.lock
+   * until a real port appears. Reused by /api/local-op/open and by the clone
+   * handler to chain clone → server-start → redirect.
+   *
+   * NOTE: The CLI's `start` command has no `--content-dir` flag — it derives
+   * the content dir from cwd + config. So we spawn with `cwd: dir` instead
+   * of passing a flag.
+   */
+  /**
+   * Ensure both the collab server (`ok start`) and the React UI (`ok ui`) are
+   * live for `dir`, and return the UI port — that's the browser-navigable
+   * redirect target post-lifecycle-split. `ok start` serves only the collab
+   * API/WebSocket and returns 404 at `/` with an `ok ui`-pointing message.
+   *
+   * Three cases:
+   *   1. `ui.lock` is live → reuse its port (UI already running in that dir).
+   *   2. `server.lock` live but `ui.lock` absent/stale → spawn `ok ui` alone;
+   *      `ok start` won't re-spawn its UI sibling when the server-lock is held.
+   *   3. Nothing live → spawn `ok start`; it auto-spawns `ok ui` as a sibling
+   *      (see `start.ts` ~line 340, "auto-spawned ok ui sibling").
+   *
+   * Polls `ui.lock` (not `server.lock`) because only `ui.lock.port` hosts the
+   * React bundle. Single polling loop covers cases 2 and 3 uniformly.
+   */
+  async function startServerAtDirAndGetPort(
+    dir: string,
+  ): Promise<{ port: number } | { error: string }> {
+    const absDir = resolve(expandTilde(dir));
+    const lockDir = resolve(absDir, '.open-knowledge');
+
+    // Case 1: UI already live — reuse.
+    const existingUi = readUiLock(lockDir);
+    if (existingUi && existingUi.port > 0) {
+      return { port: existingUi.port };
+    }
+
+    // Case 2 vs 3: pick which CLI command to spawn based on whether the
+    // collab server is already live. `ok ui` alone is correct and necessary
+    // when `server.lock` is held (can't re-run `ok start` under a live lock).
+    const existingServer = readServerLock(lockDir);
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const cliCmd = existingServer && existingServer.port > 0 ? 'ui' : 'start';
+    const spawnArgs = [...baseArgs, cliCmd];
+    // Pipe stderr so we can log why a spawn failed; ignore stdout.
+    const child = spawn(cmd, spawnArgs, {
+      cwd: absDir,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      log.warn(
+        { cwd: absDir, cliCmd, msg: chunk.toString('utf-8').trim() },
+        '[local-op/open] child stderr',
+      );
+    });
+
+    let earlyExitCode: number | null = null;
+    child.on('exit', (code) => {
+      earlyExitCode = code ?? -1;
+    });
+
+    // `unref` so the child survives past the parent. Do it after attaching
+    // the stderr listener so we still capture its output.
+    child.unref();
+
+    const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 500));
+      const uiLock = readUiLock(lockDir);
+      if (uiLock && uiLock.port > 0) {
+        return { port: uiLock.port };
+      }
+      if (earlyExitCode !== null) {
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        return {
+          error: `\`ok ${cliCmd}\` exited (code ${earlyExitCode})${stderr ? ` — ${stderr}` : ''}`,
+        };
+      }
+    }
+    const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+    return {
+      error: `UI did not start within the expected time${stderr ? ` — ${stderr}` : ''}`,
+    };
+  }
+
+  /**
+   * POST /api/local-op/open
+   *
+   * Body: { dir: string }
+   * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
+   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Returns: { port: number }
+   */
+  async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { dir?: unknown };
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: dir must be within user home dir
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard
+    if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
+      json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
+      return;
+    }
+
+    try {
+      const result = await startServerAtDirAndGetPort(dir);
+      if ('port' in result) {
+        json(res, 200, { port: result.port });
+      } else {
+        json(res, 504, { ok: false, error: result.error });
+      }
+    } finally {
+      localOpGuard.release(LOCAL_OP_OPEN_KEY);
+    }
+  }
+
+  // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
+  // FR18: loopback + origin security enforced on all five endpoints.
+  // Each endpoint has its own concurrency key to allow parallel auth operations
+  // (e.g., status check while login is in progress).
+
+  const LOCAL_OP_AUTH_LOGIN_KEY = '/api/local-op/auth/login';
+  const LOCAL_OP_AUTH_STATUS_KEY = '/api/local-op/auth/status';
+  const LOCAL_OP_AUTH_REPOS_KEY = '/api/local-op/auth/repos';
+  const LOCAL_OP_AUTH_SIGNOUT_KEY = '/api/local-op/auth/signout';
+  const LOCAL_OP_AUTH_PAT_KEY = '/api/local-op/auth/pat';
+
+  /**
+   * POST /api/local-op/auth/login
+   *
+   * Body: { host?: string }
+   * Spawns: auth login --json [--host <host>]
+   * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
+   * The device-flow subprocess manages its own timeout.
+   */
+  async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth login operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
+
+    let settled = false;
+    let sawTerminalEvent = false;
+    let stdoutBuffer = '';
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    // Kill the child if the client disconnects so `auth login` doesn't keep
+    // polling in the background and write a token to the keychain that the
+    // user never saw confirmation for.
+    const onClientClose = () => {
+      if (!child.killed) child.kill('SIGTERM');
+    };
+    res.on('close', onClientClose);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+      // Parse line-by-line to detect whether the CLI emitted a terminal event
+      // (`complete` | `error`). If it didn't but the process exits 0, we
+      // synthesize one below so the client never hangs on a silent exit.
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { type?: unknown };
+          if (parsed.type === 'complete' || parsed.type === 'error') {
+            sawTerminalEvent = true;
+          }
+        } catch {
+          /* non-JSON line (e.g. keychain-backend log) — ignore */
+        }
+      }
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      res.off('close', onClientClose);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          if (code === 0 && !sawTerminalEvent) {
+            // CLI exited cleanly without emitting a terminal event — synthesize
+            // one so the client's stream reader can resolve. Login name will be
+            // filled in by the next /api/local-op/auth/status poll.
+            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
+          } else if (code !== 0) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
+            );
+          }
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      res.off('close', onClientClose);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/status
+   *
+   * Body: { host?: string }
+   * Spawns: auth status --json [--host <host>]
+   * Returns: the single NDJSON line as parsed JSON.
+   */
+  async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth status operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve(Buffer.concat(chunks).toString('utf-8'));
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      // The CLI may emit non-JSON log lines on stdout before the terminal
+      // event (e.g. keychain probe messages on older builds). Find the last
+      // parseable JSON line and return that.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          parsed = JSON.parse(lines[i] as string);
+          break;
+        } catch {
+          /* skip non-JSON line */
+        }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
+      } else {
+        json(res, 200, { authenticated: false });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth status failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/repos
+   *
+   * Body: { host?: string }
+   * Spawns: auth repos --json [--host <host>]
+   * Streams: NDJSON via chunked HTTP.
+   */
+  async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth repos operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
+
+    let settled = false;
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/repos] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (code !== 0 && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: `auth repos exited with code ${code}` })}\n`,
+          );
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/signout
+   *
+   * Body: { host?: string }
+   * Spawns: auth signout [--host <host>]
+   * Returns: { ok: true }
+   */
+  async function handleLocalOpAuthSignout(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth signout operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve();
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth signout failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/pat
+   *
+   * Body: { pat: string, host?: string }
+   * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
+   * Returns: the NDJSON complete-event as parsed JSON.
+   */
+  async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    let pat: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { pat?: unknown; host?: unknown };
+      if (typeof parsed.pat !== 'string' || !parsed.pat) {
+        json(res, 400, { ok: false, error: 'Missing or invalid pat' });
+        return;
+      }
+      pat = parsed.pat;
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth pat operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        // Write the PAT to stdin and close it so the CLI readline resolves
+        child.stdin.write(`${pat}\n`);
+        child.stdin.end();
+
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', (code) => {
+          clearTimeout(killTimer);
+          if (code !== 0) {
+            reject(new Error(`auth pat exited with code ${code}`));
+          } else {
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          }
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      // Same robustness as status: pick the last JSON line, ignore any
+      // non-JSON output the CLI may have emitted.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          parsed = JSON.parse(lines[i] as string);
+          break;
+        } catch {
+          /* skip non-JSON line */
+        }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
+      } else {
+        json(res, 200, { ok: true });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth pat failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
+    }
+  }
+
+  // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
+  // Reads the resolved git identity via the identity resolution chain.
+  // Returns { ok: true, identity: { name, email } | null }.
+
+  async function handleLocalOpAuthIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+    try {
+      // Step 3 of the chain (OAuth profile fallback) requires a tokenStore; the
+      // server package doesn't import the CLI's token store today, so we resolve
+      // only local + global config tiers here. Sign-in flows pre-fill the form
+      // with OAuth name/email separately.
+      const identity = await resolveGitIdentity(projectDir);
+      json(res, 200, { ok: true, identity });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'identity resolution failed',
+      });
+    }
+  }
+
+  // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
+  // Writes git user.name + user.email to repo-local config via writeGitIdentity
+  // On success, nudges the sync engine to re-probe the identity chain
+  // so the UI unresolved-nudge clears immediately instead of waiting for the
+  // next push cycle.
+
+  const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
+
+  async function handleLocalOpAuthSetIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let name: string;
+    let email: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { name?: unknown; email?: unknown };
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid name' });
+        return;
+      }
+      if (typeof parsed.email !== 'string' || !parsed.email.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid email' });
+        return;
+      }
+      name = parsed.name.trim();
+      email = parsed.email.trim();
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
+      json(res, 429, { ok: false, error: 'A set-identity operation is already in progress' });
+      return;
+    }
+
+    try {
+      writeGitIdentity(projectDir, name, email);
+      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
+      // so the unresolved nudge clears in the UI without waiting on the push timer.
+      void getSyncEngine?.()
+        ?.refreshIdentity()
+        .catch(() => {
+          /* best-effort — status will catch up on next push cycle */
+        });
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'set-identity failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
+    }
+  }
+
+  // ─── Security helpers for sync endpoints ────────────────────────────────────
+  // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
+  // to avoid duplicating the same logic (checkLocalOpSecurity already imported above).
+
+  // ─── Sync endpoints ──────────────────────────────────────────────────────────
+
+  async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
+      // reads these fields unconditionally.
+      json(res, 200, {
+        state: 'dormant',
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        ahead: 0,
+        behind: 0,
+        consecutiveFailures: 0,
+        conflictCount: 0,
+        hasRemote: false,
+        syncEnabled: false,
+        identityUnresolved: false,
+      });
+      return;
+    }
+    json(res, 200, engine.getStatus());
+  }
+
+  async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let op: 'sync' | 'push' | 'pull' = 'sync';
+    try {
+      const body = await readBody(req);
+      if (body.length > 0) {
+        const parsed = JSON.parse(body.toString()) as { op?: string };
+        if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
+          op = parsed.op;
+        }
+      }
+    } catch {
+      // Ignore parse errors — use default op
+    }
+    // Fire-and-return: 202 Accepted immediately, trigger runs in background
+    json(res, 202, { ok: true, op });
+    void engine.trigger(op);
+  }
+
+  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let enabled: boolean;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { enabled?: unknown };
+      if (typeof parsed.enabled !== 'boolean') {
+        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
+        return;
+      }
+      enabled = parsed.enabled;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    await engine.setEnabled(enabled);
+    json(res, 200, { ok: true, status: engine.getStatus() });
+  }
+
+  async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    const conflicts = engine ? engine.getConflicts() : [];
+    json(res, 200, { conflicts });
+  }
+
+  async function handleSyncResolveConflict(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let body: { file?: string; strategy?: string; content?: string };
+    try {
+      const raw = await readBody(req);
+      body = JSON.parse(raw.toString()) as { file?: string; strategy?: string; content?: string };
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    const { file, strategy, content } = body;
+    if (!file || typeof file !== 'string') {
+      json(res, 400, { ok: false, error: 'Missing required field: file' });
+      return;
+    }
+    if (strategy !== 'mine' && strategy !== 'theirs' && strategy !== 'content') {
+      json(res, 400, {
+        ok: false,
+        error: "Invalid strategy: must be 'mine', 'theirs', or 'content'",
+      });
+      return;
+    }
+    try {
+      await engine.resolveConflict(file, strategy as ResolveStrategy, content);
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleSyncConflictContent(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 503, { ok: false, error: 'Project repo not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const file = url.searchParams.get('file');
+    if (!file) {
+      json(res, 400, { ok: false, error: 'Missing required query param: file' });
+      return;
+    }
+    // Reject obvious path-traversal; git itself rejects paths outside the index.
+    if (file.includes('..') || file.startsWith('/')) {
+      json(res, 400, { ok: false, error: 'Invalid file path' });
+      return;
+    }
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    // git stages: 1 = base, 2 = ours, 3 = theirs. Any may be missing for
+    // delete/edit or add/add conflicts — tolerate by returning empty content.
+    async function showStage(stage: 1 | 2 | 3): Promise<string> {
+      try {
+        return await pg.raw(['show', `:${stage}:${file}`]);
+      } catch {
+        return '';
+      }
+    }
+    try {
+      const [base, ours, theirs] = await Promise.all([showStage(1), showStage(2), showStage(3)]);
+      json(res, 200, { ok: true, file, base, ours, theirs });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    try {
+      await engine.abortMerge();
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
+    '/api/backlink-counts': handleBacklinkCounts,
     '/api/forward-links': handleForwardLinks,
     '/api/link-graph': handleLinkGraph,
     '/api/dead-links': handleDeadLinks,
@@ -2588,6 +4208,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
+    '/api/workspace': handleWorkspace,
+    '/api/sync/status': handleSyncStatus,
+    '/api/sync/trigger': handleSyncTrigger,
+    '/api/sync/set-enabled': handleSyncSetEnabled,
+    '/api/sync/conflicts': handleSyncConflicts,
+    '/api/sync/conflict-content': handleSyncConflictContent,
+    '/api/sync/resolve-conflict': handleSyncResolveConflict,
+    '/api/sync/abort-merge': handleSyncAbortMerge,
+    '/api/local-op/clone': handleLocalOpClone,
+    '/api/local-op/open': handleLocalOpOpen,
+    '/api/local-op/auth/login': handleLocalOpAuthLogin,
+    '/api/local-op/auth/status': handleLocalOpAuthStatus,
+    '/api/local-op/auth/repos': handleLocalOpAuthRepos,
+    '/api/local-op/auth/signout': handleLocalOpAuthSignout,
+    '/api/local-op/auth/pat': handleLocalOpAuthPat,
+    '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
+    '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
   };
 
   if (enableTestRoutes) {

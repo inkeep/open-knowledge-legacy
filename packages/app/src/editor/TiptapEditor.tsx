@@ -10,12 +10,19 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, useEffect, useRef } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
+import { registerEditor, unregisterEditor } from './active-editor';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
+import {
+  createClipboardHtmlSerializer,
+  createClipboardTextSerializer,
+  createHandlePaste,
+} from './clipboard/index.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
@@ -73,9 +80,10 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 
 interface TiptapEditorProps {
   provider: HocuspocusProvider;
+  placeholder?: string;
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
@@ -85,9 +93,34 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   const identity = useIdentity();
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
-  // All text/plain clipboard data is parsed as markdown — no detection heuristic.
-  // Cmd+Shift+V remains the browser-level plain-text escape hatch.
-  const mdManagerRef = useRef(new MarkdownManager({ extensions: coreExtensions }));
+  // Use useState with a lazy initializer so the bundle is constructed once
+  // and returned via stable reference — React Compiler accepts useState
+  // reads during render while it flags `useRef().current` reads. The
+  // MarkdownManager + clipboard handlers are effectively constants; the
+  // "state" slot is just the rendering-safe carrier.
+  //
+  // Per D14 LOCKED, WYSIWYG clipboard uses PM's documented editorProps hooks
+  // (clipboardTextSerializer + clipboardSerializer + handlePaste) —
+  // DOM-level copy/cut/dragstart overrides are prohibited.
+  //
+  // Known scope: FR-21's chunked Y.Text insertion guard applies to the
+  // Source-view paste path only (D14 LOCKED). WYSIWYG paste of a >500KB
+  // HTML blob runs `rehype-parse → cleanup plugins → rehype-remark →
+  // remark-stringify → PM schema transaction → fragment insert`
+  // synchronously. On very large rich-HTML pastes the user sees a brief
+  // stall. Porting chunked insertion to the PM path is non-mechanical
+  // (PM reaches Y.XmlFragment through different primitives than Y.Text)
+  // and is explicitly out of scope for this spec — don't misdiagnose the
+  // stall as a regression. See SPEC.md §Consider-1 for context.
+  const [clipboard] = useState(() => {
+    const mdManager = new MarkdownManager({ extensions: coreExtensions });
+    return {
+      mdManager,
+      text: createClipboardTextSerializer({ mdManager }),
+      html: createClipboardHtmlSerializer({ mdManager }),
+      paste: createHandlePaste({ mdManager }),
+    };
+  });
 
   const editor = useEditor({
     editorProps: {
@@ -95,14 +128,21 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
         class: 'pt-10 pb-16 h-full',
       },
       clipboardTextParser: (text, _context, _plain, view) => {
-        const json = mdManagerRef.current.parse(text);
+        const json = clipboard.mdManager.parse(text);
         const node = view.state.schema.nodeFromJSON(json);
         // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
         return node.content as any;
       },
+      clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
+      clipboardSerializer: clipboard.html,
+      handlePaste: (view, event) => clipboard.paste(view, event),
     },
     extensions: [
       ...sharedExtensions,
+      Placeholder.configure({
+        placeholder: placeholder ?? "Type '/' for commands",
+        showOnlyCurrent: true,
+      }),
       Collaboration.configure({
         document: provider.document,
       }),
@@ -142,21 +182,68 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     return () => setCurrentDocName(null);
   }, [provider]);
 
+  // DEV-only: register the TipTap editor instance in the module-level
+  // active-editor map so Playwright can resolve `window.__activeEditor` →
+  // the real Editor instance and poll `editor.state.selection` directly.
+  // Needed to close the `click → keyboard.press(Tab|...)` PM-selection-sync
+  // race described in precedent §20(a) category C — under workers>1 CPU
+  // contention the DOMObserver hasn't synced the click-induced DOM
+  // selection into PM state yet, and double-rAF yields aren't enough.
+  //
+  // `unregisterEditor` matches on the editor ref so the StrictMode double-
+  // invoke ordering (register-A, register-B, cleanup-A) doesn't leave the
+  // registry empty. Vite replaces `import.meta.env.DEV` at build time, so
+  // production bundles strip this effect entirely.
+  useEffect(() => {
+    if (!editor || !import.meta.env.DEV) return;
+    const docName = provider.configuration.name;
+    if (!docName) return;
+    registerEditor(docName, editor);
+    return () => unregisterEditor(docName, editor);
+  }, [editor, provider]);
+
   useEffect(() => {
     if (!editor) return;
-    const dom = editor.view.dom;
-    const mark = () => markUserTyping(provider.document);
-    dom.addEventListener('keydown', mark);
-    dom.addEventListener('paste', mark);
-    dom.addEventListener('drop', mark);
-    dom.addEventListener('cut', mark);
-    return () => {
-      dom.removeEventListener('keydown', mark);
-      dom.removeEventListener('paste', mark);
-      dom.removeEventListener('drop', mark);
-      dom.removeEventListener('cut', mark);
+    // TipTap v3's `editor.view` is a proxy that throws when accessed before
+    // the underlying `editorView` is mounted — e.g. during an Activity
+    // visible→hidden→visible cycle, a DocumentErrorBoundary retry that
+    // recycles the pool entry, or any race where React runs a passive
+    // effect on an editor whose view is mid-creation. We subscribe to the
+    // editor's 'create' event so the listener attachment happens after the
+    // view is guaranteed present. If the editor is already created by the
+    // time this effect runs (common path), we attach immediately.
+    // Regression fixed: QA-002 retry flow + any Activity unhide reconnect.
+    const mark = () => markUserTyping();
+    let attachedDom: HTMLElement | null = null;
+    const attach = () => {
+      if (attachedDom || !editor || editor.isDestroyed) return;
+      attachedDom = editor.view.dom;
+      attachedDom.addEventListener('keydown', mark);
+      attachedDom.addEventListener('paste', mark);
+      attachedDom.addEventListener('drop', mark);
+      attachedDom.addEventListener('cut', mark);
     };
-  }, [editor, provider.document]);
+    const detach = () => {
+      if (!attachedDom) return;
+      attachedDom.removeEventListener('keydown', mark);
+      attachedDom.removeEventListener('paste', mark);
+      attachedDom.removeEventListener('drop', mark);
+      attachedDom.removeEventListener('cut', mark);
+      attachedDom = null;
+    };
+    // Access `editorView` directly (not through the throwing proxy) to check
+    // mount state. The proxy intercepts property access on `editor.view` only.
+    const isMounted = !!(editor as unknown as { editorView?: unknown }).editorView;
+    if (isMounted) {
+      attach();
+    } else {
+      editor.on('create', attach);
+    }
+    return () => {
+      editor.off('create', attach);
+      detach();
+    };
+  }, [editor]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -207,8 +294,17 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
 
     /** Imperative DOM update — bypasses React re-render to avoid disrupting typing. */
     const applyFlashStateToDom = (state: AgentFlashState) => {
+      // `flashStateRef` is the authoritative source in production — the
+      // count-monotonicity logic in `triggerFlash` below derives the next
+      // count from `flashStateRef.current?.count ?? 0`, not from the
+      // window hook. The `window.__agentFlashState` write is a DEV-only
+      // test observation channel (US-006 / AGENTS.md precedent #20); Vite
+      // statically replaces `import.meta.env.DEV` at build time so the
+      // branch tree-shakes out of production bundles.
       flashStateRef.current = state;
-      window.__agentFlashState = state;
+      if (import.meta.env.DEV) {
+        window.__agentFlashState = state;
+      }
       const el = wrapperRef.current;
       if (el) {
         el.setAttribute('data-agent-flash-state', state.state);
@@ -226,7 +322,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
 
       const nextState: AgentFlashState = {
         state: 'editing',
-        count: (window.__agentFlashState?.count ?? 0) + 1,
+        // Read from the ref (prod-safe) rather than `window.__agentFlashState`
+        // — the window write is DEV-gated (US-006) and the ref is the
+        // authoritative source in production. Keeps count monotonic under
+        // rapid re-trigger regardless of whether tests are observing.
+        count: (flashStateRef.current?.count ?? 0) + 1,
         lastFiredAt: Date.now(),
         position,
         lastAgentId: latest?.agentId ?? null,
@@ -353,8 +453,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     if (!editor) return;
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
-      if (!detail || detail.mode !== 'wysiwyg' || !editor) return;
-      const headings = editor.view.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
+      if (!detail || detail.mode !== 'wysiwyg' || !editor || editor.isDestroyed) return;
+      // Access the real editorView directly (not editor.view which is a
+      // throwing proxy pre-mount). Typed as the relevant subset so we don't
+      // need an `any` cast at the call site.
+      const realView = (editor as unknown as { editorView?: { dom: HTMLElement } }).editorView;
+      if (!realView) return;
+      const headings = realView.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const target = headings[detail.index];
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }

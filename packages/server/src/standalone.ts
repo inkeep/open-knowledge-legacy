@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import simpleGit from 'simple-git';
+import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -15,7 +17,7 @@ import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
-import { mdManager } from './md-manager.ts';
+import { mdManager, schema } from './md-manager.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -39,6 +41,7 @@ import {
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
+import { createServerObserverExtension } from './server-observer-extension.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -48,8 +51,10 @@ import {
   readParkedState,
   type ShadowHandle,
   type ShadowRef,
+  saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { SyncEngine } from './sync-engine.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -84,12 +89,26 @@ export interface ServerOptions {
    * could take more than 10s.
    */
   destroyTimeoutMs?: number;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document) via the MCP API. The CLI uses this to open the browser
+   * on the first agent edit per session; consumers that don't care can omit.
+   */
+  onAgentWrite?: () => void;
+  /**
+   * CLI argv prefix for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (CLI on PATH).
+   * Pass [process.execPath, process.argv[1]] from start.ts to use the exact
+   * runtime that launched this server — necessary in dev (bun + .ts entry).
+   */
+  localOpCliArgs?: string[];
 }
 
 export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
+  agentFocusBroadcaster: AgentFocusBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -108,6 +127,8 @@ export interface ServerInstance {
    * once the HTTP listener has bound to a kernel-assigned port.
    */
   readonly lockDir: string;
+  /** Active sync engine instance, or null if dormant / no remote detected. */
+  readonly syncEngine: SyncEngine | null;
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -126,6 +147,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
+    localOpCliArgs,
   } = options;
 
   const log = getLogger('server');
@@ -148,6 +170,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let hocuspocus: Hocuspocus;
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
+  let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -184,6 +207,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       extensions: [persistence.extension],
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+    agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -205,8 +229,23 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       signalChannel,
+      agentFocusBroadcaster,
+      onAgentWrite: options.onAgentWrite,
+      getSyncEngine: () => syncEngine,
+      localOpCliArgs,
+      projectDir,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
+
+    hocuspocus.configuration.extensions.push(
+      createServerObserverExtension({
+        mdManager,
+        schema,
+        shadowRef,
+        contentRoot,
+        getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      }),
+    );
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;
@@ -394,20 +433,34 @@ export function createServer(options: ServerOptions): ServerInstance {
           const isDirty = ours !== base;
 
           if (isDirty && shadowRef.current) {
-            const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-            if (rescuePath) {
-              try {
-                mkdirSync(dirname(rescuePath), { recursive: true });
-                writeFileSync(rescuePath, ours, 'utf-8');
-                incrementRescueBuffer();
-                log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
-              } catch (e) {
-                log.error(
-                  { docName, err: e },
-                  `[reconcile] rescue buffer write failed: ${docName}`,
-                );
-              }
-            }
+            // Silent rescue checkpoint (SPEC §6 R7e) — preserve in-memory
+            // content on a timeline ref so TimelinePanel renders it as an
+            // 'external-change-rescue' row. Fire-and-forget; failures warn
+            // but don't block the delete lifecycle.
+            const shadowForCheckpoint = shadowRef.current;
+            const branch = headWatcher?.getLastKnownBranch() ?? 'main';
+            queueMicrotask(() => {
+              saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                kind: 'external-change-rescue',
+                docName,
+                contents: ours,
+                label: `External change recovered @ ${new Date().toISOString()}`,
+                branch,
+                // Delete event has no incoming disk content — sentinel empty
+                // string so the TimelineRescueEntry shape round-trips.
+                metadata: { incomingDiskSha: '' },
+              })
+                .then(() => {
+                  incrementRescueBuffer();
+                  log.info({ docName }, `[reconcile] rescue checkpoint saved (delete): ${docName}`);
+                })
+                .catch((e: unknown) => {
+                  log.error(
+                    { docName, err: e },
+                    `[reconcile] rescue checkpoint write failed: ${docName}`,
+                  );
+                });
+            });
           }
 
           const lifecycleMap = document.getMap('lifecycle');
@@ -501,6 +554,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  let syncEngine: SyncEngine | null = null;
   let inflightDestroy: Promise<void> | null = null;
 
   // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
@@ -735,9 +789,37 @@ export function createServer(options: ServerOptions): ServerInstance {
           } finally {
             if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
           }
+          // Phase 4.5: stop sync engine (CC8 Phase 5 per spec)
+          try {
+            if (syncEngine) {
+              await syncEngine.destroy();
+              syncEngine = null;
+            }
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'sync-engine-stop',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown sync-engine-stop failed');
+          }
         } finally {
           // Phase 5: shadow repo release — ALWAYS runs
           if (shadowRef.current) {
+            // Persist current HEAD before releasing shadow lock (FR11)
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+              const currentHead = (await projectGit.revparse('HEAD')).trim();
+              if (currentHead) {
+                writeFileSync(
+                  resolve(shadowRef.current.gitDir, 'last-known-head'),
+                  currentHead,
+                  'utf-8',
+                );
+              }
+            } catch {
+              // Fresh repo with no commits, or git not available — skip silently
+            }
+
             try {
               destroyShadowRepo(shadowRef.current);
             } catch (err) {
@@ -820,6 +902,77 @@ export function createServer(options: ServerOptions): ServerInstance {
         } else {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
+      }
+    }
+
+    // HEAD-drift check (FR11): detect git operations that occurred while offline
+    // Compare stored last-known-head against current HEAD SHA and import if diverged
+    if (shadowRef.current) {
+      try {
+        const lastKnownHeadPath = resolve(shadowRef.current.gitDir, 'last-known-head');
+
+        // Read last persisted HEAD SHA
+        let lastKnownHead: string | null = null;
+        try {
+          lastKnownHead = readFileSync(lastKnownHeadPath, 'utf-8').trim() || null;
+        } catch {
+          // File doesn't exist yet — first run
+        }
+
+        // Read current HEAD SHA from project repo
+        let currentHead: string | null = null;
+        try {
+          const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+          currentHead = (await projectGit.revparse('HEAD')).trim() || null;
+        } catch {
+          // Fresh repo with no commits — skip drift check
+        }
+
+        if (currentHead !== null) {
+          if (currentHead !== lastKnownHead) {
+            // Drift detected (includes null → SHA for fresh clone T0 case)
+            let branch = 'main';
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+              const b = (await projectGit.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
+              if (b && b !== 'HEAD') branch = b;
+            } catch {
+              // Detached HEAD or error — fallback to 'main'
+            }
+
+            log.info(
+              { lastKnownHead, currentHead, branch },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=import`,
+            );
+
+            try {
+              await commitUpstreamImport(
+                shadowRef.current,
+                contentRoot ?? '',
+                lastKnownHead,
+                currentHead,
+                branch,
+              );
+              incrementUpstreamImport();
+            } catch (e) {
+              log.warn({ err: e }, '[head-drift] commitUpstreamImport failed — continuing');
+            }
+          } else {
+            log.info(
+              { currentHead },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=noop`,
+            );
+          }
+
+          // Always persist current HEAD so next startup has an accurate baseline
+          try {
+            writeFileSync(lastKnownHeadPath, currentHead, 'utf-8');
+          } catch (e) {
+            log.warn({ err: e }, '[head-drift] failed to write last-known-head');
+          }
+        }
+      } catch (e) {
+        log.warn({ err: e }, '[head-drift] check failed — continuing');
       }
     }
 
@@ -945,23 +1098,32 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const isDirty = ours !== base;
 
                   if (isDirty && shadowRef.current) {
-                    const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-                    if (rescuePath) {
-                      try {
-                        mkdirSync(dirname(rescuePath), { recursive: true });
-                        writeFileSync(rescuePath, ours, 'utf-8');
-                        incrementRescueBuffer();
-                        log.info(
-                          { docName },
-                          `[reconcile] rescue buffer saved on branch switch: ${docName}`,
-                        );
-                      } catch (e) {
-                        log.error(
-                          { docName, err: e },
-                          `[reconcile] rescue buffer write failed: ${docName}`,
-                        );
-                      }
-                    }
+                    // Silent rescue checkpoint on branch-switch tombstone
+                    // (SPEC §6 R7e). Same pattern as reconcile-delete above.
+                    const shadowForCheckpoint = shadowRef.current;
+                    queueMicrotask(() => {
+                      saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                        kind: 'external-change-rescue',
+                        docName,
+                        contents: ours,
+                        label: `External change recovered @ ${new Date().toISOString()}`,
+                        branch: newBranch,
+                        metadata: { incomingDiskSha: '' },
+                      })
+                        .then(() => {
+                          incrementRescueBuffer();
+                          log.info(
+                            { docName },
+                            `[reconcile] rescue checkpoint saved on branch switch: ${docName}`,
+                          );
+                        })
+                        .catch((e: unknown) => {
+                          log.error(
+                            { docName, err: e },
+                            `[reconcile] rescue checkpoint write failed: ${docName}`,
+                          );
+                        });
+                    });
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');
@@ -1110,6 +1272,32 @@ export function createServer(options: ServerOptions): ServerInstance {
       log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
     }
+
+    // Start SyncEngine (FR21): remote detection + auto-sync
+    // Build credentialArgs from localOpCliArgs so git fetch/push can authenticate.
+    // Pattern: ['-c', 'credential.helper=!<cli-binary> auth git-credential']
+    const cliCmd = localOpCliArgs?.[0] ?? 'open-knowledge';
+    const cliPrefix =
+      localOpCliArgs && localOpCliArgs.length > 1 ? localOpCliArgs.join(' ') : cliCmd;
+    const syncCredentialArgs = ['-c', `credential.helper=!${cliPrefix} auth git-credential`];
+    try {
+      syncEngine = new SyncEngine({
+        projectDir,
+        contentDir,
+        contentFilter,
+        contentRoot,
+        credentialArgs: syncCredentialArgs,
+        cc1Broadcaster,
+        setBatchInProgress,
+        onStateChange: (state) => {
+          log.info({ state }, `[sync] state → ${state}`);
+        },
+      });
+      await syncEngine.start();
+    } catch (err) {
+      log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
+      syncEngine = null;
+    }
   }
 
   const ready = initAsync();
@@ -1118,10 +1306,14 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus,
     sessionManager,
     cc1Broadcaster,
+    agentFocusBroadcaster,
     contentFilter,
     destroy,
     ready,
     degraded,
     lockDir,
+    get syncEngine() {
+      return syncEngine;
+    },
   };
 }

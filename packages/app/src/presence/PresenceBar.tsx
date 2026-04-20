@@ -1,7 +1,6 @@
 import { deriveIconColor } from '@inkeep/open-knowledge-core';
 import {
   Bird,
-  Bot,
   Cat,
   Dog,
   Fish,
@@ -10,16 +9,22 @@ import {
   Rat,
   Shrimp,
   Snail,
+  Sparkles,
   Squirrel,
   Turtle,
 } from 'lucide-react';
 import type { FC, SVGProps } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
+import { ClineIcon } from '@/components/icons/cline';
+import { CodexIcon } from '@/components/icons/codex';
+import { CopilotIcon } from '@/components/icons/copilot';
 import { CursorIcon } from '@/components/icons/cursor';
+import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { type Participant, usePresence } from './use-presence';
-import { type SyncStatus, useSyncStatus } from './use-sync-status';
+import { useSyncStatus } from './use-sync-status';
+import { useSyncToasts } from './use-sync-toasts';
 
 const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Bird,
@@ -34,12 +39,15 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Turtle,
 };
 
-/** Map the `icon` field from awareness to a component. Falls back to Bot for unknown agents. */
+/** Map the `icon` field from awareness to a component. Falls back to Sparkles for unknown agents. */
 function AgentIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
   if (icon === 'claude') return <ClaudeIcon {...props} />;
   if (icon === 'cursor') return <CursorIcon {...props} />;
-  // Unknown or missing icon — generic bot
-  return <Bot {...(props as LucideProps)} />;
+  if (icon === 'windsurf') return <WindsurfIcon {...props} />;
+  if (icon === 'openai') return <CodexIcon {...props} />;
+  if (icon === 'cline') return <ClineIcon {...props} />;
+  if (icon === 'github') return <CopilotIcon {...props} />;
+  return <Sparkles strokeWidth={1.5} {...(props as LucideProps)} />;
 }
 
 const AGENT_DISPLAY_NAME: Record<string, string> = {
@@ -116,45 +124,14 @@ function PresenceAvatar({ user, mode }: { user: Participant['user']; mode: Parti
   );
 }
 
-const SYNC_CONFIG: Record<SyncStatus, { color: string; label: string; pulse: boolean }> = {
-  connecting: { color: '#f59e0b', label: 'Connecting', pulse: true },
-  connected: { color: '#f59e0b', label: 'Syncing', pulse: true },
-  synced: { color: '#22c55e', label: 'Synced', pulse: false },
-  disconnected: { color: '#ef4444', label: 'Disconnected', pulse: false },
-};
-
-function SyncIndicator({ status }: { status: SyncStatus }) {
-  const { color, label, pulse } = SYNC_CONFIG[status];
-  return (
-    <span
-      data-sync-status={status}
-      className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
-    >
-      <span className="relative inline-flex size-2">
-        {pulse && (
-          <span
-            className="absolute inline-flex size-full animate-ping rounded-full opacity-75"
-            style={{ backgroundColor: color }}
-          />
-        )}
-        <span
-          className="relative inline-flex size-2 rounded-full"
-          style={{ backgroundColor: color }}
-        />
-      </span>
-      {status !== 'synced' && <span>{label}</span>}
-    </span>
-  );
-}
-
 export function PresenceBar() {
   const { activeProvider, activeDocName } = useDocumentContext();
   const participants = usePresence(activeProvider);
   const syncStatus = useSyncStatus(activeProvider);
+  useSyncToasts(syncStatus, activeDocName);
 
   return (
     <div data-slot="presence-bar" className="flex items-center gap-2 px-1 py-1.5">
-      {activeDocName && <SyncIndicator status={syncStatus} />}
       <div className="flex items-center -space-x-1.5">
         {participants.map((p) => (
           <PresenceAvatar key={p.clientId} user={p.user} mode={p.mode} />

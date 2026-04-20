@@ -8,16 +8,13 @@
  * The broken scaffold (UndoManager, undo/redo endpoints, AgentUndoButton)
  * was removed in V0-16 per TQ13.
  */
-import type {
-  DirectConnection,
-  Document,
-  Hocuspocus,
-  LocalTransactionOrigin,
-} from '@hocuspocus/server';
+import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import {
-  applyByPrefixSuffix,
+  AGENT_ICON_COLORS,
+  applyFastDiff,
   colorFromSeed,
   prependFrontmatter,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
@@ -26,6 +23,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 
 const log = getLogger('agent-sessions');
 
@@ -40,19 +38,27 @@ export interface AgentDirectConnection extends DirectConnection {
 }
 
 /**
- * Agent write origin — typed LocalTransactionOrigin
+ * Agent write origin — typed `PairedWriteOrigin` (bridge-correctness SPEC §6 R0,
+ * precedent #1 extension, review iteration 5 compile-time gate).
  *
  * Passed to `document.transact(fn, AGENT_WRITE_ORIGIN)` in all agent write
  * paths. Load-bearing for observer origin guards and future UndoManager scoping.
  *
- * skipStoreHooks: false — persistence SHOULD fire after agent writes so
+ * `skipStoreHooks: false` — persistence SHOULD fire after agent writes so
  * content reaches disk through the normal debounce pipeline.
+ *
+ * `paired: true` — the caller atomically writes BOTH Y.XmlFragment and Y.Text
+ * inside one `doc.transact(..., AGENT_WRITE_ORIGIN)` block (see
+ * `applyAgentMarkdownWrite` below). The `satisfies PairedWriteOrigin`
+ * annotation forces the literal to carry the marker; the compile-time gate
+ * catches omissions before they reach runtime (T8/T9/T10 regression-class
+ * prevention).
  */
 export const AGENT_WRITE_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'agent-write' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'agent-write', paired: true },
+} as const satisfies PairedWriteOrigin;
 
 /** Map known MCP clientInfo.name values to icon identifiers. */
 export function iconFromClientName(name?: string): string {
@@ -75,8 +81,8 @@ export function iconFromClientName(name?: string): string {
  * Reads current XmlFragment (which reflects all CRDT-synced content including
  * client WYSIWYG typing mid-flight), composes the agent's delta at the markdown
  * level, applies via updateYFragment (structural diff preserves user-content
- * Items), and mirrors Y.Text via applyByPrefixSuffix (minimal mutation preserves
- * non-agent Y.Text Items and their origins).
+ * Items), and mirrors Y.Text via applyFastDiff (character-level DMP diff_main
+ * preserves non-agent Y.Text Items and their origins).
  *
  * Called within a transact() block whose origin is the caller's responsibility
  * (typically AGENT_WRITE_ORIGIN).
@@ -94,39 +100,59 @@ export function applyAgentMarkdownWrite(
     const ytext = document.getText('source');
     const metaMap = document.getMap('metadata');
 
-    // 1. Read current authoritative state from XmlFragment.
+    // 1. Read current authoritative state from XmlFragment + metaMap.
     const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
     const currentBody = mdManager.serialize(currentJson);
-    const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
 
-    // 2. Compose the agent's delta at the markdown-body level.
+    // 2. Split the agent's payload into frontmatter + body. The agent may
+    //    send a full document (FM + body) or body-only; we handle both.
+    //    On 'replace', an FM in the payload updates metaMap. On 'prepend'/
+    //    'append', the payload is treated as body-only — any leading FM is
+    //    stripped defensively to avoid producing a document with two FM
+    //    blocks (double-FM is a CommonMark invalid state).
+    const { frontmatter: payloadFm, body: payloadBody } = stripFrontmatter(markdown);
+
+    // 3. Determine the final frontmatter and compose the final body.
+    let finalFm: string;
     let newBody: string;
     switch (position) {
       case 'replace':
-        newBody = markdown.trim();
+        // Payload FM (if present) wins; otherwise keep existing FM.
+        finalFm = payloadFm || existingFm;
+        newBody = payloadBody.trim();
         break;
       case 'prepend':
-        newBody = `${markdown.trim()}\n\n${currentBody}`;
+        finalFm = existingFm;
+        newBody = `${payloadBody.trim()}\n\n${currentBody}`;
         break;
       case 'append':
+        finalFm = existingFm;
         newBody = currentBody.trim()
-          ? `${currentBody}\n\n${markdown.trim()}\n`
-          : `${markdown.trim()}\n`;
+          ? `${currentBody}\n\n${payloadBody.trim()}\n`
+          : `${payloadBody.trim()}\n`;
         break;
     }
 
-    // 3. Apply composed state to XmlFragment via structural diff
+    // 4. Apply composed body to XmlFragment via structural diff
     //    (preserves user-content Items at matching positions).
     const parsedJson = mdManager.parseWithFallback(newBody);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // 4. Mirror Y.Text with minimal mutation. Only the changed region is touched,
-    //    so user-content Items in Y.Text retain their origin.
+    // 5. Commit the final frontmatter to metaMap if it changed. This is the
+    //    canonical storage surface read by persistence.onStoreDocument and
+    //    by the Y.Text mirror in step 6.
+    if (finalFm !== existingFm) {
+      metaMap.set('frontmatter', finalFm);
+    }
+
+    // 6. Mirror Y.Text with minimal mutation. Only the changed region is
+    //    touched, so user-content Items in Y.Text retain their origin.
     const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
-    const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
-    applyByPrefixSuffix(ytext, ytext.toString(), canonicalFull);
+    const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
+    applyFastDiff(ytext, ytext.toString(), canonicalFull);
   } catch (err) {
     log.error(
       { err, docName: document.name, position, markdownLen: markdown.length },
@@ -171,8 +197,8 @@ export class AgentSessionManager {
     let dc = this.sessions.get(key);
     if (!dc) {
       dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
-      const color = colorFromSeed(identity?.colorSeed ?? agentId);
       const icon = iconFromClientName(identity?.clientName);
+      const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
       dc.document.awareness.setLocalState({
         user: {
           name: identity?.displayName ?? 'Claude',

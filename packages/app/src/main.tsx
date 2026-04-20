@@ -5,6 +5,8 @@ import { createRoot } from 'react-dom/client';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { App } from './App';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
 import './globals.css';
 
 const queryClient = new QueryClient({
@@ -29,7 +31,7 @@ createRoot(root).render(
         <TooltipProvider>
           <App />
         </TooltipProvider>
-        <Toaster />
+        <Toaster richColors />
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,

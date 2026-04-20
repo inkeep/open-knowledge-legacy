@@ -98,8 +98,11 @@ export const toMarkdownHandlers = {
   },
 
   /**
-   * link: write URL verbatim (no `&` escaping in URLs).
-   * Autolinks (data.sourceStyle === 'autolink') short-circuit to `<url>` form.
+   * link: route URL through formatLinkUrl so unbalanced parens, angle chars,
+   * and control/space chars pick the form (literal vs angle) that re-parses
+   * byte-identically. Autolinks (data.sourceStyle === 'autolink') short-circuit
+   * to `<url>` form (autolink URLs are scheme:uri — never have parens or
+   * literal angles in practice; promoted by autolink-promotion.ts).
    */
   link(node, _parent, state, info) {
     // Autolink form — promoted by autolink-promotion.ts transformer
@@ -121,7 +124,56 @@ export const toMarkdownHandlers = {
     subexit();
 
     const urlExit = state.enter('destinationRaw');
-    value += tracker.move(String(node.url ?? ''));
+    value += tracker.move(formatLinkUrl(String(node.url ?? '')));
+    urlExit();
+
+    if (node.title) {
+      const titleExit = state.enter('titleQuote');
+      value += tracker.move(' "');
+      value += tracker.move(
+        state.safe(node.title, { before: value, after: '"', ...tracker.current() }),
+      );
+      value += tracker.move('"');
+      titleExit();
+    }
+    value += tracker.move(')');
+    exit();
+    return value;
+  },
+
+  /**
+   * image: mirror link's URL discipline.
+   *
+   * The default mdast-util-to-markdown image handler uses state.safe() with
+   * the full unsafe list, which escapes literal `<` (and other chars) inside
+   * the URL even when those chars came from R23-PUA-restored angle-bracket
+   * URL forms. Compounds on round-trip: `![foo](<url>)` parses with url=`<url>`
+   * (R23 restoration) → default serialize → `![foo](\<url>)` → re-parse url=
+   * `\<url>` (backslash literal) → serialize → `![foo](\\\\\<url>)`.
+   *
+   * This handler routes the URL through `formatLinkUrl` (same as link), so
+   * the destination form (literal vs angle) is chosen for byte-stable
+   * round-trip regardless of what chars the URL value contains. Alt text
+   * and title use state.safe() — those are body/quoted contexts where the
+   * standard escape rules are correct (escapes consume cleanly on re-parse).
+   */
+  image(node, _parent, state, info) {
+    const tracker = state.createTracker(info);
+    const exit = state.enter('image');
+    const subexit = state.enter('label');
+    let value = tracker.move('![');
+    value += tracker.move(
+      state.safe(node.alt ?? '', {
+        before: value,
+        after: '](',
+        ...tracker.current(),
+      }),
+    );
+    value += tracker.move('](');
+    subexit();
+
+    const urlExit = state.enter('destinationRaw');
+    value += tracker.move(formatLinkUrl(String(node.url ?? '')));
     urlExit();
 
     if (node.title) {
@@ -253,6 +305,45 @@ export const toMarkdownHandlers = {
     const sep = node.spread ? '\n\n' : '\n';
     return out.join(sep);
   },
+
+  /**
+   * mdxJsxFlowElement: emit node.data.sourceRaw verbatim when present, so the
+   * MDX source round-trips byte-identically. Shipped as part of D7 / US-005:
+   * the PM→mdast handler (index.ts `jsxComponent`) always sets sourceRaw, so
+   * this branch is the production path. If sourceRaw is missing (e.g. a tree
+   * constructed by hand with no position-slice walker run), fall back to the
+   * default extension handler by returning it via mdxToMarkdown's registered
+   * `mdxJsxFlowElement` handler — but in practice we always have sourceRaw.
+   */
+  mdxJsxFlowElement(node) {
+    const raw = node.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+    // Minimal fallback: reconstruct the simplest form. Only reached if an
+    // mdxJsxFlowElement appears without position-slice coverage — outside
+    // our parse pipeline.
+    const name = node.name ?? '';
+    return `<${name}/>`;
+  },
+
+  /**
+   * mdxJsxTextElement: same sourceRaw-verbatim strategy as the flow element
+   * above. Covers inline `<Note>...</Note>` and `<br/>` variants.
+   */
+  mdxJsxTextElement(node) {
+    const raw = node.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+    const name = node.name ?? '';
+    return `<${name}/>`;
+  },
+
+  /**
+   * rawMdxFallback (D7 / US-006): emit `value` verbatim so the raw source
+   * round-trips byte-identically. `value` holds the exact bytes the parser
+   * choked on — see parse-with-fallback.ts for the producer side.
+   */
+  rawMdxFallback(node) {
+    return (node.value ?? '') as string;
+  },
 } satisfies Partial<MdastToMarkdownHandlers>;
 
 /**
@@ -279,6 +370,89 @@ export const toMarkdownHandlers = {
  * `<url>` as text content, so `:` and `@` escaping follows the remark-stringify
  * default (safe for non-autolink text).
  */
+/**
+ * Format a URL value for the link/image destination position so it re-parses
+ * byte-identically.
+ *
+ * CommonMark allows two forms for the destination:
+ *   1. Literal `(url)` — must not contain ASCII control or space, and any
+ *      parens must be balanced (matched pairs) or backslash-escaped.
+ *   2. Angle `(<url>)` — must not contain line breaks or unescaped `<` or `>`.
+ *
+ * After parse, the URL value has all source escapes consumed (e.g.
+ * `(foo\(bar\))` parses to url=`foo(bar)`).
+ *
+ * Strategy: ALWAYS use literal form. Angle form is structurally unusable
+ * here because the R23 protector (`autolink-void-html-guard.ts:protectFromMdx`)
+ * is not escape-aware for `<` / `>` — it PUA-substitutes them inside any
+ * input string regardless of preceding backslash, mangling angle-form output.
+ * Literal form survives the R23 round-trip cleanly: literal `<` and `>` chars
+ * in the URL value get PUA-substituted on parse, restoreFromMdx puts them
+ * back, so verbatim output → re-parse → byte-identical URL value (this is
+ * how `![foo](<url>)` ends up with url-value=`<url>` after R23 promotes the
+ * angle-form input to literal angles in the value).
+ *
+ * Two cases:
+ *   - Parens balanced (or absent) → write verbatim. Literal form re-parses
+ *     cleanly. Literal `<` / `>` / backslashes in V re-emerge unchanged.
+ *
+ *   - Parens unbalanced (only arises when source had `\(` / `\)` escapes that
+ *     parse consumed) → escape every `(` and `)` AND every existing `\` so
+ *     the literal form re-parses to the same V. Doubling pre-existing `\`
+ *     prevents it from combining with the newly-inserted escape backslash.
+ *
+ * Control chars and spaces in URL values aren't representable in either
+ * CommonMark form. They don't survive the parse pipeline (R23 PUA-prefix +
+ * literal-form rejects whitespace), so we don't try to encode them.
+ *
+ * This is the URL-handler-parity contract referenced by `evidence/r6-failure-
+ * modes.md` Findings 5 + 6 — fixed under US-010 (R6b/c).
+ */
+export function formatLinkUrl(url: string): string {
+  if (!url) return '';
+
+  let depth = 0;
+  let parensBalanced = true;
+  for (const ch of url) {
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth < 0) parensBalanced = false;
+    }
+  }
+  if (depth !== 0) parensBalanced = false;
+
+  if (parensBalanced) return url;
+
+  // Unbalanced parens — escape parens (force literal form to re-parse) and
+  // existing backslashes (so they don't combine with inserted escape chars).
+  return url.replace(/[\\()]/g, '\\$&');
+}
+
+/**
+ * Escape `&` followed by an HTML-entity-shaped tail (named, numeric, or hex).
+ *
+ * Why (R24 / US-017): Source `\&ouml;` parses to text value `&ouml;` (escape
+ * consumed). On serialize, NG5's strip of mdast-util-to-markdown's
+ * `&`-before-`[#A-Za-z]` unsafe rule means the `&` is emitted verbatim. Re-parse
+ * then HTML-entity-decodes `&ouml;` to `ö`, breaking idempotence on the second
+ * round-trip. The fix is to detect entity-shaped tails on serialize and emit
+ * `\&entity;` so re-parse consumes the escape and preserves the literal entity
+ * form.
+ *
+ * The negative lookbehind for `\` keeps already-escaped sequences (e.g. an
+ * upstream `\&entity;` that survived through the pipeline) from doubling up.
+ *
+ * Loss mode (NG5, unchanged): bare `&entity;` in source still decodes to its
+ * literal char on first parse — protection only kicks in when the source had
+ * `\&entity;` (escape-marked) AND on subsequent serialize cycles to keep that
+ * form stable. Plain text `Tom & Jerry` is untouched (`&` followed by space
+ * is not an entity tail).
+ */
+function escapeEntityAmpersands(s: string): string {
+  return s.replace(/(?<!\\)&(?=[A-Za-z][A-Za-z0-9]*;|#[0-9]+;|#[xX][0-9A-Fa-f]+;)/g, '\\&');
+}
+
 function safeText(state: State, value: string, info: Info): string {
   const originalUnsafe = state.unsafe;
   state.unsafe = originalUnsafe.filter((u) => {
@@ -286,9 +460,11 @@ function safeText(state: State, value: string, info: Info): string {
     if (u.character === '<') return false;
     return true;
   });
+  let result: string;
   try {
-    return state.safe(value, info);
+    result = state.safe(value, info);
   } finally {
     state.unsafe = originalUnsafe;
   }
+  return escapeEntityAmpersands(result);
 }

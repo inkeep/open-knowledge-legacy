@@ -10,31 +10,33 @@
  * webServer on VITE_PORT (or default 5173).
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
+import { expect, filterCriticalErrors, test } from './_helpers';
 
-const port = process.env.VITE_PORT || '5173';
-const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
-const FIXTURE = readFileSync(
-  resolve(import.meta.dirname, '../fixtures/large-realistic.md'),
-  'utf8',
-);
+const FIXTURE = loadLargeRealistic();
 
-test('S6: multi-turn stress — large content + user edits', async ({ page }) => {
+test('S6: multi-turn stress — large content + user edits', async ({ page, api, baseURL }) => {
   // 1. Capture console errors during the full flow
-  const logs: Array<{ type: string; text: string }> = [];
-  page.on('console', (m) => logs.push({ type: m.type(), text: m.text() }));
+  //    US-012 F1: capture message.location() URL + lineNumber so generic
+  //    "Failed to load resource: 404" errors can be triaged by URL pattern,
+  //    not just the opaque text body.
+  const logs: Array<{ type: string; text: string; url?: string; line?: number }> = [];
+  page.on('console', (m) => {
+    const loc = m.location();
+    logs.push({ type: m.type(), text: m.text(), url: loc.url, line: loc.lineNumber });
+  });
   page.on('pageerror', (e) => logs.push({ type: 'uncaught', text: e.message }));
 
-  // 2. Reset server state
-  const resetRes = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  // 2. Create a per-test doc + reset its server state (avoids racing with
+  //    parallel tests that would otherwise share the global `test-doc` name).
+  const docName = `test-crdtstress-${randomUUID().slice(0, 8)}`;
+  await api.createPage(`${docName}.md`);
+  await api.testReset(docName);
 
-  // 3. Navigate + open test-doc from sidebar (multi-doc arch requires explicit selection)
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
-  await page.waitForFunction(() => Boolean(window.__activeProvider), {
+  // 3. Navigate directly to the per-test doc via hash routing.
+  await page.goto(`/#/${docName}`);
+  await page.waitForFunction(() => Boolean(window.__activeProvider), null, {
     timeout: 15_000,
   });
   await page.waitForSelector('.ProseMirror');
@@ -43,11 +45,13 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
   const markers = ['USER-E2E-MARK-1', 'USER-E2E-MARK-2', 'USER-E2E-MARK-3'];
 
   for (const marker of markers) {
-    // Inject large content via agent API
-    const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
+    // Inject large content via agent API. Default `position: append` (omitted)
+    // so each turn stacks onto the previous — testing coexistence of agent
+    // writes + accumulated user typing across turns.
+    const writeRes = await fetch(`${baseURL}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markdown: FIXTURE }),
+      body: JSON.stringify({ docName, markdown: FIXTURE }),
     });
     expect(writeRes.ok).toBe(true);
 
@@ -85,12 +89,19 @@ test('S6: multi-turn stress — large content + user edits', async ({ page }) =>
     );
   }
 
-  // 5. Final assertions
+  // 5. Final assertions.
+  // `filterCriticalErrors` (from `_helpers/error-filters.ts`) strips known
+  // dev-server noise — favicon/HMR/Vite chatter, WebSocket reconnect race
+  // during /api/test-reset, the by-design /api/config 404. The remaining
+  // entries are genuine failures. See the helper module for the full
+  // predicate list + rationale.
   const errors = logs.filter((l) => l.type === 'error' || l.type === 'uncaught');
-  // Filter out known non-critical errors
-  const criticalErrors = errors.filter(
-    (e) => !e.text.includes('favicon') && !e.text.includes('HMR') && !e.text.includes('[vite]'),
-  );
+  const criticalErrors = filterCriticalErrors(errors);
+  if (criticalErrors.length > 0) {
+    // Include full URL + line info in the assertion failure so the flake is
+    // diagnosable from CI logs alone.
+    console.error('[Layer C] Critical errors detected:', JSON.stringify(criticalErrors, null, 2));
+  }
   expect(criticalErrors).toEqual([]);
 
   const finalState = await page.evaluate(() => {

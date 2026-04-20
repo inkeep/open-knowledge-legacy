@@ -5,11 +5,23 @@
  * through a DirectConnection and propagates to all connected editors in real-time.
  */
 import { z } from 'zod';
+import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, normalizeDocName, textResult } from './shared.ts';
+import { resolvePreviewUrl } from './preview-url.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpPost,
+  normalizeDocName,
+  resolveServerUrl,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
+  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
+  '',
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
@@ -21,11 +33,14 @@ export const DESCRIPTION = [
   '- `position` — Where to insert: "append", "prepend", or "replace"',
 ].join('\n');
 
-export function register(
-  server: ServerInstance,
-  serverUrl: string | undefined,
-  identityRef?: { current: AgentIdentity },
-): void {
+export interface WriteDocumentDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+  identityRef?: { current: AgentIdentity };
+}
+
+export function register(server: ServerInstance, deps: WriteDocumentDeps): void {
   server.tool(
     'write_document',
     DESCRIPTION,
@@ -35,11 +50,12 @@ export function register(
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
     },
     async (args: { docName: string; markdown: string; position: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(deps.serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
-      const identity = identityRef?.current;
-      const result = await httpPost(serverUrl, '/api/agent-write-md', {
+      const identity = deps.identityRef?.current;
+      const result = await httpPost(url, '/api/agent-write-md', {
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
@@ -53,7 +69,51 @@ export function register(
           : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      return textResult(`Written successfully (${args.position})`);
+
+      const cwd = await deps.resolveCwd();
+      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      const subscriberCount =
+        typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
+      const noPreviewAttached = subscriberCount === 0;
+
+      const hints = Array.isArray(result.hints) ? result.hints : undefined;
+
+      const lines: string[] = [`Written successfully (${args.position}).`];
+      if (preview) lines.push(`Preview: ${preview.url}`);
+      if (noPreviewAttached) {
+        lines.push(
+          preview
+            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
+            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+        );
+      }
+      if (hints) {
+        for (const hint of hints) {
+          if (hint.message) lines.push(hint.message);
+        }
+      }
+      const text = lines.join('\n');
+
+      if (!preview && !noPreviewAttached && !hints) {
+        return textResult(text);
+      }
+
+      const structured: Record<string, unknown> = {};
+      if (preview) {
+        structured.previewUrl = preview.url;
+        structured.previewUrlSource = preview.source;
+      }
+      if (noPreviewAttached) {
+        structured.warning = {
+          message: `No preview attached to ${normalized.docName}.`,
+          previewUrl: preview?.url ?? null,
+        };
+      }
+      if (hints) {
+        structured.hints = hints;
+      }
+      return textPlusStructured(text, structured);
     },
   );
 }
