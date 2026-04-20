@@ -15,22 +15,20 @@ bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
-`init` writes MCP configuration at the correct per-editor path for every editor whose config directory exists on your machine:
+`init` writes user-scoped MCP configuration at the correct per-editor path for every detected editor on your machine:
 
 | Editor         | Config written to                                                                                                | Scope       |
 | -------------- | ---------------------------------------------------------------------------------------------------------------- | ----------- |
-| Claude Code    | `<project>/.mcp.json`                                                                                            | Project     |
-| Cursor         | `<project>/.cursor/mcp.json`                                                                                     | Project     |
-| VS Code        | `<project>/.vscode/mcp.json`                                                                                     | Project     |
-| Codex          | `<project>/.codex/config.toml`                                                                                   | Project     |
+| Claude Code    | `~/.claude.json`                                                                                                 | User-global |
+| Cursor         | `~/.cursor/mcp.json`                                                                                             | User-global |
+| VS Code        | `~/Library/Application Support/Code/User/mcp.json` (macOS) · `%APPDATA%\Code\User\mcp.json` (Windows) · `${XDG_CONFIG_HOME:-~/.config}/Code/User/mcp.json` (Linux) | User-global |
+| Codex          | `~/.codex/config.toml` (`$CODEX_HOME/config.toml` if set)                                                        | User-global |
 | Windsurf       | `~/.codeium/windsurf/mcp_config.json`                                                                            | User-global |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) · `%APPDATA%\Claude\…` (Windows)       | User-global |
 
 Override with `--editor <name1,name2>` or `--editor all` (alias: `claude_desktop` → `claude-desktop`). AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
 
-**Global-scope editors (Claude Desktop, Windsurf) use project-qualified server keys.** Each project gets its own entry in the shared config file under `open-knowledge-<project-basename>` with `--cwd <abs-path>` baked into the args, so one global config can serve multiple projects on the same machine. Re-running `init` in a project you've already configured is a no-op. Claude Desktop requires a full **quit + relaunch** to pick up new MCP servers; Windsurf hot-reloads.
-
-Existing Windsurf users: on your next `init`, any legacy single `open-knowledge` entry (the pre-spec shape, no `--cwd`) is non-interactively migrated to the project-qualified form.
+All supported editors now share a single global `open-knowledge` entry. The MCP server resolves the active project per tool call from explicit `cwd` values or client-reported workspace roots, so one user-scoped config works across projects. If you still have legacy project-local MCP files from older `init` runs, `init` leaves them in place and warns so you can remove them manually when you want fully user-scoped behavior. Claude Desktop requires a full **quit + relaunch** to pick up new MCP servers, and other editors may require a new session or editor restart if they are already open.
 
 ### Install globally (optional)
 

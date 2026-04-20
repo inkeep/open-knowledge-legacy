@@ -6,7 +6,7 @@
  * `init.ts` can loop over targets without per-editor branching.
  */
 import { homedir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 
@@ -51,6 +51,12 @@ export function resolveAppSupportPath(options: AppSupportOptions = {}): string {
   return env.XDG_CONFIG_HOME ?? pathApi.join(home, '.config');
 }
 
+export function resolveClaudeCodeConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const home = options.home ?? homedir();
+  return pathApiForPlatform(platformName).join(home, '.claude.json');
+}
+
 export function resolveClaudeDesktopConfigPath(options: AppSupportOptions = {}): string {
   const platformName = options.platformName ?? process.platform;
   const home = options.home ?? homedir();
@@ -74,6 +80,40 @@ export function resolveClaudeDesktopConfigPath(options: AppSupportOptions = {}):
   throw new Error(`Claude Desktop is not available on ${platformName}. Supported: macOS, Windows.`);
 }
 
+export function resolveCursorConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const home = options.home ?? homedir();
+  return pathApiForPlatform(platformName).join(home, '.cursor', 'mcp.json');
+}
+
+export function resolveVsCodeConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  return pathApiForPlatform(platformName).join(
+    resolveAppSupportPath(options),
+    'Code',
+    'User',
+    'mcp.json',
+  );
+}
+
+export function resolveWindsurfConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const home = options.home ?? homedir();
+  return pathApiForPlatform(platformName).join(home, '.codeium', 'windsurf', 'mcp_config.json');
+}
+
+export function resolveCodexHomePath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  const home = options.home ?? homedir();
+  const env = options.env ?? process.env;
+  return env.CODEX_HOME ?? pathApiForPlatform(platformName).join(home, '.codex');
+}
+
+export function resolveCodexConfigPath(options: AppSupportOptions = {}): string {
+  const platformName = options.platformName ?? process.platform;
+  return pathApiForPlatform(platformName).join(resolveCodexHomePath(options), 'config.toml');
+}
+
 export interface EditorMcpTarget {
   id: EditorId;
   /** Human-friendly name for CLI output. */
@@ -94,6 +134,10 @@ export interface EditorMcpTarget {
   mergeManagedFields: (existing: Record<string, unknown>, cwd: string) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
+  /** Filesystem path whose existence implies the editor is installed. */
+  detectPath?: (cwd: string, home?: string) => string;
+  /** Legacy project-local MCP config path from pre-global installs, if any. */
+  legacyProjectConfigPath?: (cwd: string) => string;
   /**
    * Project-local agent instruction file to inject the Open Knowledge section
    * into, if any. Claude reads CLAUDE.md; every other editor picks up the
@@ -155,12 +199,14 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
   claude: createEditorTarget({
     id: 'claude',
     label: 'Claude Code',
-    configPath: (cwd) => join(cwd, '.mcp.json'),
+    configPath: (_cwd, home) => resolveClaudeCodeConfigPath({ home }),
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
-    scope: 'project',
+    scope: 'global',
+    detectPath: (_cwd, home) => join(home ?? homedir(), '.claude'),
+    legacyProjectConfigPath: (cwd) => join(cwd, '.mcp.json'),
     instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   }),
   'claude-desktop': createEditorTarget({
@@ -172,46 +218,54 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
+    detectPath: (_cwd, home) => dirname(resolveClaudeDesktopConfigPath({ home })),
   }),
   cursor: createEditorTarget({
     id: 'cursor',
     label: 'Cursor',
-    configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
-    format: 'json',
-    topLevelKey: 'mcpServers',
-    serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
-    scope: 'project',
-  }),
-  vscode: createEditorTarget({
-    id: 'vscode',
-    label: 'VS Code',
-    configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
-    format: 'json',
-    topLevelKey: 'servers',
-    serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
-    scope: 'project',
-  }),
-  windsurf: createEditorTarget({
-    id: 'windsurf',
-    label: 'Windsurf',
-    configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
+    configPath: (_cwd, home) => resolveCursorConfigPath({ home }),
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
+    detectPath: (_cwd, home) => dirname(resolveCursorConfigPath({ home })),
+    legacyProjectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
+  }),
+  vscode: createEditorTarget({
+    id: 'vscode',
+    label: 'VS Code',
+    configPath: (_cwd, home) => resolveVsCodeConfigPath({ home }),
+    format: 'json',
+    topLevelKey: 'servers',
+    serverName: () => MCP_SERVER_NAME,
+    buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'global',
+    detectPath: (_cwd, home) => dirname(resolveVsCodeConfigPath({ home })),
+    legacyProjectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
+  }),
+  windsurf: createEditorTarget({
+    id: 'windsurf',
+    label: 'Windsurf',
+    configPath: (_cwd, home) => resolveWindsurfConfigPath({ home }),
+    format: 'json',
+    topLevelKey: 'mcpServers',
+    serverName: () => MCP_SERVER_NAME,
+    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'global',
+    detectPath: (_cwd, home) => dirname(resolveWindsurfConfigPath({ home })),
   }),
   codex: createEditorTarget({
     id: 'codex',
     label: 'Codex',
-    configPath: (cwd) => join(cwd, '.codex', 'config.toml'),
+    configPath: (_cwd, home) => resolveCodexConfigPath({ home }),
     format: 'toml',
     topLevelKey: 'mcp_servers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
-    scope: 'project',
+    scope: 'global',
+    detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
+    legacyProjectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
   }),
 };
 

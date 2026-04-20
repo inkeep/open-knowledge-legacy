@@ -40,7 +40,7 @@ open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client so the server picks up the new config.
+That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into your selected editors' MCP config files (user-scoped by default). It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client so the server picks up the new config.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 

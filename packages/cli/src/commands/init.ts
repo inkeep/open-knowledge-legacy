@@ -125,6 +125,12 @@ export interface EditorMcpResult {
   error?: string;
 }
 
+export interface LegacyProjectConfigResult {
+  editorId: EditorId;
+  label: string;
+  path: string;
+}
+
 export interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
@@ -141,6 +147,8 @@ export interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
+  /** Legacy project-local MCP configs left in place after global init. */
+  legacyProjectConfigs: LegacyProjectConfigResult[];
   /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
   rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
@@ -386,6 +394,19 @@ function writeEditorMcpConfig(
   };
 }
 
+function collectLegacyProjectConfig(
+  target: EditorMcpTarget,
+  cwd: string,
+): LegacyProjectConfigResult | undefined {
+  const legacyPath = target.legacyProjectConfigPath?.(cwd);
+  if (!legacyPath || !existsSync(legacyPath)) return undefined;
+  return {
+    editorId: target.id,
+    label: target.label,
+    path: legacyPath,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Core init logic
 // ---------------------------------------------------------------------------
@@ -398,11 +419,12 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   try {
     contentResult = initContent(cwd);
   } catch (err) {
-    const fallbackPath = join(cwd, '.mcp.json');
+    const fallbackPath = EDITOR_TARGETS.claude.configPath(cwd, options.home);
     return {
       contentCreated: [],
       contentSkipped: [],
       editors: [],
+      legacyProjectConfigs: [],
       rootInstructions: [],
       mcpAction: 'failed',
       mcpPath: fallbackPath,
@@ -435,6 +457,12 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     }
     editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
   }
+  const legacyProjectConfigs =
+    options.mcp === false
+      ? []
+      : targets
+          .map((target) => collectLegacyProjectConfig(target, cwd))
+          .filter((result): result is LegacyProjectConfigResult => result !== undefined);
 
   // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
   const hasClaude = editorIds.includes('claude');
@@ -457,13 +485,14 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
       action: 'skipped-flag' as const,
-      configPath: join(cwd, '.mcp.json'),
+      configPath: EDITOR_TARGETS.claude.configPath(cwd, options.home),
     };
 
   return {
     contentCreated: contentResult.created,
     contentSkipped: contentResult.skipped,
     editors: editorResults,
+    legacyProjectConfigs,
     rootInstructions,
     launchJson,
     mcpAction: primary.action,
@@ -560,6 +589,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('');
       lines.push('For failed editors, add the MCP server entry manually. See:');
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
+    }
+
+    if (result.legacyProjectConfigs.length > 0) {
+      lines.push('');
+      lines.push('Legacy project MCP configs detected:');
+      for (const legacy of result.legacyProjectConfigs) {
+        lines.push(`  ${legacy.label}  ${relative(cwd, legacy.path)}`);
+      }
+      lines.push(
+        '  These project-local files may override the new global config. Remove them if you want fully user-scoped MCP setup in this project.',
+      );
     }
 
     // Claude Code launch.json summary
@@ -680,13 +720,10 @@ export function parseEditorFlag(value: string): EditorId[] {
 }
 
 /**
- * Detect every editor whose MCP config directory already exists. The parent
- * directory of each editor's `configPath` is the probe location so an empty
- * editor install (no `mcp.json` yet) still counts as detected. Covers both
- * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
- * Code `.vscode/`, Codex `.codex/config.toml`) plus user-global editors
- * (Claude Desktop under the platform-specific app-support dir's `Claude/`,
- * Windsurf under `~/.codeium/windsurf/`).
+ * Detect every editor whose global config surface already exists. Each target
+ * can override the probe path when the config file itself is a poor signal
+ * (for example Claude Code writes `~/.claude.json`, but installation is better
+ * inferred from the presence of `~/.claude/`).
  *
  * Used by the Commander action to default to all detected editors in both
  * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
@@ -696,13 +733,13 @@ export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
   const detected: EditorId[] = [];
   for (const id of ALL_EDITOR_IDS) {
     const target = EDITOR_TARGETS[id];
-    let configPath: string;
+    let probePath: string;
     try {
-      configPath = target.configPath(cwd, home);
+      probePath = target.detectPath?.(cwd, home) ?? dirname(target.configPath(cwd, home));
     } catch {
       continue;
     }
-    if (existsSync(dirname(configPath))) {
+    if (existsSync(probePath)) {
       detected.push(id);
     }
   }

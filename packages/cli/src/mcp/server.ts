@@ -9,7 +9,7 @@
  * per-file enrichment renders the same view on demand without the
  * persisted INDEX.md artifacts.
  *
- * Scaffolding (`.open-knowledge/` directory creation plus `.mcp.json` wiring) is a
+ * Scaffolding (`.open-knowledge/` directory creation plus editor MCP config wiring) is a
  * terminal-side operation handled by the CLI `init` subcommand.
  *
  * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
