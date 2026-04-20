@@ -993,7 +993,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           destinationDocName,
         );
 
-        const renamedWithGit = await renameTrackedPathInGit(projectDir, sourcePath, destinationPath);
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
         if (!renamedWithGit) {
           mkdirSync(dirname(destinationPath), { recursive: true });
           renameSync(sourcePath, destinationPath);
@@ -2834,7 +2838,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       );
 
       const applyRename = async (): Promise<void> => {
-        const renamedWithGit = await renameTrackedPathInGit(projectDir, sourcePath, destinationPath);
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
         if (!renamedWithGit) {
           mkdirSync(dirname(destinationPath), { recursive: true });
           renameSync(sourcePath, destinationPath);
@@ -2856,21 +2864,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         await applyRename();
 
         const fileIndex = getFileIndex();
-          for (const { fromDocName, toDocName } of renamed) {
-            updateFileIndex(
-              {
-                kind: 'rename',
-                oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
-                newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
-                oldDocName: fromDocName,
-                newDocName: toDocName,
-                content:
-                  liveContents.get(fromDocName) ??
-                  readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
-              },
-              fileIndex as Map<string, FileIndexEntry>,
-            );
-          }
+        for (const { fromDocName, toDocName } of renamed) {
+          updateFileIndex(
+            {
+              kind: 'rename',
+              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
+              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
+              oldDocName: fromDocName,
+              newDocName: toDocName,
+              content:
+                liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
 
         if (backlinkIndex) {
           for (const { fromDocName, toDocName } of renamed) {
