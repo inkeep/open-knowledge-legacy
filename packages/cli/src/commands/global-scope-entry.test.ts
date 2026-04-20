@@ -307,4 +307,59 @@ describe('globalScopeResolveServerKey', () => {
     const result = globalScopeResolveServerKey({}, projectDir);
     expect(result.key).toBe('open-knowledge-project');
   });
+
+  it('throws when all 1000 disambiguation suffixes are taken (D10 upper bound)', () => {
+    const projectDir = join(testDir, 'notes');
+    mkdirSync(projectDir);
+    // Pre-populate the default key + every suffix from -2 through -1000 with
+    // entries bound to a different cwd so the resolver can't match any of
+    // them — forces the disambiguation loop to exhaust.
+    const stuffedOther = join(testDir, 'stuffed-other');
+    mkdirSync(stuffedOther);
+    const stuffedEntry = {
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp', '--cwd', stuffedOther],
+    };
+    const existing: Record<string, unknown> = {
+      'open-knowledge-notes': stuffedEntry,
+    };
+    for (let suffix = 2; suffix <= 1000; suffix++) {
+      existing[`open-knowledge-notes-${suffix}`] = stuffedEntry;
+    }
+    expect(() => globalScopeResolveServerKey(existing, projectDir)).toThrow(
+      /1000 suffixes of open-knowledge-notes are all taken/,
+    );
+  });
+
+  it('legacy migration disambiguates when the default key already exists for another project', () => {
+    // Windsurf multi-project scenario:
+    //   - Project A at ~/work/notes was freshly registered with init →
+    //     mcp_config.json has `open-knowledge-notes` bound to that cwd.
+    //   - Project B at ~/personal/notes had a pre-spec plain `open-knowledge`
+    //     entry (no --cwd) lingering from old init.
+    //   - User now runs NEW init in Project B. Legacy detection fires (plain
+    //     `open-knowledge`). Without disambiguation, migration would clobber
+    //     Project A's entry. With disambiguation, the new key is
+    //     `open-knowledge-notes-2` and A's entry survives.
+    const workNotes = join(testDir, 'work', 'notes');
+    const personalNotes = join(testDir, 'personal', 'notes');
+    mkdirSync(workNotes, { recursive: true });
+    mkdirSync(personalNotes, { recursive: true });
+    const existing: Record<string, unknown> = {
+      // Legacy plain entry (no --cwd) — target of migration.
+      'open-knowledge': { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+      // Qualified entry from Project A — must not be overwritten.
+      'open-knowledge-notes': {
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp', '--cwd', workNotes],
+      },
+    };
+    const result = globalScopeResolveServerKey(existing, personalNotes, { detectLegacy: true });
+    expect(result.key).toBe('open-knowledge-notes-2');
+    expect(result.migratedFromKey).toBe('open-knowledge');
+    expect(result.disambiguatedFrom).toBe('open-knowledge-notes');
+    // The legacy entry is still returned as existingEntry — caller will
+    // delete the old key and write under the new one.
+    expect(result.existingEntry).toEqual(existing['open-knowledge']);
+  });
 });

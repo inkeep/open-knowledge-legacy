@@ -586,13 +586,14 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         switch (editor.action) {
           case 'written':
             lines.push(`  ${editor.label}${pad}${displayPath}  registered${restartHint}`);
-            // Auto-disambiguation fired: surface the conflicting key + its --cwd
-            // so the user understands why they got a `-2` suffix.
+            // Auto-disambiguation fired: surface the conflicting key + the
+            // path it's registered to so the user understands why they got
+            // a `-2` suffix instead of the plain slug.
             if (editor.disambiguatedFrom !== undefined) {
               const conflictCwd = findCwdForKey(editor, editor.disambiguatedFrom);
               const hint = conflictCwd
-                ? `(${editor.disambiguatedFrom} is already bound to --cwd ${conflictCwd})`
-                : `(${editor.disambiguatedFrom} is already bound to a different project)`;
+                ? `(${editor.disambiguatedFrom} is already registered for ${conflictCwd})`
+                : `(${editor.disambiguatedFrom} is already registered for a different project)`;
               lines.push(`  ${' '.repeat(editor.label.length)}${pad}${hint}`);
             }
             break;
@@ -734,14 +735,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 
 /**
  * Map a user-typed editor token to its canonical `EditorId`. Accepts the
- * canonical IDs directly and a small set of aliases — `desktop` and
- * `claude_desktop` are shorthands for `claude-desktop`. Anything else passes
- * through unchanged so `resolveEditorTargets` can produce the authoritative
- * "Unknown editor(s): …" error with the full valid list.
+ * canonical IDs directly and `claude_desktop` as an underscore-variant alias
+ * for `claude-desktop`. Anything else passes through unchanged so
+ * `resolveEditorTargets` can produce the authoritative "Unknown editor(s): …"
+ * error with the full valid list.
+ *
+ * A bare `desktop` alias was initially supported but removed before v1 to
+ * avoid ambiguity if a future `vscode-desktop` / `cursor-desktop` target is
+ * added. `claude_desktop` is unambiguous by virtue of the `claude_` prefix.
  */
 function normalizeEditorToken(token: string): EditorId {
   switch (token) {
-    case 'desktop':
     case 'claude_desktop':
       return 'claude-desktop';
     default:
@@ -800,7 +804,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, codex, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
+      `Target editor(s): ${ALL_EDITOR_IDS.join(', ')}, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)`,
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -826,7 +830,7 @@ export function initCommand(): Command {
         const detected = new Set(detectInstalledEditors(cwd));
         if (detected.size === 0) {
           process.stdout.write(
-            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|cursor|vscode|codex|windsurf>.\n',
+            `No MCP-capable editors detected — select manually, or cancel and use --editor <all|${ALL_EDITOR_IDS.join('|')}>.\n`,
           );
         }
 
@@ -872,7 +876,7 @@ export function initCommand(): Command {
         editors = detectInstalledEditors(cwd);
         if (editors.length === 0) {
           process.stderr.write(
-            'No MCP-capable editors detected. Use --editor <all|claude|cursor|vscode|codex|windsurf> to force.\n',
+            `No MCP-capable editors detected. Use --editor <all|${ALL_EDITOR_IDS.join('|')}> to force.\n`,
           );
           process.exitCode = 1;
           return;

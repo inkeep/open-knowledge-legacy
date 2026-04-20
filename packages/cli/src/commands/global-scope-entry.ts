@@ -120,38 +120,66 @@ export function globalScopeResolveServerKey(
     }
   }
 
+  const projectSlug = slugify(basename(normalizedCwd));
+  const defaultKey = `${MCP_SERVER_KEY_PREFIX}-${projectSlug}`;
+
   // 2. Legacy step — exact key 'open-knowledge' with NO --cwd (Windsurf only).
+  //    The default key may already be taken by another project's qualified
+  //    entry; disambiguate rather than clobber that project. The legacy entry
+  //    itself is still removed (caller deletes migratedFromKey) — we can't
+  //    know which project it originally represented, so the safe move is to
+  //    attach it to the current project under a non-conflicting key.
   if (detectLegacy) {
     const legacy = existingServers[LEGACY_SERVER_KEY];
     if (legacy !== undefined && isLegacyWindsurfEntry(legacy)) {
-      const projectSlug = slugify(basename(normalizedCwd));
+      const target = pickFreeKey(existingServers, defaultKey);
       return {
-        key: `${MCP_SERVER_KEY_PREFIX}-${projectSlug}`,
+        key: target.key,
         existingEntry: legacy,
         migratedFromKey: LEGACY_SERVER_KEY,
+        ...(target.disambiguatedFrom !== undefined
+          ? { disambiguatedFrom: target.disambiguatedFrom }
+          : {}),
       };
     }
   }
 
   // 3. Default key step.
-  const projectSlug = slugify(basename(normalizedCwd));
-  const defaultKey = `${MCP_SERVER_KEY_PREFIX}-${projectSlug}`;
   if (existingServers[defaultKey] === undefined) {
     return { key: defaultKey, existingEntry: undefined };
   }
 
   // 4. Disambiguation step — default key is taken by a different cwd.
+  const target = pickFreeKey(existingServers, defaultKey);
+  return {
+    key: target.key,
+    existingEntry: undefined,
+    ...(target.disambiguatedFrom !== undefined
+      ? { disambiguatedFrom: target.disambiguatedFrom }
+      : {}),
+  };
+}
+
+/**
+ * Find the first free key starting from `defaultKey` and suffixing `-2`, `-3`,
+ * … up to the disambiguation upper bound. Returns the default key directly if
+ * it's free (no `disambiguatedFrom` set), otherwise the first free suffixed
+ * candidate with `disambiguatedFrom = defaultKey`. Throws when all suffixes
+ * are taken (D10 upper bound).
+ */
+function pickFreeKey(
+  existingServers: Record<string, unknown>,
+  defaultKey: string,
+): { key: string; disambiguatedFrom?: string } {
+  if (existingServers[defaultKey] === undefined) {
+    return { key: defaultKey };
+  }
   for (let suffix = 2; suffix <= DISAMBIGUATION_UPPER_BOUND; suffix++) {
     const candidate = `${defaultKey}-${suffix}`;
     if (existingServers[candidate] === undefined) {
-      return {
-        key: candidate,
-        existingEntry: undefined,
-        disambiguatedFrom: defaultKey,
-      };
+      return { key: candidate, disambiguatedFrom: defaultKey };
     }
   }
-
   throw new Error(
     `Unable to pick a unique server key: ${DISAMBIGUATION_UPPER_BOUND} suffixes of ${defaultKey} are all taken.`,
   );

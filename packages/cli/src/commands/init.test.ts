@@ -1231,7 +1231,7 @@ describe('runInit', () => {
       expect(output).toMatch(/overwritten — migrated legacy open-knowledge → open-knowledge-/);
     });
 
-    it('disambiguation emits "(<old> is already bound to --cwd <cwd>)" hint', () => {
+    it('disambiguation emits "(<old> is already registered for <path>)" hint', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
@@ -1240,13 +1240,15 @@ describe('runInit', () => {
       mkdirSync(workNotes, { recursive: true });
       mkdirSync(personalNotes, { recursive: true });
 
-      // First init writes `open-knowledge-notes` bound to workNotes.
+      // First init writes `open-knowledge-notes` registered for workNotes.
       runInit({ cwd: workNotes, editors: ['windsurf'], home: fakeHome });
       // Second init from personalNotes collides → `-2` + hint.
       const result = runInit({ cwd: personalNotes, editors: ['windsurf'], home: fakeHome });
 
       const output = formatInitResult(result, testDir);
-      expect(output).toContain(`(open-knowledge-notes is already bound to --cwd ${workNotes})`);
+      expect(output).toContain(
+        `(open-knowledge-notes is already registered for ${workNotes})`,
+      );
     });
 
     it('skipped-existing with non-default key emits "(<matched-key>)" annotation', () => {
@@ -1397,12 +1399,12 @@ describe('parseEditorFlag', () => {
     expect(parseEditorFlag('claude-desktop')).toEqual(['claude-desktop']);
   });
 
-  it('accepts the "desktop" alias', () => {
-    expect(parseEditorFlag('desktop')).toEqual(['claude-desktop']);
-  });
-
   it('accepts the "claude_desktop" alias (underscore form)', () => {
     expect(parseEditorFlag('claude_desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('rejects the bare "desktop" token (removed to avoid future ambiguity)', () => {
+    expect(() => parseEditorFlag('desktop')).toThrow(/Unknown editor/);
   });
 
   it('"all" includes claude-desktop', () => {
@@ -1410,9 +1412,9 @@ describe('parseEditorFlag', () => {
     expect(all).toContain('claude-desktop');
   });
 
-  it('comma-separated mix resolves both aliases + canonical ids', () => {
+  it('comma-separated mix resolves the alias + canonical ids', () => {
     expect(parseEditorFlag('claude,claude-desktop')).toEqual(['claude', 'claude-desktop']);
-    expect(parseEditorFlag('claude,desktop,cursor')).toEqual([
+    expect(parseEditorFlag('claude,claude_desktop,cursor')).toEqual([
       'claude',
       'claude-desktop',
       'cursor',
@@ -1421,6 +1423,6 @@ describe('parseEditorFlag', () => {
 
   it('throws on unknown editor tokens', () => {
     expect(() => parseEditorFlag('nope-invalid')).toThrow(/Unknown editor/);
-    expect(() => parseEditorFlag('desktop,bogus')).toThrow(/Unknown editor/);
+    expect(() => parseEditorFlag('claude_desktop,bogus')).toThrow(/Unknown editor/);
   });
 });
