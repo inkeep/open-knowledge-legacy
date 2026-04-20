@@ -46,9 +46,13 @@ export function createGitInstance(projectDir: string, options: GitHandleOptions 
 
   const gitConfig = credentialArgs.length >= 2 ? [credentialArgs[1]] : [];
 
+  // simple-git 3.36+ blocks `credential.helper` in `config` by default. Our helper
+  // strings come from resolveAuth (hard-coded !gh/!open-knowledge invocations), not
+  // user input — so this guard doesn't apply to us. Opt in.
   const git = simpleGit({
     baseDir: projectDir,
     config: gitConfig,
+    unsafe: { allowUnsafeCredentialHelper: true },
   }).env(env as Record<string, string>);
 
   return { git, projectDir, credentialArgs };

@@ -78,7 +78,14 @@ export async function runClone(
   // Build -c credential.helper config if needed
   const gitConfig = resolved.credentialArgs.length >= 2 ? [resolved.credentialArgs[1]] : [];
 
-  const git = simpleGit({ baseDir: cwd, config: gitConfig }).env(env);
+  // simple-git 3.36+ blocks `credential.helper` in `config` by default. Our helper
+  // strings come from resolveAuth (hard-coded !gh/!open-knowledge invocations), not
+  // user input — so this guard doesn't apply to us. Opt in.
+  const git = simpleGit({
+    baseDir: cwd,
+    config: gitConfig,
+    unsafe: { allowUnsafeCredentialHelper: true },
+  }).env(env);
 
   let lastPct = -1;
 
