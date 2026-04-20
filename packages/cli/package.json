@@ -10,7 +10,8 @@
     }
   },
   "bin": {
-    "open-knowledge": "./dist/cli.mjs"
+    "open-knowledge": "./dist/cli.mjs",
+    "ok": "./dist/cli.mjs"
   },
   "repository": {
     "type": "git",
