@@ -297,8 +297,7 @@ export async function createTestClient(
 }
 
 // ─── Utilities ───
-
-function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
+export function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Provider sync timeout')), timeoutMs);
     provider.on('synced', () => {
