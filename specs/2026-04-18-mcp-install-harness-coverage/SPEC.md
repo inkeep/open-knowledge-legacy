@@ -3,35 +3,39 @@
 **Status:** Draft
 **Owner(s):** Nick Gomez
 **Last updated:** 2026-04-20
-**Baseline commit:** aced0253
+**Baseline commit:** aced0253 (spec initiated); spec now builds on `origin/main` at `31888dcc` (post-#221)
 **Links:**
 - Research report: [reports/mcp-server-auto-install-harnesses/](../../reports/mcp-server-auto-install-harnesses/) (REPORT.md + 18 evidence files including source audits)
 - Evidence: [./evidence/](evidence/) (spec-local findings)
 - Changelog: [./meta/_changelog.md](meta/_changelog.md)
-- **Dependency:** [GH PR #207 — enforce strict MCP routing](https://github.com/inkeep/open-knowledge/pull/207) — OPEN at HEAD `c7bb5132` (last updated 2026-04-18 03:48 UTC). Our spec inherits PR #207's `createProjectRoutingResolver` architecture (D-8) and closes its latent regression on harnesses that don't advertise `roots` (D-7).
+- **Prior-art (MERGED 2026-04-20):** [PR #221 — feat(init): register Claude Desktop + upgrade Windsurf to global-scope writes](https://github.com/inkeep/open-knowledge/pull/221) — Tim's spec at [`specs/2026-04-17-claude-desktop-init-cwd/SPEC.md`](../2026-04-17-claude-desktop-init-cwd/SPEC.md). Shipped: `claude-desktop` editor target, `--cwd <abs>` baking in args, Windsurf upgraded to project-qualified keys with legacy migration, shared `globalScopeResolveServerKey` helper. Our spec layers on top (user-scope + sidecars + atomic writes + `--yes` + Codex `--cwd`).
+- **Dependency (OPEN):** [PR #207 — enforce strict MCP routing](https://github.com/inkeep/open-knowledge/pull/207) at HEAD `c7bb5132` (last updated 2026-04-18 03:48 UTC). Adds `createProjectRoutingResolver` runtime. Our spec's `--cwd` arg (D-7) needs to also set `bypassProjectSelection: true` when #207 merges, or Codex + Claude Desktop Chat hit `ROOTS_UNAVAILABLE_ERROR` on every tool call despite `--cwd` being baked (by #221) into their configs.
 
 ---
 
 ## 1) Problem statement
 
-**Situation.** Open Knowledge ships `open-knowledge mcp` (a stdio MCP server) and installs it into AI coding harnesses via `open-knowledge init`. Today init covers **5 of 7** target harnesses at project-scope: Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code (`.vscode/mcp.json`), Codex (`.codex/config.toml`), Windsurf (`~/.codeium/windsurf/mcp_config.json` — only user-scope target shipped).
+**Situation.** Open Knowledge ships `open-knowledge mcp` (a stdio MCP server) and installs it into AI coding harnesses via `open-knowledge init`. **As of main post-PR #221 (merged 2026-04-20), init covers 6 harnesses** at project- or global-scope: Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code (`.vscode/mcp.json`), Codex (`.codex/config.toml`), Windsurf (global-scope with project-qualified keys + `--cwd` baked), and **Claude Desktop** (NEW via #221 — macOS + Windows, project-qualified keys + `--cwd` baked, Linux refused). The shared `globalScopeResolveServerKey` helper is the template for every global-scope target.
 
-**Complication.** The 7-harness research (`reports/mcp-server-auto-install-harnesses/REPORT.md`) surfaced five concrete coverage gaps that keep users from a clean zero-interaction install:
+**Complication.** The 7-harness research (`reports/mcp-server-auto-install-harnesses/REPORT.md`) surfaced coverage gaps that #221 partially closed. Remaining gaps:
 
-1. **Claude Desktop invisible.** `init` never touches `claude_desktop_config.json` — your MCP cannot be used in Claude Desktop Chat (standalone) at all. (Cowork mode is a separate story — see D-11 / D-Intake-2: Cowork's in-VM `claude` binds its MCP root to `/sessions/<name>/` ephemeral VM scaffolding rather than the mounted workspace, so MCP install is architecturally unusable there until Anthropic ships #26287 or changes the spawn cwd.)
-2. **Project-scope only.** Users who expect "install once, use in any project" have to re-run `init` in every directory. No user-scope path exists for Claude Code, Cursor, or Codex.
-3. **Codex Desktop broken by project-scope.** [openai/codex#13025](https://github.com/openai/codex/issues/13025): Codex Desktop ignores `.codex/config.toml` project-scope; users see zero MCP support on desktop even after `init`.
-4. **Missing activation files.** Cursor Desktop requires `~/.cursor/permissions.json` for zero-click tool approval; Cursor CLI requires a post-write `cursor-agent mcp enable` step; Claude Code project scope triggers a TTY trust prompt that's bypassable via `.claude/settings.local.json` pre-stage. Today none of these are written.
-5. **Windows concurrent-write corruption.** Claude Code has 5 documented `.claude.json` corruption bugs ([#28842](https://github.com/anthropics/claude-code/issues/28842), [#28847](https://github.com/anthropics/claude-code/issues/28847), [#29036](https://github.com/anthropics/claude-code/issues/29036), [#29153](https://github.com/anthropics/claude-code/issues/29153), [#29217](https://github.com/anthropics/claude-code/issues/29217)). Our current `writeFileSync` (`init.ts:95,105`) inherits the same class; an atomic tmp+rename primitive fixes it.
+1. **Project-scope only for 3 of 6 shipped targets.** Users who expect "install once, use in any project" have to re-run `init` in every directory. No user-scope path exists for Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), or Codex (`~/.codex/config.toml` — user-scope).
+2. **Codex `--cwd` not baked.** PR #221 baked `--cwd` into Claude Desktop + Windsurf configs (global-scope targets); Codex's project-scope and user-scope configs still use plain `npx @inkeep/open-knowledge mcp`. Codex doesn't advertise MCP `roots` ([A8 confirmed](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)); when PR #207 merges and strict routing takes effect, every Codex tool call will throw `ROOTS_UNAVAILABLE_ERROR` because `--cwd` isn't baked.
+3. **Codex Desktop broken by project-scope** ([openai/codex#13025](https://github.com/openai/codex/issues/13025)): Codex Desktop ignores `.codex/config.toml` project-scope. User-scope `~/.codex/config.toml` is the only path that works there.
+4. **Codex user-scope collides across projects** — a new finding from adopting #221's lens. Codex at user-scope has the same latent multi-project collision bug Windsurf had pre-#221: single `open-knowledge` key + no `--cwd` + global config file = last-init-wins silent overwrite. Needs the `globalScopeResolveServerKey` pattern (D-12).
+5. **Missing activation files.** Cursor Desktop requires `~/.cursor/permissions.json` for zero-click tool approval; Cursor CLI requires a post-write `cursor-agent mcp enable` step; Claude Code project scope triggers a TTY trust prompt that's bypassable via `.claude/settings.local.json` pre-stage. Today none of these are written.
+6. **Windows concurrent-write corruption.** Claude Code has 5 documented `.claude.json` corruption bugs ([#28842](https://github.com/anthropics/claude-code/issues/28842), [#28847](https://github.com/anthropics/claude-code/issues/28847), [#29036](https://github.com/anthropics/claude-code/issues/29036), [#29153](https://github.com/anthropics/claude-code/issues/29153), [#29217](https://github.com/anthropics/claude-code/issues/29217)). Main's `writeFileSync` (and #221's shipped writes) inherits the same class; an atomic tmp+rename primitive fixes it.
+7. **No `--yes` flag.** Headless/CI/`npm postinstall` use cases can't skip the Clack prompt cleanly.
+8. **Cowork mode unusable.** Claude Desktop Chat (standalone) works after #221. Cowork does NOT — in-VM `claude` binds its MCP root to `/sessions/<name>/` ephemeral VM scaffolding (see D-11 / D-Intake-2). Architectural limit; not our bug to fix.
 
-**Resolution.** Extend `editors.ts` with new targets for the missing surfaces, add user-scope variants behind a `--global` flag, pre-stage activation sidecar files, implement atomic writes, and support `--yes` for headless/CI install. Document Cowork's transport-agnostic reliability caveats (#24433 closed-"not-planned"; #26259 stdio bridge race open) as known product-level limits not architectural problems to solve.
+**Resolution.** Extend `editors.ts` with user-scope targets (Claude Code, Cursor, Codex user-scope) behind a `--global` flag; adopt #221's `globalScopeResolveServerKey` pattern for `codex-user` (and bake `--cwd` into both Codex project-scope and user-scope configs); pre-stage activation sidecar files; implement atomic writes via `write-file-atomic`; support `--yes` for headless install. Wire `--cwd` to set `bypassProjectSelection: true` when #207 merges so the baked `--cwd` actually closes #207's regression for Codex + Claude Desktop Chat. Document Cowork's reliability caveats (#24433 closed-"not-planned"; #26259 stdio bridge race open; D-11 architectural limit) as known product-level limits.
 
 ## 2) Goals
 
 - **G1:** `open-knowledge init` covers all 7 target harnesses with zero-click install on the happy path.
 - **G2:** Writes are atomic (tmp+rename) and safe to run while harnesses are live.
 - **G3:** `init --yes` is non-interactive and scriptable — works in Docker entrypoints, npm `postinstall`, CI pipelines.
-- **G4:** Claude Desktop **standalone** is "supported" — install writes `claude_desktop_config.json` + bakes `--project` via D-7. Cowork **mode** is explicitly documented as NOT SUPPORTED (D-11) — caveat block in `init` output + docs cite the architectural root cause so users aren't surprised.
+- **G4:** Claude Desktop **standalone** is "supported" — install writes `claude_desktop_config.json` (**shipped in #221**) + wires `--cwd` to `bypassProjectSelection` in #207 (D-7). Cowork **mode** is explicitly documented as NOT SUPPORTED (D-11) — caveat block in `init` output + docs cite the architectural root cause so users aren't surprised.
 - **G5:** `init --global` opts into user-scope writes for Claude Code, Cursor, and Codex (in addition to project-scope).
 - **G6:** Existing behavior preserved — default `init` matches today's project-scope-first semantics.
 
@@ -40,6 +44,7 @@
 - **[NEVER]** NG1: Fix Cowork's per-tool approval bug (#24433). Anthropic closed as not-planned; not our bug to fix.
 - **[NEVER]** NG2: Fix Cowork's stdio bridge race (#26259). Same — Anthropic upstream.
 - **[NEVER]** NG12: Work around Cowork's in-VM cwd binding (`/sessions/<name>/` instead of mounted workspace). Requires Anthropic to ship #26287 (`--cwd` flag) OR change Cowork launcher spawn cwd. No user-land path exists that doesn't compromise PR #207's strict routing. See D-11 + [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md).
+- **[NEVER]** NG13: Re-ship work already merged in PR #221. Our spec no longer proposes `claude-desktop` target creation, `--cwd` arg baking for global-scope editors, Windsurf legacy migration, or the `globalScopeResolveServerKey` helper — those are all live on main at `31888dcc`. Our delta is layered on top: user-scope targets, sidecars, atomic writes, `--yes`, Codex `--cwd` baking, and the #207 `--cwd` → `bypassProjectSelection` wiring.
 - **[NEVER]** NG3: Ship localhost HTTP transport for the MCP. Research concluded (`evidence/localhost-http-per-harness.md`) localhost HTTP worsens 2 of 7 harnesses (Claude Code Desktop rejects `http://`; Cowork VM can't reach host-localhost per #28018). Stdio remains correct primary.
 - **[NEVER]** NG4: Ship a custom deep-link URI scheme. No harness consumes one.
 - **[NOT NOW]** NG5: Runtime MCP self-registration via `/mcp add` or skill-driven install. Only Cursor Desktop has a runtime API (`vscode.cursor.mcp.registerServer()`); every other harness requires session/app restart. — Revisit if: Claude Code #46426 (hot-reload MCP) ships OR Codex #7767 is reopened OR ≥2 vendors add runtime register.
@@ -106,8 +111,8 @@
 
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
-| Must | FR-1: `init` writes `claude_desktop_config.json` on macOS + Windows | File contains `mcpServers.open-knowledge` entry after init; existing entries preserved; idempotent | Linux: no-op (Claude Desktop not supported) |
-| Must | FR-2: `init --global` writes user-scope variants for Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex (`~/.codex/config.toml`) | All three files exist with entry; existing user-scope `mcpServers` preserved | |
+| ~~Must~~ | ~~FR-1: `init` writes `claude_desktop_config.json` on macOS + Windows~~ | **SHIPPED in PR #221** at `31888dcc`. macOS + Windows covered; Linux throws friendly error. Project-qualified keys (`open-knowledge-<slug>`); `--cwd` baked into args. | Our spec inherits #221's target; adds the sidecar sweep (FR-3) + atomic writes (FR-5) |
+| Must | FR-2: `init --global` writes user-scope variants for Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex (`~/.codex/config.toml`) | All three files exist with entry; existing user-scope `mcpServers` preserved; **Codex user-scope uses project-qualified keys + `--cwd` per D-12** (same pattern as Windsurf global-scope) | Claude Code + Cursor user-scope can use single `open-knowledge` key because those clients route via `roots/list`; Codex cannot |
 | Must | FR-3: `init` writes `.claude/settings.local.json` with `enabledMcpjsonServers: ["open-knowledge"]` whenever it writes `.mcp.json` project-scope | File exists; user-scope Claude Code session doesn't prompt for trust on first open | [anthropics/claude-code#9189](https://github.com/anthropics/claude-code/issues/9189) |
 | Must | FR-4: `init` writes `~/.cursor/permissions.json` with `mcpAllowlist: ["open-knowledge:*"]` whenever it writes Cursor config | File exists; tool approvals skipped on first Cursor launch | [cursor.com/docs/reference/permissions](https://cursor.com/docs/reference/permissions) |
 | Must | FR-5: All file writes use atomic tmp+rename | Concurrent `init` runs don't corrupt target files; verified by a unit test that runs two concurrent writes and checks file integrity | Fixes Claude Code Windows bug class |
@@ -141,39 +146,50 @@
 
 ## 8) Current state (how it works today)
 
-Summary of current behavior (from `init.ts` + `editors.ts` inspection + source audits):
+### State of `origin/main` at commit `31888dcc` (post-#221, 2026-04-20 16:50 UTC)
 
-- **Covered today:** 5 editor targets at project scope. Editor IDs: `claude`, `cursor`, `vscode`, `codex`, `windsurf`. Only Windsurf is user-scope (`~/.codeium/windsurf/mcp_config.json`).
-- **File-write pattern already exists:** `readJsonConfig` / `readTomlConfig` / `writeJsonConfig` / `writeTomlConfig` (non-atomic — `init.ts:95,105`).
-- **Idempotent merge already done:** `writeEditorMcpConfig` preserves existing `mcpServers`, skips if `open-knowledge` present unless `--force`. D-9 will upgrade to identical-vs-conflicting-vs-missing trichotomy (matches PR #207).
-- **Detection already works:** `detectInstalledEditors` probes parent dirs of each target's `configPath`.
-- **Launch.json scaffolding for Claude Code:** sophisticated stale-field detection (`diffLaunchEntry`) — precedent for handling config-schema drift.
-- **AGENTS.md injection:** `upsertRootInstructions` writes Open Knowledge section — precedent for multi-file-write orchestration.
-- **TTY + non-TTY paths:** TTY uses `@clack/prompts` multiselect; non-TTY auto-detects. Non-TTY with empty detection exits 1 with hint.
-- **Flags:** `--mcp/--no-mcp`, `--force`, `--editor`.
-- **MCP runtime today (main):** `mcp.ts:299` uses `projectDir = process.cwd()` — project hard-bound at subprocess spawn.
-- **MCP runtime post-#207 (at HEAD `c7bb5132`, verified via live diff 2026-04-20):** PR #207 replaces spawn-time binding with `createProjectRoutingResolver({ startupCwd, listRoots, bypassProjectSelection, log })`:
+PR #221 **shipped independently of our spec** and covers a meaningful slice of what our draft proposed. Summary of the shipped world:
+
+- **Covered today:** 6 editor targets. Editor IDs: `claude`, `cursor`, `vscode`, `codex`, `windsurf`, `claude-desktop`.
+  - Project-scope: `claude`, `cursor`, `vscode`, `codex` — plain `open-knowledge` key, no `--cwd`.
+  - Global-scope: `windsurf`, `claude-desktop` — project-qualified keys (`open-knowledge-<slug>`), `--cwd <abs>` baked into args, realpath-matched idempotence, `-2`/`-3`/… auto-disambiguation.
+- **`globalScopeResolveServerKey` helper** (`packages/cli/src/commands/global-scope-entry.ts`) — shared by both global-scope targets; the template our `codex-user` must adopt (D-12).
+- **`--cwd <abs-path>` CLI flag EXISTS** (since before our spec): `cli.ts:33` preAction hook calls `process.chdir(opts.cwd)`. When MCP's `editors.ts buildEntry(cwd)` emits `['@inkeep/open-knowledge', 'mcp', '--cwd', cwd]`, the subprocess starts in the right directory and `process.cwd()` is set accordingly. This is what makes #221 work pre-#207.
+- **File-write pattern exists but non-atomic:** `writeMcpConfig` uses plain `writeFileSync`. Our D-Intake-3 adds `write-file-atomic` as a drop-in replacement.
+- **Idempotence:** `#221`'s `resolveServerKey` does identical-vs-conflicting-vs-missing via realpath match on `--cwd` arg; survives hand-crafted keys. Different shape than #207's `init.ts` trichotomy but semantically equivalent — both land together cleanly.
+- **Detection:** `detectInstalledEditors` probes `dirname(configPath)`. Linux skip for `claude-desktop` is a throw from `configPath`, not a silent pass.
+- **Restart hint:** `formatInitResult` emits "quit and relaunch Claude Desktop to activate" on written/overwritten.
+- **Flags today:** `--cwd`, `--mcp/--no-mcp`, `--force`, `--editor`.
+
+### State of `PR #207` (OPEN at HEAD `c7bb5132`, 2026-04-18 03:48 UTC — pre-dates #221 merge)
+
+- **`mcp.ts:299`** (on main) uses `projectDir = process.cwd()` — hard-bound at subprocess spawn (works with `--cwd` because `cli.ts` chdir's first).
+- **#207 replaces that** with `createProjectRoutingResolver({ startupCwd, listRoots, bypassProjectSelection, log })`:
   - `resolveCwd(explicit?)` precedence: explicit tool-call `cwd` → `bypassProjectSelection` path (returns `startupCwd`) → cached `roots/list` (1 root) → throw
   - Three typed errors: `NO_CLIENT_ROOTS_ERROR`, `MULTIPLE_ROOTS_ERROR`, `ROOTS_UNAVAILABLE_ERROR`
   - `roots/list_changed` notification handler wired (dormant for Claude Code; Claude Code advertises `roots: {}` without `listChanged` per A7)
-  - `bypassProjectSelection: true` currently surfaced ONLY via `--port` CLI flag (single-target debug pin). **No `--project <abs-path>` CLI arg exists.** Our spec's D-7 adds one (~10 LoC delta to `mcp.ts`).
+  - `bypassProjectSelection: true` currently surfaced ONLY via `--port` CLI flag. **`--cwd` does NOT currently trigger bypass in #207.** Our D-7 adds that wiring (~10 LoC).
   - `normalize-cwd.ts` via `realpath` for stable cache keys across symlinked paths
-  - `init.ts` identical-vs-conflicting merge trichotomy — our D-9 shipped in #207 at this commit
-  - Claude Desktop added as `editors.ts` target with plain `npx @inkeep/open-knowledge mcp` entry — our D-6 shipped in #207 (but WITHOUT `--project` baking, which is why Claude Desktop Chat is broken post-#207 without our spec)
-- **Latent regression in #207 as written** (for our spec to close via D-7): Codex + Claude Desktop Chat + Cowork never advertise usable roots (A7/A8/A10). Every tool call from those harnesses hits `ROOTS_UNAVAILABLE_ERROR` or `NO_CLIENT_ROOTS_ERROR`. Our `--project` arg + install-time baking IS the fix for the 3 non-Cowork cases; Cowork remains architecturally blocked per D-11.
-- **MCP routing landscape per harness (from source audits):**
-  - Claude Code CLI / Desktop / Cowork in-VM: advertises `roots` capability (`{}`, no `listChanged`); returns 1 root = startup cwd (`@anthropic-ai/claude-code@2.1.114` binary offset ~9320, `T8()` = `m_.originalCwd`). Works with PR #207 ✅
-  - Codex CLI / Desktop / IDE ext: **does NOT advertise `roots`** (`codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419`, `roots: None`). **Breaks under PR #207** without `--project` fallback ❌
-  - Cursor CLI / Desktop: advertises `roots` with `listChanged: false`; multi-root spawns N MCP instances. Works with PR #207 ✅
-  - Claude Desktop Chat: no workspace concept; advertises no meaningful root. **Breaks under PR #207** without `--project` fallback ❌
-- **Known gaps (pre-spec):**
-  - Non-atomic writes — inherits Claude Code concurrent-write corruption class
-  - No Claude Desktop target
-  - No user-scope targets for Claude Code / Cursor / Codex
-  - No activation-sidecar writes (`permissions.json`, `settings.local.json`)
-  - No post-write activation for Cursor CLI (`agent mcp enable`)
-  - No explicit `--yes` flag (non-TTY fallback works but isn't discoverable)
-  - No `--project` arg on `mcp` command (needed for Codex + Claude Desktop Chat)
+  - #207 also shipped its own Claude Desktop target (plain entry, no `--cwd`) — **overlapping with #221's superior shape**. On rebase mike must drop #207's claude-desktop in favor of main's #221 version.
+- **Latent regression in #207 as written:** When #207 merges, Codex + Claude Desktop Chat hit `ROOTS_UNAVAILABLE_ERROR` / `NO_CLIENT_ROOTS_ERROR` on EVERY tool call — because the `--cwd` that #221 bakes into Codex configs doesn't propagate to `bypassProjectSelection`. The resolver goes straight to `roots/list` and fails. Our D-7 is the wiring fix.
+
+### MCP routing landscape per harness (from source audits — unchanged)
+
+- Claude Code CLI / Desktop / Cowork in-VM: advertises `roots` capability (`{}`, no `listChanged`); returns 1 root = startup cwd (`@anthropic-ai/claude-code@2.1.114` binary offset ~9320, `T8()` = `m_.originalCwd`). Works with PR #207 ✅
+- Codex CLI / Desktop / IDE ext: **does NOT advertise `roots`** (`codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419`, `roots: None`). **Breaks under PR #207** without `--cwd`→bypass wiring ❌
+- Cursor CLI / Desktop: advertises `roots` with `listChanged: false`; multi-root spawns N MCP instances. Works with PR #207 ✅
+- Claude Desktop Chat: no workspace concept; advertises no meaningful root. **Breaks under PR #207** without `--cwd`→bypass wiring ❌ (despite `--cwd` being baked by #221)
+
+### Known gaps (post-#221, pre-this-spec)
+
+- **Non-atomic writes** — inherits Claude Code concurrent-write corruption class; applies to #221's writes too
+- **No user-scope targets for Claude Code / Cursor / Codex** — `--global` flag entire unshipped
+- **Codex user-scope pattern missing** — single `open-knowledge` key would collide across projects at user-scope; needs `globalScopeResolveServerKey` + `--cwd` baking (D-12)
+- **Codex project-scope also lacks `--cwd`** — #221 only baked `--cwd` for global-scope targets; Codex project-scope still uses plain entry. Breaks under #207 until fixed.
+- **No activation-sidecar writes** (`permissions.json`, `settings.local.json`)
+- **No post-write activation for Cursor CLI** (`cursor-agent mcp enable`)
+- **No `--yes` flag** — non-TTY fallback works but isn't discoverable; `init` still emits Clack prompt in piped contexts
+- **No `--cwd`→`bypassProjectSelection` wiring in #207** — the baked `--cwd` from #221 doesn't rescue Codex/Desktop-Chat once #207 merges
 
 ## 9) Proposed solution (vertical slice)
 
@@ -198,60 +214,71 @@ Summary of current behavior (from `init.ts` + `editors.ts` inspection + source a
 
 ### System design
 
-**Data model — expand `EditorId`:** (D-2 LOCKS flat-ID approach)
+**Data model — `EditorId` post-#221 + our delta:**
 
 ```typescript
 export type EditorId =
-  // Project-scope (existing)
-  | 'claude'               // <project>/.mcp.json
-  | 'cursor'               // <project>/.cursor/mcp.json
-  | 'vscode'               // <project>/.vscode/mcp.json
-  | 'codex'                // <project>/.codex/config.toml — WITH --project arg baked (D-7)
-  // User-scope (existing)
-  | 'windsurf'             // ~/.codeium/windsurf/mcp_config.json
-  // User-scope (new, via --global)
-  | 'claude-user'          // ~/.claude.json — top-level mcpServers (D-5)
-  | 'cursor-user'          // ~/.cursor/mcp.json (user-global)
-  | 'codex-user'           // ~/.codex/config.toml — WITH --project arg baked (D-7)
-  // Host-global (new, via --global or --yes)
-  | 'claude-desktop';      // claude_desktop_config.json — WITH --project arg baked (D-7)
+  // Project-scope (existing on main)
+  | 'claude'               // <project>/.mcp.json                  (single key, no --cwd)
+  | 'cursor'               // <project>/.cursor/mcp.json           (single key, no --cwd)
+  | 'vscode'               // <project>/.vscode/mcp.json           (single key, no --cwd)
+  | 'codex'                // <project>/.codex/config.toml         WITH --cwd baked (D-7 delta to main)
+  // Global-scope (existing on main — #221 shape)
+  | 'windsurf'             // ~/.codeium/windsurf/mcp_config.json  (global-scope helper, --cwd baked)
+  | 'claude-desktop'       // claude_desktop_config.json           (global-scope helper, --cwd baked)
+  // User-scope (new, via --global — our spec adds)
+  | 'claude-user'          // ~/.claude.json                       (single key, no --cwd — routes via roots) (D-5)
+  | 'cursor-user'          // ~/.cursor/mcp.json                   (single key, no --cwd — routes via roots)
+  | 'codex-user';          // ~/.codex/config.toml                 WITH --cwd baked + globalScopeResolveServerKey (D-12)
 ```
 
-That's **9 IDs** — the 7 target harnesses plus Windsurf (existing) plus 2 new user-scope variants. Cursor's user-scope shares the same config shape as project-scope, so no separate ID needed — same `cursor-user` target writes to `~/.cursor/mcp.json`.
+That's **9 IDs total** — 6 existing on main at `31888dcc` + 3 new user-scope variants.
 
-**Sidecar files (D-3)** are NOT separate IDs — they're written automatically inside the main target's write path:
+**Key design split (new, via D-12):**
+- **Clients that route via MCP `roots/list`** (Claude Code, Cursor) use **single `open-knowledge` key + no `--cwd`** at user-scope. The client advertises different roots per session; our MCP routes correctly without install-time baking.
+- **Clients that do NOT route via roots** (Codex, Claude Desktop — any client whose `roots/list` fails/returns wrong) use **project-qualified keys + `--cwd` baking** via the `globalScopeResolveServerKey` helper. Applies at both project-scope (Codex project needs `--cwd` baked) AND user-scope (`codex-user` needs the full globalScope pattern + `--cwd`).
+
+**Sidecar files (D-3)** are NOT separate IDs — written automatically inside the main target's write path:
 - `claude` target → writes `<project>/.mcp.json` + `<project>/.claude/settings.local.json` + appends `.claude/settings.local.json` to `<project>/.gitignore` (D-10)
 - `cursor` + `cursor-user` targets → writes `.cursor/mcp.json` + `~/.cursor/permissions.json` (always user-scope — Cursor `permissions.json` is global-only)
 
 **Post-write activation (D-4):**
 - `cursor` + `cursor-user` targets → shell out to `cursor-agent mcp enable open-knowledge` if `cursor-agent` binary on PATH; graceful no-op otherwise; 10s timeout
 
-**`--project <abs-path>` arg baking (D-7):**
-- `codex`, `codex-user`, `claude-desktop` targets → entry args include `["--project", "<abs-path>"]` baked at install time with the project's absolute cwd
-- Other targets — no `--project` arg; clients advertise roots via `roots/list`, PR #207 routes correctly
+**`--cwd <abs-path>` arg baking (D-7, aligned with #221's naming):**
+- **Already baked in main** (via #221): `claude-desktop`, `windsurf`
+- **This spec bakes**: `codex` (project-scope), `codex-user` (user-scope via `globalScopeResolveServerKey`)
+- Other targets — no `--cwd` arg; clients advertise roots via `roots/list`, #207 routes correctly
+- **Runtime delta to PR #207 (D-7):** `mcp.ts` must set `bypassProjectSelection: true` when `--cwd` is present (currently only `--port` sets it). ~10 LoC.
 
 ### Alternatives considered
 
 (see existing §9 alternatives section — unchanged; D-5/D-6/D-7/D-8/D-9/D-10 now LOCKED with full evidence)
 
-**Architecture overview:**
+**Architecture overview (layered on main @ `31888dcc`):**
 
 ```
 init command
   │
-  ├─ detectInstalledEditors(cwd, home)  ← existing; extended to new IDs
+  ├─ detectInstalledEditors(cwd, home)  ← existing (#221); extended with 3 user-scope IDs
   │
   ├─ for each selected target:
-  │    ├─ readConfig (JSON or TOML) — existing
-  │    ├─ merge open-knowledge entry — existing
-  │    └─ writeConfigAtomic (NEW) — tmp + fsync + rename
+  │    ├─ readConfig (JSON or TOML)                   ← existing
+  │    ├─ target.resolveServerKey?.(existing, cwd)    ← existing for global-scope (#221);
+  │    │                                                  our `codex-user` adopts helper
+  │    ├─ merge open-knowledge entry                  ← existing (#221's resolveServerKey semantics)
+  │    └─ writeConfigAtomic (NEW)                     ← D-Intake-3 wraps existing writeMcpConfig
   │
   ├─ for Cursor CLI (NEW): shell out `cursor-agent mcp enable open-knowledge`
   │      - only if binary on PATH; graceful no-op otherwise
   │
-  ├─ print per-harness summary (existing)
+  ├─ write activation sidecars (NEW): settings.local.json + permissions.json
+  │      - orchestrated inside each main target's write path (D-3)
+  │      - .gitignore append for settings.local.json (D-10)
   │
-  └─ if claude-desktop was written: print Cowork caveat block (NEW)
+  ├─ print per-harness summary (existing #221 format — reuse disambiguation + matched-key hints)
+  │
+  └─ if claude-desktop written: existing "quit and relaunch" hint (#221) + (NEW) Cowork caveat block (D-11)
 ```
 
 **Enforcement points:**
@@ -308,7 +335,7 @@ init command
 | ID | Decision | Type | Resolution | 1-way door? | Rationale | Evidence / links | Implications |
 |---|---|---|---|---|---|---|---|
 | D-Intake-1 | All 7 harnesses in one spec (not phased) | Cross | LOCKED | No | Research is done; spec cost similar for 1 vs 7. Cohesive implementation. | Intake turn | Single PR covers all gaps |
-| D-Intake-2 | Cowork split: Claude Desktop **standalone** = "supported" (chat MCP works); Claude Desktop **Cowork mode** = "NOT SUPPORTED — architectural limit" | Product | **LOCKED (revised 2026-04-18 post-audit)** | No | `claude_desktop_config.json` is shared between Desktop standalone and Cowork — one file, two consumption modes. Standalone Desktop chat MCP works; Cowork's in-VM `claude` advertises `/sessions/<sessionName>/` (ephemeral VM scaffolding, NOT user content) as its MCP root, and our `--project` arg cannot reach the in-VM process's routing because MCP loads in-VM. Four reinforcing blockers: (1) MCP root ≠ user content, (2) no in-VM cwd lever (#26287 CLOSED by Anthropic), (3) stdio bridge race #26259 (open, zero staff engagement 6 weeks), (4) per-tool approval #24433 (closed "not planned"). | [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md) + [cowork-deep-dive.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-deep-dive.md) | Docs state Desktop standalone works; Cowork does not. `init` caveat block makes the distinction explicit. Cowork re-evaluation blocked on Anthropic resolving #26287 OR changing spawn cwd to mount path. |
+| D-Intake-2 | Cowork split: Claude Desktop **standalone** = "supported" (chat MCP works); Claude Desktop **Cowork mode** = "NOT SUPPORTED — architectural limit" | Product | **LOCKED (revised 2026-04-18 post-audit)** | No | `claude_desktop_config.json` is shared between Desktop standalone and Cowork — one file, two consumption modes. Standalone Desktop chat MCP works; Cowork's in-VM `claude` advertises `/sessions/<sessionName>/` (ephemeral VM scaffolding, NOT user content) as its MCP root, and our `--cwd` arg cannot reach the in-VM process's routing because MCP loads in-VM. Four reinforcing blockers: (1) MCP root ≠ user content, (2) no in-VM cwd lever (#26287 CLOSED by Anthropic), (3) stdio bridge race #26259 (open, zero staff engagement 6 weeks), (4) per-tool approval #24433 (closed "not planned"). | [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md) + [cowork-deep-dive.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-deep-dive.md) | Docs state Desktop standalone works; Cowork does not. `init` caveat block makes the distinction explicit. Cowork re-evaluation blocked on Anthropic resolving #26287 OR changing spawn cwd to mount path. |
 | D-Intake-3 | Atomic writes across all targets; **adopt `write-file-atomic` npm package** (not DIY) | Technical | LOCKED | No | ~5kB dep; battle-tested (npm itself uses it); 100M+ weekly DLs; zero-dep (no transitive). Windows EPERM semantics + fsync + retry handled correctly. DIY estimate revised 15→30-40 lines with tests. | [evidence/cli-vs-file-write.md](../../reports/mcp-server-auto-install-harnesses/evidence/cli-vs-file-write.md) | New `write-file-atomic.ts` thin facade; replaces `writeFileSync` calls at `init.ts:95,105` |
 | D-Intake-4 | `--yes` flag for non-interactive install | Cross | LOCKED | No | Enables Docker / postinstall / CI use cases. Matches `add-mcp -y` pattern. | [evidence/extended-tooling-survey.md](../../reports/mcp-server-auto-install-harnesses/evidence/extended-tooling-survey.md) | New flag in commander; threads through to non-TTY path |
 | D-1 | `--global` flag for user-scope writes; default stays project-scope | Cross | LOCKED | No | Via /analyze — preserves team-lead persona's current workflow; solo developers opt in. `--yes` implies `--global` for headless "install everything" UX. | Intake + /analyze | New flag; expands selected IDs to include user-scope variants |
@@ -316,12 +343,14 @@ init command
 | D-3 | Sidecar files (`settings.local.json`, `permissions.json`) written automatically when main target is selected — NOT separate `--editor` IDs | Technical | DIRECTED | No | User-facing simplicity: one `--editor claude` install is one mental action. Sidecars are implementation detail. | /analyze | `runInit` orchestrates sidecar writes inside each main target's write path |
 | D-4 | `cursor-agent mcp enable` shell-out when binary on PATH; graceful no-op otherwise | Technical | LOCKED | No | Closes zero-click gap for Cursor CLI users without making install fail for Cursor-Desktop-only users. 10s timeout on shell-out. | /analyze | Post-write step in `writeEditorMcpConfig` for `cursor` target when binary detected |
 | **D-5** | **Uphold prior spec NG4 narrowly — allow `~/.claude.json` under `--global`; keep NG4's `~/.claude/.mcp.json` path rejection intact** | Cross | **LOCKED** | **YES** (precedent) | NG4 rejected `~/.claude/.mcp.json` specifically (nonstandard path); `~/.claude.json` is Anthropic's canonical user-scope file (documented; `claude mcp add --scope user` writes here). Different files, different semantics. | /analyze + [specs/2026-04-16-zero-ceremony-resume/SPEC.md](../2026-04-16-zero-ceremony-resume/SPEC.md) NG4 | Adds `claude-user` target writing `~/.claude.json` under `--global`; spec NG11 restates prior NG4's path-specific rejection |
-| **D-6** | **Claude Desktop (`claude_desktop_config.json`) written only under `--global`** (or `--yes`, which implies `--global`); with discoverability hint when detected but unwritten. **PARTIALLY SHIPPED in PR #207 at `c7bb5132`** — editors.ts target exists with plain `npx @inkeep/open-knowledge mcp` entry (no `--project` baking, no `--global` gate). Our spec adds the gate + the `--project` arg so Chat actually works. | Cross | **LOCKED** | No | Honors D-Intake-1-era invariant ("default stays project-scope"). Consistent `--global` semantics = "everything host/user scope." Hint in init output prevents surprise-missing-Cowork. | /analyze + verified against PR #207 live diff 2026-04-20 | Gate existing `claude-desktop` target on `--global` in selection logic; add `--project` arg to baked command |
-| **D-7** | **Add `--project <abs-path>` arg to `mcp` command. Bake it into install-time config for harnesses that don't route via MCP `roots/list`**: **Codex CLI, Codex Desktop, Claude Desktop Chat.** | Technical | **LOCKED** | No | **Source audits** ([claude-code-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/claude-code-roots-source-audit.md), [codex-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)): Codex declares `roots: None` verbatim in single production path (`codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419`) — never advertises roots capability. Claude Desktop Chat has no workspace concept ([claude-desktop-project-scope.md](../../reports/mcp-server-auto-install-harnesses/evidence/claude-desktop-project-scope.md)). **PR #207 at `c7bb5132` already exposes `bypassProjectSelection: true` as an `McpServerOptions` field** — currently reachable only via `--port` (single-target debug pin). Our `--project <abs-path>` arg is a ~10 LoC delta to `mcp.ts`'s Commander surface wiring a new flag to the existing hook. **Without D-7, #207 ships a latent regression: every tool call from Codex + Claude Desktop Chat fails with `ROOTS_UNAVAILABLE_ERROR`.** | Source audits + PR #207 live diff | ~10 LoC to `mcp.ts` for flag parsing → `bypassProjectSelection: true` + `startupCwd = resolved --project path`; init bakes into 3 targets (Codex user-scope, Codex project-scope, Claude Desktop Chat) |
-| **D-8** | **Spec inherits PR #207's strict-routing architecture at HEAD `c7bb5132` as a dependency.** Our spec adds install-time capabilities; PR #207 provides the runtime `createProjectRoutingResolver` that our baked args plug into. | Cross | **DIRECTED** | No | PR #207 solves multi-project routing for harnesses advertising roots (4 of 7 — Claude Code CLI/Desktop, Cursor CLI/Desktop); our D-7 solves it for the remaining 3 (Codex CLI/Desktop, Claude Desktop Chat). Cowork remains architecturally blocked per D-11. Complementary, not competing — recommended sequencing: #207 merges, we rebase, drop overlap (D-6/D-9 already done), ship the rest. | [GH PR #207 at `c7bb5132`](https://github.com/inkeep/open-knowledge/pull/c7bb5132fe33d98e2165f1297c16a3d40cdc4358) | Baseline tracks #207's merge commit post-merge |
-| **D-9** | **Idempotent-merge UX: identical-vs-conflicting-vs-missing trichotomy. SHIPPED in PR #207 at `c7bb5132`** — no spec work required beyond verifying the final shape on rebase. | Technical | **DIRECTED → DONE in #207** | No | Strictly better than today's skip/force binary. Identical-entry skip; conflicting-entry refuses with explicit `--force` hint; missing-entry writes. Verified via PR #207 `init.ts` diff 2026-04-20. | PR #207 `init.ts` + `init.test.ts` | FR-1 acceptance criteria inherit #207's implementation |
+| ~~**D-6**~~ | ~~Claude Desktop (`claude_desktop_config.json`) written only under `--global`~~ | Cross | **SUPERSEDED by #221** (merged 2026-04-20 `31888dcc`) | No | #221 shipped `claude-desktop` target via detect-and-preselect (NOT `--global`-gated) + `--cwd` baked + project-qualified keys + Linux refusal. Tim's spec argued for detect-and-preselect; merged. Our original `--global` gate rationale ("default stays project-scope") loses here because `claude-desktop` is global-scope by nature (host-user file, not project file) — the `--global` gate conflated two different axes. | #221 spec [`specs/2026-04-17-claude-desktop-init-cwd/SPEC.md`](../2026-04-17-claude-desktop-init-cwd/SPEC.md) D4 | No action needed. Our spec inherits #221's Claude Desktop target verbatim. |
+| **D-7** | **Wire `--cwd <abs-path>` on the `mcp` command to set `bypassProjectSelection: true` in #207's resolver + bake `--cwd` into Codex targets** (project-scope + user-scope). #221 already bakes `--cwd` into Claude Desktop + Windsurf; this extends the pattern and closes #207's latent regression. | Technical | **LOCKED** (renamed `--project` → `--cwd` to align with #221) | No | `--cwd` arg already exists on main (since before #221) — `cli.ts:33` preAction chdir. #221 bakes it into global-scope editors. **Missing piece**: (1) #207's `startMcpServer` currently only sets `bypassProjectSelection` via `--port`; our ~10 LoC delta adds a `--cwd` branch too. (2) Codex project-scope + user-scope still use plain entries (no `--cwd`); our spec bakes `--cwd` for both via `editors.ts`. Rationale: Codex never advertises `roots` ([codex-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)) — post-#207 it hits `ROOTS_UNAVAILABLE_ERROR` on every tool call without this. | Source audits + #207 live diff + #221 shipped pattern | `editors.ts`: add `--cwd` to `codex.buildEntry` and create `codex-user` with full globalScope pattern; `mcp.ts`: `--cwd` also sets `bypassProjectSelection: true` when #207 merges |
+| **D-8** | **Spec builds on `origin/main` at `31888dcc` (post-#221) AND takes PR #207 at HEAD `c7bb5132` as a soft dependency.** Our spec layers user-scope targets + sidecars + atomic writes + `--yes` on top of #221's shipped patterns. | Cross | **DIRECTED** | No | Recommended sequencing: **#207 merges → we rebase → implement.** #221 is done; #207 is the runtime dependency for D-7's bypass wiring. If #207 stalls, D-7 can be split: atomic writes + `--yes` + user-scope ship independently; `--cwd`→bypass wiring ships in #207's PR or a follow-up after #207 merges. | #221 `31888dcc` + [PR #207 at `c7bb5132`](https://github.com/inkeep/open-knowledge/pull/207) | Baseline moves from `aced0253` to #207's merge commit post-merge |
+| ~~**D-9**~~ | ~~Idempotent-merge trichotomy~~ | Technical | **SUPERSEDED by #221** | No | #221 shipped `resolveServerKey` — matches existing entries by realpath-normalized `--cwd` (regardless of key), handles hand-crafted keys, auto-disambiguates on collision. Semantically richer than #207's planned identical-vs-conflicting trichotomy. When #207 rebases onto `31888dcc`, #221's shape wins (it's more correct for global-scope editors + backwards-compatible with project-scope). | #221 `resolveServerKey` in `global-scope-entry.ts` | No action needed. |
 | **D-10** | **`.claude/settings.local.json` added to project `.gitignore` automatically by init** | Product | **LOCKED** | No | Matches dev-tooling `.local.*` convention (VS Code, JetBrains). Trust-bypass is user-machine-local; shouldn't propagate via git. Each team member approves their own. | /analyze | New idempotent `.gitignore` append primitive — single line `.claude/settings.local.json` |
-| **D-11** | **Cowork is NOT a supported consumer of `open-knowledge mcp` under the current Anthropic Cowork architecture. Claude Desktop standalone (chat MCP) IS supported via `claude-desktop` target + D-7 `--project` arg.** | Cross | **LOCKED** | No (conditional — unlocks if Anthropic ships cwd-controlling flag) | Opus source audit proves Cowork's in-VM `claude` spawns with `cwd=/sessions/<sessionName>/` (not the mounted workspace), advertises that ephemeral path as its MCP root, and has no user-facing lever to change it. PR #207's `ProjectRoutingResolver` would hand that path to our MCP, which cannot resolve a valid Open Knowledge project there. `--project` baking (D-7) cannot remediate because the MCP runs in-VM with the VM-side absolute path, not a host path. | [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md) (281 lines, 4 primary sources: local claude-code source, issue #50168 spawn logs, aaddrick.com RE, full-tree grep) | `claude-desktop` target still ships (serves standalone Desktop); init caveat block explicitly warns Cowork-mode users; docs source-of-truth cite this audit. Re-evaluate when Anthropic ships #26287 (`--cwd` flag) OR changes Cowork spawn cwd to mount path. |
+| **D-11** | **Cowork is NOT a supported consumer of `open-knowledge mcp` under the current Anthropic Cowork architecture. Claude Desktop standalone (chat MCP) IS supported via `claude-desktop` target (shipped in #221) + D-7 `--cwd`→bypass wiring.** | Cross | **LOCKED** | No (conditional — unlocks if Anthropic ships cwd-controlling flag) | Opus source audit proves Cowork's in-VM `claude` spawns with `cwd=/sessions/<sessionName>/` (not the mounted workspace), advertises that ephemeral path as its MCP root, and has no user-facing lever to change it. PR #207's `ProjectRoutingResolver` would hand that path to our MCP, which cannot resolve a valid Open Knowledge project there. `--cwd` baking (via #221) cannot remediate because the MCP runs in-VM with the VM-side absolute path, not a host path. | [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md) (281 lines, 4 primary sources) | `claude-desktop` target still ships (serves standalone Desktop); init caveat block explicitly warns Cowork-mode users; docs source-of-truth cite this audit. Re-evaluate when Anthropic ships #26287 (`--cwd` flag) OR changes Cowork spawn cwd to mount path. |
+| **D-12** | **Codex user-scope target (`codex-user`) uses project-qualified keys + `--cwd` baking via the shared `globalScopeResolveServerKey` helper — same pattern #221 applied to Windsurf.** | Technical | **LOCKED** | No | Codex does not advertise MCP `roots` (A8 CONFIRMED via Rust source audit). Single `open-knowledge` key at user-scope (`~/.codex/config.toml`) has the same latent multi-project collision bug Windsurf had pre-#221 — last-init-wins silent overwrite. The `globalScopeResolveServerKey` helper is now the canonical pattern for any global-scope editor that lacks roots-based routing. Applies `detectLegacy: false` (Codex user-scope doesn't have a legacy form pre-dating this spec — our spec creates the target). | #221 `global-scope-entry.ts` + codex-roots-source-audit.md | Adopt helper verbatim; `codex-user.buildEntry(cwd)` returns `['@inkeep/open-knowledge', 'mcp', '--cwd', cwd]`; `codex-user.resolveServerKey` calls `globalScopeResolveServerKey(existing, cwd, {detectLegacy: false})` |
+| **D-13** | **Codex project-scope target gets `--cwd` baked into `buildEntry(cwd)` — same one-line change as Claude Desktop project-scope (#221 didn't touch project-scope targets, but Codex is the one project-scope harness that needs it).** | Technical | **LOCKED** | No | Codex at project-scope still works today via `process.cwd()` binding (main's `mcp.ts:299`). Post-#207, the resolver tries `roots/list` first and throws because Codex doesn't advertise. Without `--cwd` baked, project-scope Codex breaks when #207 merges — same class of regression as `codex-user`. Single-key is fine (config is project-local, no collision risk). | Source audits + #207 diff | `codex.buildEntry(cwd)` widened from `(_cwd) => {...}` to `(cwd) => {...--cwd, cwd}`; matches #221's `buildEntry` widening convention |
 
 ## 11) Open questions
 
@@ -334,9 +363,10 @@ Most P0 items were resolved via /analyze + two source audits (2026-04-18). Remai
 | Q7 | Does `cursor-agent mcp enable` persist across sessions, or require re-run on next Cursor launch? | T | P2 | Deferred — matters for uninstall/upgrade, not install |
 | Q19 | Which docs need updates: `README.md`, `CLAUDE.md`, `AGENTS.md`, `packages/cli/README.md`? | X | P0 | Open — all four likely; resolve during implementation |
 | ~~Q-Cowork-cwd~~ | ~~What cwd does the Cowork launcher (`@ant/claude-swift`) set when spawning in-VM `claude`?~~ | T | P0 | **RESOLVED → D-11** (cwd = `/sessions/<sessionName>/`; workspace passed via `--add-dir`, permission-only not cwd — [cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md)) |
-| Q-PR207 | Coordination sequencing with PR #207 — ship our spec first, after, or merged? | X | P0 | **Directed:** after #207 merges. Our spec inherits #207's `createProjectRoutingResolver`; D-6 + D-9 are shipped in #207 at `c7bb5132`; our spec adds the `--project` arg delta (D-7) + user-scope targets + sidecars + atomic writes on top. Nick to coordinate with mike via draft PR + tag. |
+| Q-PR207 | Coordination sequencing with PR #207 — ship our spec first, after, or merged? | X | P0 | **Directed:** after #207 merges. Our spec builds on main post-#221; #207 is the runtime dependency for D-7's bypass wiring. If #207 stalls, split: atomic writes + `--yes` + user-scope can ship independently on main; D-7 wiring ships with or after #207. |
 | Q-PR207-cowork-err | Should #207 detect the `/sessions/<sessionName>/?$` pattern in its routing resolver and throw a Cowork-specific error (pointing at Anthropic #26287 + #26259) distinct from `NO_CLIENT_ROOTS_ERROR`? | T | P1 | Recommend to mike in coordination note; if accepted, reduces our support-triage burden but is his PR's call to make. |
-| Q-PR207-project-arg | Will mike accept our `--project <abs-path>` arg delta into #207 directly, or land it as a follow-up in our spec's branch? | X | P0 | Open — proposal goes in coordination note. Landing in #207 closes the latent regression before merge; landing as follow-up means #207 ships broken for Codex + Claude Desktop Chat until our spec merges. |
+| Q-PR207-cwd-wiring | Will mike accept our `--cwd → bypassProjectSelection` wiring into #207 directly, or land it as a follow-up? | X | P0 | Open — proposal goes in coordination note. Landing in #207 closes the Codex + Claude Desktop Chat regression before #207 merges. Landing as follow-up means #207 ships broken for those 3 harnesses (even though #221 already bakes `--cwd` into their configs) until our follow-up merges. |
+| Q-221-rebase | When #207 rebases onto main `31888dcc`, whose Claude Desktop target wins? | X | P0 | **Recommend: #221's version wins** (superior shape — project-qualified keys + `--cwd` baked + globalScopeResolveServerKey). #207's claude-desktop target (plain entry, no `--cwd`, no qualification) should be dropped during rebase. Mention in coordination note. |
 
 ### Resolved (historical)
 
@@ -373,7 +403,8 @@ Most P0 items were resolved via /analyze + two source audits (2026-04-18). Remai
 | **A8** | **Codex (CLI + Desktop + IDE ext) does NOT advertise MCP `roots` capability at all** | **CONFIRMED** via Rust source audit at `codex-rs/codex-mcp/src/mcp_connection_manager.rs:1400-1419` ([codex-roots-source-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/codex-roots-source-audit.md)) | Verified | Resolved |
 | **A9** | **Cursor (CLI + Desktop) advertises MCP `roots` capability with `listChanged: false`; multi-root workspaces spawn N MCP instances** | SUPPORTED via Cursor forum threads + existing Cursor research | Verified | Resolved |
 | **A10** | **Cowork launcher cwd → user's mounted workspace folder** (makes Cowork's in-VM Claude Code advertise the right path as its root) | **FALSIFIED** | Verified via Opus source audit ([cowork-launcher-cwd-audit.md](../../reports/mcp-server-auto-install-harnesses/evidence/cowork-launcher-cwd-audit.md)) — cwd is hard-wired to `/sessions/<sessionName>/` by `@ant/claude-swift`'s spawn; workspace folder comes in via `--add-dir` (permission-only, not cwd). In-VM Claude advertises `file:///sessions/<sessionName>/` — ephemeral VM scaffolding, not user content. | Resolved → D-11 |
-| **A11** | **PR #207 exposes `bypassProjectSelection` as a CLI-reachable flag for our `--project` fallback** | **CONFIRMED with nuance** — verified via live diff of PR #207 at `c7bb5132` (2026-04-20): `bypassProjectSelection: true` exists as `McpServerOptions` field and routes through `createProjectRoutingResolver` correctly. Currently surfaced ONLY via `--port` flag (single-target debug pin); our spec adds `--project <abs-path>` as a parallel CLI arg (~10 LoC delta) wiring the same hook with explicit cwd override. | Verified | Resolved → D-7 |
+| **A11** | **PR #207 exposes `bypassProjectSelection` as a CLI-reachable hook for our `--cwd` wiring** | **CONFIRMED with nuance** — verified via live diff of PR #207 at `c7bb5132` (2026-04-20): `bypassProjectSelection: true` exists as `McpServerOptions` field and routes through `createProjectRoutingResolver` correctly. Currently surfaced ONLY via `--port` flag (single-target debug pin); our spec adds `--cwd` as a parallel trigger (~10 LoC delta). Naming aligns with main's existing `--cwd` arg (already baked by #221 into Claude Desktop + Windsurf configs). | Verified | Resolved → D-7 |
+| **A12** | **`globalScopeResolveServerKey` helper (shipped by #221) is the correct template for `codex-user`** — project-qualified keys + realpath-matched idempotence + auto-disambiguation + `--cwd` baking all compose correctly for a Codex-at-user-scope target | **SUPPORTED** via reading `packages/cli/src/commands/global-scope-entry.ts` on `origin/main` at `31888dcc`. The helper is parameterized by `{detectLegacy}` — Codex user-scope uses `detectLegacy: false` (no pre-spec legacy entries exist for `codex-user` since the target is new). | Implementation-time verification | Active (verifies during impl) |
 
 ## 13) In Scope (implement now)
 

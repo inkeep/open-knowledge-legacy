@@ -120,3 +120,53 @@ Research surfaced [PR #207 "fix(cli): enforce strict MCP routing"](https://githu
   3. Consider Cowork-specific error pattern match on `^/sessions/[A-Za-z0-9-]+/?$` to save triage
 - Then move to audit phase (task #16): parallel /audit + design-challenge subprocesses
 - Then /assess-findings (task #17), verify + finalize (task #18)
+
+---
+
+## 2026-04-20 — Session 4: `git fetch origin main` — major overlap with merged PR #221
+
+### Discovery
+PR #221 merged 2026-04-20 at 16:50 UTC as commit `31888dcc` on main — shipped Tim Cardona's `specs/2026-04-17-claude-desktop-init-cwd/SPEC.md` (17 decisions LOCKED). Our spec had no visibility into it prior to the `git fetch`. The spec makes significant overlap with our D-6/D-7/D-9; we now build on top rather than in parallel.
+
+### What #221 shipped (verified via reading `editors.ts` + `global-scope-entry.ts` on origin/main)
+- **`claude-desktop` editor target** — macOS + Windows, Linux refuses with friendly error
+- **`--cwd <abs>` baked into args** for global-scope targets (Claude Desktop + Windsurf)
+- **Project-qualified server keys** — `open-knowledge-<slug(basename(cwd))>` with `-2`/`-3` auto-disambiguation
+- **Realpath-normalized `--cwd` match** for idempotent re-init across symlinked paths + hand-crafted keys
+- **Shared `globalScopeResolveServerKey` helper** in `global-scope-entry.ts` — parameterized by `{detectLegacy}`
+- **Windsurf legacy migration** — plain `open-knowledge` entry with no `--cwd` → rewrites to qualified form
+- **Windsurf upgraded to global-scope write path** — closes latent pre-#221 multi-project collision bug
+- **Restart hint** — "quit and relaunch Claude Desktop to activate" emitted on written/overwritten
+- **17 decisions LOCKED** in their own spec with evidence, audit findings, design-challenge
+
+### Impact on our spec (decisions reclassified)
+- **D-6 SUPERSEDED**: Our `--global` gate for Claude Desktop conflated host-user-global scope with opt-in; #221's detect-and-preselect is cleaner. No action needed.
+- **D-9 SUPERSEDED**: #221's `resolveServerKey` via realpath-match is semantically richer than our planned identical-vs-conflicting trichotomy (handles hand-crafted keys, symlinks, auto-disambig). When #207 rebases onto main it should adopt #221's shape.
+- **D-7 RENAMED** `--project` → `--cwd` to align with #221's convention. Reframed as: (a) wire `--cwd` to `bypassProjectSelection: true` in #207's resolver (~10 LoC), (b) bake `--cwd` into Codex project-scope (D-13) + user-scope (D-12) configs.
+- **D-12 LOCKED (new)**: Codex user-scope adopts `globalScopeResolveServerKey` helper verbatim — same class of multi-project collision bug Windsurf had pre-#221.
+- **D-13 LOCKED (new)**: Codex project-scope bakes `--cwd` — one-line `buildEntry(cwd)` widening. Breaks post-#207 without it.
+- **NG13 added**: Never re-ship #221 work (Claude Desktop target, `--cwd` baking for global-scope, Windsurf migration, globalScopeResolveServerKey helper).
+
+### Q-221-rebase added
+When #207 rebases onto main @ `31888dcc`, mike needs to drop #207's claude-desktop target in favor of #221's. #207's version is plain-entry / no-`--cwd` / no-qualification — a regression against main. Mention in coordination note.
+
+### A12 added (SUPPORTED)
+`globalScopeResolveServerKey` helper works for `codex-user` with `detectLegacy: false` — verify at implementation.
+
+### Spec updates applied (SPEC.md)
+- Header: added #221 as prior-art link, reframed #207 dependency, updated baseline to note `origin/main` at `31888dcc`
+- §1 Problem statement: reframed to acknowledge #221's coverage (6 editors, global-scope pattern, restart hint); 8 remaining gaps
+- §2 Goals: G4 renamed `--project` → `--cwd`
+- §3 Non-goals: added NG13 (never re-ship #221 work)
+- §6 FR-1: marked SHIPPED in #221 (strikethrough); FR-2 expanded with Codex user-scope note
+- §8 Current state: complete rewrite — state of main post-#221, state of #207, routing landscape, 8 remaining gaps
+- §9 Data model: 9 IDs, clear split between roots-routing vs globalScope-pattern editors; `--cwd` alignment throughout
+- §9 Architecture diagram: updated to show #221 patterns + our sidecar layering
+- §10 Decision log: D-6 SUPERSEDED, D-9 SUPERSEDED, D-7 reframed + renamed, D-12 + D-13 added, D-8 clarified as multi-PR-layered
+- §11 Q-PR207 directed after-merge; Q-PR207-project-arg renamed → Q-PR207-cwd-wiring; added Q-221-rebase
+- §12 A11 updated to reflect `--cwd` alignment; A12 added for globalScopeResolveServerKey
+
+### Next steps unchanged
+- User to open draft PR on our worktree branch; tag mike with 3 items + Q-221-rebase guidance
+- Then audit phase (task #16)
+- Then assess-findings (task #17), verify + finalize (task #18)
