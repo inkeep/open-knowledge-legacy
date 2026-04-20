@@ -11,6 +11,7 @@ export default {
     'docs/source.config.ts': ['exports'],
     '{tech-probes,reports,specs}/**': ['files'],
   },
+  ignoreBinaries: ['printf'],
   workspaces: {
     'packages/app': {
       entry: 'tests/**/*.{test,e2e}.ts',
@@ -18,6 +19,7 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         'ws', // false positive
+        '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
