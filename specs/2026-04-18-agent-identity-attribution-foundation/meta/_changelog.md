@@ -163,3 +163,37 @@ Updated FR-3 (UM scope extension), FR-5 (endpoint list expansion), §8.6 ref tab
 - **E3 (from Ch-M5 reopening):** "History" vs "journal" naming. Already adjudicated in prior conversation but challenger reopens. User previously picked "history" explicitly.
 
 **Post-audit state.** 57 decisions + FR-20. Round-2 + challenger findings applied or escalated. Changelog carries full audit trail.
+
+## 2026-04-18 — Adjudication of E1/E2/E3 via /analyze
+
+**E2 KEEP DEFERRED (user decision).** D1 stays two-slot `(principal, agent_session)`. No `delegator?` slot added; Q103 nested-agents remains P2. Additive schema evolution is safe either way — no forward-compat cost to deferring. Directive "without over-engineering" wins over speculative future-proofing without concrete use case.
+
+**E3 KEEP "history" (user prior decision stands).** Challenger reopen dismissed; naming adjudicated in earlier conversation, alignment argument (API `/api/history` + user mental model) remains strongest under directive.
+
+**E1 REOPENED (applied this turn).** After `/analyze` protocol on E1 — journey re-read found no consumer of effect-diffs needs retention beyond hours:
+- P1/P3/P5: live-feed (minutes-hours)
+- P4: historical attribution — goes through shadow/history git `ok-actor:` commit bodies (D13), NOT the activity-log
+
+Server-side store + CC1 + REST was over-engineering for the actual scope. **D49 reverted to bounded Y.Map ring-buffer.**
+
+New D49:
+- `Y.Map('agent-effects')` on each doc
+- Keyed by `${sessionId}:${transactIdx}`
+- Value: `{ sessionId, timestamp, delta, agent_type, color_seed }`
+- Bounded at 50 entries total per doc
+- Oldest-by-timestamp eviction in server observer during the same paired-write drain
+- Clients sync + subscribe via Y.Doc sync + `Y.Map.observe` (no CC1, no REST endpoint)
+- Storage cost: ~10KB per doc bounded
+- UM scope (FR-3) unchanged — `agent-effects` is NOT in UM scope (undo doesn't revert effect-diff log entries; undo-transacts create their own entries; timeline stream shows both write + undo narratively)
+
+FR-11 updated to match new D49 shape.
+
+**Forward-compat note.** If future product scope adds "scroll back weeks of activity without reading git," a server-side archive tier can be added additively (Y.Map remains live-buffer tier; server store adds archive tier). No migration cost of deferring.
+
+**Reversals applied this pass (to my own earlier commits):**
+- My original D49 v1 (Y.Map per-session-bloat) → Y.Map ring-buffer total-bounded (not the same thing)
+- My middle-revision D49 (server-side + CC1 + REST) → Y.Map ring-buffer (now locked)
+
+The escalation-resolve revealed I'd been over-engineering from both directions. Y.Map ring-buffer (what the challenger originally proposed) is the simplest fit.
+
+**Post-adjudication state.** 57 decisions + FR-20, all high/medium audit + challenger findings closed. Ready for Task 11 (Verify and finalize).
