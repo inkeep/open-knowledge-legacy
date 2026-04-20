@@ -2,6 +2,28 @@
 
 Append-only record of process events. Not a substitute for the Decision Log in SPEC.md §10.
 
+## 2026-04-20 (late) — Pre-ship decision-lock pass: D3 revised, D24 revised, D44 revised, D50 retracted, D52 finalized, R3 retracted
+
+User conversation before kicking off `/ship`. Five product/technical tensions revisited and locked based on direct user confirmation:
+
+**D3 revised — new-window-default, switch-in-place retired.** User: *"new window is the better experience, there will be scenarios that you want multiple windows open at the same time."* Every project pick — from Navigator, File → Open Recent, deep-link, or any other surface — now spawns a new editor BrowserWindow. The "click to switch in current window" UX (prior J4a) is removed. Cmd+Click modifier dropped as redundant; right-click/context-menu covers Show in Finder / Remove from Recent. Sections updated: §6 J4 (collapsed J4a + J4b into a single journey), §7.5 (ProviderPool framing — one pool per window, never re-pointed), §8.6 (Navigator mockup footer, Recent-project rows), §8.7 (multi-window lifecycle bullets).
+
+**D24 revised — Navigator is its own persistent-launcher BrowserWindow.** Under D3 revised (new-window-default), same-window conditional render (original D24, CS1-driven) is no longer the right pattern — the Navigator only needs to *launch* new windows, not transition-in-place. Navigator becomes a UI-only BrowserWindow (no utilityProcess attached) that stays alive on the Navigator view as a persistent launcher. Shared React bundle with `mode: 'navigator'` flag (preload-injected). Matches GitHub Desktop / TextMate project-chooser pattern.
+
+**R3 retracted** alongside D3 revised. Utility lifetime now bound 1:1 to window lifetime — no mid-lifetime utility swaps to reason about.
+
+**D50 RETRACTED — cross-machine read-only fallback removed from v0.** User asked: *"how do we even identify this situation with dropbox icloud?"* — surfaced the real issue: there is no reliable way to detect cross-machine concurrent opens via filesystem-level signals. Dropbox / iCloud / Google Drive frequently ignore or delay `.lock` files, create conflict-copies, and offer no ordering guarantees. Without a trustworthy detection trigger, the novel read-only UX has no foundation. D44 case (c) simplified to hard-refuse dialog: *"Close it there before editing here. [Cancel] [Show lock in Finder]"*. §13 Future Work adds "Cross-machine concurrent editing" entry with revisit conditions (a non-filesystem coordination channel — mDNS, cloud relay, or CRDT awareness — is the minimum primitive to build on).
+
+**D44 revised — case (c) hard-refuse, no read-only fallback.** Cascades from D50 retraction. Three-case dialog keeps its shape; only the foreign-host dialog body + buttons changed. Confidence moves from "HIGH (cases a + b); TENTATIVE (case c via D50)" to "HIGH (all three cases)."
+
+**D52 finalized — dual-bin confirmed on origin/main.** User: *"cli dual bin is already on the main branch."* Verified — `packages/cli/package.json` on main ships `"bin": { "open-knowledge": "./dist/cli.mjs", "ok": "./dist/cli.mjs" }`. D52's conditional "if upstream ships first / if Electron ships first" language removed; the bundled CLI inherits both bins through `extraResources` packaging without any coordination step.
+
+**Apple Developer creds confirmed as load-bearing.** User: *"Do we need apple dev creds to distribute this app from our own site?"* — answered yes, independent of App Store. Gatekeeper + notarization is required for P1 UX on macOS Sequoia+ even for direct-DMG distribution from our own site; unsigned apps hit the "cannot verify developer" friction that ends at "unusable for P1." `electron-updater` signature-verifies each update → unsigned auto-update is broken. §12 procurement bullet ("Apple Developer Program + D-U-N-S + Developer ID + notary creds within ≤4 weeks") remains critical-path for M2.
+
+**bootServer extraction confirmed in-scope.** User: *"bootserver extraction is in scope for this work"* — D35 stays as specified. M1 includes the `packages/cli/src/commands/start.ts:249 → packages/server/src/boot.ts` move.
+
+**Net state:** 52 decisions (D1–D52) with D7/D11/D32 superseded, D50 retracted. 22 risks (R1–R22) with R1/R3/R6 retracted. Spec is ready for `/ship` — user invoked immediately after this decision pass.
+
 ## 2026-04-20 — /audit + /assess-findings round → 17 findings resolved
 
 Fresh-eyes `/audit` (Opus subagent, eng:audit skill) on SPEC.md + audit-findings.md; output at `meta/audit-findings-pass2.md`. Triaged via `/assess-findings` methodology — adversarial investigation before accepting. 17 findings: 4 High, 8 Medium, 5 Low. 15 resolved autonomously, 2 escalated to user (both resolved).
