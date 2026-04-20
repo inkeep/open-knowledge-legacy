@@ -386,7 +386,20 @@
     [full-end];
 }
 
-.tiptap-editor > div {
+/* Content-column children. The `.tiptap-editor` wrapper is a 3-column named
+ * grid ([full-start] margin [content-start] content [content-end] margin
+ * [full-end]). Direct children default to `grid-column: content` so editor
+ * chrome — EditorContent, Breadcrumb footer, future <nav>/<header>/<footer>
+ * — lands in the content column. An earlier version of this rule targeted
+ * `> div` specifically, which worked while every child was a <div> but
+ * silently broke semantic elements: a direct <nav> child auto-placed into
+ * the right-margin track (width = --margin-width = 4rem), truncating its
+ * content into a ~64px vertical sliver. Widened to `> *` so the rule's
+ * intent ("content-column children") matches the CSS. Edge-to-edge
+ * elements that want a different track can explicit-override with
+ * `grid-column: full`.
+ */
+.tiptap-editor > * {
   grid-column: content;
   position: relative;
 }

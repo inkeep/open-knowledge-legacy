@@ -148,7 +148,7 @@ export const BlockDragHandle = Extension.create({
           currentNodePos = pos ?? -1;
         },
         computePositionConfig: {
-          placement: 'left-start',
+          placement: 'left',
           strategy: 'absolute',
           middleware: [
             offset(({ rects }) => {
