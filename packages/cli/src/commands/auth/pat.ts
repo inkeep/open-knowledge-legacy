@@ -4,12 +4,12 @@ import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
-export interface PatOptions {
+interface PatOptions {
   host: string;
   json: boolean;
 }
 
-export async function runPat(
+async function runPat(
   opts: PatOptions,
   tokenStore: TokenStore,
   readToken?: () => Promise<string>,

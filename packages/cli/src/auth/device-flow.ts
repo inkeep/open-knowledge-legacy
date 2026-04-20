@@ -1,21 +1,21 @@
 import { createOAuthDeviceAuth } from '@octokit/auth-oauth-device';
 
-export interface DeviceFlowVerification {
+interface DeviceFlowVerification {
   verificationUri: string;
   userCode: string;
   expiresIn: number;
   interval: number;
 }
 
-export interface DeviceFlowResult {
+interface DeviceFlowResult {
   token: string;
   tokenType: string;
   scopes: string[];
 }
 
-export type OnVerification = (verification: DeviceFlowVerification) => void | Promise<void>;
+type OnVerification = (verification: DeviceFlowVerification) => void | Promise<void>;
 
-export interface DeviceFlowOptions {
+interface DeviceFlowOptions {
   clientId: string;
   scopes?: string[];
   /** Host for GitHub Enterprise (default: 'github.com') */

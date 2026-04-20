@@ -14,13 +14,13 @@ import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
-export interface PruneTarget {
+interface PruneTarget {
   name: 'server' | 'ui';
   lockPath: string;
   reason: 'dead-pid' | 'corrupt';
 }
 
-export interface CleanPlan {
+interface CleanPlan {
   prune: PruneTarget[];
 }
 
@@ -38,7 +38,7 @@ export function buildCleanPlan(server: LockState, ui: LockState): CleanPlan {
   return { prune };
 }
 
-export interface RunCleanDeps {
+interface RunCleanDeps {
   lockDir: string;
   inspect?: (name: 'server' | 'ui') => LockState;
   unlink?: (path: string) => void;
@@ -46,7 +46,7 @@ export interface RunCleanDeps {
   error?: (msg: string) => void;
 }
 
-export interface CleanOutcome {
+interface CleanOutcome {
   pruned: PruneTarget[];
   failed: Array<{ target: PruneTarget; error: string }>;
 }

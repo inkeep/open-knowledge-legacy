@@ -3,12 +3,12 @@ import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
-export interface ReposOptions {
+interface ReposOptions {
   host: string;
   json: boolean;
 }
 
-export async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Promise<void> {
+async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Promise<void> {
   const { host, json } = opts;
   validateGitHubHost(host);
   const entry = await tokenStore.get(host);

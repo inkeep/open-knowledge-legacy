@@ -1,6 +1,6 @@
 import type { ResolvedNavigationTarget } from './navigation-targets';
 
-export interface FileTreeSelection {
+interface FileTreeSelection {
   selectedFilePath: string | null;
   selectedFolderPath: string | null;
   navigationPath: string | null;

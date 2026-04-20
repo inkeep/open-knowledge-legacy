@@ -4,7 +4,7 @@ export type FolderOverviewEntry =
   | { kind: 'folder'; path: string; name: string; title: string }
   | { kind: 'file'; path: string; name: string; title: string; size: number; modified: string };
 
-export interface FolderOverviewData {
+interface FolderOverviewData {
   title: string;
   children: FolderOverviewEntry[];
 }
