@@ -504,6 +504,35 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * Look up the `--cwd` value for a server key by re-reading its config file.
+ * Returns `undefined` if the config can't be read or the key/entry/args don't
+ * match the expected shape. Used only by the format layer to emit the
+ * disambiguation conflict hint; never throws.
+ */
+function findCwdForKey(editor: EditorMcpResult, key: string): string | undefined {
+  try {
+    const raw = readFileSync(editor.configPath, 'utf-8').trim();
+    if (raw === '') return undefined;
+    const parsed = JSON.parse(raw);
+    if (!isObject(parsed)) return undefined;
+    // All currently-supported editors use `mcpServers`. VS Code uses `servers`
+    // but is project-scoped (no disambiguation path).
+    const servers = parsed.mcpServers;
+    if (!isObject(servers)) return undefined;
+    const entry = servers[key];
+    if (!isObject(entry)) return undefined;
+    const args = entry.args;
+    if (!Array.isArray(args)) return undefined;
+    const i = args.indexOf('--cwd');
+    if (i < 0 || i === args.length - 1) return undefined;
+    const value = args[i + 1];
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Format a user-facing summary of an init run.
  */
 export function formatInitResult(result: InitCommandResult, cwd: string): string {
@@ -545,16 +574,51 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
           ? relative(cwd, editor.configPath)
           : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
         const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
+
+        // Claude Desktop does not hot-reload MCP config — surface a restart hint
+        // on successful writes only. Windsurf hot-reloads (A5) so no hint.
+        const restartHint =
+          editor.editorId === 'claude-desktop' &&
+          (editor.action === 'written' || editor.action === 'overwritten')
+            ? ' — quit and relaunch Claude Desktop to activate'
+            : '';
+
         switch (editor.action) {
           case 'written':
-            lines.push(`  ${editor.label}${pad}${displayPath}  registered`);
+            lines.push(`  ${editor.label}${pad}${displayPath}  registered${restartHint}`);
+            // Auto-disambiguation fired: surface the conflicting key + its --cwd
+            // so the user understands why they got a `-2` suffix.
+            if (editor.disambiguatedFrom !== undefined) {
+              const conflictCwd = findCwdForKey(editor, editor.disambiguatedFrom);
+              const hint = conflictCwd
+                ? `(${editor.disambiguatedFrom} is already bound to --cwd ${conflictCwd})`
+                : `(${editor.disambiguatedFrom} is already bound to a different project)`;
+              lines.push(`  ${' '.repeat(editor.label.length)}${pad}${hint}`);
+            }
             break;
           case 'overwritten':
-            lines.push(`  ${editor.label}${pad}${displayPath}  overwritten (--force)`);
+            if (editor.migratedFromKey !== undefined) {
+              // Windsurf legacy migration — replace the stock "(--force)" label
+              // with the longer form that names both keys.
+              lines.push(
+                `  ${editor.label}${pad}${displayPath}  overwritten — migrated legacy ${editor.migratedFromKey} → ${editor.serverKey ?? ''}${restartHint}`,
+              );
+            } else {
+              lines.push(
+                `  ${editor.label}${pad}${displayPath}  overwritten (--force)${restartHint}`,
+              );
+            }
             break;
-          case 'skipped-existing':
-            lines.push(`  ${editor.label}${pad}${displayPath}  already configured`);
+          case 'skipped-existing': {
+            // Global-scope targets match by `--cwd`, so the matched key may be
+            // a user-chosen suffix (e.g. `open-knowledge-bim-tools`). Surface
+            // it in parens when it's not the default `open-knowledge` key.
+            const matchedKey = editor.serverKey;
+            const keyAnnotation =
+              matchedKey !== undefined && matchedKey !== MCP_SERVER_NAME ? ` (${matchedKey})` : '';
+            lines.push(`  ${editor.label}${pad}${displayPath}  already configured${keyAnnotation}`);
             break;
+          }
           case 'failed':
             lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
             break;

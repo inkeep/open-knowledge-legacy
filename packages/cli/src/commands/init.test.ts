@@ -1188,6 +1188,103 @@ describe('runInit', () => {
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // formatInitResult — hint variants for global-scope editors (US-006)
+  // -------------------------------------------------------------------------
+  describe('formatInitResult hints', () => {
+    const skipDarwinPath = process.platform !== 'darwin';
+
+    it.skipIf(skipDarwinPath)(
+      'Claude Desktop fresh write emits "quit and relaunch" restart hint',
+      () => {
+        const fakeHome = join(testDir, 'fakehome');
+        mkdirSync(fakeHome, { recursive: true });
+        const result = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+        const output = formatInitResult(result, testDir);
+        expect(output).toContain('quit and relaunch Claude Desktop to activate');
+      },
+    );
+
+    it('Windsurf written does NOT emit restart hint (hot-reloads)', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+      const result = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+      const output = formatInitResult(result, testDir);
+      expect(output).not.toContain('quit and relaunch');
+    });
+
+    it('Windsurf legacy migration emits "overwritten — migrated legacy … → …"', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      const configPath = join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json');
+      mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            'open-knowledge': { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+          },
+        }),
+      );
+      const result = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+      const output = formatInitResult(result, testDir);
+      expect(output).toMatch(/overwritten — migrated legacy open-knowledge → open-knowledge-/);
+    });
+
+    it('disambiguation emits "(<old> is already bound to --cwd <cwd>)" hint', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const workNotes = join(testDir, 'work', 'notes');
+      const personalNotes = join(testDir, 'personal', 'notes');
+      mkdirSync(workNotes, { recursive: true });
+      mkdirSync(personalNotes, { recursive: true });
+
+      // First init writes `open-knowledge-notes` bound to workNotes.
+      runInit({ cwd: workNotes, editors: ['windsurf'], home: fakeHome });
+      // Second init from personalNotes collides → `-2` + hint.
+      const result = runInit({ cwd: personalNotes, editors: ['windsurf'], home: fakeHome });
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain(`(open-knowledge-notes is already bound to --cwd ${workNotes})`);
+    });
+
+    it('skipped-existing with non-default key emits "(<matched-key>)" annotation', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      const configPath = join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json');
+      mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            'open-knowledge-bim-tools': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp', '--cwd', testDir],
+            },
+          },
+        }),
+      );
+      const result = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('already configured (open-knowledge-bim-tools)');
+    });
+
+    it('project-scoped skipped-existing (default key) has no key annotation', () => {
+      // Pre-seed with the default `open-knowledge` key for a project-scoped editor.
+      writeFileSync(
+        join(testDir, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: { 'open-knowledge': { command: 'npx', args: ['old'] } },
+        }),
+      );
+      const result = runInit({ cwd: testDir, editors: ['claude'] });
+      const output = formatInitResult(result, testDir);
+      // No `(open-knowledge)` suffix — matching the default key is the common
+      // case and doesn't need annotation.
+      expect(output).toContain('already configured');
+      expect(output).not.toContain('already configured (open-knowledge)');
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
