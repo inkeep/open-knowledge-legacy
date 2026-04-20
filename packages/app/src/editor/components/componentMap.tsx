@@ -16,10 +16,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { File, Files, Folder } from 'fumadocs-ui/components/files';
 import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
-import { InlineTOC } from 'fumadocs-ui/components/inline-toc';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { TypeTable } from 'fumadocs-ui/components/type-table';
 import { EditorAccordion, EditorAccordions, EditorTab, EditorTabs } from './compound-wrappers';
+import { InlineTOCView } from './InlineTOCView';
 
 function MermaidPlaceholder(props: { chart?: string; children?: React.ReactNode }) {
   return (
@@ -66,7 +66,7 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   ImageZoom,
   Banner,
   TypeTable,
-  InlineTOC,
+  InlineTOC: InlineTOCView,
   Mermaid: MermaidPlaceholder,
   Audio: AudioPlaceholder,
   '*': UnregisteredBadgeRender,

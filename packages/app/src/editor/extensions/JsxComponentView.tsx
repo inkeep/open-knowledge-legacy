@@ -20,6 +20,7 @@ import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
+import { EditorContextProvider } from '../components/EditorContext.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
@@ -522,16 +523,18 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           filterTransaction plugin (TypedChildrenGuard) rejects unwanted
           insertions at the PM transaction level. */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
-        <Comp {...primitiveProps}>
-          <NodeViewContent
-            className={`component-children ${
-              !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
-            }`}
-            {...(!descriptor.hasChildren || descriptor.isSelfClosing
-              ? { contentEditable: false }
-              : {})}
-          />
-        </Comp>
+        <EditorContextProvider value={editor}>
+          <Comp {...primitiveProps}>
+            <NodeViewContent
+              className={`component-children ${
+                !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
+              }`}
+              {...(!descriptor.hasChildren || descriptor.isSelfClosing
+                ? { contentEditable: false }
+                : {})}
+            />
+          </Comp>
+        </EditorContextProvider>
       </ComponentErrorBoundary>
 
       {/* "Add child" pill — absolute overlay at bottom edge (containers only) */}
