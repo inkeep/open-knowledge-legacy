@@ -20,7 +20,9 @@ import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import {
   ACTIVITY_MOUNT_LIMIT,
   computeActivityMountList,
+  computeEditorMountGate,
   EditorActivityPool,
+  LARGE_DOC_CHAR_THRESHOLD,
 } from './EditorActivityPool';
 
 interface FakeEntry {
@@ -181,6 +183,181 @@ describe('computeActivityMountList — active-doc force-inclusion (invariant #2)
     const d = entry('d', 400);
     const result = computeActivityMountList([a, b, c, d], null, 3);
     expect(result.map((e) => e.docName)).toEqual(['d', 'c', 'b']);
+  });
+});
+
+describe('LARGE_DOC_CHAR_THRESHOLD', () => {
+  test('is 500_000 — matches SPEC D12 DIRECTED + evidence/s1-diagnosis.md', () => {
+    // The threshold is a tuning knob, not a contract. Lowering below the
+    // size of medium docs (CLAUDE.md ≈ 150 KB) would unnecessarily delay
+    // first-toggle UX for docs where pre-mount-both is already fast. Raising
+    // above the size of typical "big" docs (PROJECT.md ≥ 3 MB) would
+    // regress the S1 fix. 500 KB is the sweet spot.
+    expect(LARGE_DOC_CHAR_THRESHOLD).toBe(500_000);
+  });
+
+  test('is safely above CLAUDE.md-class docs (≈150 KB) so they pre-mount both', () => {
+    expect(LARGE_DOC_CHAR_THRESHOLD).toBeGreaterThan(200_000);
+  });
+
+  test('is safely below PROJECT.md-class docs (≥3 MB) so they trigger defer-mount', () => {
+    expect(LARGE_DOC_CHAR_THRESHOLD).toBeLessThan(1_000_000);
+  });
+});
+
+describe('computeEditorMountGate — small doc (below threshold)', () => {
+  test('pre-mounts both regardless of mode or visit history (precedent #18(b) default)', () => {
+    // No matter the visited history, a 5.5 KB README should always have both.
+    const small = 5583;
+    const cases = [
+      { isSourceMode: false, visitedSource: false, visitedVisual: true },
+      { isSourceMode: true, visitedSource: true, visitedVisual: false },
+      { isSourceMode: false, visitedSource: false, visitedVisual: false },
+    ];
+    for (const c of cases) {
+      const gate = computeEditorMountGate({ ytextLength: small, ...c });
+      expect(gate.renderSource).toBe(true);
+      expect(gate.renderVisual).toBe(true);
+      expect(gate.isLarge).toBe(false);
+    }
+  });
+
+  test('exactly at threshold → still below (< not <=)', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: LARGE_DOC_CHAR_THRESHOLD,
+      isSourceMode: false,
+      visitedSource: false,
+      visitedVisual: true,
+    });
+    expect(gate.isLarge).toBe(false);
+    expect(gate.renderSource).toBe(true);
+    expect(gate.renderVisual).toBe(true);
+  });
+
+  test('one above threshold → flips to large', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: LARGE_DOC_CHAR_THRESHOLD + 1,
+      isSourceMode: false,
+      visitedSource: false,
+      visitedVisual: true,
+    });
+    expect(gate.isLarge).toBe(true);
+  });
+});
+
+describe('computeEditorMountGate — large doc (above threshold)', () => {
+  const large = 3_250_000; // ≈ PROJECT.md
+
+  test('cold load in Visual mode → only TiptapEditor mounted', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: large,
+      isSourceMode: false,
+      visitedSource: false, // never visited source
+      visitedVisual: true, // initialized to true (active)
+    });
+    expect(gate.renderSource).toBe(false); // defer SourceEditor
+    expect(gate.renderVisual).toBe(true);
+    expect(gate.isLarge).toBe(true);
+  });
+
+  test('cold load in Source mode → only SourceEditor mounted', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: large,
+      isSourceMode: true,
+      visitedSource: true, // active
+      visitedVisual: false, // never visited visual
+    });
+    expect(gate.renderSource).toBe(true);
+    expect(gate.renderVisual).toBe(false); // defer TiptapEditor
+    expect(gate.isLarge).toBe(true);
+  });
+
+  test('after first toggle to Source → both mount', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: large,
+      isSourceMode: true,
+      visitedSource: true,
+      visitedVisual: true, // visited before
+    });
+    expect(gate.renderSource).toBe(true);
+    expect(gate.renderVisual).toBe(true);
+  });
+
+  test('after first toggle to Visual → both mount', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: large,
+      isSourceMode: false,
+      visitedSource: true, // visited before
+      visitedVisual: true,
+    });
+    expect(gate.renderSource).toBe(true);
+    expect(gate.renderVisual).toBe(true);
+  });
+
+  test('active mode is always rendered — defer never applies to active', () => {
+    // Pathological input: marked not-visited for active mode. Active must still
+    // be rendered because the OR with isSourceMode guarantees it.
+    const gate = computeEditorMountGate({
+      ytextLength: large,
+      isSourceMode: true,
+      visitedSource: false, // impossible in practice but we assert robustness
+      visitedVisual: false,
+    });
+    expect(gate.renderSource).toBe(true); // active wins
+    expect(gate.renderVisual).toBe(false);
+  });
+
+  test('threshold override respected (for test isolation)', () => {
+    // Same 5583-char doc is "small" with default threshold but "large" if
+    // caller overrides to 1000. Useful for tests that don't want to stand
+    // up a 500_001-char string to exercise the defer branch.
+    const small = 5583;
+    const withDefault = computeEditorMountGate({
+      ytextLength: small,
+      isSourceMode: false,
+      visitedSource: false,
+      visitedVisual: true,
+    });
+    expect(withDefault.isLarge).toBe(false);
+    const withOverride = computeEditorMountGate({
+      ytextLength: small,
+      isSourceMode: false,
+      visitedSource: false,
+      visitedVisual: true,
+      threshold: 1000,
+    });
+    expect(withOverride.isLarge).toBe(true);
+    expect(withOverride.renderSource).toBe(false); // defer source (not active, not visited)
+    expect(withOverride.renderVisual).toBe(true); // active
+  });
+});
+
+describe('computeEditorMountGate — invariant: at least one editor rendered', () => {
+  test('small doc — always both', () => {
+    const gate = computeEditorMountGate({
+      ytextLength: 100,
+      isSourceMode: false,
+      visitedSource: false,
+      visitedVisual: false,
+    });
+    expect(gate.renderSource || gate.renderVisual).toBe(true);
+  });
+
+  test('large doc — at least active is rendered', () => {
+    // All four quadrants of (isSourceMode, visited-history) for large doc.
+    for (const isSourceMode of [false, true]) {
+      for (const visitedSource of [false, true]) {
+        for (const visitedVisual of [false, true]) {
+          const gate = computeEditorMountGate({
+            ytextLength: 3_000_000,
+            isSourceMode,
+            visitedSource,
+            visitedVisual,
+          });
+          expect(gate.renderSource || gate.renderVisual).toBe(true);
+        }
+      }
+    }
   });
 });
 
