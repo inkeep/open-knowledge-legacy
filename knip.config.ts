@@ -9,7 +9,7 @@ export default {
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
-    '{tech-probes,reports,specs}/**': ['files']
+    '{tech-probes,reports,specs}/**': ['files'],
   },
   workspaces: {
     'packages/app': {

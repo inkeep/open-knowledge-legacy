@@ -64,6 +64,7 @@
     "test:health": "bun run tests/health/parse-health-gate.ts tests/health/baseline.json"
   },
   "devDependencies": {
+    "@types/hast": "^3.0.4",
     "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
