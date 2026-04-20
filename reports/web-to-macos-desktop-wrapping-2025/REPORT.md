@@ -2,7 +2,7 @@
 title: "Wrapping a Web App as a Native macOS Desktop App in 2025/2026"
 description: "Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Arc, Warp, etc.), quantitative tradeoffs, local server integration patterns, and a concrete recommendation for a Vite+React+Hocuspocus stack."
 createdAt: 2026-04-11
-updatedAt: 2026-04-11
+updatedAt: 2026-04-20
 subjects:
   - Electron
   - Tauri
@@ -30,6 +30,20 @@ topics:
 # Wrapping a Web App as a Native macOS Desktop App in 2025/2026
 
 **Purpose:** Decide what stack to use for wrapping Open Knowledge (Vite + React + TipTap + Hocuspocus) as a native macOS desktop app — informed by what modern apps actually use and the 2025/2026 framework landscape.
+
+---
+
+## Refresh — 2026-04-20
+
+Spot-check of the 2026-04-11 findings. The recommendation below (Electron + electron-vite + electron-forge) is unchanged. Two signals moved, both in Electron's favor for Open Knowledge's stack. See also the companion [[reports/electron-desktop-app-operations-2025/REPORT|Electron Desktop App Operations]] report.
+
+- **Resolved — macOS Tahoe GPU bug:** The Electron × WindowServer performance regression flagged in §5 as an open risk is fully patched. Fix landed in Electron 36.9.2 / 37.6.0 / 38.2.0 and all later versions ([electron#48376](https://github.com/electron/electron/pull/48376), [AppleInsider coverage](https://appleinsider.com/articles/25/10/10/update-your-slack-discord-clients-the-electron-tahoe-gpu-slowdown-bug-is-fixed)). Slack, Discord, Figma have shipped updated builds. The "Electron is exposed to Apple's release-cycle risk" caveat stands in spirit but this specific instance is closed.
+- **Unchanged — [tauri#11992](https://github.com/tauri-apps/tauri/issues/11992):** macOS `externalBin` code-signing / notarization is still open and marked needs-triage, 16 months after filing. Strengthens the case against a Tauri + Node-sidecar path for Open Knowledge (see OK-Specific Deep Dive below).
+- **Current versions (2026-04-20):** Electron stable [41.2.1](https://releases.electronjs.org/) (released 2026-04-16), 42 in beta. Tauri stable [2.10.3](https://github.com/tauri-apps/tauri/releases) (March 2026). Normal cadence, no surprises.
+- **New CVE:** [CVE-2026-34781](https://www.sentinelone.com/vulnerability-database/cve-2026-34781/) — Electron `clipboard.readImage()` DoS on malformed image data, local-only, no RCE. Fixed in 39.8.5 / 40.8.5 / 41.1.0 / 42.0.0-alpha.5. Routine dep hygiene; does not change framework choice.
+- **SwiftUI WebView:** Adoption signal continues to grow (third-party polyfills being deprecated), but it remains macOS/iOS-only and does not address the cross-platform Windows/Linux requirement.
+
+The "Not Covered" items under §Limitations (Windows/Linux packaging specifics, Tauri 2 iOS/Android deep dive, WebView feature-parity matrix) remain open and warrant a Path C extension if they become load-bearing for the decision.
 
 ---
 
