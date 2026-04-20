@@ -79,3 +79,44 @@ Research surfaced [PR #207 "fix(cli): enforce strict MCP routing"](https://githu
 - If Cowork launcher cwd resolves to mounted workspace → Cowork works with PR #207 alone (no `--project` needed for Cowork SDK-bridge path)
 - If not → document Cowork as blocked on Anthropic architecture, not our spec
 - Then move to audit phase (tasks #16-#17)
+
+---
+
+## 2026-04-20 — Session 3: Cowork audit applied + PR #207 re-verification
+
+### Opus Cowork audit delivered
+- `evidence/cowork-launcher-cwd-audit.md` (281 lines, 4 primary sources)
+- **Finding:** Cowork launcher spawns in-VM `claude` with `cwd = /sessions/<sessionName>/` — NOT the mounted workspace. Workspace passed via `--add-dir` (permission-only, not cwd). In-VM claude advertises `file:///sessions/<sessionName>/` as its sole MCP root — ephemeral VM scaffolding.
+- Cross-verified: local `~/.claude/oss-repos/claude-code/src/bootstrap/state.ts:260-278` + `src/services/mcp/client.ts:1009-1018` + issue #50168 `[Spawn:create]` log evidence + aaddrick.com RE
+- Anthropic stance audited: #24433 CLOSED not-planned; #26259 OPEN zero staff engagement 6 weeks; #26287 CLOSED (feature request for `--cwd`); #47371 OPEN zero comments
+- A10 FALSIFIED; Q-Cowork-cwd RESOLVED → D-11
+
+### Decisions LOCKED this session
+- **D-11 (new):** Cowork is NOT a supported consumer of `open-knowledge mcp` under current Anthropic architecture. Claude Desktop standalone IS supported. Re-evaluate only if Anthropic ships #26287 or changes spawn cwd.
+- **D-Intake-2 revised:** Split Claude Desktop standalone (supported) vs Cowork mode (NOT SUPPORTED — architectural limit).
+- **NG12 (new):** Never work around Cowork in-VM cwd binding. Requires Anthropic upstream.
+
+### PR #207 re-verification (HEAD `c7bb5132`, verified 2026-04-20 via live diff)
+- **D-9 SHIPPED in #207:** identical/conflicting/missing merge trichotomy in `init.ts`
+- **D-6 PARTIALLY SHIPPED in #207:** `claude-desktop` editors.ts target with plain entry — no `--global` gate, no `--project` baking
+- **A11 CONFIRMED with nuance:** `bypassProjectSelection: true` exists as `McpServerOptions` field; currently reachable ONLY via `--port`. Our `--project <abs-path>` is a ~10 LoC Commander delta.
+- **Latent regression identified:** #207 at `c7bb5132` ships Codex + Claude Desktop Chat broken out of the box (both hit `ROOTS_UNAVAILABLE_ERROR`). Our D-7 is the fix.
+
+### Spec updates applied (SPEC.md)
+- Header: baseline desc updated; PR #207 link pinned to `c7bb5132`
+- §1 Problem statement: Cowork split from Claude Desktop
+- §2 Goals: G4 split (Desktop standalone supported; Cowork NOT SUPPORTED)
+- §3 Non-goals: added NG12 (never work around Cowork cwd)
+- §6 FR-8 caveat block: 3-way split (standalone works / Cowork NOT SUPPORTED / Linux unsupported)
+- §8 Current state: rewrote MCP runtime paragraph for main vs post-#207 with `c7bb5132` verified details
+- §10 D-6 / D-7 / D-8 / D-9 / D-11: updated to reflect #207's ship state + locate the latent regression
+- §11 Q-Cowork-cwd RESOLVED → D-11; Q-PR207 Directed (after merge); added Q-PR207-cowork-err, Q-PR207-project-arg
+- §12 A10 FALSIFIED; A11 CONFIRMED with nuance
+
+### Next steps
+- User to open draft PR + tag mike-inkeep with the 3 evidence-grounded items:
+  1. Codex + Claude Desktop Chat regression — `--project <abs-path>` arg is the 10 LoC fix (+ install-time baking from our spec)
+  2. `roots/list_changed` handler is dormant for Claude Code (not a bug — Claude Code's root is static)
+  3. Consider Cowork-specific error pattern match on `^/sessions/[A-Za-z0-9-]+/?$` to save triage
+- Then move to audit phase (task #16): parallel /audit + design-challenge subprocesses
+- Then /assess-findings (task #17), verify + finalize (task #18)
