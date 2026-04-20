@@ -67,7 +67,9 @@
       "!meta",
       "!docs/bun.lock",
       "!worktrees",
-      "!**/rehype-plugins/fixtures"
+      "!**/rehype-plugins/fixtures",
+      "!**/tests/perf/results",
+      "!**/tests/perf/playwright-results"
     ]
   }
 }
