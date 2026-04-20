@@ -84,23 +84,17 @@
         "@tanstack/react-query": "^5.99.0",
         "@tiptap/core": "^3.22.3",
         "@tiptap/extension-collaboration": "^3.22.3",
-        "@tiptap/extension-collaboration-cursor": "3.0.0",
         "@tiptap/extension-drag-handle": "3.22.3",
         "@tiptap/extension-file-handler": "^3.22.3",
-        "@tiptap/extension-image": "^3.22.3",
-        "@tiptap/extension-link": "^3.22.3",
         "@tiptap/extension-placeholder": "^3.22.3",
-        "@tiptap/extension-table": "^3.22.3",
         "@tiptap/pm": "^3.22.3",
         "@tiptap/react": "^3.22.3",
-        "@tiptap/starter-kit": "^3.22.3",
         "@tiptap/suggestion": "^3.22.3",
         "@tiptap/y-tiptap": "^3.0.3",
         "@uiw/codemirror-theme-basic": "^4.25.9",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "codemirror": "^6.0.2",
-        "diff-match-patch": "^1.0.5",
         "fuzzysort": "^3.1.0",
         "lucide-react": "^1.7.0",
         "next-themes": "^0.4.6",
@@ -127,7 +121,6 @@
         "@playwright/test": "^1.59.1",
         "@rolldown/plugin-babel": "^0.2.2",
         "@size-limit/preset-app": "^12.1.0",
-        "@types/diff-match-patch": "^1.0.36",
         "@types/react": "^19.2.14",
         "@types/react-dom": "^19.2.3",
         "@types/ws": "^8.18.1",
@@ -269,7 +262,6 @@
   "patchedDependencies": {
     "@tiptap/y-tiptap@3.0.3": "patches/@tiptap%2Fy-tiptap@3.0.3.patch",
     "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch",
-    "y-prosemirror@1.3.7": "patches/y-prosemirror@1.3.7.patch",
   },
   "packages": {
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],
@@ -1131,8 +1123,6 @@
     "@tiptap/extension-code-block": ["@tiptap/extension-code-block@3.22.3", "", { "peerDependencies": { "@tiptap/core": "^3.22.3", "@tiptap/pm": "^3.22.3" } }, "sha512-RiQtEjDAPrHpdo6sw6b7fOw/PijqgFIsozKKkGcSeBgWHQuFg7q9OxJTj+l0e60rVwSu/5gmKEEobzM9bX+t2Q=="],
 
     "@tiptap/extension-collaboration": ["@tiptap/extension-collaboration@3.22.3", "", { "peerDependencies": { "@tiptap/core": "^3.22.3", "@tiptap/pm": "^3.22.3", "@tiptap/y-tiptap": "^3.0.2", "yjs": "^13" } }, "sha512-rGW4dwvmHPSplWmP3KQPYX2UaekWcMB5YjfmrYL5b4x/gq78ilpFz25WZIZQ6FYG22j5SG/ape/SLLgDxsNDIw=="],
-
-    "@tiptap/extension-collaboration-cursor": ["@tiptap/extension-collaboration-cursor@3.0.0", "", { "peerDependencies": { "@tiptap/core": "^3.0.0", "y-prosemirror": "^1.2.6" } }, "sha512-GrH80m/BShJJFJVjLeom8JhM4AoB1SyWL6bFgaiN1mHrya7kkdKWz/72LNG7VNEZz1qXPSlM/LdosIxlRFJAQQ=="],
 
     "@tiptap/extension-document": ["@tiptap/extension-document@3.22.3", "", { "peerDependencies": { "@tiptap/core": "^3.22.3" } }, "sha512-MCSr1PFPtTd++lA3H1RNgqAczAE59XXJ5wUFIQf2F+/0DPY5q2SU4g5QsNJVxPPft5mrNT4C6ty8xBPrALFEdA=="],
 
@@ -2975,8 +2965,6 @@
     "wsl-utils": ["wsl-utils@0.3.1", "", { "dependencies": { "is-wsl": "^3.1.0", "powershell-utils": "^0.1.0" } }, "sha512-g/eziiSUNBSsdDJtCLB8bdYEUMj4jR7AGeUo96p/3dTafgjHhpF4RiCFPiRILwjQoDXx5MqkBr4fwWtR3Ky4Wg=="],
 
     "y-codemirror.next": ["y-codemirror.next@0.3.5", "", { "dependencies": { "lib0": "^0.2.42" }, "peerDependencies": { "@codemirror/state": "^6.0.0", "@codemirror/view": "^6.0.0", "yjs": "^13.5.6" } }, "sha512-VluNu3e5HfEXybnypnsGwKAj+fKLd4iAnR7JuX1Sfyydmn1jCBS5wwEL/uS04Ch2ib0DnMAOF6ZRR/8kK3wyGw=="],
-
-    "y-prosemirror": ["y-prosemirror@1.3.7", "", { "dependencies": { "lib0": "^0.2.109" }, "peerDependencies": { "prosemirror-model": "^1.7.1", "prosemirror-state": "^1.2.3", "prosemirror-view": "^1.9.10", "y-protocols": "^1.0.1", "yjs": "^13.5.38" } }, "sha512-NpM99WSdD4Fx4if5xOMDpPtU3oAmTSjlzh5U4353ABbRHl1HtAFUx6HlebLZfyFxXN9jzKMDkVbcRjqOZVkYQg=="],
 
     "y-protocols": ["y-protocols@1.0.7", "", { "dependencies": { "lib0": "^0.2.85" }, "peerDependencies": { "yjs": "^13.0.0" } }, "sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw=="],
 

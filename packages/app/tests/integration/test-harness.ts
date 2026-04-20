@@ -370,7 +370,7 @@ export async function awaitDocQuiescence(
       }
       // Yield to the microtask queue + one macro tick — lets pending
       // transacts drain and observer follow-ups fire.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await wait(0);
     }
     throw new Error(`awaitDocQuiescence: doc did not settle within ${timeoutMs} ms`);
   } finally {

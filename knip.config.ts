@@ -6,10 +6,10 @@ export default {
     'lint-staged', // not sure if it's false positive
     'bun-types',
   ],
-  ignore: ['tech-probes/**', 'reports/**', 'specs/**'],
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
+    '{tech-probes,reports,specs}/**': ['files']
   },
   workspaces: {
     'packages/app': {

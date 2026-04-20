@@ -11,7 +11,7 @@
     "docs"
   ],
   "scripts": {
-    "knip": "knip --files --dependencies --fix-type exports --fix-type types --include exports,types",
+    "knip": "knip --files --fix-type exports --fix-type types --include exports,types",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
