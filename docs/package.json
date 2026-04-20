@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@floating-ui/dom": "^1.7.6",
+    "@tiptap/core": "^3.22.3",
     "@tiptap/extension-drag-handle": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
     "@tiptap/extension-table": "^3.22.3",
