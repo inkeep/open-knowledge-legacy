@@ -23,7 +23,7 @@
  *
  * The poll loop is extracted as `runCollabUrlPoll` so tests can drive it
  * with fake clocks + mocked fetch — the hook is a thin React wrapper. This
- * follows CLAUDE.md precedent #13b: implicit time-coupling is a test smell,
+ * follows PRECEDENTS.md precedent #13b: implicit time-coupling is a test smell,
  * so the primitive accepts `now / setTimeout / clearTimeout` as deps.
  */
 import { useEffect, useRef, useState } from 'react';
