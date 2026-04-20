@@ -6,7 +6,7 @@ export const OK_MARKER_BEGIN = '<!-- open-knowledge:begin -->';
 export const OK_MARKER_END = '<!-- open-knowledge:end -->';
 const OK_MARKER_RE = /<!-- open-knowledge:begin -->[\s\S]*?<!-- open-knowledge:end -->/;
 
-export const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
+const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
 
 This directory holds Open Knowledge's configuration for this project. It's **not** where content lives — content lives wherever \`content.dir\` + \`content.include\` in \`config.yml\` point. The default is the repo root with \`**/*.md\`, so any markdown file in the project is fair game. Inspect \`config.yml\` for the actual setting.
 
@@ -96,7 +96,7 @@ If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`o
 These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
 `;
 
-export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below
 # is commented out and shows its current default value. Uncomment any key
@@ -332,7 +332,7 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
-export type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
+type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
 
 /**
  * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.

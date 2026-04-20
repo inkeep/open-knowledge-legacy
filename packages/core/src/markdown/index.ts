@@ -71,7 +71,7 @@ interface MdastToPmState {
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 
-export interface MarkdownManagerOptions {
+interface MarkdownManagerOptions {
   extensions: Extensions;
 }
 

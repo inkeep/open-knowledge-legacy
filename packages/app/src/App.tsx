@@ -15,8 +15,6 @@ import {
 } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
 
-export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
-
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that resolves the active navigation target
  *  and calls openTargetTransition().

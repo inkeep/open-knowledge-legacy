@@ -35,7 +35,7 @@ const SKIP_DIRS: ReadonlySet<string> = new Set([
   'build',
 ]);
 
-export type MtimeSnapshot = Map<string, number>;
+type MtimeSnapshot = Map<string, number>;
 
 /**
  * Snapshot `(relPath, mtimeMs)` for files in `projectDir`. Bounded; returns
@@ -84,7 +84,7 @@ export async function snapshotMtimes(
   return { snapshot, truncated };
 }
 
-export interface MtimeDiff {
+interface MtimeDiff {
   /** Paths whose mtime changed between snapshots (or appeared/disappeared). */
   changed: string[];
 }

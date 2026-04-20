@@ -21,7 +21,7 @@ interface HubsPayload {
   hubs?: Array<Record<string, unknown> & { docName?: string }>;
 }
 
-export interface GetHubsDeps extends PreviewUrlDeps {
+interface GetHubsDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

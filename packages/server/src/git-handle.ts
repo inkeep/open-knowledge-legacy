@@ -15,7 +15,7 @@ export { withParentLock } from './git-mutex.ts';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface GitHandleOptions {
+interface GitHandleOptions {
   /** git -c flags for credential injection (from resolveAuth) */
   credentialArgs?: string[];
   /** Override GIT_INDEX_FILE env var for index isolation */

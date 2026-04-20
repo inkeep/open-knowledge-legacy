@@ -289,7 +289,7 @@ function PopoverBody({
 
 // ── public component ──────────────────────────────────────────────────────────
 
-export interface SyncStatusBadgeProps {
+interface SyncStatusBadgeProps {
   /** Called when "Sign in" is clicked in the auth-error popover or enable-sync prompt. */
   onSignIn?: () => void;
   /** Called when "Review conflicts" is clicked in the conflict popover. */

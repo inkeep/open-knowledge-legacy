@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface GitIdentity {
+interface GitIdentity {
   name: string;
   email: string;
 }

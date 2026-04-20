@@ -29,7 +29,7 @@ import { dim } from '../ui/colors.ts';
 import type { AgentIdentity } from './agent-identity.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
-export interface McpServerOptions {
+interface McpServerOptions {
   projectDir: string;
   serverUrl?: string;
   config: Config;

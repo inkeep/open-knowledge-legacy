@@ -24,7 +24,7 @@
  * again during isPending re-enters Suspense with a fresh promise" behavior is
  * Playwright-asserted in US-012.
  */
-export interface CreateNavigationRetryHandlerArgs {
+interface CreateNavigationRetryHandlerArgs {
   /**
    * Called first — destroys + recreates the pool entry so the new
    * `DocumentBoundary` render attaches to a fresh provider. `recycleDocument`

@@ -293,9 +293,9 @@ export function safeSubdir(baseDir: string, subdir: string): string {
   return resolved;
 }
 
-export type ContentEntryKind = 'file' | 'folder';
+type ContentEntryKind = 'file' | 'folder';
 
-export interface RenamedDocMapping {
+interface RenamedDocMapping {
   fromDocName: string;
   toDocName: string;
 }
@@ -310,7 +310,7 @@ interface ManagedRenameRewrittenDoc {
   rewrites: number;
 }
 
-export function isValidRelativeContentPath(path: string): boolean {
+function isValidRelativeContentPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
     return false;
   }
@@ -318,7 +318,7 @@ export function isValidRelativeContentPath(path: string): boolean {
   return path.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
 }
 
-export function listAffectedDocNames(
+function listAffectedDocNames(
   index: ReadonlyMap<string, FileIndexEntry>,
   kind: ContentEntryKind,
   path: string,
@@ -330,7 +330,7 @@ export function listAffectedDocNames(
   return docNames;
 }
 
-export function remapDocNameForRename(
+function remapDocNameForRename(
   docName: string,
   kind: ContentEntryKind,
   fromPath: string,
@@ -500,12 +500,10 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   });
   res.end(JSON.stringify(data));
 }
-
 /**
- * Extract all ATX headings (# … ######) from a markdown document.
+ * Extract all ATX headings (# … ######) from a Markdown document.
  * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
  */
-export type { HeadingEntry } from '@inkeep/open-knowledge-core';
 export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {

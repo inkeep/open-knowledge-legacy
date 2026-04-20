@@ -34,7 +34,7 @@ import { resolve } from 'node:path';
 // ───────────────────────── Types ──────────────────────────────────────────
 
 /** Single-op latency stats as emitted by the bench harness. */
-export interface OpStats {
+interface OpStats {
   mean: number;
   min: number;
   max: number;
@@ -44,7 +44,7 @@ export interface OpStats {
 }
 
 /** Per-block-count entry in a fresh benchmark run. */
-export interface FreshBlockResult {
+interface FreshBlockResult {
   blockCount: number;
   docSizeChars: number;
   parseMs: OpStats;
@@ -52,7 +52,7 @@ export interface FreshBlockResult {
   roundTripMs: OpStats;
 }
 
-export interface FreshResults {
+interface FreshResults {
   schemaVersion: number;
   startedAt: string;
   finishedAt: string;
@@ -70,7 +70,7 @@ export interface FreshResults {
  * AND a p99 stdev measured across the calibration runs. Stdev is the
  * variance term in the threshold formula.
  */
-export interface BaselineBlockEntry {
+interface BaselineBlockEntry {
   blockCount: number;
   docSizeChars: number;
   parseMs: { p99: number; p99StdevMs: number };
@@ -78,7 +78,7 @@ export interface BaselineBlockEntry {
   roundTripMs: { p99: number; p99StdevMs: number };
 }
 
-export interface Baseline {
+interface Baseline {
   schemaVersion: 1;
   /** ISO timestamp at which the baseline was captured. */
   capturedAt: string;
@@ -94,9 +94,9 @@ export interface Baseline {
   results: BaselineBlockEntry[];
 }
 
-export type OpName = 'parseMs' | 'serializeMs' | 'roundTripMs';
+type OpName = 'parseMs' | 'serializeMs' | 'roundTripMs';
 
-export interface OpRegressionRow {
+interface OpRegressionRow {
   blockCount: number;
   op: OpName;
   baselineP99: number;
@@ -106,7 +106,7 @@ export interface OpRegressionRow {
   regression: boolean;
 }
 
-export interface RegressionReport {
+interface RegressionReport {
   pass: boolean;
   rows: OpRegressionRow[];
   missingFresh: number[]; // block counts present in baseline but missing in fresh

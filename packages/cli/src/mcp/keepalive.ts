@@ -41,7 +41,7 @@ export interface MinimalWebSocket {
   addEventListener: (type: 'open' | 'close' | 'error', listener: () => void) => void;
 }
 
-export interface KeepaliveOptions {
+interface KeepaliveOptions {
   /**
    * Called on each connect attempt. Returns a WebSocket base URL
    * (`ws://localhost:<port>`) or `undefined` if the server is not yet
@@ -72,7 +72,7 @@ export interface KeepaliveOptions {
   createWebSocket?: (url: string) => MinimalWebSocket;
 }
 
-export interface KeepaliveHandle {
+interface KeepaliveHandle {
   /** Stop reconnect attempts and close the underlying WS. Idempotent. */
   close: () => void;
   /** For tests — `true` while the WS is open and in `OPEN` state. */

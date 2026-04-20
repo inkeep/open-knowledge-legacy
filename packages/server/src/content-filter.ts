@@ -36,7 +36,7 @@ import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
  * VCS:
  *   .git — already in the ig instance; hardcoded here for the fast-path
  */
-export const BUILTIN_SKIP_DIRS = new Set([
+const BUILTIN_SKIP_DIRS = new Set([
   // Package managers / language runtimes
   'node_modules',
   '.venv',

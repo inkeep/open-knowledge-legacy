@@ -11,12 +11,9 @@
  * (`source-polish/index.ts`, `image-upload/index.ts`).
  */
 
-export type { PasteDispatcherDeps } from './handle-paste.ts';
 export { createHandlePaste } from './handle-paste.ts';
-export type { WysiwygSerializerDeps } from './serialize.ts';
 export {
   createClipboardHtmlSerializer,
   createClipboardTextSerializer,
 } from './serialize.ts';
-export type { SourceClipboardDeps } from './source-clipboard.ts';
 export { createSourceClipboardExtension } from './source-clipboard.ts';

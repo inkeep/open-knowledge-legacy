@@ -49,7 +49,7 @@ export interface InsertableYDoc {
   transact<T>(fn: () => T, origin?: unknown): T;
 }
 
-export interface ChunkedInsertOptions {
+interface ChunkedInsertOptions {
   /** Inclusive: payloads at-or-below this size skip chunking. Default 500KB. */
   thresholdBytes?: number;
   /** Target bytes per chunk. Default 50KB. */

@@ -104,7 +104,7 @@ export function markUserTyping(): void {
 // Observer shell
 // ─────────────────────────────────────────────────────────────
 
-export interface ObserverDeps {
+interface ObserverDeps {
   doc: Y.Doc;
   xmlFragment: Y.XmlFragment;
   ytext: Y.Text;

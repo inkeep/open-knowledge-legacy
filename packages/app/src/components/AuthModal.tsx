@@ -54,14 +54,14 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-export interface AuthSuccessResult {
+interface AuthSuccessResult {
   login: string;
   name?: string;
   email?: string;
   avatarUrl?: string;
 }
 
-export interface AuthModalProps {
+interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (result: AuthSuccessResult) => void;

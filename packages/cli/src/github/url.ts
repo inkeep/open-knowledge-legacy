@@ -1,7 +1,7 @@
 /**
  * Parsed Git URL result.
  */
-export interface ParsedGitUrl {
+interface ParsedGitUrl {
   protocol: 'https' | 'ssh' | 'git';
   hostname: string;
   owner: string;

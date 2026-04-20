@@ -27,7 +27,7 @@ interface DeadLinksPayload {
   >;
 }
 
-export interface GetDeadLinksDeps extends PreviewUrlDeps {
+interface GetDeadLinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

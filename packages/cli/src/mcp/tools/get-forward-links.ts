@@ -23,7 +23,7 @@ interface ForwardLinksPayload {
   forwardLinks?: Array<Record<string, unknown> & { kind?: string; docName?: string }>;
 }
 
-export interface GetForwardLinksDeps extends PreviewUrlDeps {
+interface GetForwardLinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

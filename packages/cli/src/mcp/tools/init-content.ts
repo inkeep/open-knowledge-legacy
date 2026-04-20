@@ -125,7 +125,7 @@ export const DESCRIPTION = [
   '- User asks to document or catalog the codebase',
 ].join('\n');
 
-export interface InitContentDeps extends PreviewUrlDeps {}
+interface InitContentDeps extends PreviewUrlDeps {}
 
 /**
  * Register the init-content tool. Emits structuredContent with a top-level

@@ -5,7 +5,7 @@ import { getOAuthClientId } from '../../github/app-config.ts';
 import type { Config } from '../../index.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
-export interface LoginOptions {
+interface LoginOptions {
   host: string;
   json: boolean;
 }
@@ -20,7 +20,7 @@ function emit(json: boolean, obj: Record<string, unknown>): void {
  * Core login logic — runs Device Flow and stores the resulting token.
  * Injectable for unit tests (pass mocked tokenStore + runDeviceFlowFn).
  */
-export async function runLogin(
+async function runLogin(
   opts: LoginOptions,
   tokenStore: TokenStore,
   config: Config,

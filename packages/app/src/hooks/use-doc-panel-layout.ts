@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 const DOC_PANEL_SHEET_BREAKPOINT = 960;
 const DOC_PANEL_COLLAPSE_BREAKPOINT = 1024;
 
-export type DocPanelLayout = 'panel' | 'sheet';
+type DocPanelLayout = 'panel' | 'sheet';
 
 export function useDocPanelLayout() {
   const [layout, setLayout] = useState<DocPanelLayout>(() =>
