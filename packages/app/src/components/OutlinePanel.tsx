@@ -127,6 +127,12 @@ function OutlinePanelInner({
     queryKey: ['page-headings', docName],
     queryFn: () => fetchHeadings(docName),
     enabled: !loading && pages.has(docName),
+    // The Y.Doc `update` subscription below is authoritative for freshness —
+    // background refetch on window-focus/reconnect would add wasted fetches
+    // for data already guaranteed-current. Per TkDodo (TanStack Query
+    // maintainer) guidance for subscription-source-authoritative queries:
+    // https://tkdodo.eu/blog/using-web-sockets-with-react-query
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
   // Precise-trigger invalidation (US-006, spec §6 D9 LOCKED). The active doc's

@@ -74,6 +74,16 @@ import { usePageList } from './PageListContext';
  * for the trade-off analysis. Moving it UP regresses the S1 fix for smaller
  * "large" docs; moving it DOWN unnecessarily delays first-toggle UX for
  * medium docs where pre-mount-both was already fast enough.
+ *
+ * FIRST-TOGGLE COST (US-008 code-trace, 2026-04-20): On a 3.25 MB PROJECT doc,
+ * the first mode toggle after cold load pays the deferred editor's cold mount
+ * — measured at `toSourceMs=223 ms`. Proportional scaling to the original
+ * 9.7 MB workhorse puts first toggle in the 500–800 ms range. Perceptible but
+ * well below the ~1 s hang threshold. Subsequent toggles remain CSS-only.
+ * Future engineers: do not assume defer-mount is free at the toggle boundary;
+ * it trades cold-load latency for one-time first-toggle latency on the
+ * deferred mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts
+ * of the same Activity-mount hygiene pattern.
  */
 export const LARGE_DOC_CHAR_THRESHOLD = 500_000;
 
@@ -132,6 +142,15 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  * Changing either this value or `MAX_POOL` is an ASK_FIRST boundary — they're
  * coupled by design. If one moves, audit the other for sympathetic impact.
  *
+ * **LIMIT=3 is a stable decision, not a temporary holdpoint.** Both the
+ * TipTap-editor-cost argument (LIMIT=1 doesn't avoid `createEditor` cost
+ * because `@tiptap/react`'s `useEditor` destroys on effect-cleanup anyway)
+ * and the scroll-state argument (F1 scroll preservation requires refs to
+ * survive, which requires Activity hidden not full unmount) stand
+ * independently of any V2 Editor cache. A module-level editor cache would
+ * change the first argument's mechanics but not the second — LIMIT stays
+ * at 3 to keep ScrollPreservingContainer's `useRef` alive across navigation.
+ *
  * US-007 FINDING (2026-04-19): Reducing this value to 1 was attempted as an S2
  * warm-switch fix (see evidence/s2-diagnosis.md), then REVERTED — LIMIT=1 broke
  * `docs-open.e2e.ts:F1` (scroll position survives A→B→A) because
@@ -148,6 +167,9 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  * regardless of doc size or `ACTIVITY_MOUNT_LIMIT`); unlocking <100 ms
  * warm-switch requires a module-level Editor cache outside React's lifecycle
  * (V2 refactor, tracked in evidence/s2-diagnosis.md "V2 follow-up").
+ *
+ * See `LARGE_DOC_CHAR_THRESHOLD` above — both constants are parts of the same
+ * Activity-mount hygiene pattern (precedent #18(c) / precedent #24).
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 

@@ -15,6 +15,7 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
+import { mark } from '@/lib/perf';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
@@ -122,7 +123,29 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     };
   });
 
+  // US-007 S7-T1 (2026-04-20): instrument the TipTap Editor construct+attach
+  // window so the ~250ms attribution in the S2 warm-switch diagnosis is
+  // directly measured instead of inferred by elimination. `useRef(initialValue)`
+  // evaluates the initializer exactly once per mount — giving us a stable
+  // anchor that captures wall-clock at render start. The `onCreate` callback
+  // fires after the Editor's `create` event (schema build + Yjs Collaboration
+  // bind + DOM attach + initial y-prosemirror sync all complete), so the
+  // delta measures the entire commit-phase Editor construction cost.
+  const createEditorStartRef = useRef<number>(performance.now());
+
   const editor = useEditor({
+    onCreate: () => {
+      const start = createEditorStartRef.current;
+      const now = performance.now();
+      mark(
+        'ok/editor/create-tiptap',
+        {
+          docName: provider.configuration.name ?? 'unknown',
+          ytextLength: provider.document.getText('source').length,
+        },
+        { startTime: start, duration: Math.max(0, now - start) },
+      );
+    },
     editorProps: {
       attributes: {
         class: 'pt-10 pb-16 h-full',

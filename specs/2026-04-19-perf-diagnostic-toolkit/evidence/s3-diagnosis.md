@@ -136,7 +136,7 @@ The 580 ms Source→Visual wall-clock on PROJECT decomposes as:
 - ~30 ms React reconciliation (compiler-memoized)
 - ~576 ms browser style + layout + paint for 39 608-node PM DOM going `display:none → visible`
 
-The 576 ms browser work is proportional to DOM node count in the hidden subtree — irreducible without changing the pre-mount-both architecture (precedent #18(b)). Reaching below 300 ms would require one of the V2 refactors in §8; each has non-trivial product or upstream-library trade-offs that belong in a follow-up spec rather than retroactively applied to this toolkit-focused one.
+The 576 ms figure is a **measured floor on this hardware and doc pair** (3.25 MB / 39 608 PM DOM nodes), not a universal ceiling — it scales with DOM cardinality, and on faster or slower hardware both ends move proportionally. What is architecturally fixed is the *shape*: the cost is browser-owned and proportional to hidden-subtree node count — irreducible without changing the pre-mount-both architecture (precedent #18(b)). Reaching below 300 ms would require one of the V2 refactors in §8; each has non-trivial product or upstream-library trade-offs that belong in a follow-up spec rather than retroactively applied to this toolkit-focused one.
 
 The diagnostic toolkit (US-001–005) now captures the data needed to PROVE the architectural floor, so any future claim of "toggle is faster" has a benchmark to beat. The measurement infrastructure is the durable deliverable; S3's absolute wall-clock remains a product decision.
 
@@ -146,26 +146,28 @@ The diagnostic toolkit (US-001–005) now captures the data needed to PROVE the 
 
 Three distinct levers could reduce S3 on large docs. None are in-scope for this spec.
 
+**Ranking (post-US-009 dual-validation, 2026-04-20):** §8b (`content-visibility: hidden`) is the highest-leverage lowest-risk probe and the recommended first move — 2-line CSS change, 30-min cost, outcome space well-bounded. §8a (module-level editor cache) ships independently for the S2 warm-switch gain but requires coupling with conditional-mount-of-active-only to fix S3 (see §8a correction below). §8c (viewport-virtualized PM) is HIGHER-risk than initially framed — the PM maintainer has publicly rejected this direction ("intentionally out of scope", Marijn Haverbeke, [prosemirror discuss](https://discuss.prosemirror.net/t/efficient-viewport-rendering-like-codemirror/577)); expect a multi-quarter in-house engineering effort.
+
 ### 8a. Module-level editor cache (same as s2-diagnosis V2)
 
-**Approach.** Replace `useEditor` with a module-level LRU cache of TipTap Editor instances, keyed by `docName`. On ActivityEntry mount, retrieve-or-create an Editor. On mode toggle, conditionally render only the active editor (no `display:none` sibling). TipTap `view.setProps({ mount: newDom })` re-attaches the cached Editor to the new React-rendered container.
+**Approach.** Replace `useEditor` with a module-level LRU cache of TipTap Editor instances, keyed by `docName`. On ActivityEntry mount, retrieve-or-create an Editor. TipTap's first-class `editor.mount(el)` / `editor.unmount()` APIs re-attach the cached Editor to the new React-rendered container (see `node_modules/@tiptap/core/src/Editor.ts:161,190`; `@tiptap/react/src/EditorContent.tsx:155` carries the upstream TODO for this).
 
-**Effect on S3.** The hidden editor is removed from the DOM entirely, so there's no `display:none → visible` cost. Toggle becomes conditional-mount + cache-hit, which is ~50–80 ms (just React commit + browser paint for fresh DOM + TipTap's `setProps` which is O(viewport), not O(doc-size)).
+**Effect on S3 — corrected.** **Module-level cache ALONE does NOT fix S3.** Per `/tmp/ok-perf-validation/editor-cache-v2/investigation.md`, Stage 1 of the cache keeps BOTH editors alive via orphan-DOM re-parenting — the toggle still goes through `display:none → visible` on the second-in-mount DOM and the S3 recalc lands unchanged. To fix S3 via this path, you need **Stage 1 + switch from pre-mount-both to conditional-mount-of-active-only** (don't render the non-active editor at all; mount-on-toggle). Conditional-mount is a different architecture — it re-introduces the defer-show costs (editor construction ~350 ms + y-prosemirror `_forceRerender` 100-400 ms + NodeView portal re-materialize 50-150 ms) on every toggle, which partially offsets the layout savings. Net benefit depends on which class dominates for your doc size.
 
-**Costs.** Same as s2-diagnosis §V2 — breaks out of TipTap's intended lifecycle; TipTap GH #5761 closed as wontfix; maintenance burden on upstream bumps.
+**Costs.** Breaks out of TipTap's React lifecycle — but the V2 landing surface is TipTap's own public API, not a downstream workaround. TipTap #5761 is about **provider hot-swap** (TiptapCollabProvider on name change), closed as **COMPLETED** on 2025-04-18 — not the "editor hot-swap is unsupported" claim originally cited. Maintenance cost on upstream bumps is proportional to `mount()`/`unmount()` signature stability, which is first-class.
 
-**Applicability.** Would fix BOTH S2 (warm-switch) AND S3 (mode-toggle) in one refactor, since both costs share the same root cause (React-lifecycle-managed editor construction/destruction on pre-mount-both architecture).
+**Applicability.** Fixes S2 (warm-switch) alone via the cache. Fixes S3 only when Stage 1 is paired with conditional-mount-of-active-only.
 
 ### 8b. `content-visibility: hidden` instead of `display: none`
 
 **Approach.** Change the `hidden` Tailwind class to a custom `.editor-hidden` CSS rule that uses `content-visibility: hidden` instead of `display: none`. Per MDN:
 > The contents of the element are not rendered, similar to `display: none`. But unlike `display: none`, the user agent preserves the rendering state of the element, so scroll position, layout, and rendering information is cached.
 
-**Effect on S3.** The browser caches layout state across `content-visibility: hidden → visible`. On toggle back to visible, the browser reuses the cached layout tree instead of re-computing from scratch. Theoretical speedup: eliminate the ~576 ms layout/style recalc (order-of-magnitude improvement).
+**Effect on S3 — nuanced.** Per CSS Containment Module L2 spec + Chromium's `RenderElement` source, `content-visibility: hidden` preserves cached rendering state **only after first render**. The FIRST transition (never-rendered → visible) must compute style + layout + paint from scratch — **same cost as `display:none`**, no first-toggle improvement expected. SUBSEQUENT transitions (visible → hidden → visible) can reuse cached layout IF no layout-invalidating mutations happened to the subtree while hidden. y-prosemirror's `ySyncPlugin._forceRerender`, cursor-plugin awareness ticks, and node-view portal updates all mutate DOM during the hidden window — unclear whether Chromium coalesces invalidation across them into one on-show layout pass or re-invalidates per mutation. This is precisely why an empirical probe is required before adopting §8b as a fix.
 
-**Risks.** Browser support landed Chromium 85 + Safari 18 + Firefox 125 (April 2025) — broadly available but recent. Empirical effect on `ProseMirror` + `y-prosemirror` is unproven; there may be interaction effects with TipTap's view-attach lifecycle that regress editor behavior. Requires a focused empirical test before committing.
+**Risks.** Browser support landed Chromium 85 + Safari 18 + Firefox 125 (April 2025) — broadly available but recent. Empirical effect on `ProseMirror` + `y-prosemirror` is unproven. Find-in-page semantics change (`content-visibility: hidden` exposes skipped contents to find-in-page per MDN; `display:none` hides them) — likely a product improvement but verify.
 
-**Applicability.** Would fix S3 without changing editor mounting. Does NOT fix S2 (warm-switch cost is React-effect-driven editor destruction, not browser layout). Smaller-footprint change than §8a.
+**Applicability.** Would fix S3 **only if** subsequent-toggle cache survives PM + y-prosemirror hidden-window mutations AND the dominant user flow is multi-toggle (not one-shot). First toggle unchanged. Does NOT fix S2. Smaller-footprint change than §8a; cheap enough to probe pre-freeze.
 
 ### 8c. Viewport-virtualized ProseMirror
 
@@ -180,6 +182,16 @@ Three distinct levers could reduce S3 on large docs. None are in-scope for this 
 ### 8d. NOT pursued: change `display:none` to `visibility:hidden`
 
 `visibility: hidden` retains layout space but hides pixels. This would cause the hidden editor's scroll height to contribute to the parent's layout, making the visible editor's scroll container behave wrong (double-height scroll). Not a viable alternative to `display: none` in this architecture.
+
+### 8e. STOP — do NOT extend US-008 defer-mount to "defer-show forever"
+
+Tempting naive-variant: extend `LARGE_DOC_CHAR_THRESHOLD` gating to never mount the non-active editor (even after first toggle). **This STRICTLY regresses S3, it does not fix it.** Mechanical accounting on PROJECT (3.25 MB, 39 608 PM nodes):
+- First toggle cost under the naive variant: editor construction ~350 ms + y-prosemirror `_forceRerender` 100–400 ms + DOM layout ~576 ms + React NodeView portals 50–150 ms = **~900–1100 ms** first-toggle wall-clock.
+- Current pre-mount-both first toggle: ~580 ms (S3-bounded, one-time).
+
+Net: +320 ms to +520 ms worse on first toggle, and every subsequent toggle becomes a fresh remount (not a CSS flip), so the cost compounds per toggle session. The pre-mount-both design is DELIBERATE — it trades cold-load cost (mitigated by US-008 defer-mount) for free subsequent toggles. Do not undo that trade.
+
+If a future spec pursues conditional-mount-of-active-only (the §8a+conditional-mount pairing that actually fixes S3), it MUST couple it with a module-level editor cache outside React (Stage 1 of the V2 cache) — the Editor instance must survive React unmount/remount, otherwise the defer-show costs re-emerge per toggle and the net result is still worse.
 
 ---
 
