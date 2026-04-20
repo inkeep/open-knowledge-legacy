@@ -123,6 +123,8 @@ describe('runInit', () => {
             'open-knowledge': {
               command: 'npx',
               args: ['@inkeep/open-knowledge', 'mcp'],
+              cwd: testDir,
+              env: { OK_MODE: 'local' },
             },
           },
         },
@@ -134,6 +136,14 @@ describe('runInit', () => {
     const result = runInit({ cwd: testDir });
     expect(result.mcpAction).toBe('skipped-existing');
     expect(result.editors[0].action).toBe('skipped-existing');
+
+    const config = JSON.parse(readFileSync(join(testDir, '.mcp.json'), 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+      cwd: testDir,
+      env: { OK_MODE: 'local' },
+    });
   });
 
   it('overwrites existing open-knowledge entry with --force', () => {
@@ -145,6 +155,8 @@ describe('runInit', () => {
             'open-knowledge': {
               command: 'node',
               args: ['./old/path.js'],
+              cwd: testDir,
+              env: { OK_MODE: 'local' },
             },
           },
         },
@@ -160,6 +172,8 @@ describe('runInit', () => {
     expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
+      cwd: testDir,
+      env: { OK_MODE: 'local' },
     });
   });
 
@@ -757,8 +771,8 @@ describe('runInit', () => {
       const result = runInit({ cwd: testDir });
       const output = formatInitResult(result, testDir);
       expect(result.editors[0].action).toBe('skipped-conflict');
-      expect(output).toContain('differs from current defaults');
-      expect(output).toContain('re-run with --force to replace');
+      expect(output).toContain('managed MCP fields differ from current defaults');
+      expect(output).toContain('re-run with --force to update');
     });
 
     it('loadConfig + previewContent integration: preview picks up scaffolded config', () => {

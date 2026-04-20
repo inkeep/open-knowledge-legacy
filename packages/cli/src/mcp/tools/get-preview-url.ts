@@ -21,6 +21,7 @@ import type { ServerInstance } from './shared.ts';
 import {
   type ConfigOrResolver,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
   textResult,
@@ -47,7 +48,7 @@ export interface GetPreviewUrlResult {
 }
 
 export async function buildGetPreviewUrlResult(
-  args: { docName: string },
+  args: { docName: string; cwd?: string },
   deps: GetPreviewUrlDeps,
 ): Promise<{ ok: true; result: GetPreviewUrlResult; text: string } | { ok: false; error: string }> {
   const normalized = normalizeDocName(args.docName);
@@ -58,7 +59,7 @@ export async function buildGetPreviewUrlResult(
 
   // Content-include check — mirrors search.ts / wiki-write tools. Try both
   // canonical extensions (.md, .mdx) since docNames are extension-less.
-  const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+  const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
   if (!context.ok) return context;
   const { cwd, config } = context;
   const contentDir = resolveContentDir(config, cwd);
@@ -107,11 +108,19 @@ export async function buildGetPreviewUrlResult(
 }
 
 export function register(server: ServerInstance, deps: GetPreviewUrlDeps): void {
-  server.tool('get_preview_url', DESCRIPTION, { docName: z.string().min(1) }, async (args) => {
-    const outcome = await buildGetPreviewUrlResult(args, deps);
-    if (!outcome.ok) {
-      return textResult(outcome.error, true);
-    }
-    return textPlusStructured(outcome.text, outcome.result);
-  });
+  server.tool(
+    'get_preview_url',
+    DESCRIPTION,
+    {
+      docName: z.string().min(1),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { docName: string; cwd?: string }) => {
+      const outcome = await buildGetPreviewUrlResult(args, deps);
+      if (!outcome.ok) {
+        return textResult(outcome.error, true);
+      }
+      return textPlusStructured(outcome.text, outcome.result);
+    },
+  );
 }

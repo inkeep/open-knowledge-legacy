@@ -13,6 +13,7 @@ import {
   httpGet,
   httpPost,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -46,12 +47,14 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         .length(40)
         .regex(/^[0-9a-f]+$/i)
         .describe('40-character commit SHA from the shadow repo timeline'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; commitSha: string }) => {
+    async (args: { docName: string; commitSha: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;

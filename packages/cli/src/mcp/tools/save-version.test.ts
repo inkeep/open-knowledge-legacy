@@ -10,7 +10,7 @@ interface ToolResult {
 }
 
 interface RegisteredTool {
-  handler: () => Promise<ToolResult>;
+  handler: (args: { cwd?: string }) => Promise<ToolResult>;
 }
 
 function createFakeServer() {
@@ -61,7 +61,7 @@ describe('save_version — previewUrl emission (workspace-level: always null)', 
     const { server, getTool } = createFakeServer();
     register(server, ConfigSchema.parse({}), baseUrl, async () => '/tmp/project');
 
-    const result = await getTool().handler();
+    const result = await getTool().handler({ cwd: '/tmp/project' });
 
     expect(result.structuredContent).toEqual({
       checkpointRef: 'refs/checkpoints/2026-04-16-abc',

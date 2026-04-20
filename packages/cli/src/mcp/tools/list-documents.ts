@@ -11,6 +11,7 @@ import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './sh
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -39,12 +40,14 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
     DESCRIPTION,
     {
       dir: z.string().optional().describe('Optional directory to filter documents'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { dir?: string }) => {
+    async (args: { dir?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;
@@ -64,7 +67,7 @@ export function register(server: ServerInstance, deps: ListDocumentsDeps): void 
           ...(resolved ? { previewUrlSource: resolved.source } : {}),
         };
       });
-      const structured = { ...data, documents, ui };
+      const structured = { ...data, documents, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

@@ -8,6 +8,7 @@
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '../constants.ts';
+import { isObject } from '../utils/is-object.ts';
 
 export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf';
 
@@ -67,6 +68,10 @@ export interface EditorMcpTarget {
   serverName: (cwd: string) => string;
   /** Build the server entry object for this editor. */
   buildEntry: (cwd: string) => Record<string, unknown>;
+  /** True when the managed MCP fields already match the target entry. */
+  isCompatible: (existing: Record<string, unknown>, cwd: string) => boolean;
+  /** Merge only the managed MCP fields into an existing entry. */
+  mergeManagedFields: (existing: Record<string, unknown>, cwd: string) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
   /**
@@ -78,8 +83,56 @@ export interface EditorMcpTarget {
   instructionsPath?: (cwd: string) => string;
 }
 
+function managedFieldEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => managedFieldEquals(value, b[index]));
+  }
+  if (isObject(a) && isObject(b)) {
+    const aKeys = Object.keys(a).sort();
+    const bKeys = Object.keys(b).sort();
+    return (
+      aKeys.length === bKeys.length &&
+      aKeys.every((key, index) => key === bKeys[index]) &&
+      aKeys.every((key) => managedFieldEquals(a[key], b[key]))
+    );
+  }
+  return false;
+}
+
+function hasMatchingManagedFields(
+  existing: Record<string, unknown>,
+  managed: Record<string, unknown>,
+): boolean {
+  return Object.entries(managed).every(([key, value]) => managedFieldEquals(existing[key], value));
+}
+
+function mergeManagedFields(
+  existing: Record<string, unknown>,
+  managed: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...existing,
+    ...managed,
+  };
+}
+
+function createEditorTarget(
+  target: Omit<EditorMcpTarget, 'isCompatible' | 'mergeManagedFields'>,
+): EditorMcpTarget {
+  return {
+    ...target,
+    isCompatible(existing, cwd) {
+      return hasMatchingManagedFields(existing, target.buildEntry(cwd));
+    },
+    mergeManagedFields(existing, cwd) {
+      return mergeManagedFields(existing, target.buildEntry(cwd));
+    },
+  };
+}
+
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
-  claude: {
+  claude: createEditorTarget({
     id: 'claude',
     label: 'Claude Code',
     configPath: (cwd) => join(cwd, '.mcp.json'),
@@ -88,8 +141,8 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
     instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
-  },
-  'claude-desktop': {
+  }),
+  'claude-desktop': createEditorTarget({
     id: 'claude-desktop',
     label: 'Claude Desktop',
     configPath: (_cwd, home) => resolveClaudeDesktopConfigPath({ home }),
@@ -97,8 +150,8 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
-  },
-  cursor: {
+  }),
+  cursor: createEditorTarget({
     id: 'cursor',
     label: 'Cursor',
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
@@ -106,8 +159,8 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
-  },
-  vscode: {
+  }),
+  vscode: createEditorTarget({
     id: 'vscode',
     label: 'VS Code',
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
@@ -115,8 +168,8 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
-  },
-  windsurf: {
+  }),
+  windsurf: createEditorTarget({
     id: 'windsurf',
     label: 'Windsurf',
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
@@ -124,7 +177,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
-  },
+  }),
 };
 
 /** Validate and resolve editor IDs to targets. Throws on unknown IDs. */

@@ -5,6 +5,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -34,12 +35,14 @@ export function register(server: ServerInstance, deps: GetForwardLinksDeps): voi
     DESCRIPTION,
     {
       docName: z.string().describe('Source page docName'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string }) => {
+    async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;
@@ -65,7 +68,7 @@ export function register(server: ServerInstance, deps: GetForwardLinksDeps): voi
           ...(resolved ? { previewUrlSource: resolved.source } : {}),
         };
       });
-      const structured = { ...data, forwardLinks, ui };
+      const structured = { ...data, forwardLinks, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

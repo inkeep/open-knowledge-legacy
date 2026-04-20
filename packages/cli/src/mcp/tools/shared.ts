@@ -11,6 +11,8 @@ import type { Config } from '../../config/schema.ts';
 
 export type ServerInstance = McpServer;
 export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);
+export const ROUTED_CWD_DESCRIPTION =
+  'Absolute host path to resolve the request against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.';
 
 /**
  * Wrap a single string into the content shape MCP tools require for text results.

@@ -135,6 +135,7 @@ export async function buildSearchResult(
         truncated: false,
         results: [],
         ui,
+        cwd,
       },
     };
   }
@@ -212,6 +213,7 @@ export async function buildSearchResult(
       truncated,
       results,
       ui,
+      cwd,
     },
   };
 }

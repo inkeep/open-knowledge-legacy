@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 
 export interface McpLogEntry {
   ts: string;
@@ -84,7 +85,16 @@ export class McpLogger {
       msg,
       ...ctx,
     };
-    process.stderr.write(`${JSON.stringify(entry)}\n`);
+    const line = `${JSON.stringify(entry)}\n`;
+    process.stderr.write(line);
+    const logFile = process.env.OK_LOG_FILE;
+    if (logFile) {
+      try {
+        appendFileSync(logFile, line);
+      } catch {
+        // best-effort
+      }
+    }
   }
 }
 

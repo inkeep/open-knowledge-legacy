@@ -5,6 +5,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -32,12 +33,14 @@ export function register(server: ServerInstance, deps: SuggestLinksDeps): void {
     DESCRIPTION,
     {
       docName: z.string().describe('Target page docName'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string }) => {
+    async (args: { docName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;

@@ -12,6 +12,7 @@ import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import {
   type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
   textResult,
@@ -200,9 +201,12 @@ export function register(server: ServerInstance, deps: ResearchDeps): void {
   server.tool(
     'research',
     DESCRIPTION,
-    { topic: z.string().describe('The topic, question, or anchor URL to research') },
-    async (args: { topic: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+    {
+      topic: z.string().describe('The topic, question, or anchor URL to research'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { topic: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
         previewUrl: null,

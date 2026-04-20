@@ -13,6 +13,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -57,12 +58,20 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; find: string; replace: string; offset?: number }) => {
+    async (args: {
+      docName: string;
+      find: string;
+      replace: string;
+      offset?: number;
+      cwd?: string;
+    }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, config, url } = context;

@@ -67,9 +67,15 @@ describe('registerAllTools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' });
     const config = ConfigSchema.parse({});
     const toolNames: string[] = [];
+    const toolSchemas = new Map<string, Record<string, unknown>>();
     const originalTool = server.tool.bind(server);
     const toolSpy = ((...args: unknown[]) => {
       toolNames.push(String(args[0]));
+      const schema =
+        args.length >= 4 && typeof args[2] === 'object' && args[2] !== null
+          ? (args[2] as Record<string, unknown>)
+          : undefined;
+      if (schema) toolSchemas.set(String(args[0]), schema);
       return originalTool(...args);
     }) as unknown as typeof server.tool;
     (server as unknown as { tool: typeof server.tool }).tool = toolSpy;
@@ -80,6 +86,33 @@ describe('registerAllTools', () => {
     });
 
     expect(toolNames).toContain('get_dead_links');
+    const routedTools = [
+      'exec',
+      'init-content',
+      'ingest',
+      'research',
+      'consolidate',
+      'read_document',
+      'rename_document',
+      'search',
+      'suggest_links',
+      'write_document',
+      'edit_document',
+      'get_history',
+      'save_version',
+      'rollback_to_version',
+      'list_documents',
+      'get_backlinks',
+      'get_forward_links',
+      'get_orphans',
+      'get_hubs',
+      'get_dead_links',
+      'get_preview_url',
+    ] as const;
+    for (const toolName of routedTools) {
+      expect(toolSchemas.get(toolName)).toBeDefined();
+      expect(toolSchemas.get(toolName)).toHaveProperty('cwd');
+    }
   });
 
   it('each tool returns instructional text content', () => {

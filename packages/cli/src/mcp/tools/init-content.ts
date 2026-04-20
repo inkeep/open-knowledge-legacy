@@ -7,11 +7,17 @@
  * agent's native tools, not through the MCP server. The server only provides
  * the instructions.
  */
+import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type PreviewUrlDeps, resolveUiInfo } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { resolveProjectConfigContext, textPlusStructured, textResult } from './shared.ts';
+import {
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 function buildBody(contentDir: string): string {
   return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
@@ -133,13 +139,20 @@ export interface InitContentDeps extends PreviewUrlDeps {}
  * (no docName list) so it has no per-row previewUrl — only the ui block.
  */
 export function register(server: ServerInstance, deps: InitContentDeps): void {
-  server.tool('init-content', DESCRIPTION, async () => {
-    const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
-    if (!context.ok) return textResult(`Error: ${context.error}`, true);
-    const { cwd, config } = context;
-    const body = buildBody(config.content.dir);
-    const lockDir = resolveLockDir(resolveContentDir(config, cwd));
-    const ui = resolveUiInfo({ config, lockDir });
-    return textPlusStructured(body, { ui });
-  });
+  server.tool(
+    'init-content',
+    DESCRIPTION,
+    {
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { cwd?: string } = {}) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, config } = context;
+      const body = buildBody(config.content.dir);
+      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const ui = resolveUiInfo({ config, lockDir });
+      return textPlusStructured(body, { ui });
+    },
+  );
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -385,6 +385,14 @@ describe('startUiServer', () => {
     expect(caught).toBeDefined();
     // Lock acquired pre-listen must be released on bind failure.
     expect(readUiLock(lockDir)).toBeNull();
+  });
+
+  test('starts when the content root contains a broken symlink', async () => {
+    symlinkSync(resolve(tmpDir, 'missing-target'), resolve(tmpDir, 'broken-link'));
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status } = await get(handle.port, '/api/config');
+    expect(status).toBe(200);
   });
 });
 

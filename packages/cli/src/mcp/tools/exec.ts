@@ -105,6 +105,8 @@ export interface ExecStructuredResult {
    * UI lock is absent. Omitted only when config is not supplied.
    */
   ui?: UiInfo;
+  /** Resolved project directory for this call — useful for verifying routing. */
+  cwd?: string;
   /**
    * Raw stdout (after soft-cap truncation). Duplicated from the `text` content
    * stream into `structuredContent` because some MCP clients (notably Claude
@@ -593,6 +595,7 @@ export async function buildExecResult(
     enrichedPaths: enrichedWithPreview,
     stdout: stdoutText,
     stdoutTruncated: capped.truncated,
+    cwd,
     ...(uiBlock ? { ui: uiBlock } : {}),
     ...(banners.length > 0 ? { warnings: banners } : {}),
   };

@@ -13,6 +13,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -47,12 +48,14 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       docName: z.string().describe('Document name to write to'),
       markdown: z.string().describe('Markdown content to write'),
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; markdown: string; position: string }) => {
+    async (args: { docName: string; markdown: string; position: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, config, url } = context;

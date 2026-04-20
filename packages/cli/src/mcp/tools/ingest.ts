@@ -10,6 +10,7 @@ import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import {
   type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
   textResult,
@@ -104,9 +105,12 @@ export function register(server: ServerInstance, deps: IngestDeps): void {
   server.tool(
     'ingest',
     DESCRIPTION,
-    { source: z.string().describe('URL, file path, or identifier of the source to ingest') },
-    async (args: { source: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+    {
+      source: z.string().describe('URL, file path, or identifier of the source to ingest'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { source: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       return textPlusStructured(buildBody(args.source, context.config.content.dir), {
         previewUrl: null,

@@ -17,6 +17,7 @@ import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import {
   type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
   textResult,
@@ -195,9 +196,12 @@ export function register(server: ServerInstance, deps: ConsolidateDeps): void {
   server.tool(
     'consolidate',
     DESCRIPTION,
-    { topic: z.string().describe('The topic to consolidate into a canonical article') },
-    async (args: { topic: string }) => {
-      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config);
+    {
+      topic: z.string().describe('The topic to consolidate into a canonical article'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { topic: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
         previewUrl: null,

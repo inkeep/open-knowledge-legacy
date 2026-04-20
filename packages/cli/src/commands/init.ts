@@ -152,23 +152,6 @@ export interface LaunchJsonResult {
   staleFields?: string[];
 }
 
-function mcpEntriesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((value, index) => mcpEntriesEqual(value, b[index]));
-  }
-  if (isObject(a) && isObject(b)) {
-    const aKeys = Object.keys(a).sort();
-    const bKeys = Object.keys(b).sort();
-    return (
-      aKeys.length === bKeys.length &&
-      aKeys.every((key, index) => key === bKeys[index]) &&
-      aKeys.every((key) => mcpEntriesEqual(a[key], b[key]))
-    );
-  }
-  return false;
-}
-
 /**
  * Compare an existing launch-json entry against the current target shape and
  * return the names of fields that differ. Empty array ⇒ entries match (safe
@@ -306,10 +289,14 @@ function writeEditorMcpConfig(
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
   const existing = servers[serverName];
-  const targetEntry = target.buildEntry(cwd);
+  const targetEntry =
+    isObject(existing) && force ? target.mergeManagedFields(existing, cwd) : target.buildEntry(cwd);
 
   if (existing && !force) {
-    const action = mcpEntriesEqual(existing, targetEntry) ? 'skipped-existing' : 'skipped-conflict';
+    const action =
+      isObject(existing) && target.isCompatible(existing, cwd)
+        ? 'skipped-existing'
+        : 'skipped-conflict';
     return {
       editorId: target.id,
       label: target.label,
@@ -490,7 +477,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
             break;
           case 'skipped-conflict':
             lines.push(
-              `  ${editor.label}${pad}${displayPath}  differs from current defaults${serverNameNote}; re-run with --force to replace`,
+              `  ${editor.label}${pad}${displayPath}  managed MCP fields differ from current defaults${serverNameNote}; re-run with --force to update`,
             );
             break;
           case 'failed':

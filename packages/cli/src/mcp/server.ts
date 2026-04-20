@@ -411,6 +411,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     resolveCwd: resolveCwdForTools,
     config,
     identityRef,
+    logger,
   });
 
   const transport = new StdioServerTransport();

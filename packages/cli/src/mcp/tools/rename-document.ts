@@ -11,6 +11,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -91,12 +92,14 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
     {
       docName: z.string().describe('Current document name'),
       newDocName: z.string().describe('New document name'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; newDocName: string }) => {
+    async (args: { docName: string; newDocName: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;

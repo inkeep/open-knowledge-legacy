@@ -10,11 +10,13 @@
  * checkpoint-level URL shape. Emitting null keeps the 21-tool contract uniform
  * without misleading agents into a nonexistent per-doc preview.
  */
+import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -34,31 +36,38 @@ export function register(
   resolveCwd: (explicit?: string) => Promise<string>,
   identityRef?: { current: AgentIdentity },
 ): void {
-  server.tool('save_version', DESCRIPTION, {}, async () => {
-    const context = await resolveProjectServerContext(resolveCwd, config, serverUrl);
-    if (!context.ok) return textResult(`Error: ${context.error}`, true);
-    if (!context.url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
-    const { url } = context;
+  server.tool(
+    'save_version',
+    DESCRIPTION,
+    {
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { cwd?: string } = {}) => {
+      const context = await resolveProjectServerContext(resolveCwd, config, serverUrl, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      if (!context.url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const { url } = context;
 
-    const identity = identityRef?.current;
-    const result = await httpPost(url, '/api/save-version', {
-      ...(identity
-        ? {
-            writers: [
-              {
-                id: `agent-${identity.connectionId}`,
-                name: identity.displayName,
-                email: `agent-${identity.connectionId}@openknowledge.local`,
-              },
-            ],
-          }
-        : {}),
-    });
-    if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      const identity = identityRef?.current;
+      const result = await httpPost(url, '/api/save-version', {
+        ...(identity
+          ? {
+              writers: [
+                {
+                  id: `agent-${identity.connectionId}`,
+                  name: identity.displayName,
+                  email: `agent-${identity.connectionId}@openknowledge.local`,
+                },
+              ],
+            }
+          : {}),
+      });
+      if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-    return textPlusStructured(`Version saved. Checkpoint ref: ${result.checkpointRef}`, {
-      checkpointRef: result.checkpointRef,
-      previewUrl: null,
-    });
-  });
+      return textPlusStructured(`Version saved. Checkpoint ref: ${result.checkpointRef}`, {
+        checkpointRef: result.checkpointRef,
+        previewUrl: null,
+      });
+    },
+  );
 }

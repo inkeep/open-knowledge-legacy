@@ -17,7 +17,9 @@
  * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
  * `register(...)` export, then import and call it from here.
  */
+
 import type { AgentIdentity } from '../agent-identity.ts';
+import type { McpLogger } from '../logger.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
@@ -138,12 +140,31 @@ export interface RegisterAllToolsOptions {
   resolveCwd: ResolveCwd;
   config: ConfigOrResolver;
   identityRef?: { current: AgentIdentity };
+  logger?: McpLogger;
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
+  const log = opts.logger;
+  const named =
+    (tool: string): ResolveCwd =>
+    async (explicit?: string) => {
+      try {
+        const cwd = await opts.resolveCwd(explicit);
+        log?.info('tool call', { tool, cwd, ...(explicit ? { explicit } : {}) });
+        return cwd;
+      } catch (err) {
+        log?.warn('tool call failed', {
+          tool,
+          error: err instanceof Error ? err.message : String(err),
+          ...(explicit ? { explicit } : {}),
+        });
+        throw err;
+      }
+    };
+
   // exec — the primary surface (V0-24 / L2-aggressive per D2).
   registerExec(server, {
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('exec'),
     serverUrl: opts.serverUrl,
     config: opts.config,
   });
@@ -151,92 +172,92 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   // Workflow tools — return instructional text, no server connection needed
   registerInitContent(server, {
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('init-content'),
   });
-  registerIngest(server, { config: opts.config, resolveCwd: opts.resolveCwd });
-  registerResearch(server, { config: opts.config, resolveCwd: opts.resolveCwd });
-  registerConsolidate(server, { config: opts.config, resolveCwd: opts.resolveCwd });
+  registerIngest(server, { config: opts.config, resolveCwd: named('ingest') });
+  registerResearch(server, { config: opts.config, resolveCwd: named('research') });
+  registerConsolidate(server, { config: opts.config, resolveCwd: named('consolidate') });
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('read_document'),
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('search'),
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSuggestLinks(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('suggest_links'),
   });
 
   // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('write_document'),
     identityRef: opts.identityRef,
   });
   registerEditDocument(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('edit_document'),
     identityRef: opts.identityRef,
   });
   registerRenameDocument(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('rename_document'),
   });
   registerGetHistory(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_history'),
   });
-  registerSaveVersion(server, opts.config, opts.serverUrl, opts.resolveCwd, opts.identityRef);
+  registerSaveVersion(server, opts.config, opts.serverUrl, named('save_version'), opts.identityRef);
   registerRollbackToVersion(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('rollback_to_version'),
   });
   registerListDocuments(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('list_documents'),
   });
   registerGetBacklinks(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_backlinks'),
   });
   registerGetForwardLinks(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_forward_links'),
   });
   registerGetOrphans(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_orphans'),
   });
   registerGetHubs(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_hubs'),
   });
   registerGetDeadLinks(server, {
     serverUrl: opts.serverUrl,
     config: opts.config,
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_dead_links'),
   });
 
   // Preview URL — no Hocuspocus dependency; reads config + server.lock directly.
   registerGetPreviewUrl(server, {
-    resolveCwd: opts.resolveCwd,
+    resolveCwd: named('get_preview_url'),
     config: opts.config,
   });
 }

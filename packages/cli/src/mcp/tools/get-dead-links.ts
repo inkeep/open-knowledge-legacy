@@ -5,6 +5,7 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   textPlusStructured,
   textResult,
@@ -41,12 +42,14 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
         .array(z.string())
         .optional()
         .describe('Referring source docs to narrow the audit with OR semantics'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { sourceDocNames?: string[] }) => {
+    async (args: { sourceDocNames?: string[]; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
         deps.serverUrl,
+        args.cwd,
       );
       if (!context.ok) return textResult(`Error: ${context.error}`, true);
       const { cwd, url } = context;
@@ -88,7 +91,7 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
           ...(resolvedTarget ? { previewUrlSource: resolvedTarget.source } : {}),
         };
       });
-      const structured = { ...data, deadLinks, ui };
+      const structured = { ...data, deadLinks, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

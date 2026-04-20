@@ -158,4 +158,23 @@ describe('buildGetPreviewUrlResult', () => {
       expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
     }
   });
+
+  test('uses explicit cwd when the client cannot provide a default root', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test', cwd: tmpDir },
+      {
+        resolveCwd: async (explicit?: string) => {
+          if (!explicit) throw new Error('explicit cwd required');
+          return explicit;
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
 });
