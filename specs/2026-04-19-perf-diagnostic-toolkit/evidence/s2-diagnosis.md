@@ -162,7 +162,7 @@ Tradeoffs:
 - TipTap [GH #5761](https://github.com/ueberdosis/tiptap/issues/5761) is the upstream "editor hot-swap" feature request — closed as wontfix in 2024-08 by maintainer @janthurau. Our cache approach is a downstream workaround, which means maintenance cost on upstream bumps.
 - Expected benefit: warm-switch drops from ~700 ms to ~50–80 ms (just React commit + browser paint).
 
-Not urgent — the 700 ms warm-switch is perceptible but not broken. The diagnostic toolkit + precedent #20 land enables us to revisit this any time without re-deriving the diagnosis.
+Not urgent — the 700 ms warm-switch is perceptible but not broken. The diagnostic toolkit + precedent #24 land enables us to revisit this any time without re-deriving the diagnosis.
 
 ---
 

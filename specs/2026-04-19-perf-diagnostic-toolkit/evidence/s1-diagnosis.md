@@ -46,7 +46,7 @@ Two independent savings are visible post-fix:
 
 ## 3. Attribution via new instrumentation
 
-The US-004 instrumentation (precedent #20 emission layer) captured the full cold-load timeline on PROJECT. From a manual probe on the dev server with the fix applied:
+The US-004 instrumentation (precedent #24 emission layer) captured the full cold-load timeline on PROJECT. From a manual probe on the dev server with the fix applied:
 
 | t (ms) | event | duration / details |
 |---|---|---|
@@ -108,7 +108,7 @@ Defer-mount saves this entirely on cold load. First mode toggle pays the cost th
 
 React Compiler's Babel plugin rejects render-phase ref mutation ("Cannot access refs during render"). Even though the mutation is idempotent and safe, the compiler can't prove it. `useState` with a lazy initializer + a post-commit effect is the compiler-approved shape. The only cost is one extra render on the first mode visit (state flip → rerender → same gate output because the OR-with-active-mode already rendered the correct editor). Subsequent renders are no-ops because the state is already true.
 
-### STOP rules for this area (candidate precedent #20 content)
+### STOP rules for this area (landed as CLAUDE.md precedent #24)
 
 Pre-mounting both editors concurrently (precedent #18(b)) is the default for small-to-medium docs. For docs above `LARGE_DOC_CHAR_THRESHOLD`, the non-active editor defer-mounts to avoid the S1 cold-load cost. The threshold and trigger live in `<EditorActivityPool>`. Do NOT apply defer-mount unconditionally — toggle UX is a product concern that the threshold protects. Do NOT move the threshold without measuring: it is the product's stated contract for "fast toggle means pre-mounted."
 

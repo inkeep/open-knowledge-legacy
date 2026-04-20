@@ -8,8 +8,9 @@ Parallels the shape of `packages/core/tests/perf/` (the R4 markdown-bench gate) 
 
 See also:
 - `reports/perf-profiling-landscape-2026/` — 3P ecosystem survey + tool selection rationale
-- `specs/2026-04-19-perf-diagnostic-toolkit/SPEC.md` — what we're building + why
-- `CLAUDE.md` precedent #20 — "Perf instrumentation as first-class" (added in US-010)
+- `specs/2026-04-19-perf-diagnostic-toolkit/SPEC.md` — what we're building + why (post-fix baseline at `baselines/2026-04-19-postfix.json`)
+- `CLAUDE.md` precedent #24 — "Perf instrumentation as first-class" (the authoring contract: wrap new perceived-perf surfaces in `<ProfilerBoundary>`, emit `mark('ok/<subsystem>/<event>', …)`, reproduction scripts go here, never in `/tmp`). This precedent was added in US-010 with the SPEC §F25 text, renumbered to #24 because precedents #20–#23 landed in parallel with this spec's execution.
+- `CLAUDE.md` precedent #18 — hybrid Activity + Suspense + `use(promise)`; S2 / S3 are direct consequences of the pre-mount-both pattern, and #24's defer-mount STOP rule is the per-doc-size exception.
 
 ---
 
@@ -213,5 +214,5 @@ export default defineScenario({ ... });  // NOT `export const scenario = ...`
 
 - Emission layer (the `mark()` / `<ProfilerBoundary>` / `initWebVitals` APIs): `packages/app/src/lib/perf/`
 - Structural precedent (micro-bench R4 gate): `packages/core/tests/perf/README.md`
-- CLAUDE.md precedent #20 (surfaces that must be instrumented): appended by US-010
+- `CLAUDE.md` precedent #24 — "Perf instrumentation as first-class" (the authoring contract: surfaces that must be instrumented, `ok/<subsystem>/<event>` namespace, defer-mount STOP rule, no-CI-gating STOP rule)
 - `reports/perf-profiling-landscape-2026/` — 3P landscape survey

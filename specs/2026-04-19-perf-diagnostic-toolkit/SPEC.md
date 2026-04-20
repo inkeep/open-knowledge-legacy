@@ -40,7 +40,7 @@ Build a **repeatable performance diagnostic toolkit** that:
 
 1. Lays down the **durable instrumentation pattern** (emission helpers + React Profiler boundaries + web-vitals) for every future perf-relevant surface in the app.
 2. Ships a **scenario framework** at `packages/app/tests/perf/` that mirrors the existing `packages/core/tests/perf/` precedent — versioned, runnable via `bun run perf:profile --scenario=<name>`, producing per-run JSON artifacts.
-3. Sets a **CLAUDE.md architectural precedent #20** so future agents/engineers know where to instrument + how to reproduce.
+3. Sets a **CLAUDE.md architectural precedent #20** so future agents/engineers know where to instrument + how to reproduce.<br>_[Corrected 2026-04-20 post-ship: the precedent landed as **#24**, not #20. Between this spec's drafting and US-010's landing, four unrelated precedents (#20 E2E conventions, #21 ancestor-priority tree derivations, #22 shell-script conventions, #23 async-socket error handling) landed in CLAUDE.md from parallel spec work. The SPEC's prose uses "#20" throughout as a placeholder — every mention refers to the same perf precedent now at #24. Authoritative fix in `CLAUDE.md` §"Architectural precedents" entry #24 + `packages/app/tests/perf/README.md` cross-references.]_
 4. **Actually diagnoses and fixes the four real symptoms** via the new toolkit — evidence-based root-cause identification, then the fix, then re-run the scenarios to verify improvement.
 
 The toolkit generalizes beyond the current symptoms: any future perceived-perf regression reduces to "run the scenario, read the trace, identify the component, apply the fix." It is the foundation, not a one-off.
