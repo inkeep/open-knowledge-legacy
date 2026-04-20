@@ -57,6 +57,7 @@ interface SearchResultRow {
 }
 
 interface SearchStructuredResult {
+  cwd: string;
   query: string;
   matchCount: number;
   fileCount: number;

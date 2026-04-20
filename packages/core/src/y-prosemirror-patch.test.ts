@@ -84,6 +84,25 @@ function findRepoRoot(): string {
 
 const REPO_ROOT = findRepoRoot();
 
+function resolveInstalledPackageDir(packageName: string): string {
+  const storeDir = join(REPO_ROOT, 'node_modules', '.bun');
+  const parts = packageName.split('/');
+
+  for (const entry of readdirSync(storeDir)) {
+    const candidate = join(storeDir, entry, 'node_modules', ...parts);
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch {
+      // Keep scanning until we find the installed package directory.
+    }
+  }
+
+  throw new Error(`Could not resolve installed package directory for ${packageName}`);
+}
+
+const Y_PROSEMIRROR_DIR = resolveInstalledPackageDir('y-prosemirror');
+const Y_TIPTAP_DIR = resolveInstalledPackageDir('@tiptap/y-tiptap');
+
 /**
  * Every bundle in our dep tree that ships its own copy of the destructive-
  * delete code. Both are real production paths: `@tiptap/extension-collaboration-cursor`
@@ -94,15 +113,15 @@ const REPO_ROOT = findRepoRoot();
 const PATCHED_BUNDLES = [
   {
     label: 'y-prosemirror CJS',
-    path: 'node_modules/y-prosemirror/dist/y-prosemirror.cjs',
+    path: join(Y_PROSEMIRROR_DIR, 'dist', 'y-prosemirror.cjs'),
   },
   {
     label: '@tiptap/y-tiptap CJS',
-    path: 'node_modules/@tiptap/y-tiptap/dist/y-tiptap.cjs',
+    path: join(Y_TIPTAP_DIR, 'dist', 'y-tiptap.cjs'),
   },
   {
     label: '@tiptap/y-tiptap ESM',
-    path: 'node_modules/@tiptap/y-tiptap/dist/y-tiptap.js',
+    path: join(Y_TIPTAP_DIR, 'dist', 'y-tiptap.js'),
   },
 ] as const;
 
@@ -124,7 +143,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
   for (const bundle of PATCHED_BUNDLES) {
     describe(bundle.label, () => {
       test('contains R13 patch body (not upstream destructive-delete)', () => {
-        const src = readFileSync(join(REPO_ROOT, bundle.path), 'utf8');
+        const src = readFileSync(bundle.path, 'utf8');
 
         // Patch markers must be present at BOTH throw sites
         const patchMarkers = src.match(/R13 patch:/g);
@@ -148,7 +167,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
       });
 
       test('patched throw sites do NOT retain upstream destructive _item.delete calls', () => {
-        const src = readFileSync(join(REPO_ROOT, bundle.path), 'utf8');
+        const src = readFileSync(bundle.path, 'utf8');
 
         // Split on 'R13 patch:' and for each hunk, verify the patch body does
         // NOT contain `_item.delete(transaction)` — that's the upstream
@@ -211,7 +230,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
    * coverage (y-prosemirror and y-tiptap are both hoisted to top-level).
    */
   test('dep-tree invariant: no destructive _item.delete(transaction) in any dist bundle', () => {
-    const nodeModules = join(REPO_ROOT, 'node_modules');
+    const bunStore = join(REPO_ROOT, 'node_modules', '.bun');
     const offending: Array<{ path: string; line: number }> = [];
 
     function scanDistDir(distDir: string) {
@@ -268,7 +287,17 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
       }
     }
 
-    walkTopLevel(nodeModules);
+    for (const entry of readdirSync(bunStore)) {
+      const full = join(bunStore, entry);
+      let stats: ReturnType<typeof statSync>;
+      try {
+        stats = statSync(full);
+      } catch {
+        continue;
+      }
+      if (!stats.isDirectory()) continue;
+      walkTopLevel(join(full, 'node_modules'));
+    }
 
     if (offending.length > 0) {
       const details = offending.map(({ path, line }) => `  ${path}:${line}`).join('\n');

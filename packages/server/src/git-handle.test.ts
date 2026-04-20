@@ -6,11 +6,10 @@ import { join } from 'node:path';
 import { createGitInstance } from './git-handle.ts';
 import { withParentLock } from './git-mutex.ts';
 
-describe('createGitInstance (credential.helper opt-in)', () => {
-  // simple-git 3.36+ blocks `credential.helper` in `config` unless the caller
-  // opts into `unsafe.allowUnsafeCredentialHelper`. Tier A (gh) and Tier B/C
-  // (stored token) both pass a `credential.helper=!…` string — regression
-  // guard so a future refactor can't silently drop the opt-in.
+describe('createGitInstance (credential.helper config)', () => {
+  // Tier A (gh) and Tier B/C (stored token) both pass a
+  // `credential.helper=!…` config string. Keep a regression test that the
+  // SimpleGit constructor accepts it with our current package version.
   let tmpDir: string;
 
   beforeEach(() => {
@@ -22,7 +21,7 @@ describe('createGitInstance (credential.helper opt-in)', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('accepts credential.helper config without throwing the allowUnsafeCredentialHelper error', async () => {
+  test('accepts credential.helper config without throwing', async () => {
     const handle = createGitInstance(tmpDir, {
       credentialArgs: ['-c', 'credential.helper=!open-knowledge auth git-credential'],
     });
