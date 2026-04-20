@@ -240,7 +240,19 @@ describe('runInit', () => {
   });
 
   describe('Windsurf', () => {
-    it('writes to global path using home override', () => {
+    const windsurfConfigPath = (home: string) =>
+      join(home, '.codeium', 'windsurf', 'mcp_config.json');
+
+    const findOkEntries = (config: Record<string, unknown>): Record<string, unknown> => {
+      const servers = (config.mcpServers as Record<string, unknown> | undefined) ?? {};
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(servers)) {
+        if (k.startsWith('open-knowledge')) out[k] = v;
+      }
+      return out;
+    };
+
+    it('writes to global path with project-qualified key + --cwd baked in', () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
@@ -249,15 +261,176 @@ describe('runInit', () => {
       expect(result.editors).toHaveLength(1);
       expect(result.editors[0].editorId).toBe('windsurf');
       expect(result.editors[0].action).toBe('written');
+      expect(result.editors[0].serverKey).toMatch(/^open-knowledge-/);
 
-      const configPath = join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json');
+      const configPath = windsurfConfigPath(fakeHome);
       expect(existsSync(configPath)).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const okEntries = findOkEntries(config);
+      const keys = Object.keys(okEntries);
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toBe(result.editors[0].serverKey);
+
+      const entry = okEntries[keys[0]] as { command: string; args: string[] };
+      expect(entry.command).toBe('npx');
+      expect(entry.args).toEqual(['@inkeep/open-knowledge', 'mcp', '--cwd', testDir]);
+    });
+
+    it('migrates legacy plain open-knowledge entry to project-qualified form', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const configPath = windsurfConfigPath(fakeHome);
+      mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            'open-knowledge': { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+          },
+        }),
+      );
+
+      const result = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+
+      expect(result.editors[0].action).toBe('overwritten');
+      expect(result.editors[0].serverKey).toMatch(/^open-knowledge-/);
+      expect(result.editors[0].migratedFromKey).toBe('open-knowledge');
+
+      // Legacy key must be removed — exactly one open-knowledge-* entry remains.
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.mcpServers['open-knowledge']).toBeUndefined();
+      const okEntries = findOkEntries(config);
+      expect(Object.keys(okEntries)).toHaveLength(1);
+
+      const newKey = result.editors[0].serverKey;
+      if (newKey === undefined) throw new Error('expected serverKey');
+      const entry = config.mcpServers[newKey] as { args: string[] };
+      expect(entry.args).toContain('--cwd');
+      expect(entry.args).toContain(testDir);
+    });
+
+    it('multi-project keys coexist in the same Windsurf config', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const projA = join(testDir, 'projA');
+      const projB = join(testDir, 'projB');
+      mkdirSync(projA, { recursive: true });
+      mkdirSync(projB, { recursive: true });
+
+      const r1 = runInit({ cwd: projA, editors: ['windsurf'], home: fakeHome });
+      const r2 = runInit({ cwd: projB, editors: ['windsurf'], home: fakeHome });
+
+      expect(r1.editors[0].action).toBe('written');
+      expect(r1.editors[0].serverKey).toBe('open-knowledge-proja');
+      expect(r2.editors[0].action).toBe('written');
+      expect(r2.editors[0].serverKey).toBe('open-knowledge-projb');
+
+      const config = JSON.parse(readFileSync(windsurfConfigPath(fakeHome), 'utf-8'));
+      const okEntries = findOkEntries(config);
+      expect(Object.keys(okEntries).sort()).toEqual([
+        'open-knowledge-proja',
+        'open-knowledge-projb',
+      ]);
+    });
+
+    it('protected partial-legacy: exact key with --cwd matching current project → skipped-existing', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const configPath = windsurfConfigPath(fakeHome);
+      mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            'open-knowledge': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp', '--cwd', testDir],
+            },
+          },
+        }),
+      );
+
+      const result = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+
+      // --cwd already present → not a legacy entry; match-by-cwd path finds it → skipped-existing.
+      expect(result.editors[0].action).toBe('skipped-existing');
+      expect(result.editors[0].serverKey).toBe('open-knowledge');
+      expect(result.editors[0].migratedFromKey).toBeUndefined();
+
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(Object.keys(findOkEntries(config))).toEqual(['open-knowledge']);
+    });
+
+    it('protected partial-legacy: exact key with --cwd pointing elsewhere → auto-disambig', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const configPath = windsurfConfigPath(fakeHome);
+      mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+
+      // Use matching basenames so the default slug-key collides and -2 fires.
+      // The default key is picked from slugify(basename(cwd)) — if basenames
+      // differ, there's no collision and no disambiguation.
+      const workNotes = join(testDir, 'work', 'notes');
+      const personalNotes = join(testDir, 'personal', 'notes');
+      mkdirSync(workNotes, { recursive: true });
+      mkdirSync(personalNotes, { recursive: true });
+
+      // Pre-seed an existing `open-knowledge-notes` entry bound to workNotes.
+      // Critically, also include an exact 'open-knowledge' key with --cwd
+      // pointing at workNotes — this must NOT trigger legacy migration (has
+      // --cwd) AND must NOT be matched by the current run (cwd is personalNotes).
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            'open-knowledge-notes': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp', '--cwd', workNotes],
+            },
+            'open-knowledge': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp', '--cwd', workNotes],
+            },
+          },
+        }),
+      );
+
+      const result = runInit({ cwd: personalNotes, editors: ['windsurf'], home: fakeHome });
+
+      // Default key `open-knowledge-notes` is taken (bound to workNotes) →
+      // auto-disambig writes `open-knowledge-notes-2`.
+      expect(result.editors[0].action).toBe('written');
+      expect(result.editors[0].serverKey).toBe('open-knowledge-notes-2');
+      expect(result.editors[0].disambiguatedFrom).toBe('open-knowledge-notes');
+      expect(result.editors[0].migratedFromKey).toBeUndefined();
+
+      // Original 'open-knowledge' and 'open-knowledge-notes' entries untouched.
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers['open-knowledge']).toEqual({
         command: 'npx',
-        args: ['@inkeep/open-knowledge', 'mcp'],
+        args: ['@inkeep/open-knowledge', 'mcp', '--cwd', workNotes],
       });
+      expect(config.mcpServers['open-knowledge-notes']).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp', '--cwd', workNotes],
+      });
+    });
+
+    it('re-init with same cwd is idempotent (skipped-existing)', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const first = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+      expect(first.editors[0].action).toBe('written');
+
+      const second = runInit({ cwd: testDir, editors: ['windsurf'], home: fakeHome });
+      expect(second.editors[0].action).toBe('skipped-existing');
+      expect(second.editors[0].serverKey).toBe(first.editors[0].serverKey);
     });
   });
 

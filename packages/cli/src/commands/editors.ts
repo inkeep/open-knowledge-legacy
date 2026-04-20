@@ -108,7 +108,16 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (cwd) => ({
+      command: MCP_SERVER_COMMAND,
+      args: [...MCP_SERVER_ARGS, '--cwd', cwd],
+    }),
+    // Windsurf is a global-scope target, so we need project-qualified keys.
+    // `detectLegacy: true` opts into a one-shot non-interactive migration of
+    // any pre-spec plain `open-knowledge` entry (no `--cwd`) left by earlier
+    // versions of this CLI (D17 LOCKED).
+    resolveServerKey: (existingServers, cwd) =>
+      globalScopeResolveServerKey(existingServers, cwd, { detectLegacy: true }),
     scope: 'global',
   },
   'claude-desktop': {
