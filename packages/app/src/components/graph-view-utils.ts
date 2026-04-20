@@ -151,10 +151,6 @@ export function getGraphNodePointerRadius(
   return baseRadius;
 }
 
-function getGraphNodeSelectionId(selection: GraphNodeSelection): string {
-  return selection.id;
-}
-
 export function getHashForGraphDocSelection(selection: GraphDocSelection): string {
   return hashFromDocName(selection.docName, selection.anchor);
 }

@@ -13,13 +13,6 @@ function getCurrentDocNameFromHash(locationHash = window.location.hash): string 
   return hashMatch ? decodeURIComponent(hashMatch[1]) : '';
 }
 
-function resolveCurrentInternalHref(
-  href: string,
-  locationHash = window.location.hash,
-): ResolvedInternalHref | null {
-  return resolveInternalHref(href, getCurrentDocNameFromHash(locationHash));
-}
-
 export function classifyCurrentMarkdownHref(
   href: string,
   locationHash = window.location.hash,
@@ -38,9 +31,7 @@ function openHashHrefInNewTab(href: string): void {
   window.open(href, '_blank', 'noopener,noreferrer');
 }
 
-function navigateToInternalHashHref(
-  resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
-): void {
+function navigateToInternalHashHref(resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>): void {
   window.location.assign(toInternalHashHref(resolved));
 }
 

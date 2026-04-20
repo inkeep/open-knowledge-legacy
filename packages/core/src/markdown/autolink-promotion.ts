@@ -30,23 +30,6 @@ import { visit } from 'unist-util-visit';
 const AUTOLINK_IN_TEXT_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
 
 /**
- * Unified transformer plugin that promotes autolink-shaped text into
- * semantic `link` mdast nodes.
- */
-function autolinkPromotionPlugin() {
-  return (tree: Root) => {
-    // Walk ALL parent nodes that can contain phrasing content (text).
-    visit(tree, (node: Nodes) => {
-      if ('children' in node && Array.isArray(node.children)) {
-        const parent = node as Parent;
-        const hasTextChild = parent.children.some((c) => c.type === 'text');
-        if (hasTextChild) promoteInParent(parent);
-      }
-    });
-  };
-}
-
-/**
  * Walk a parent node's children looking for text nodes that contain
  * `<scheme:uri>` patterns. Split them into: preceding text, link node,
  * trailing text. Mutates `parent.children` in place.

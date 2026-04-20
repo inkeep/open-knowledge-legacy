@@ -74,7 +74,3 @@ export function applyDocStartThematicFix(tree: Root, file: VFile): void {
   // Replace the yaml node with synthesized thematicBreaks
   tree.children.splice(0, 1, ...replacements);
 }
-
-function docStartThematicFixPlugin() {
-  return (tree: Root, file: VFile) => applyDocStartThematicFix(tree, file);
-}

@@ -153,12 +153,7 @@ interface InitCommandResult {
 const LAUNCH_JSON_VERSION = '0.0.1';
 const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
 
-type LaunchJsonAction =
-  | 'created'
-  | 'merged'
-  | 'skipped-existing'
-  | 'skipped-stale'
-  | 'failed';
+type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'skipped-stale' | 'failed';
 
 interface LaunchJsonResult {
   action: LaunchJsonAction;
