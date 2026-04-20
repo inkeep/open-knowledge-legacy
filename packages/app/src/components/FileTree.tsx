@@ -239,10 +239,10 @@ function dropHighlightClass(
   if (!activeSource) return '';
   const v = validateMoveToFolder(activeSource, destinationFolderPath);
   if (!v.ok && (v.reason === 'self' || v.reason === 'descendant')) {
-    return 'bg-destructive/15 ring-2 ring-destructive/40';
+    return 'bg-destructive/20 ring-2 ring-destructive/50';
   }
   if (v.ok) {
-    return 'bg-primary/10 ring-2 ring-primary/35';
+    return 'bg-primary/10 ring-2 ring-primary/40';
   }
   return '';
 }
@@ -505,7 +505,7 @@ const FileTreeNode: FC<{
           <div
             ref={rowRef}
             className={cn(
-              'rounded-md transition-[opacity,box-shadow]',
+              'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
               isDragging && 'opacity-40',
               overDropClass,
             )}
