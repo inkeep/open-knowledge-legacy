@@ -33,7 +33,7 @@ const AUTOLINK_IN_TEXT_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
  * Unified transformer plugin that promotes autolink-shaped text into
  * semantic `link` mdast nodes.
  */
-export function autolinkPromotionPlugin() {
+function autolinkPromotionPlugin() {
   return (tree: Root) => {
     // Walk ALL parent nodes that can contain phrasing content (text).
     visit(tree, (node: Nodes) => {

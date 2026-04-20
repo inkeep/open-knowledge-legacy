@@ -60,7 +60,7 @@ const SAFE_URL_SCHEME = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i
  * Tests assert this list — do not remove entries without revisiting
  * `mdast-to-html.test.ts`.
  */
-export const UNSAFE_URL_SCHEMES = ['javascript:', 'data:', 'vbscript:', 'file:'] as const;
+const UNSAFE_URL_SCHEMES = ['javascript:', 'data:', 'vbscript:', 'file:'] as const;
 
 function isSafeUrl(url: string): boolean {
   const trimmed = url.trim();

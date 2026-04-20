@@ -21,8 +21,6 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import { type AgentFocusEntry, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { getLogger } from './logger.ts';
 
-export type { AgentFocusEntry };
-
 export class AgentFocusBroadcaster {
   private readonly hocuspocus: Hocuspocus;
   private readonly log = getLogger('agent-focus');

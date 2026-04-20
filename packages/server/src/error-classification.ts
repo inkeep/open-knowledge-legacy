@@ -10,7 +10,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type ErrorClass =
+type ErrorClass =
   | 'network' // Class 1 — transient, retryable
   | 'auth' // Class 2 — credential failure, non-retryable (needs re-auth)
   | 'semantic' // Class 3 — logic-level rejection, non-retryable
@@ -39,7 +39,7 @@ export type StructuralSubclass =
   | 'unknown-structural';
 export type LocalSubclass = 'index-lock' | 'dirty-tree' | 'disk-full' | 'unknown-local';
 
-export type ErrorSubclass =
+type ErrorSubclass =
   | NetworkSubclass
   | AuthSubclass
   | SemanticSubclass

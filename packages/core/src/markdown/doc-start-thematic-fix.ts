@@ -75,6 +75,6 @@ export function applyDocStartThematicFix(tree: Root, file: VFile): void {
   tree.children.splice(0, 1, ...replacements);
 }
 
-export function docStartThematicFixPlugin() {
+function docStartThematicFixPlugin() {
   return (tree: Root, file: VFile) => applyDocStartThematicFix(tree, file);
 }

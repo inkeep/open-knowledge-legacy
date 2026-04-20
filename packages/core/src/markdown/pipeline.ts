@@ -69,7 +69,7 @@ interface PipelineOptions {
 /** Options needed by `serializeMd` for the PM→mdast pre-pass. Kept separate
  * from the (pre-baked) processor so one cached serialize processor can serve
  * calls that share schema/handler registrations. */
-export interface SerializeMdOptions {
+interface SerializeMdOptions {
   schema: Schema;
   pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];

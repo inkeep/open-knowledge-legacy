@@ -50,7 +50,7 @@ export type SyncState =
   | 'auth-error'
   | 'disabled';
 
-export interface SyncStatus {
+interface SyncStatus {
   state: SyncState;
   lastSyncUtc: string | null;
   lastFetchUtc: string | null;
@@ -95,7 +95,7 @@ interface PersistedSyncState {
   syncEnabled?: boolean;
 }
 
-export interface SyncEngineOptions {
+interface SyncEngineOptions {
   projectDir: string;
   contentDir: string;
   contentFilter: ContentFilter;
