@@ -120,6 +120,12 @@
         "tests/health/parse-health-gate.ts",
         "tests/health/baseline.json"
       ]
+    },
+    "perf:profile": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": ["src/lib/perf/**/*.ts", "src/lib/perf/**/*.tsx", "tests/perf/**/*.ts"],
+      "passThroughEnv": ["DISPLAY", "OK_PERF_TARGET"]
     }
   }
 }
