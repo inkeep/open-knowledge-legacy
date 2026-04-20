@@ -34,7 +34,7 @@ export interface AsyncSubscription {
   unsubscribe(): Promise<void>;
 }
 
-export type WatcherBackend = 'parcel' | 'chokidar';
+type WatcherBackend = 'parcel' | 'chokidar';
 
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 
@@ -453,6 +453,10 @@ function seedLastKnownHashes(
           visited.add(canonStat.ino);
 
           if (canonStat.isDirectory()) {
+            if (contentFilter) {
+              const relPath = relative(contentDir, canonical);
+              if (contentFilter.isDirExcluded(relPath)) continue;
+            }
             seedLastKnownHashes(canonical, contentDir, contentFilter, fileIndex, aliasMap, visited);
           } else if (canonStat.isFile() && isSupportedDocFile(entry.name)) {
             if (contentFilter) {

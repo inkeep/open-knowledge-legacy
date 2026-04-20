@@ -1,0 +1,51 @@
+name: Bundle Size
+
+# Enforces SPEC A2 + §6 Cost budget: the four unified clipboard plugins
+# (rehype-parse / rehype-remark / remark-rehype / rehype-stringify) plus
+# any future additions must keep packages/app's bundle within the size
+# budgets declared in packages/app/package.json's `size-limit` field.
+#
+# Regression gate: size-limit fails CI if ANY of the tracked artifacts
+# (main JS, all-JS combined, main CSS) exceeds its gzipped limit.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/app/**"
+      - "packages/core/**"
+      - "packages/server/**"
+      - "bun.lock"
+      - "package.json"
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Node 22+ — same reason as the ci.yml `test` job: turbo's ^build
+      # traverses into the app's vite build, which uses native `import()`
+      # on workspace deps that resolve to `.ts` source.
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+      - run: bun install --frozen-lockfile
+      - name: Build packages/app
+        run: bun run build
+        working-directory: packages/app
+      - name: Check bundle size
+        run: bunx size-limit
+        working-directory: packages/app

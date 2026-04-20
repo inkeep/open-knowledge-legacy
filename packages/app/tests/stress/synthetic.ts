@@ -6,7 +6,7 @@
  * the same content given the same parameters (FR1, FR10).
  */
 
-export interface GenerateMarkdownOptions {
+interface GenerateMarkdownOptions {
   /** Include emoji, CJK, and combining marks in content */
   unicode?: boolean;
   /** Omit trailing newline to exercise applyUserDelta unterminated-final-line path (FR5a) */

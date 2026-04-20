@@ -12,8 +12,14 @@ import { type GrepMatch, grep } from '../../bash/index.ts';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
-import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import {
+  buildListResolver,
+  docNameFromPath,
+  type PreviewUrlSource,
+  type UiInfo,
+} from './preview-url.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { resolveServerUrl, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   'Search wiki content with metadata-enriched results. Matches are grouped by file; each file is annotated with its title, description, and tags so you can judge relevance without opening it first.',
@@ -29,10 +35,35 @@ export const DESCRIPTION = [
   '- `case_sensitive` (optional, default false) — case-sensitive match',
 ].join('\n');
 
-export interface SearchDeps {
-  projectDir: string;
+interface SearchDeps {
+  /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
+  resolveCwd: (explicit?: string) => Promise<string>;
   config: Config;
-  serverUrl?: string | undefined;
+  /**
+   * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
+   * Resolved once per call before passing into `enrichPath`.
+   */
+  serverUrl?: ServerUrlOrResolver;
+}
+
+interface SearchResultRow {
+  path: string;
+  docName: string;
+  title: string | null;
+  description: string | null;
+  tags: string[];
+  matches: Array<{ line: number; text: string }>;
+  previewUrl: string | null;
+  previewUrlSource?: PreviewUrlSource;
+}
+
+interface SearchStructuredResult {
+  query: string;
+  matchCount: number;
+  fileCount: number;
+  truncated: boolean;
+  results: SearchResultRow[];
+  ui: UiInfo;
 }
 
 interface FileGroup {
@@ -53,16 +84,22 @@ function groupByFile(matches: GrepMatch[]): FileGroup[] {
   return [...byPath.entries()].map(([path, fileMatches]) => ({ path, matches: fileMatches }));
 }
 
+interface SearchResult {
+  text: string;
+  structured: SearchStructuredResult | null;
+}
+
 export async function buildSearchResult(
-  args: { query: string; case_sensitive?: boolean },
+  args: { query: string; case_sensitive?: boolean; cwd?: string },
   deps: SearchDeps,
-): Promise<string> {
+): Promise<SearchResult> {
+  const cwd = await deps.resolveCwd(args.cwd);
   const maxResults = deps.config.mcp.tools.search.maxResults;
   const include = deps.config.content.include;
   const exclude = deps.config.content.exclude;
 
   // Request one extra match so we can tell whether the result set was truncated.
-  const matches = await grep(args.query, {
+  const matches = await grep(args.query, cwd, {
     caseInsensitive: !(args.case_sensitive ?? false),
     include,
     exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', OK_DIR],
@@ -72,8 +109,23 @@ export async function buildSearchResult(
   const truncated = matches.length > maxResults;
   const visible = truncated ? matches.slice(0, maxResults) : matches;
 
+  const { resolve, ui } = await buildListResolver({
+    config: deps.config,
+    resolveCwd: async () => cwd,
+  });
+
   if (visible.length === 0) {
-    return `No matches for "${args.query}".`;
+    return {
+      text: `No matches for "${args.query}".`,
+      structured: {
+        query: args.query,
+        matchCount: 0,
+        fileCount: 0,
+        truncated: false,
+        results: [],
+        ui,
+      },
+    };
   }
 
   const groups = groupByFile(visible);
@@ -82,12 +134,15 @@ export async function buildSearchResult(
   // no history, no backlinkCount, to avoid N-amplification on multi-file
   // search output.
   const metaByPath = new Map<string, EnrichedMeta>();
+  const resolvedServerUrl = await resolveServerUrl(deps.serverUrl);
+  const folderRules = deps.config.folders;
   await Promise.all(
     groups.map(async (g) => {
       try {
         const meta = await enrichPath(g.path, {
-          projectDir: deps.projectDir,
-          serverUrl: deps.serverUrl,
+          projectDir: cwd,
+          serverUrl: resolvedServerUrl,
+          folderRules,
         });
         metaByPath.set(g.path, meta);
       } catch {
@@ -102,6 +157,7 @@ export async function buildSearchResult(
     '',
   );
 
+  const results: SearchResultRow[] = [];
   for (const group of groups) {
     const meta = metaByPath.get(group.path);
     const title = meta?.title ?? group.path;
@@ -116,6 +172,19 @@ export async function buildSearchResult(
       lines.push(`- Line ${m.line}: ${m.text}`);
     }
     lines.push('');
+
+    const docName = docNameFromPath(group.path);
+    const resolved = resolve(docName);
+    results.push({
+      path: group.path,
+      docName,
+      title: meta?.title ?? null,
+      description: meta?.description ?? null,
+      tags: meta?.tags ?? [],
+      matches: group.matches.map((m) => ({ line: m.line, text: m.text })),
+      previewUrl: resolved?.url ?? null,
+      ...(resolved ? { previewUrlSource: resolved.source } : {}),
+    });
   }
 
   if (truncated) {
@@ -124,7 +193,17 @@ export async function buildSearchResult(
     );
   }
 
-  return lines.join('\n');
+  return {
+    text: lines.join('\n'),
+    structured: {
+      query: args.query,
+      matchCount: visible.length,
+      fileCount: groups.length,
+      truncated,
+      results,
+      ui,
+    },
+  };
 }
 
 export function register(server: ServerInstance, deps: SearchDeps): void {
@@ -134,11 +213,18 @@ export function register(server: ServerInstance, deps: SearchDeps): void {
     {
       query: z.string().describe('Literal text to search for'),
       case_sensitive: z.boolean().optional().describe('Case-sensitive search (default false)'),
+      cwd: z
+        .string()
+        .optional()
+        .describe(
+          "Absolute host path to search in. Defaults to the MCP client's first advertised root.",
+        ),
     },
-    async (args: { query: string; case_sensitive?: boolean }) => {
+    async (args: { query: string; case_sensitive?: boolean; cwd?: string }) => {
       try {
-        const body = await buildSearchResult(args, deps);
-        return textResult(body);
+        const { text, structured } = await buildSearchResult(args, deps);
+        if (!structured) return textResult(text);
+        return textPlusStructured(text, structured);
       } catch (err) {
         return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
       }

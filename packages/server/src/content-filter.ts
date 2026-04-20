@@ -14,6 +14,53 @@ import picomatch from 'picomatch';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
+/**
+ * Directories that are always skipped during traversal, independent of gitignore or user config.
+ *
+ * Criteria: never contains user-authored markdown AND either (a) uses symlinks aggressively,
+ * (b) is a massive tree, or (c) is a framework/tool cache. Overridable in the future via
+ * config if a project genuinely needs to serve docs from one of these locations.
+ *
+ * Package managers / language runtimes:
+ *   node_modules  — pnpm broken symlinks crash statSync; massive tree
+ *   .venv / venv / env — Python virtualenvs
+ *   __pycache__   — Python bytecode
+ *   vendor        — Go / PHP / Ruby vendored deps
+ *
+ * Build output:
+ *   dist / build / out / output — compiled assets
+ *   .next / .nuxt / .svelte-kit / .astro — framework build caches
+ *   .turbo / .cache / .parcel-cache     — build tool caches
+ *   coverage                            — test coverage reports
+ *
+ * VCS:
+ *   .git — already in the ig instance; hardcoded here for the fast-path
+ */
+const BUILTIN_SKIP_DIRS = new Set([
+  // Package managers / language runtimes
+  'node_modules',
+  '.venv',
+  'venv',
+  'env',
+  '__pycache__',
+  'vendor',
+  // Build output
+  'dist',
+  'build',
+  'out',
+  'output',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.astro',
+  '.turbo',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+  // VCS
+  '.git',
+]);
+
 export interface ContentFilterOptions {
   /** Project root directory (where .gitignore lives). */
   projectDir: string;
@@ -165,6 +212,9 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     },
 
     isDirExcluded(relativePath: string): boolean {
+      // Fast-path: built-in skips are always excluded regardless of gitignore config.
+      const topSegment = relativePath.split('/')[0];
+      if (BUILTIN_SKIP_DIRS.has(topSegment)) return true;
       if (contentOutsideProject) return false;
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
@@ -213,7 +263,8 @@ function populateDirCount(
   for (const entry of entries) {
     const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      if (entry.name === '.git') continue;
+      if (BUILTIN_SKIP_DIRS.has(entry.name)) continue;
+      if (isGitignoreExcluded(childRel) || isGitignoreExcluded(`${childRel}/`)) continue;
       populateDirCount(join(dir, entry.name), childRel, isIncluded, isGitignoreExcluded, dirCount);
     } else if (
       entry.isFile() &&
@@ -253,6 +304,10 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+
+    // Fast-path: built-in skips never contain user .gitignore files and can
+    // be massive trees (node_modules) or contain broken symlinks (pnpm).
+    if (BUILTIN_SKIP_DIRS.has(entry.name)) continue;
 
     const dirPath = join(dir, entry.name);
     const relToProject = relative(projectDir, dirPath);

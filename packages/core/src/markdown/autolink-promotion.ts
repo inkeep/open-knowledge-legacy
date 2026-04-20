@@ -20,8 +20,7 @@
  * non-whitespace non-bracket content. Same regex as AUTOLINK_RE in the
  * preprocessor.
  */
-import type { Link, Nodes, Parent, Root, Text } from 'mdast';
-import { visit } from 'unist-util-visit';
+import type { Link, Parent, Text } from 'mdast';
 
 /**
  * CommonMark autolink pattern — matches `<scheme:uri>` in text content.
@@ -30,28 +29,16 @@ import { visit } from 'unist-util-visit';
 const AUTOLINK_IN_TEXT_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
 
 /**
- * Unified transformer plugin that promotes autolink-shaped text into
- * semantic `link` mdast nodes.
- */
-export function autolinkPromotionPlugin() {
-  return (tree: Root) => {
-    // Walk ALL parent nodes that can contain phrasing content (text).
-    visit(tree, (node: Nodes) => {
-      if ('children' in node && Array.isArray(node.children)) {
-        const parent = node as Parent;
-        const hasTextChild = parent.children.some((c) => c.type === 'text');
-        if (hasTextChild) promoteInParent(parent);
-      }
-    });
-  };
-}
-
-/**
  * Walk a parent node's children looking for text nodes that contain
  * `<scheme:uri>` patterns. Split them into: preceding text, link node,
  * trailing text. Mutates `parent.children` in place.
+ *
+ * Exported for use in the R17 merged post-parse walker — that walker
+ * invokes the same promotion logic per parent-visit without re-walking
+ * the tree. The standalone `autolinkPromotionPlugin` above is preserved
+ * for legacy callers and unit tests that exercise the plugin surface.
  */
-function promoteInParent(parent: Parent): void {
+export function promoteInParent(parent: Parent): void {
   const newChildren: Parent['children'] = [];
   let changed = false;
 

@@ -1,14 +1,32 @@
 ---
 title: Getting started
-description: Initialize Open Knowledge on an existing project, start the editor, and connect AI agents.
+description: Initialize Open Knowledge on an existing project or clone a GitHub repo, start the editor, and connect AI agents.
 ---
-
 ## Prerequisites
 
 - **Bun >= 1.3.11** or **Node.js >= 22**
-- **Git** installed and initialized in your project
+- **Git** installed and on your PATH
 
-## Initialize your project
+## Choose your starting point
+
+There are two ways to get started:
+
+- **Clone a GitHub repo** -- start from an existing repository (public or private).
+- **Initialize an existing project** -- add Open Knowledge to a project already on disk.
+
+## Clone from GitHub
+
+The fastest path from a GitHub URL to editing:
+
+```bash
+npx @inkeep/open-knowledge clone https://github.com/company/docs
+```
+
+This clones the repository, scaffolds `.open-knowledge/`, and starts the editor. Authentication is handled automatically -- if you have the [GitHub CLI](https://cli.github.com/) installed, its session is reused. Otherwise, you'll be prompted to sign in via Device Flow or paste a Personal Access Token.
+
+After cloning, changes sync with the remote automatically. See [GitHub Sync](/guides/github-sync) for details on auto-sync, conflict resolution, and configuration.
+
+## Initialize an existing project
 
 <Steps>
 
@@ -27,9 +45,25 @@ cd your-project
 npx @inkeep/open-knowledge init
 ```
 
-This scaffolds the `.open-knowledge/` directory structure, registers the MCP server in your project's `.mcp.json`, and prints a content preview showing which files the watcher will track.
+When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
 
-The `.mcp.json` entry that gets written:
+1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root).
+2. Registers the MCP server in each editor's config file at the correct per-editor path (table below).
+3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
+4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
+5. Prints a content preview showing which files the watcher will track.
+
+`init` writes to the correct per-editor path for every editor whose config directory exists on your machine:
+
+| Editor       | Config file                               | Scope       |
+| ------------ | ----------------------------------------- | ----------- |
+| Claude Code  | `<project>/.mcp.json`                     | Project     |
+| Cursor       | `<project>/.cursor/mcp.json`              | Project     |
+| VS Code      | `<project>/.vscode/mcp.json`              | Project     |
+| Codex        | `<project>/.codex/config.toml`            | Project     |
+| Windsurf     | `~/.codeium/windsurf/mcp_config.json`     | User-global |
+
+Each MCP entry looks like this (using `npx` as the runner):
 
 ```json
 {
@@ -42,31 +76,56 @@ The `.mcp.json` entry that gets written:
 }
 ```
 
-The command is idempotent -- safe to run again without side effects. Pass `--force` to overwrite an existing `.mcp.json` entry, or `--no-mcp` to skip writing `.mcp.json` entirely.
+`init` also writes a `.claude/launch.json` so Claude Code's preview pane can spawn the editor via `preview_start("open-knowledge")` — `runtimeArgs` points at `['@inkeep/open-knowledge', 'ui']` with `autoPort: true`.
+
+The command is idempotent — safe to run again without side effects. Flags:
+
+- `--editor <name1,name2>` or `--editor all` — override the detected set.
+- `--force` — overwrite existing entries (including the Open Knowledge section in `AGENTS.md` and per-editor instruction files).
+- `--no-mcp` — skip writing MCP config entries entirely.
+
+**Upgrading an existing project:** if you ran `init` before, the `AGENTS.md` marker block is already present and `init` skips it by default. Run `open-knowledge init --force` to refresh the injected section with the latest agent instructions.
 </Step>
 
 </Steps>
 
-## Start the editor
+## The editor starts automatically
+
+You don't need to start the editor manually. When a connected agent is about to make edits, it calls `preview_start("open-knowledge")` — which starts the [[server]] and opens the browser for you. Changes stream live into the editor as the agent writes.
+
+If you want to open the editor yourself:
 
 ```bash
-npx @inkeep/open-knowledge start
-npx @inkeep/open-knowledge start --open  # also opens the editor in your browser
+npx @inkeep/open-knowledge start --open
 ```
 
-This starts the collaborative editor at `http://localhost:3000`. The port is configurable via `.open-knowledge/config.yml`. The `--open` flag launches your default browser automatically (macOS, Linux, and Windows).
+`ok start` runs the Hocuspocus collab server on a kernel-allocated port and auto-spawns `ok ui` — a sibling process that serves the React editor at `http://localhost:3000`. The `--open` flag opens that UI in your default browser.
+
+When you close your editor tab and stop editing, idle-shutdown tears both processes down after 30 minutes of zero WebSocket clients — you never have to run `stop` yourself, but it's there if you want it:
+
+```bash
+npx @inkeep/open-knowledge status   # Inspect both lockfiles
+npx @inkeep/open-knowledge stop     # SIGTERM both siblings
+npx @inkeep/open-knowledge clean    # Prune stale locks (if a process crashed)
+```
+
+See the [Service Topology](/internals/service-topology) page for the full lifecycle model.
 
 <Callout type="info">
-Starting the editor is optional. AI agents work without it -- the MCP server operates in disk-only mode when no editor is running.
+Starting the editor is optional. AI agents work without it — the MCP server operates in disk-only mode when no collab server is running, or detach-spawns `ok start` on demand when you call your first write-capable tool (opt-out via `OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config).
+</Callout>
+
+<Callout type="warn" title="Platform support">
+macOS and Linux only. Windows has long-standing Node bugs with detached spawn that would break the `ok mcp` → `ok start` handoff.
 </Callout>
 
 ## Create files from the sidebar
 
 The file sidebar offers several ways to create a new markdown file or folder:
 
-- **Header `+` button** -- opens a dropdown with "New file" and "New folder". Defaults to the active file's parent directory, or project root when no file is open.
+- **Header **`+`** button** -- opens a dropdown with "New file" and "New folder". Defaults to the active file's parent directory, or project root when no file is open.
 - **Right-click a folder row** -- "New file here" / "New folder here" targets that folder.
-- **`Cmd+Alt+N` (macOS) / `Ctrl+Alt+N` (Linux/Windows)** -- opens the new-file dialog with the active-directory default. The shortcut is ignored while focus is inside a text input, textarea, or content-editable element.
+- `Cmd+Alt+N`\*\* (macOS) / `Ctrl+Alt+N` (Linux/Windows)\*\* -- opens the new-file dialog with the active-directory default. The shortcut is ignored while focus is inside a text input, textarea, or content-editable element.
 - **Empty workspace** -- a "Create your first file" button appears when no files exist yet.
 - **Drag and drop** -- drag a file or folder row onto another folder (or onto the **library root** strip that appears while dragging) to move it. Invalid targets (for example, moving a folder into itself) are highlighted in red. Moves use the same server rename pipeline as other file operations.
 
@@ -79,7 +138,7 @@ New folders are always created with an initial file (default `index.md`) so they
 <Step>
 ### Open your project in an MCP-compatible editor
 
-Claude Code, Cursor, Windsurf, or Codex all support MCP servers.
+Claude Code, Cursor, Codex, or Windsurf all support MCP servers.
 </Step>
 
 <Step>
@@ -104,15 +163,17 @@ The agent now has access to three workflow tools:
 
 ```
 .open-knowledge/
-  articles/          — Canonical knowledge articles
-  external-sources/  — Ingested reference material
-  research/          — Exploratory findings
-  cache/             — Derived data (gitignored)
-  catalogs/          — Auto-generated indexes (created when agents connect)
-  AGENTS.md          — Navigation guide for AI agents
-  config.yml         — Workspace configuration overrides
+  AGENTS.md          — Navigation guide for AI agents (tool usage, linking conventions)
+  config.yml         — Workspace config (content dir, include/exclude globs, server port)
   .gitignore         — Excludes cache/
+  cache/             — Derived data (gitignored)
+AGENTS.md            — Root agent instructions with Open Knowledge section injected
+.mcp.json            — MCP server entry for open-knowledge
+.claude/
+  launch.json        — Tells Claude Code how to start the editor via preview_start
 ```
+
+Content directories (`articles/`, `research/`, etc.) are not pre-created — organize your knowledge wherever makes sense for the project. The agent creates files as it works.
 
 ## Preview content scope
 
@@ -127,6 +188,9 @@ This works before or after `init` and reflects the current state of your config.
 ## Next steps
 
 <Cards>
+  <Card title="GitHub Sync" href="/guides/github-sync">
+    Clone repos, auto-sync with your team, and resolve conflicts.
+  </Card>
   <Card title="Configuration" href="/guides/configuration">
     Customize ports, content directory, and file patterns.
   </Card>

@@ -1,8 +1,208 @@
+diff --git a/node_modules/@handlewithcare/remark-prosemirror/.bun-tag-c30c30ad62176876 b/.bun-tag-c30c30ad62176876
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/lib/mdast-util-from-prosemirror.js b/lib/mdast-util-from-prosemirror.js
+index 8b1d0173e7a95e5dc57d9b85b2b0a2360190fcb3..7b4c210f2117efb04a49e8e07a19338c7b56637c 100644
+--- a/lib/mdast-util-from-prosemirror.js
++++ b/lib/mdast-util-from-prosemirror.js
+@@ -32,55 +32,148 @@ function createState(nodeHandlers, markHandlers) {
+         }
+         return null;
+     }
+-    function processChildPartition(nodes, parent) {
+-        const firstChild = nodes[0];
+-        const firstMark = firstChild?.marks[0];
+-        if (!firstMark) return nodes.map((node)=>state.one(node.node, parent));
+-        const children = hydrateMarks(nodes.map(({ node, marks })=>({
+-                node,
+-                marks: marks.slice(1)
+-            })), parent);
+-        const handler = state.markHandlers[firstMark.type.name];
++    /**
++     * R24 (US-017) — Outside-in greedy mark hydration.
++     *
++     * Replaces the upstream marks[0]-partition algorithm. Original algorithm groups
++     * adjacent spans whose first mark matches by .eq(), which loses nested-mark
++     * structure when ProseMirror's mark-order normalization (per schema registration
++     * order) makes adjacent spans pick different "first marks" for the same logical
++     * outer mark.
++     *
++     * Example failure with the upstream algorithm — input mdast `strong([emphasis([foo]), text(" bar")])`:
++     *   PM spans: foo[E,S], " bar"[S]  (schema order [E,S])
++     *   marks[0]: E vs S → different partitions → emits as siblings
++     *   `[emphasis(strong(foo)), strong(" bar")]` — STRUCTURAL LOSS.
++     *
++     * Outside-in greedy algorithm:
++     *   1. Compute the intersection of marks across all spans by .eq().
++     *   2. If non-empty, peel one shared mark, recurse on stripped spans, wrap result.
++     *   3. Else partition spans into max-length adjacent groups whose running
++     *      intersection stays non-empty (or both ends are mark-less). Recurse each.
++     *   4. Base case: if all spans have no marks, render directly via state.one.
++     *
++     * Termination: each recursive call either reduces total mark count (peel) or
++     * strictly reduces span count per group (partition produces ≥2 groups since
++     * shared was empty across all spans).
++     *
++     * For `[foo[E,S], " bar"[S]]`: shared=[S], peel S → [foo[E], " bar"[]] →
++     * partition: [foo[E]] alone, [" bar"[]] alone → recurse → [emphasis(foo), text(" bar")] →
++     * wrap S → strong([emphasis(foo), text(" bar")]). Byte-identical to original.
++     *
++     * For `[a[E], b[code]]` (after Code mark `excludes:'_'` removal lets b carry both):
++     * input was `[a[E], b[E,code]]` → shared=[E], peel → [a[], b[code]] → partition:
++     * [a[]], [b[code]] → recurse → [text(a), inlineCode(b)] → wrap E →
++     * emphasis([text(a), inlineCode(b)]). Byte-identical to original mdast.
++     */
++    function intersectMarks(spans) {
++        if (spans.length === 0) return [];
++        const first = spans[0].marks;
++        const result = [];
++        for (const m of first) {
++            let inAll = true;
++            for (let i = 1; i < spans.length; i++) {
++                if (!spans[i].marks.some((x)=>x.eq(m))) {
++                    inAll = false;
++                    break;
++                }
++            }
++            if (inAll) result.push(m);
++        }
++        return result;
++    }
++    function removeMarkOnce(marks, target) {
++        const idx = marks.findIndex((m)=>m.eq(target));
++        if (idx === -1) return marks;
++        return marks.slice(0, idx).concat(marks.slice(idx + 1));
++    }
++    function spansShareAnyMark(a, b) {
++        for (const am of a.marks) {
++            if (b.marks.some((bm)=>am.eq(bm))) return true;
++        }
++        return false;
++    }
++    function intersectMarkArrays(a, b) {
++        const result = [];
++        for (const m of a) {
++            if (b.some((x)=>x.eq(m))) result.push(m);
++        }
++        return result;
++    }
++    function applyMarkHandler(mark, parent, children) {
++        const handler = state.markHandlers[mark.type.name];
+         if (!handler) return children;
+-        return handler(firstMark, parent, children, state);
++        const result = handler(mark, parent, children, state);
++        // Handlers may return a single node or an array; normalize and filter null.
++        return (Array.isArray(result) ? result : [result]).filter((n)=>n != null);
+     }
+-    function hydrateMarks(children, parent) {
+-        const partitioned = children.reduce((acc, child)=>{
+-            const lastPartition = acc[acc.length - 1];
+-            if (!lastPartition) {
+-                return [
+-                    [
+-                        child
+-                    ]
+-                ];
+-            }
+-            const lastChild = lastPartition[lastPartition.length - 1];
+-            if (!lastChild) {
+-                return [
+-                    ...acc.slice(0, acc.length),
+-                    [
+-                        child
+-                    ]
++    function renderSpansWithoutMarks(spans, parent) {
++        const result = [];
++        for (const s of spans) {
++            const r = state.one(s.node, parent);
++            if (r != null) result.push(r);
++        }
++        return result;
++    }
++    function hydrateMarks(spans, parent) {
++        if (spans.length === 0) return [];
++        // Base case: all spans mark-less — render directly.
++        if (spans.every((s)=>s.marks.length === 0)) {
++            return renderSpansWithoutMarks(spans, parent);
++        }
++        // Try to peel a shared mark covering ALL spans (outside-in).
++        const shared = intersectMarks(spans);
++        if (shared.length > 0) {
++            const mark = shared[0];
++            const stripped = spans.map((s)=>({
++                    node: s.node,
++                    marks: removeMarkOnce(s.marks, mark)
++                }));
++            const inner = hydrateMarks(stripped, parent);
++            return applyMarkHandler(mark, parent, inner);
++        }
++        // No mark shared by ALL spans — partition into max-length adjacent groups
++        // whose running intersection stays non-empty (or where both adjacent spans
++        // have no marks).
++        const groups = [];
++        let current = [
++            spans[0]
++        ];
++        let currentInter = spans[0].marks.slice();
++        for (let i = 1; i < spans.length; i++) {
++            const next = spans[i];
++            const newInter = intersectMarkArrays(currentInter, next.marks);
++            const bothEmpty = currentInter.length === 0 && next.marks.length === 0;
++            if (newInter.length > 0 || bothEmpty) {
++                current.push(next);
++                currentInter = bothEmpty ? [] : newInter;
++            } else {
++                groups.push(current);
++                current = [
++                    next
+                 ];
++                currentInter = next.marks.slice();
+             }
+-            if (!child.marks.length && !lastChild.marks.length || child.marks.length && lastChild.marks.length && // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+-            child.marks[0]?.eq(lastChild.marks[0])) {
+-                return [
+-                    ...acc.slice(0, acc.length - 1),
+-                    [
+-                        ...lastPartition.slice(0, lastPartition.length),
+-                        child
+-                    ]
+-                ];
++        }
++        groups.push(current);
++        // Defensive: if partitioning produced one group spanning all input but
++        // shared was empty, fall through to per-span rendering (cannot recurse
++        // on the same shape without termination guarantee). This branch is
++        // not expected in practice — kept as safety net.
++        if (groups.length === 1 && spans.length > 1) {
++            const result = [];
++            for (const s of spans) {
++                for (const r of hydrateMarks([
++                    s
++                ], parent)) result.push(r);
+             }
+-            return [
+-                ...acc,
+-                [
+-                    child
+-                ]
+-            ];
+-        }, []);
+-        return partitioned.flatMap((nodes)=>processChildPartition(nodes, parent)).filter((node)=>!!node).flat();
++            return result;
++        }
++        const out = [];
++        for (const g of groups) {
++            for (const r of hydrateMarks(g, parent)) out.push(r);
++        }
++        return out;
+     }
+     function all(pmNode) {
+         return hydrateMarks(pmNode.children.map((child)=>({
 diff --git a/lib/mdast-util-to-prosemirror.js b/lib/mdast-util-to-prosemirror.js
-index 1234567..abcdefg 100644
+index 8433f31fff4e82e5fbb0fae2bb8ba1f68cc30f35..9adb6cd9be3462cbca81f4b6a0dca30571e3d05a 100644
 --- a/lib/mdast-util-to-prosemirror.js
 +++ b/lib/mdast-util-to-prosemirror.js
-@@ -167,7 +167,9 @@
+@@ -167,7 +167,9 @@ function handle(schema, handlers, htmlHandlers, node, parent, state) {
                  return schema.text(node.value);
              },
              text (node) {

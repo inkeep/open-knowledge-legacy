@@ -1,6 +1,15 @@
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
+import type { Config } from '../../config/schema.ts';
+import { resolvePreviewUrlForTool } from './preview-url.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  normalizeDocName,
+  resolveServerUrl,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find missing link candidates for a target page.',
@@ -12,7 +21,13 @@ export const DESCRIPTION = [
   '- `docName` — Target page docName, typically without extension (for example, "articles/project-alpha"). A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export interface SuggestLinksDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: SuggestLinksDeps): void {
   server.tool(
     'suggest_links',
     DESCRIPTION,
@@ -20,19 +35,28 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       docName: z.string().describe('Target page docName'),
     },
     async (args: { docName: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(deps.serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
 
       const result = await httpGet(
-        serverUrl,
+        url,
         `/api/suggest-links?docName=${encodeURIComponent(normalized.docName)}`,
       );
 
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       const { ok: _ok, ...data } = result;
-      return textResult(JSON.stringify(data, null, 2));
+      const preview = await resolvePreviewUrlForTool(normalized.docName, {
+        config: deps.config,
+        resolveCwd: deps.resolveCwd,
+      });
+      return textPlusStructured(JSON.stringify(data, null, 2), {
+        ...data,
+        previewUrl: preview?.url ?? null,
+        ...(preview ? { previewUrlSource: preview.source } : {}),
+      });
     },
   );
 }

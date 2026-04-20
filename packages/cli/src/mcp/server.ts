@@ -16,16 +16,20 @@
  * (stdout is the MCP wire).
  */
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { readServerLock } from '@inkeep/open-knowledge-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { setProjectDir } from '../bash/index.ts';
+import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
+import { PREVIEW_GUIDANCE } from '../content/init.ts';
 import { dim } from '../ui/colors.ts';
 import type { AgentIdentity } from './agent-identity.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
-export interface McpServerOptions {
+interface McpServerOptions {
   projectDir: string;
   serverUrl?: string;
   config: Config;
@@ -36,7 +40,7 @@ function log(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
-function buildInstructions(config: Config): string {
+export function buildInstructions(config: Config): string {
   const { dir, include, exclude } = config.content;
   const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
 
@@ -48,11 +52,21 @@ function buildInstructions(config: Config): string {
 - **Include globs:** ${include.map((p) => `\`${p}\``).join(', ')}
 - **Exclude globs:** ${excludeLine}
 
+**Path contract (\`config.yml\`):** \`.open-knowledge/config.yml\` (plus optional \`~/.open-knowledge/config.yml\`, with CLI/env overrides) owns the \`content\` keys. The table above is **this MCP session's resolved view** of that contract — same rules, no guessing from folder names. A file is an Open Knowledge document iff it lives under **Content directory**, matches at least one **Include glob**, and is not removed by **Exclude globs** or \`.gitignore\`.
+
 Paths in \`exec\` commands are resolved relative to the content directory. The sandbox prevents paths escaping it.
 
-## Navigation — prefer \`exec\` for all wiki reads
+**Default rule:** with the usual \`**/*.md\` + \`**/*.mdx\` globs from repo root, **every** such file under the content directory is an Open Knowledge document unless \`.gitignore\` or \`content.exclude\` drops it. Folder names (\`specs/\`, \`reports/\`, …) do not matter. If \`content.include\` was narrowed, only matching paths use \`exec\`.
 
-**Prefer \`exec\` over native \`Read\`/\`Grep\`/\`Glob\` and over \`read_document\`/\`search\` for all wiki operations.** \`exec\` provides the same enrichment as the typed tools (frontmatter, backlink count, shadow-repo activity with agent-vs-human attribution, project git history) plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them — no per-operation tool switch.
+## Navigation — \`exec\` is **mandatory** for Open Knowledge \`.md\` / \`.mdx\` (this server is registered)
+
+**STOP:** Do not use the host IDE's \`Read\`, \`Grep\`, or \`Glob\` on in-scope \`.md\` / \`.mdx\` — use \`exec\` (or typed \`read_document\` / \`search\` when you need fixed \`structuredContent\`). Native file tools skip frontmatter, backlinks, shadow-repo activity, and project git history; reserve them for **source code and non-markdown** paths.
+
+**MCP clients differ:** Your agent host may expose these tools directly or only through its MCP integration (server name from \`tools/list\`, user-chosen label). **That still counts as this server being available.** Invoke \`exec\` / \`search\` / \`read_document\` the way **your product's docs** describe — not native \`Grep\` on in-scope markdown. Missing a top-level symbol named \`exec\` is not an excuse.
+
+\`exec\` provides the same enrichment as the typed tools plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them. **Escape hatch:** only if this MCP server is **not** registered for the workspace, or after an MCP **call** failed — say \`Open Knowledge MCP unavailable:\`. Never use the hatch to skip trying MCP first.
+
+For paths **outside** the include globs above, use native tools.
 
 Examples:
 
@@ -65,12 +79,13 @@ Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, 
 
 ### Scope searches — \`grep\` and \`find\` can be slow if unscoped
 
-Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For wiki reads, scope deliberately:
+Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For reads inside the content tree, scope deliberately:
 
 - **Filter to markdown:** \`grep -rn TERM --include="*.md" <dir>\` — skips every non-md file.
 - **Scope to a known knowledge dir:** \`grep -rn TERM reports/ specs/\` (or whatever folders the project uses) beats \`grep -rn TERM .\`.
 - **Bail early:** pipe through \`| head -20\` for bounded output. The server waits for the pipeline to finish before returning, so unscoped commands block on the slowest stage.
-- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
+- **Existence vs. enumeration:** "does X exist in any tracked doc?" is \`grep -rl PATTERN <dir>\` (list matching files, unbounded) — NOT \`grep -rn PATTERN <dir> | head -N\`. When \`head\` truncates, alphabetically-earlier files dominate the output and later files silently go missing. The server surfaces a banner when \`head\` / \`tail\` hits its cap, but the fix is to pick the right command up front.
+- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, \`.claude\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
 
 ### Why \`exec\` over typed tools
 
@@ -78,7 +93,9 @@ Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real
 
 ## Writing
 
-Agent writes to wiki markdown **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
+Agent writes to in-scope \`.md\` / \`.mdx\` (paths under \`content.include\`) **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
+
+${PREVIEW_GUIDANCE}
 
 ## Linking — lean on \`[[wiki-links]]\` aggressively
 
@@ -94,9 +111,22 @@ Agent writes to wiki markdown **must** go through the \`write_document\` / \`edi
 
 **Rule of thumb:** if a human reader would want to click a term to learn more, make it a link. Err on the side of too many links.
 
+## Cadence — maintain hubs as you create children
+
+When you create or meaningfully edit a doc inside a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before moving to the next child. Write one child → update hub → write next child. Don't batch five children and then the hub.
+
+**Why:** the browser follows your focus in real time via push-nav on every write. Hub-as-you-go makes your work legible to the human watching — each pulse is a complete thought (child → hub → child → hub), and the hub doc itself functions as the live progress bar. Batched writes make the nav flicker, flatten the narrative, and hide the structure you're building.
+
+When \`write_document\` creates a doc with zero incoming backlinks and a hub candidate exists in the folder tree, the response includes a \`hints: [{type: 'orphan', parentCandidates: [...], message: ...}]\` entry — that's the soft nudge to interleave the hub update next. Pair with the link-as-you-write discipline above.
+
 ## Frontmatter conventions
 
-Every \`.md\` file in the knowledge base should have YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended). Folder-level frontmatter was deprecated — per-file frontmatter is the only authored metadata surface.
+Open Knowledge has two metadata surfaces that merge at read time:
+
+1. **Per-file frontmatter** — YAML at the top of each \`.md\` / \`.mdx\`: \`title\` (required), \`description\` (required), \`tags\` (recommended). This is where a file's own identity lives.
+2. **Folder-level defaults via \`.open-knowledge/config.yml\` \`folders:\`** — declare \`title\` / \`description\` / \`tags\` defaults keyed by glob \`match:\`. Rules apply in declaration order; later matches override earlier scalars. Tags concatenate across ALL matching rules (in declaration order), with file tags appended last, and first-occurrence preserved on dedup. The file's own frontmatter wins per-scalar; folder defaults fill in blanks.
+
+Folder metadata lives in \`config.yml\`, **not** in content files — this is intentionally different from the rejected \`INDEX.md\`-inside-content pattern. The merge happens on every \`exec\` / \`read_document\` / \`search\` call and is never written back to disk.
 
 ## Tools
 
@@ -134,19 +164,20 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
 // ── Server entrypoint ──────────────────────────────────────────────────
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
-  const { projectDir, serverUrl, config } = options;
+  const { projectDir: startupCwd, serverUrl, config } = options;
 
-  // Detect Hocuspocus (non-blocking)
-  let hocuspocusAvailable = false;
+  // Detect Hocuspocus (non-blocking, informational). An explicit `serverUrl`
+  // is probed immediately; when discovery is lazy the log is deferred until
+  // after the client advertises its roots (see below).
   if (serverUrl) {
-    hocuspocusAvailable = await detectHocuspocus(serverUrl);
+    const hocuspocusAvailable = await detectHocuspocus(serverUrl);
     log(
       hocuspocusAvailable
         ? `Hocuspocus detected at ${serverUrl}`
         : `Hocuspocus not available at ${serverUrl} — using disk-only mode`,
     );
   } else {
-    log('No server URL configured — using disk-only mode');
+    log('No explicit server URL — will discover lazily from server.lock per call');
   }
 
   const server = new McpServer(
@@ -159,14 +190,103 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     },
   );
 
+  // ── Cwd resolution via MCP roots ────────────────────────────────────
+  //
+  // The client advertises one or more roots (file:// URIs of directories
+  // it's working in). We fetch those roots and use the first one as the
+  // default cwd for every tool call; agents can override per-call via an
+  // explicit `cwd` arg. Falls back to startup cwd if the client doesn't
+  // advertise roots (non-MCP-roots clients, or clients that leave it empty).
+  //
+  // This replaces the previous spawn-time singleton (`setProjectDir`),
+  // which broke whenever the spawner didn't set cwd the way the server
+  // expected (e.g., Claude Desktop not honoring the `cwd` field in
+  // `claude_desktop_config.json`).
+  let cachedRoots: string[] = [];
+  let rootsLoaded = false;
+
+  async function refreshRoots(): Promise<void> {
+    try {
+      const result = await server.server.listRoots();
+      cachedRoots = result.roots
+        .map((r) => r.uri)
+        .filter((u) => u.startsWith('file://'))
+        .map((u) => fileURLToPath(u));
+      log(
+        cachedRoots.length > 0
+          ? `roots: ${cachedRoots.join(', ')}`
+          : 'client advertised no roots — falling back to startup cwd',
+      );
+    } catch (err) {
+      log(
+        `listRoots unsupported by client (using startup cwd): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      rootsLoaded = true;
+    }
+  }
+
+  let warnedNoRoots = false;
+  async function resolveCwd(explicit?: string): Promise<string> {
+    if (explicit) return explicit;
+    if (!rootsLoaded) await refreshRoots();
+    if (cachedRoots.length === 0) {
+      // Observability: the client didn't advertise any file:// roots. Falling
+      // back to the spawn cwd — which is `/` for Claude Desktop and rarely
+      // what the user wants. Log once so operators debugging "wrong project"
+      // issues can see this.
+      if (!warnedNoRoots) {
+        log(`no client roots — falling back to startup cwd: ${startupCwd}`);
+        warnedNoRoots = true;
+      }
+      return startupCwd;
+    }
+    if (warnedNoRoots) {
+      log(`client roots now available — using ${cachedRoots[0]}`);
+      warnedNoRoots = false;
+    }
+    return cachedRoots[0];
+  }
+
+  server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
+    rootsLoaded = false;
+    await refreshRoots();
+  });
+
   // MCP tools — workflow + document + enriched + exec (V0-24)
-  const httpUrl = serverUrl
+  //
+  // Hocuspocus URL resolution is **lazy** when no explicit override is given.
+  // Discovery reads `<contentDir>/.open-knowledge/server.lock` relative to the
+  // client-advertised root, re-resolved on every tool invocation. This is the
+  // difference between "MCP started before `open-knowledge start`" returning
+  // stale `undefined` forever vs. picking the server up as soon as it appears.
+  // An explicit `serverUrl` (e.g. from `--port`) short-circuits discovery.
+  const explicitHttpUrl = serverUrl
     ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
     : undefined;
-  // Bash wrapper scopes all shell ops to projectDir (see bash/index.ts).
-  setProjectDir(projectDir);
+  // 1-second TTL cache on the lock-file read: agent burst writes (e.g. 5 files
+  // in 600ms) otherwise re-stat the same lock file N times with no new info.
+  // Lock contents change once per `open-knowledge start` lifetime, so this
+  // window is generously short. Keyed by cwd since different projects have
+  // different locks.
+  const SERVER_URL_CACHE_MS = 1000;
+  const serverUrlCache = new Map<string, { url: string | undefined; expiresAt: number }>();
+  const resolveServerUrlForTools = async (): Promise<string | undefined> => {
+    if (explicitHttpUrl) return explicitHttpUrl;
+    const cwd = await resolveCwd();
+    const now = Date.now();
+    const cached = serverUrlCache.get(cwd);
+    if (cached && cached.expiresAt > now) return cached.url;
+    const lock = readServerLock(resolveLockDir(resolveContentDir(config, cwd)));
+    const url = lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
+    serverUrlCache.set(cwd, { url, expiresAt: now + SERVER_URL_CACHE_MS });
+    return url;
+  };
 
-  // --- Agent identity (Ref pattern — tool handlers read .current at call time)
+  // --- Agent identity (Ref pattern — tool handlers read .current at call time).
+  // From attribution PR #134: every MCP connection gets a stable connectionId
+  // used as the agentId; displayName/colorSeed fall back to label env → client
+  // name → connectionId suffix.
   const connectionId = randomUUID();
   const label = process.env.AGENT_LABEL || undefined;
 
@@ -191,14 +311,50 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     log(`Agent identity: ${identityRef.current.displayName} (${connectionId.slice(0, 8)})`);
   };
 
-  registerAllTools(server, { serverUrl: httpUrl, projectDir, config, identityRef });
+  registerAllTools(server, {
+    serverUrl: resolveServerUrlForTools,
+    resolveCwd,
+    startupCwd,
+    config,
+    identityRef,
+  });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log('MCP server running (stdio)');
 
+  // Fetch roots opportunistically after the client finishes handshake.
+  // If it fires before the client is ready, `resolveCwd` will retry on
+  // first use (rootsLoaded is reset on failure paths via fallback).
+  refreshRoots().catch(() => {
+    /* logged inside refreshRoots */
+  });
+
+  // D-034 — keep-alive WebSocket to `/collab/keepalive`.
+  //
+  // Holds a single WS open for the lifetime of this MCP stdio process. Server-
+  // side idle-shutdown counts `/collab*` upgrades, so this channel (which
+  // carries no traffic) is exactly what keeps the collab server alive while
+  // a user has an MCP client connected but no browser tab open. Reconnects
+  // with exponential backoff so a server restart on a different port is
+  // picked up transparently.
+  const { startKeepalive } = await import('./keepalive.ts');
+  const keepaliveHandle = startKeepalive({
+    resolveWsUrl: async () => {
+      const httpUrl = await resolveServerUrlForTools();
+      if (!httpUrl) return undefined;
+      return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+    },
+    log,
+  });
+
   // Cleanup on exit
   const shutdown = (): void => {
+    try {
+      keepaliveHandle.close();
+    } catch {
+      // best-effort
+    }
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

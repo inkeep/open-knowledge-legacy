@@ -40,7 +40,7 @@ const GUARD_OPEN = '\uE000';
 const GUARD_CLOSE = '\uE001';
 const GUARD_COLON = '\uE002';
 const GUARD_AT = '\uE003';
-export const GUARD_OPEN_BRACE = '\uE004';
+const GUARD_OPEN_BRACE = '\uE004';
 
 /**
  * Autolink pattern: <scheme:uri>
@@ -71,6 +71,83 @@ const HTML_CLOSE_TAG_RE = /<\/([a-z][a-z0-9]*)\s*>/g;
  * Matches opening tags with optional attributes and optional self-closing slash.
  */
 const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
+
+/**
+ * Uppercase close tag used for the catch-all matching-close lookup (R15).
+ *
+ * Matches the literal `</UpperName>` form with NO whitespace before `>` —
+ * the pre-fix code used `rest.includes('</TagName>')` which is byte-literal.
+ * Lowercase close tags were already replaced with PUA sentinels by the
+ * earlier `HTML_CLOSE_TAG_RE` pass, so only uppercase-initial JSX close
+ * tags remain in `result` at this point.
+ */
+const UPPERCASE_CLOSE_TAG_INDEX_RE = /<\/([A-Z][A-Za-z0-9.]*)>/g;
+
+/**
+ * Binary search: smallest index `i` such that `arr[i] >= target`
+ * (standard lower-bound). Used by the R15 guard to resolve per-`<`
+ * position queries in O(log n) against pre-indexed sorted arrays.
+ */
+function lowerBound(arr: number[], target: number): number {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * One O(n) sweep collecting the absolute offsets of every uppercase-initial
+ * `</TagName>` close tag, grouped by tag name. Enables O(log n) "is there a
+ * matching close tag after this `<`?" lookups during the catch-all pass.
+ */
+function indexUppercaseCloseTagsByName(source: string): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  const re = new RegExp(UPPERCASE_CLOSE_TAG_INDEX_RE.source, 'g');
+  let m = re.exec(source);
+  while (m !== null) {
+    const existing = index.get(m[1]);
+    if (existing) existing.push(m.index);
+    else index.set(m[1], [m.index]);
+    m = re.exec(source);
+  }
+  return index;
+}
+
+/**
+ * One O(n) sweep collecting the offset of every paragraph-break match
+ * (`/\n\s*\n/`). Offsets are stored in ascending order so lower-bound
+ * binary search yields the next paragraph break > a given `<` offset.
+ */
+function indexParagraphBreaks(source: string): number[] {
+  const breaks: number[] = [];
+  const re = /\n\s*\n/g;
+  let m = re.exec(source);
+  while (m !== null) {
+    breaks.push(m.index);
+    m = re.exec(source);
+  }
+  return breaks;
+}
+
+/**
+ * One O(n) sweep collecting the offset of every `/>` occurrence. Allows
+ * finding the last self-closing marker within a paragraph region in
+ * O(log n). Skip-past after each match (+2) mirrors `indexOf` semantics
+ * and prevents double counting of overlapping `/>`.
+ */
+function indexSelfClose(source: string): number[] {
+  const positions: number[] = [];
+  let i = source.indexOf('/>');
+  while (i !== -1) {
+    positions.push(i);
+    i = source.indexOf('/>', i + 2);
+  }
+  return positions;
+}
 
 /**
  * Protect autolinks and HTML from MDX claiming.
@@ -148,19 +225,34 @@ export function protectFromMdx(source: string): string {
   // letter, has `>` on the same line, AND has `</` + same tag name later.
   // This is conservative — some valid JSX may get guarded and rendered as
   // text. But the alternative (crash) is worse.
+  //
+  // R15 (US-005): position indexes built once in O(n) so each `<` callback
+  // resolves in O(log n). Pre-fix did O(rest.includes(closeTag)) per `<`,
+  // which is O(n·m) worst case (e.g., many unique unclosed tags forcing
+  // full-rest scans). Empirical pathology: ~570ms at 10K unclosed tags
+  // pre-fix → log-linear post-fix. Behavior preserved byte-identically;
+  // only the lookup mechanism changed.
+  const closeTagOffsets = indexUppercaseCloseTagsByName(result);
+  const paragraphBreaks = indexParagraphBreaks(result);
+  const selfCloseOffsets = indexSelfClose(result);
+
   result = result.replace(/</g, (match, offset) => {
-    const rest = result.slice(offset);
+    // Bounded lookahead is enough for the regex prefix tests below — tag
+    // names are short, the regex patterns anchor at start. 256 chars is well
+    // beyond the longest dotted JSX name (`<Foo.Bar.Baz...>`) we'd hit in
+    // practice. Keeping this bounded converts a per-`<` O(n) slice into O(1).
+    const lookahead = result.slice(offset, offset + 256);
 
     // Close tags (</TagName>) — pass through ONLY if complete.
     // Incomplete `</` or `</foo` (no closing `>`) crashes remark-mdx.
     // Lowercase close tags were already handled by HTML_CLOSE_TAG_RE above.
-    if (rest[1] === '/') {
-      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*[ \t]*>/.test(rest)) return match;
+    if (lookahead[1] === '/') {
+      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*[ \t]*>/.test(lookahead)) return match;
       return GUARD_OPEN; // Incomplete close tag — protect
     }
 
     // Check if this looks like a valid self-closing or paired tag
-    const tagMatch = /^<([A-Z][a-zA-Z0-9.]*)[\s/>]/.exec(rest);
+    const tagMatch = /^<([A-Z][a-zA-Z0-9.]*)[\s/>]/.exec(lookahead);
     if (!tagMatch) {
       // Not an uppercase tag start — protect unconditionally
       return GUARD_OPEN;
@@ -168,31 +260,37 @@ export function protectFromMdx(source: string): string {
 
     const tagName = tagMatch[1];
 
-    // Check for self-closing: <TagName ... /> (may span multiple lines)
-    // Multi-line self-closing JSX like `<Widget\n  attr="x"\n/>` has the
-    // `/>` on a later line. Search up to the next paragraph break (blank line)
-    // — JSX tags don't span paragraph breaks.
-    //
-    // STRICT: only pass through if the content between <Tag and /> contains
-    // no stray `/` outside quoted attribute values. `<J/a/>` has a bare `/`
-    // (malformed JSX), but `<Image src="https://url" />` has `/` inside
-    // quotes (valid — URLs in attr values).
-    const nextBlankLine = rest.search(/\n\s*\n/);
-    const searchRegion = nextBlankLine === -1 ? rest : rest.slice(0, nextBlankLine);
-    const selfCloseIdx = searchRegion.lastIndexOf('/>');
-    if (selfCloseIdx > 0) {
-      const betweenContent = searchRegion.slice(tagMatch[0].length - 1, selfCloseIdx);
-      // Strip quoted strings — `/` inside "..." or '...' is valid attr content
-      const withoutQuotes = betweenContent.replace(/"[^"]*"|'[^']*'/g, '');
-      if (!withoutQuotes.includes('/')) {
-        return match; // Self-closing — safe for mdx-jsx
+    // Find next paragraph break > offset via binary search (O(log n)).
+    // JSX tags don't span paragraph breaks, so this scopes the self-close
+    // search the same way `rest.search(/\n\s*\n/)` did pre-fix.
+    const pbIdx = lowerBound(paragraphBreaks, offset);
+    const nextBlankLine = pbIdx < paragraphBreaks.length ? paragraphBreaks[pbIdx] : result.length;
+
+    // Check for self-closing: <TagName ... /> (may span multiple lines).
+    // Want the LAST `/>` strictly within (offset, nextBlankLine). Pre-fix
+    // used `searchRegion.lastIndexOf('/>')`; same semantics, indexed.
+    const scIdx = lowerBound(selfCloseOffsets, nextBlankLine);
+    if (scIdx > 0) {
+      const lastSelfCloseAbs = selfCloseOffsets[scIdx - 1];
+      if (lastSelfCloseAbs > offset) {
+        const tagEndAbs = offset + tagMatch[0].length - 1;
+        const betweenContent = result.slice(tagEndAbs, lastSelfCloseAbs);
+        // Strip quoted strings — `/` inside "..." or '...' is valid attr content
+        const withoutQuotes = betweenContent.replace(/"[^"]*"|'[^']*'/g, '');
+        if (!withoutQuotes.includes('/')) {
+          return match; // Self-closing — safe for mdx-jsx
+        }
       }
     }
 
-    // Check for matching close tag: </TagName>
-    const closeTag = `</${tagName}>`;
-    if (rest.includes(closeTag)) {
-      return match; // Has matching close tag — safe for mdx-jsx
+    // Check for matching close tag </TagName> anywhere after offset (O(log n)).
+    // Pre-fix used `rest.includes(closeTag)` which is O(n) per `<`.
+    const positions = closeTagOffsets.get(tagName);
+    if (positions) {
+      const idx = lowerBound(positions, offset);
+      if (idx < positions.length) {
+        return match; // Has matching close tag — safe for mdx-jsx
+      }
     }
 
     // Uppercase tag with no self-close and no matching close tag — protect
@@ -209,12 +307,26 @@ export function protectFromMdx(source: string): string {
   // — treat all open braces as unmatched because remark-parse processes
   // block structure BEFORE remark-mdx processes expressions.
   //
-  // Block boundaries that split expressions:
-  //   - Blank lines (\n\n) — paragraph breaks
-  //   - \n> — blockquote markers (remark-parse claims > as block syntax)
+  // Escape discipline (US-009, R6a): `{` preceded by an odd number of
+  // backslashes is a CommonMark §2.4 escape — the brace is already
+  // neutralized from remark-mdx's expression parser, so PUA-protecting
+  // it would DEFEAT the escape semantics: remark-parse would see
+  // `\<PUA>` and keep the backslash as literal text (since `<PUA>` is
+  // not in §2.4's escapable set), producing text value `\{` on restore.
+  // That text value then re-escapes on serialize to `\\\{`, growing 2
+  // backslashes per round-trip (safeText non-idempotence). Skipping the
+  // stack operations for escaped braces lets remark-parse apply the
+  // escape naturally; position-slice then tags `data.escapedChars` and
+  // the text handler re-emits `\{` on serialize. Idempotent.
+  //
+  // Symmetry note: `}` with odd preceding backslashes is similarly
+  // skipped — an escaped `}` can't close an expression, so counting it
+  // as a matched close would spuriously "pair" an earlier unmatched `{`,
+  // bypassing protection and handing the unclosed expression to
+  // remark-mdx (crash).
   //
   // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`,
-  // `a{\n>}` (blockquote splits expression), etc.
+  // `a{\n>}` (blockquote splits expression), `\{`, `\}`, `\{a}`, etc.
   {
     const unmatchedPositions: number[] = [];
     const stack: number[] = [];
@@ -231,10 +343,22 @@ export function protectFromMdx(source: string): string {
           continue;
         }
       }
-      if (result[i] === '{') {
-        stack.push(i);
-      } else if (result[i] === '}') {
-        if (stack.length > 0) stack.pop(); // matched pair within same block
+      if (result[i] === '{' || result[i] === '}') {
+        // Count preceding backslashes; odd count means this brace is
+        // CommonMark-escaped and remark-parse will consume the escape.
+        // Escape-awareness for `<`/`>`/`:`/`@` is NOT applied here — those
+        // passes unconditionally PUA-substitute. The position-slice walker
+        // at packages/core/src/markdown/position-slice.ts (ESCAPABLE_CHARS
+        // check + value-consistency guard, lines 100-116) is the
+        // downstream enforcement point for the `\<` / `\>` / `\:` / `\@`
+        // cases: if a future refactor makes R23 escape-aware for those
+        // chars as well, the position-slice value-consistency guard can be
+        // simplified at that time.
+        let bs = 0;
+        for (let j = i - 1; j >= 0 && result[j] === '\\'; j--) bs++;
+        if (bs % 2 === 1) continue; // escaped — skip stack operations
+        if (result[i] === '{') stack.push(i);
+        else if (stack.length > 0) stack.pop(); // matched pair within same block
       }
     }
     // Any remaining at EOF are also unmatched

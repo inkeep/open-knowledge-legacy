@@ -1,17 +1,21 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
+import { FolderOverview } from '@/components/FolderOverview';
+import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDocumentContext } from '@/editor/DocumentContext';
-import { SourceEditor } from '@/editor/SourceEditor';
-import { TiptapEditor } from '@/editor/TiptapEditor';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
+import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
+import { EditorActivityPool } from './EditorActivityPool';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
@@ -22,9 +26,48 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider } = useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
+  const { openDocumentTransition } = useDocumentTransition();
+  const isNewDoc = activeTarget?.kind === 'missing';
+  const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { layout: docPanelLayout, autoCollapse } = useDocPanelLayout();
+  const isSheetMode = docPanelLayout === 'sheet';
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // Tracks whether the user manually collapsed the panel via the toggle button.
+  // When true, auto-expand on crossing the 1024px breakpoint upward is suppressed
+  // so the panel respects the user's last manual action.
+  // Reset when the user manually expands, or when entering auto-collapse range
+  // (so that leaving auto-collapse range later triggers a fresh expand).
+  const userCollapsedRef = useRef(false);
+
+  useEffect(() => {
+    if (docPanelLayout === 'panel') {
+      if (autoCollapse) {
+        userCollapsedRef.current = false;
+        panelRef.current?.collapse();
+      } else if (!userCollapsedRef.current) {
+        panelRef.current?.expand();
+      }
+    }
+  }, [autoCollapse, docPanelLayout, panelRef]);
+
+  // Track the previously-active docName for DocumentErrorBoundary's
+  // "Back to previous document" affordance. Updated AFTER render (effect) so
+  // the *current* render still sees the prior value — during an error, the
+  // user sees "Back to <previous>" where <previous> is the last successfully
+  // navigated-to doc, not the doc that just errored.
+  const previousDocNameRef = useRef<string | null>(null);
+  const [previousDocName, setPreviousDocName] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeDocName && activeDocName !== previousDocNameRef.current) {
+      // Capture prior ref value, then update ref + state for the next render.
+      const prior = previousDocNameRef.current;
+      previousDocNameRef.current = activeDocName;
+      setPreviousDocName(prior);
+    }
+  }, [activeDocName]);
 
   // FUTURE: The diff is a snapshot fetched once. If the document changes while
   // the user is in diff mode (e.g., agent writes), the diff view becomes stale.
@@ -57,9 +100,13 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
         }
         const data = (await res.json()) as { content: string };
         if (!cancelled) {
-          // Git stores full file (with frontmatter); Y.Text('source') has body only.
+          // Strip frontmatter from both sides so the diff shows only body changes.
+          // Git stores full file (with frontmatter); Y.Text('source') also includes
+          // frontmatter (Observer A prepends it), so both must be stripped.
           const historical = stripFrontmatter(data.content ?? '').body;
-          const current = activeProvider?.document.getText('source').toString() ?? '';
+          const current = stripFrontmatter(
+            activeProvider?.document.getText('source').toString() ?? '',
+          ).body;
           // Normalize trailing whitespace + line endings before comparing —
           // the markdown pipeline may add/remove trailing newlines or spaces.
           const norm = (s: string) =>
@@ -91,9 +138,14 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
     };
   }, [previewEntry?.sha, activeDocName, activeProvider, onNoDiff]);
 
+  if (activeTarget?.kind === 'folder') {
+    return <FolderOverview folderPath={activeTarget.folderPath} />;
+  }
+
   if (!activeProvider || !activeDocName) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4">
+        <OkBlob size={80} />
         <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
       </div>
     );
@@ -102,74 +154,127 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   const isDiffMode = editorMode === 'diff';
   const isSourceMode = editorMode === 'source';
 
+  const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
+
+  const toggleButton = (
+    <div className="absolute top-2 right-2 z-10">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              if (isSheetMode) {
+                setSheetOpen((prev) => !prev);
+              } else if (isCollapsed) {
+                userCollapsedRef.current = false;
+                panelRef.current?.expand();
+              } else {
+                userCollapsedRef.current = true;
+                panelRef.current?.collapse();
+              }
+            }}
+            aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
+            className="text-muted-foreground"
+          >
+            {showPanelOpen ? (
+              <PanelRightOpen className="size-4" />
+            ) : (
+              <PanelRightClose className="size-4" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left">{showPanelOpen ? 'Show panel' : 'Hide panel'}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+
+  const editorContent = (
+    <div className="relative h-full">
+      {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+          internal scroller in diff mode and (b) the per-Activity scroller
+          inside EditorActivityPool in editor mode. Hoisting the scroller
+          to this level would let the Activity subtree's content contract
+          on hidden-mode effect cleanup, clamping scrollTop to 0 and
+          losing the user's position across warm navigation (QA-002 /
+          SPEC US-007/F1). */}
+
+      {/* Diff view — shown when editorMode === 'diff' */}
+      {isDiffMode && previewLoading && (
+        <div
+          className="flex items-center justify-center py-16"
+          role="status"
+          aria-label="Loading version"
+        >
+          <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+        </div>
+      )}
+      {isDiffMode && !previewLoading && diffContent !== null && (
+        <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
+      )}
+
+      {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+          Outer display:none keeps the editor DOM alive when in diff mode.
+          Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
+          inner display:none toggle) is preserved inside EditorActivityPool
+          per spec §9 + audit A2. Each Activity entry owns its own scroll
+          container so scroll position is DOM-local to that doc's subtree
+          and survives the Activity hidden-mode mount/unmount cycle.
+
+          Error + Suspense scoping lives INSIDE EditorActivityPool — each
+          Activity wraps its own DocumentErrorBoundary + Suspense so a
+          hidden doc's cached rejected syncPromise cannot re-throw into
+          the visible UI (QA-023/024). See EditorActivityPool.tsx file
+          docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
+      <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+        <EditorActivityPool
+          activeDocName={activeDocName}
+          isSourceMode={isSourceMode}
+          editorPlaceholder={editorPlaceholder}
+          previousDocName={previousDocName ?? undefined}
+          onNavigateBack={(prev) => {
+            // Navigate via hash so the URL stays in sync with app state —
+            // NavigationHandler's hashchange listener will call
+            // openDocumentTransition(prev). If the hash is already at
+            // prev (rare — happens when back-nav is used after agent
+            // nav without URL update), fall back to direct transition.
+            const nextHash = hashFromDocName(prev);
+            if (window.location.hash === nextHash) {
+              openDocumentTransition(prev);
+            } else {
+              window.location.hash = nextHash;
+            }
+          }}
+          onRecycle={recycleDocument}
+        />
+      </div>
+      {toggleButton}
+    </div>
+  );
+
+  if (isSheetMode) {
+    return (
+      <div className="flex min-h-0 flex-1">
+        <div className="min-w-0 flex-1">{editorContent}</div>
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetContent side="right" className="flex w-80 sm:w-96 flex-col gap-0 p-0">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Document panel</SheetTitle>
+            </SheetHeader>
+            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          </SheetContent>
+        </Sheet>
+      </div>
+    );
+  }
+
   return (
     // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
     // (which uses h-full internally) a correctly-sized height context.
     <div className="flex min-h-0 flex-1">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">
-          <div className="relative h-full">
-            <div
-              className="subtle-scrollbar h-full overflow-y-auto"
-              style={{ overflowAnchor: 'auto' }}
-            >
-              {/* Diff view — shown when editorMode === 'diff' */}
-              {isDiffMode && previewLoading && (
-                <div
-                  className="flex items-center justify-center py-16"
-                  role="status"
-                  aria-label="Loading version"
-                >
-                  <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-                </div>
-              )}
-              {isDiffMode && !previewLoading && diffContent !== null && (
-                <DiffView
-                  oldContent={diffContent.old}
-                  newContent={diffContent.new}
-                  layout={diffLayout}
-                />
-              )}
-
-              {/* CSS-based show/hide — display:none keeps DOM alive without triggering
-                  React's effect lifecycle, so both editors survive mode switches. */}
-              <div style={{ display: isDiffMode ? 'none' : undefined }}>
-                <div className={isSourceMode ? 'h-full' : 'hidden'}>
-                  <SourceEditor
-                    ytext={activeProvider.document.getText('source')}
-                    provider={activeProvider}
-                  />
-                </div>
-                <div className={isSourceMode ? 'hidden' : 'h-full'}>
-                  <TiptapEditor key={activeDocName} provider={activeProvider} />
-                </div>
-              </div>
-            </div>
-            <div className="absolute top-2 right-2 z-10">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() =>
-                      isCollapsed ? panelRef.current?.expand() : panelRef.current?.collapse()
-                    }
-                    aria-label={isCollapsed ? 'Show document panel' : 'Hide document panel'}
-                    className="text-muted-foreground"
-                  >
-                    {isCollapsed ? (
-                      <PanelRightOpen className="size-4" />
-                    ) : (
-                      <PanelRightClose className="size-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">
-                  {isCollapsed ? 'Show panel' : 'Hide panel'}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
+          {editorContent}
         </ResizablePanel>
 
         <ResizableHandle withHandle />
@@ -177,7 +282,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
         <ResizablePanel
           panelRef={panelRef}
           defaultSize="25%"
-          minSize="15%"
+          minSize="300px"
           maxSize="40%"
           collapsible
           collapsedSize={0}

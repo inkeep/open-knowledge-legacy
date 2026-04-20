@@ -1,9 +1,26 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import type { Config } from '../../config/schema.ts';
 import { DESCRIPTION, register } from './edit-document.ts';
 import type { ServerInstance } from './shared.ts';
 
+const BASE_CONFIG: Config = {
+  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
+  server: { port: 3000, host: 'localhost', openOnAgentEdit: false },
+  persistence: { debounceMs: 2000, maxDebounceMs: 10000 },
+  mcp: {
+    tools: {
+      read_document: { historyDepth: 5 },
+      search: { maxResults: 50 },
+    },
+  },
+};
+
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: Record<string, unknown>;
   isError?: true;
 }
 
@@ -45,6 +62,7 @@ function createFakeServer() {
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 const requestBodies: unknown[] = [];
+let mockSubscriberCount: number | undefined = 1;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -63,7 +81,11 @@ beforeAll(() => {
           );
         }
 
-        return Response.json({ ok: true, timestamp: '2026-04-14T22:00:00.000Z' });
+        return Response.json({
+          ok: true,
+          timestamp: '2026-04-14T22:00:00.000Z',
+          ...(mockSubscriberCount !== undefined ? { subscriberCount: mockSubscriberCount } : {}),
+        });
       }
 
       return new Response('Not found', { status: 404 });
@@ -76,6 +98,34 @@ afterAll(() => {
   testServer.stop();
 });
 
+let tmpDir: string;
+let originalEnv: string | undefined;
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-edit-doc-'));
+  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  mockSubscriberCount = 1;
+});
+
+afterEach(async () => {
+  if (originalEnv === undefined) {
+    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  } else {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+  }
+  await rm(tmpDir, { recursive: true, force: true });
+});
+
+function makeDeps(overrides: Partial<Config> = {}) {
+  const config: Config = { ...BASE_CONFIG, ...overrides };
+  return {
+    serverUrl: baseUrl,
+    config,
+    resolveCwd: async () => tmpDir,
+  };
+}
+
 describe('edit_document MCP tool', () => {
   test('describes the optional offset precision contract', () => {
     expect(DESCRIPTION).toContain('offset');
@@ -86,7 +136,7 @@ describe('edit_document MCP tool', () => {
   test('sends offset to the agent-patch endpoint when provided', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps());
 
     const result = await getTool().handler({
       docName: 'notes',
@@ -101,15 +151,13 @@ describe('edit_document MCP tool', () => {
       replace: '[[Project Alpha]]',
       offset: 42,
     });
-    expect(result).toEqual({
-      content: [{ type: 'text', text: 'Edit applied successfully' }],
-    });
+    expect(result.content[0]?.text).toBe('Edit applied successfully.');
   });
 
   test('omits offset when the caller uses first-match mode', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps());
 
     await getTool().handler({
       docName: 'notes',
@@ -127,7 +175,7 @@ describe('edit_document MCP tool', () => {
   test('propagates stale-target errors from the server', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps());
 
     const result = await getTool().handler({
       docName: 'notes',
@@ -142,5 +190,100 @@ describe('edit_document MCP tool', () => {
       ],
       isError: true,
     });
+  });
+
+  test('includes previewUrl + source in structuredContent when resolver resolves', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent).toEqual({
+      previewUrl: 'https://env.example/#/notes',
+      previewUrlSource: 'env',
+    });
+    expect(result.content[0]?.text).toContain('Preview: https://env.example/#/notes');
+  });
+
+  test('omits structuredContent when resolver returns null AND subscribers>0', async () => {
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent).toBeUndefined();
+    expect(result.content[0]?.text).toBe('Edit applied successfully.');
+  });
+
+  test('emits warning with previewUrl when subscriberCount=0', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    mockSubscriberCount = 0;
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      previewUrl: 'https://env.example/#/notes',
+      previewUrlSource: 'env',
+      warning: {
+        message: 'No preview attached to notes.',
+        previewUrl: 'https://env.example/#/notes',
+      },
+    });
+    expect(result.content[0]?.text).toContain('Warning: no preview is currently attached');
+  });
+
+  test('emits warning with null previewUrl when subscriberCount=0 and no resolver source', async () => {
+    mockSubscriberCount = 0;
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      warning: {
+        message: 'No preview attached to notes.',
+        previewUrl: null,
+      },
+    });
+    expect(result.structuredContent?.previewUrl).toBeUndefined();
+  });
+
+  test('no warning emitted when server omits subscriberCount field (legacy server)', async () => {
+    mockSubscriberCount = undefined;
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent).toBeUndefined();
+    expect(result.content[0]?.text).toBe('Edit applied successfully.');
   });
 });

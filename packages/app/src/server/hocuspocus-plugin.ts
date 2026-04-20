@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
   AgentSessionManager,
   acquireServerLock,
@@ -18,6 +19,8 @@ import {
   createExternalChangeHandler,
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
+  createServerObserverExtension,
+  handleCollabSocketError,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
@@ -27,6 +30,7 @@ import {
   updateServerLockPort,
   type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
+import { getSchema } from '@tiptap/core';
 import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
@@ -154,7 +158,7 @@ if (!isTestIsolated) {
 // them post-init.
 let contentFilter: ReturnType<typeof createContentFilter>;
 let backlinkIndex: BacklinkIndex;
-export let hocuspocus: Hocuspocus;
+let hocuspocus: Hocuspocus;
 let sessionManager: AgentSessionManager;
 let persistence: ReturnType<typeof createPersistenceExtension>;
 let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
@@ -218,6 +222,18 @@ try {
       signalChannel,
     }),
   );
+
+  const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
+  const pluginSchema = getSchema(sharedExtensions);
+  hocuspocus.configuration.extensions.push(
+    createServerObserverExtension({
+      mdManager: pluginMdManager,
+      schema: pluginSchema,
+      shadowRef,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    }),
+  );
 } catch (err) {
   try {
     releaseServerLock(LOCK_DIR);
@@ -254,7 +270,16 @@ export function hocuspocusPlugin(): Plugin {
           // Attach error handler on the raw TCP socket BEFORE handleUpgrade.
           // Without this, an ECONNRESET during/after upgrade emits an 'error'
           // event with no listener, which crashes the entire Node process.
-          socket.on('error', (err: Error) => {
+          //
+          // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that
+          // surface asynchronously after ws.send()/socket.write() has already
+          // returned — no userspace pre-check can prevent them (see
+          // websockets/ws#1017). Hocuspocus already filters by readyState in
+          // Connection.send (packages/server/src/Connection.ts), so the only
+          // remaining visibility is catching + classifying the async emission
+          // here. Drop the expected codes; surface everything else.
+          socket.on('error', (err: NodeJS.ErrnoException) => {
+            if (handleCollabSocketError(err)) return;
             console.error('[collab] Upgrade socket error:', err);
           });
 
@@ -268,22 +293,43 @@ export function hocuspocusPlugin(): Plugin {
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
-            ws.on('error', (err) => {
-              console.error('[collab] WebSocket error:', err);
+            ws.on('error', (err: NodeJS.ErrnoException) => {
+              if (!handleCollabSocketError(err)) {
+                console.error('[collab] WebSocket error:', err);
+              }
               ws.terminate();
             });
           });
         }
       });
 
-      // Wire up API endpoints via Vite middleware
+      // Wire up API endpoints via Vite middleware.
+      //
+      // Unknown `/api/*` routes must NOT fall through to Vite's SPA
+      // fallback (which would return index.html with a 200, confusing API
+      // clients like MCP stdio that expect JSON). Any `/api/*` request that
+      // no Hocuspocus onRequest handler consumed returns 404 JSON here.
+      // Production behavior (packages/cli/src/commands/start.ts) naturally
+      // 404s on unknown routes because there's no SPA fallback; this aligns
+      // dev-mode with production.
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
           // Let the Hocuspocus onRequest extensions handle API routes
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
+          // Unhandled /api/* route — return 404 JSON, do NOT fall through
+          // to the SPA fallback which would return index.html.
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+          return;
         }
         next();
       });

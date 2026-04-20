@@ -1,10 +1,10 @@
 import { type GraphLabelDescriptor, pickGraphLabelText } from './graph-label-utils';
 import type { GraphNode } from './graph-view-utils';
 
-export interface GraphLabelLayoutNode extends GraphNode {
+export type GraphLabelLayoutNode = GraphNode & {
   x?: number;
   y?: number;
-}
+};
 
 export interface GraphLabelLayoutLinkRef {
   id?: string | number | null;
@@ -15,7 +15,7 @@ export interface GraphLabelLayoutLink {
   target: string | GraphLabelLayoutLinkRef;
 }
 
-export interface GraphViewport {
+interface GraphViewport {
   width: number;
   height: number;
 }
@@ -38,7 +38,7 @@ export interface GraphLabelPlacement {
   textY: number;
 }
 
-export interface PlanGraphLabelsInput {
+interface PlanGraphLabelsInput {
   nodes: GraphLabelLayoutNode[];
   links: GraphLabelLayoutLink[];
   activeDocName: string;

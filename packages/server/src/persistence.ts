@@ -24,7 +24,7 @@ import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { incrementGitAutoSaveFailure } from './metrics.ts';
+import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
 
@@ -104,23 +104,6 @@ export function setReconciledBase(docName: string, content: string): void {
 export function deleteReconciledBase(docName: string): void {
   reconciledBaseByBranch.get(activeBranch)?.delete(docName);
 }
-
-/**
- * Legacy flat accessor — returns the active branch's map.
- * Used by standalone.ts for event-driven reconciliation where the flat
- * Map interface is expected.
- */
-export const reconciledBase = {
-  get(docName: string): string | undefined {
-    return getReconciledBase(docName);
-  },
-  set(docName: string, content: string): void {
-    setReconciledBase(docName, content);
-  },
-  delete(docName: string): void {
-    deleteReconciledBase(docName);
-  },
-};
 
 /** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
 let batchInProgress = false;
@@ -489,6 +472,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, canonicalPath);
         registerWrite(canonicalPath, contentHash(markdown));
+        // Increment disk-write counter after the atomic rename succeeds.
+        // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
+        // drops skipStoreHooks, observer writes trigger onStoreDocument
+        // and produce amplified disk writes per user/agent edit.
+        incrementPersistenceDiskWrite();
       } catch (e) {
         try {
           unlinkSync(tmpPath);

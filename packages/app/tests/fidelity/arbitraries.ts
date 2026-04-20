@@ -283,15 +283,52 @@ export const blockExtended = fc.oneof(
   nestedBlockquote,
 );
 
-/** A complete markdown document (1-5 blocks separated by blank lines). */
-export const markdownDoc = fc
-  .array(block, { minLength: 1, maxLength: 5 })
-  .map((blocks) => blocks.join('\n\n'));
+/**
+ * Join blocks with a parametric number of blank lines per boundary.
+ *
+ * R13 (US-014): the prior joiner used a hardcoded `'\n\n'` between every
+ * boundary — i.e. exactly one blank line between blocks — so multi-blank-
+ * line inputs never reached I3. NG1 says blank-line counts normalize on
+ * round-trip (`# H\n\n\n\nP\n` → `# H\n\nP\n`); without parametric joining
+ * the PBT tests the parser's behavior on canonical-blank-line spacing only,
+ * not on the normalization path NG1 asserts.
+ *
+ * Range `fc.nat({ min: 0, max: 3 })` joins with 1-4 newlines (one boundary
+ * newline + N blank lines), exercising:
+ *   - 0 blank lines (`'\n'`): adjacent-block boundary — typically still
+ *     parses as separate blocks for non-paragraph types; for paragraphs
+ *     the round-trip normalizes to soft-break or paragraph fission.
+ *   - 1 blank (`'\n\n'`): canonical block separator (the prior behavior).
+ *   - 2-3 blanks: NG1 territory — exercise the normalize-and-stable path.
+ *
+ * Probed all four cases stable for I3 (`evidence/perf-baseline-measured.md`
+ * methodology, ad-hoc probe at iteration 14).
+ */
+const blankLineJoiner = fc.nat({ min: 0, max: 3 }).map((n) => `\n${'\n'.repeat(n + 1)}`);
+
+/**
+ * Compose blocks with per-boundary parametric blank-line counts.
+ *
+ * Generates an array of N blocks plus N-1 joiners, then weaves them.
+ */
+const composeWithJoiners = <A>(blockArb: fc.Arbitrary<A & string>): fc.Arbitrary<string> =>
+  fc.array(blockArb, { minLength: 1, maxLength: 5 }).chain((blocks) =>
+    fc
+      .array(blankLineJoiner, { minLength: blocks.length - 1, maxLength: blocks.length - 1 })
+      .map((joiners) => {
+        let out = blocks[0] ?? '';
+        for (let i = 1; i < blocks.length; i++) {
+          out += joiners[i - 1] + blocks[i];
+        }
+        return out;
+      }),
+  );
+
+/** A complete markdown document (1-5 blocks, parametric blank-line joiners). */
+export const markdownDoc = composeWithJoiners(block as fc.Arbitrary<string>);
 
 /** Extended document with MDX, directives, and feature interactions. */
-export const markdownDocExtended = fc
-  .array(blockExtended, { minLength: 1, maxLength: 5 })
-  .map((blocks) => blocks.join('\n\n'));
+export const markdownDocExtended = composeWithJoiners(blockExtended as fc.Arbitrary<string>);
 
 // ─── Combinatorial / structural edge cases ───
 // These generators produce NESTED and HALF-FORMED inputs that test feature

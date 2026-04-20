@@ -45,32 +45,32 @@ interface PlainSegment {
   sourceOffsets: number[];
 }
 
-export interface SuggestLinksMention {
+interface SuggestLinksMention {
   source: string;
   excerpt: string;
   offset: number;
 }
 
-export interface SuggestLinksTarget {
+interface SuggestLinksTarget {
   docName: string;
   title: string;
   aliases: string[];
 }
 
-export interface SuggestLinksResult {
+interface SuggestLinksResult {
   target: SuggestLinksTarget;
   mentions: SuggestLinksMention[];
   truncated: boolean;
 }
 
-export interface SuggestLinksObservation {
+interface SuggestLinksObservation {
   durationMs: number;
   corpusDocCount: number;
   candidateCount: number;
   truncated: boolean;
 }
 
-export interface SuggestLinksOptions {
+interface SuggestLinksOptions {
   hocuspocus: Pick<Hocuspocus, 'documents'>;
   fileIndex: ReadonlyMap<string, FileIndexEntry>;
   docName: string;

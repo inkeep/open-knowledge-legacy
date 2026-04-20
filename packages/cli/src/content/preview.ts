@@ -19,7 +19,7 @@ import { join, relative } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { OK_DIR } from '../constants.ts';
 
-export interface PreviewOptions {
+interface PreviewOptions {
   projectDir: string;
   contentDir: string;
   include: string[];

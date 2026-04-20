@@ -6,12 +6,16 @@
  * All connected editors see the restored content.
  */
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
+import type { Config } from '../../config/schema.ts';
+import { resolvePreviewUrlForTool } from './preview-url.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   httpPost,
   normalizeDocName,
+  resolveServerUrl,
+  textPlusStructured,
   textResult,
 } from './shared.ts';
 
@@ -26,7 +30,13 @@ export const DESCRIPTION = [
   '  Use `get_history` to find available versions.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export interface RollbackToVersionDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: RollbackToVersionDeps): void {
   server.tool(
     'rollback_to_version',
     DESCRIPTION,
@@ -39,7 +49,8 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
         .describe('40-character commit SHA from the shadow repo timeline'),
     },
     async (args: { docName: string; commitSha: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(deps.serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -47,7 +58,7 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
 
       // First, verify the version exists and show what we're restoring
       const versionResult = await httpGet(
-        serverUrl,
+        url,
         `/api/history/${args.commitSha}?docName=${encodeURIComponent(docName)}`,
       );
       if (!versionResult.ok) {
@@ -55,15 +66,21 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       }
 
       // Perform the rollback
-      const result = await httpPost(serverUrl, '/api/rollback', {
+      const result = await httpPost(url, '/api/rollback', {
         docName,
         commitSha: args.commitSha,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      return textResult(
-        `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`,
-      );
+      const text = `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`;
+      const preview = await resolvePreviewUrlForTool(docName, {
+        config: deps.config,
+        resolveCwd: deps.resolveCwd,
+      });
+      return textPlusStructured(text, {
+        previewUrl: preview?.url ?? null,
+        ...(preview ? { previewUrlSource: preview.source } : {}),
+      });
     },
   );
 }

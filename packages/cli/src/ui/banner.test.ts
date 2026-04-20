@@ -46,6 +46,30 @@ describe('renderBanner', () => {
     expect(output).not.toContain('Network:');
   });
 
+  test('labels primary URL as "Editor:" and shows API URL when both are provided', () => {
+    const output = renderBanner({
+      name: 'open-knowledge',
+      version: VERSION,
+      localUrl: 'http://localhost:3000',
+      apiUrl: 'http://localhost:52345',
+    });
+    expect(output).toContain('Editor:');
+    expect(output).toContain('API:');
+    expect(output).toContain('http://localhost:3000');
+    expect(output).toContain('http://localhost:52345');
+  });
+
+  test('keeps "Local:" label when only localUrl is provided', () => {
+    const output = renderBanner({
+      name: 'open-knowledge',
+      version: VERSION,
+      localUrl: 'http://localhost:3000',
+    });
+    expect(output).toContain('Local:');
+    expect(output).not.toContain('Editor:');
+    expect(output).not.toContain('API:');
+  });
+
   test('contains Ctrl+C hint', () => {
     const output = renderBanner({
       name: 'open-knowledge',

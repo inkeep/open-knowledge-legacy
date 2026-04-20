@@ -1,4 +1,4 @@
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Contrast, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import type { ComponentProps, FC } from 'react';
 import { Button } from '@/components/ui/button';
@@ -13,16 +13,16 @@ import {
 const themes: Array<{ value: string; label: string; icon: FC<ComponentProps<'svg'>> }> = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'system', label: 'System', icon: Contrast },
 ];
 
 export const ThemeToggle: FC = () => {
   const { theme, setTheme } = useTheme();
 
   // Trigger icon mirrors the user's explicit choice, not the resolved theme.
-  // Showing Monitor when theme === 'system' makes the three-state model visible
+  // Showing Contrast when theme === 'system' makes the three-state model visible
   // and mitigates the system→explicit→OS-change mental-model trap (spec D15).
-  const TriggerIcon = theme === 'system' ? Monitor : theme === 'dark' ? Moon : Sun;
+  const TriggerIcon = theme === 'system' ? Contrast : theme === 'dark' ? Moon : Sun;
 
   return (
     <DropdownMenuRoot>

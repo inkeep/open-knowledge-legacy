@@ -6,11 +6,13 @@
  * otherwise easily miss the other.
  */
 
-import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
-import { stripFrontmatter } from '@inkeep/open-knowledge-core';
+import type { Hocuspocus } from '@hocuspocus/server';
+import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
+import { setReconciledBase } from './persistence.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 
 /**
  * Transaction origin for file-watcher disk→CRDT bridge operations.
@@ -22,12 +24,17 @@ import { mdManager, schema } from './md-manager.ts';
  *
  * skipStoreHooks: true — prevents persistence from re-saving a file we just
  * loaded from disk (feedback loop prevention).
+ *
+ * paired: true — `applyExternalChange` atomically writes BOTH XmlFragment and
+ * Y.Text inside one `doc.transact(..., FILE_WATCHER_ORIGIN)` block. Server
+ * Observer A/B match via `context.paired === true` and short-circuit
+ * symmetrically (bridge-correctness SPEC §6 R0/R0b/R0c).
  */
 export const FILE_WATCHER_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: true,
-  context: { origin: 'file-watcher' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'file-watcher', paired: true },
+} as const satisfies PairedWriteOrigin;
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the
@@ -66,10 +73,13 @@ export function applyExternalChange(
     const ytext = document.getText('source');
     const currentText = ytext.toString();
     if (currentText !== content) {
-      ytext.delete(0, currentText.length);
-      ytext.insert(0, content);
+      applyFastDiff(ytext, currentText, content);
     }
   }, FILE_WATCHER_ORIGIN);
+
+  // Set the reconciled base so persistence does not re-serialize and re-write
+  // the same content on next flush (EC3 blocker resolution — FR-6).
+  setReconciledBase(docName, content);
 }
 
 /**

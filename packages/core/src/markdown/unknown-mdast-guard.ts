@@ -82,7 +82,7 @@ import type { VFile } from 'vfile';
  *     addition degrades gracefully)
  *   - Our internal fallback marker: rawMdxFallbackMdast
  */
-const KNOWN_TYPES: ReadonlySet<string> = new Set([
+export const KNOWN_MDAST_TYPES: ReadonlySet<string> = new Set([
   // remark-parse (mdast core)
   'root',
   'paragraph',
@@ -150,7 +150,7 @@ function walk(node: WalkableNode | null | undefined, source: string): void {
   for (let i = 0; i < node.children.length; i++) {
     const child = node.children[i] as WalkableNode;
     if (!child || typeof child !== 'object' || typeof child.type !== 'string') continue;
-    if (!KNOWN_TYPES.has(child.type)) {
+    if (!KNOWN_MDAST_TYPES.has(child.type)) {
       node.children[i] = toRawMdxFallbackMdast(child, source);
     } else {
       walk(child, source);
@@ -165,7 +165,13 @@ interface RawMdxFallbackMdast {
   position?: WalkableNode['position'];
 }
 
-function toRawMdxFallbackMdast(node: WalkableNode, source: string): RawMdxFallbackMdast {
+/**
+ * Replace an unknown-type mdast node with a `rawMdxFallbackMdast` carrying the
+ * node's source slice. Exported for use in the R17 merged post-parse walker;
+ * the standalone plugin below wraps the same substitution for legacy callers
+ * and unit tests.
+ */
+export function toRawMdxFallbackMdast(node: WalkableNode, source: string): RawMdxFallbackMdast {
   const start = node.position?.start?.offset ?? 0;
   const end = node.position?.end?.offset ?? 0;
   const sourceSlice = end > start ? source.slice(start, end) : '';
@@ -176,9 +182,3 @@ function toRawMdxFallbackMdast(node: WalkableNode, source: string): RawMdxFallba
     position: node.position,
   };
 }
-
-/**
- * Type-safe access for the handler table — imported by `buildMdastToPmHandlers`
- * in index.ts.
- */
-export type RawMdxFallbackMdastNode = RawMdxFallbackMdast;

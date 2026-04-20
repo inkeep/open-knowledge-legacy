@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge-core",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "@handlewithcare/remark-prosemirror": "0.1.5",
     "@tiptap/core": "^3.22.3",
+    "@tiptap/extension-code": "3.22.3",
     "@tiptap/extension-bold": "^3.22.3",
     "@tiptap/extension-code-block": "^3.22.3",
     "@tiptap/extension-hard-break": "^3.22.3",
@@ -28,17 +29,20 @@
     "@tiptap/extension-table": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "diff-match-patch": "^1.0.5",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-mdx": "3.0.0",
-    "mdast-util-mdx-expression": "^2.0.1",
-    "mdast-util-mdx-jsx": "^3.2.0",
-    "mdast-util-mdxjs-esm": "^2.0.1",
     "mdast-util-to-markdown": "^2.1.2",
     "micromark-extension-mdx": "2.1.0",
     "micromark-util-types": "^2.0.2",
+    "node-diff3": "^3.2.0",
+    "rehype-parse": "^9.0.1",
+    "rehype-remark": "^10.0.1",
+    "rehype-stringify": "^10.0.1",
     "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
@@ -48,11 +52,26 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test src/",
+    "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
+    "test:perf:fallback": "RUN_BENCH=1 bun test src/markdown/parse-with-fallback.test.ts",
+    "test:perf:r15-guard": "RUN_BENCH=1 bun test src/markdown/autolink-void-html-guard.perf.test.ts",
+    "test:perf:regression:unit": "bun test tests/perf/regression-gate.test.ts",
+    "test:perf:regression": "bun run tests/perf/run-regression-gate.ts",
+    "test:health:unit": "bun test tests/health/parse-health-gate.test.ts",
+    "test:health": "bun run tests/health/parse-health-gate.ts tests/health/baseline.json"
   },
   "devDependencies": {
+    "@tiptap/extension-document": "^3.22.3",
+    "@tiptap/extension-paragraph": "^3.22.3",
+    "@tiptap/extension-text": "^3.22.3",
+    "mdast-util-to-hast": "^13.2.1",
+    "fast-check": "^4.6.0",
+    "@types/hast": "^3.0.4",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
+    "commonmark.json": "^0.31.0",
     "typescript": "^5.9.3"
   }
 }

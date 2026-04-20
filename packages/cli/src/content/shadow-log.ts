@@ -53,7 +53,7 @@ const GIT_TIMEOUT_MS = 5000;
 /** The three distinct historySource states per FR15. */
 export type HistorySource = 'shadow-repo' | 'shadow-repo-absent';
 
-export interface ReadShadowLogResult {
+interface ReadShadowLogResult {
   commits: ShadowCommit[];
   source: HistorySource;
 }

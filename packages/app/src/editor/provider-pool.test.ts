@@ -7,8 +7,15 @@
  * the pool's LRU logic, Map management, and eviction ordering are all
  * exercised without needing a running Hocuspocus server.
  */
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { ProviderPool } from './provider-pool';
+import {
+  __resetSyncPromiseCache,
+  __syncPromiseCacheSize,
+  BridgeSetupError,
+  PreSyncDisconnectError,
+  syncPromise,
+} from './sync-promise';
 
 // Use a dummy URL — providers won't connect but pool logic still works
 const DUMMY_WS = 'ws://localhost:1/collab';
@@ -30,8 +37,9 @@ describe('ProviderPool basics', () => {
   test('open() creates an entry and returns it', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');
-    expect(entry.docName).toBe('doc1');
-    expect(entry.provider).toBeDefined();
+    expect(entry).not.toBeNull();
+    expect(entry?.docName).toBe('doc1');
+    expect(entry?.provider).toBeDefined();
     expect(pool.has('doc1')).toBe(true);
     expect(pool.entries.size).toBe(1);
   });
@@ -40,7 +48,7 @@ describe('ProviderPool basics', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry1 = pool.open('doc1');
     const entry2 = pool.open('doc1');
-    expect(entry1.provider).toBe(entry2.provider);
+    expect(entry1?.provider).toBe(entry2?.provider);
     expect(pool.entries.size).toBe(1);
   });
 
@@ -179,6 +187,7 @@ describe('ProviderPool disconnect recycling', () => {
   test('does not recycle a provider that disconnects before first sync', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
 
     const originalProvider = entry.provider;
@@ -193,6 +202,7 @@ describe('ProviderPool disconnect recycling', () => {
     // Use recycleDebounceMs: 50 for fast test execution
     pool = new ProviderPool(3, DUMMY_WS, 50);
     const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
 
     const originalProvider = entry.provider;
@@ -216,6 +226,7 @@ describe('ProviderPool disconnect recycling', () => {
   test('keeps the provider when disconnect occurs with unsynced local changes', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
 
     const originalProvider = entry.provider;
@@ -248,14 +259,17 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   // try block. Overriding doc.getXmlFragment to throw triggers the catch before
   // setupObservers is called — same code path, same recovery behavior.
 
-  test('init-time throw in onSynced triggers destroy-and-evict with onChange notification', () => {
+  test('init-time throw rejects held syncPromise with BridgeSetupError + leaves entry pool-resident', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
-    let onChangeCalls = 0;
-    pool.setOnChange(() => onChangeCalls++);
 
     const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
-    onChangeCalls = 0; // reset after open + setActive notifications
+
+    // Subscribe to the syncPromise BEFORE firing synced — this models the
+    // DocumentBoundary use() consumer that must see the rejection. Without
+    // a subscriber the rejectSyncPromise call would be a no-op (no cache entry).
+    const consumerPromise = syncPromise('doc1', entry.provider);
 
     // Sabotage the provider's document to force a throw during observer init
     const doc = entry.provider.document;
@@ -263,27 +277,36 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
       throw new Error('synthetic getXmlFragment failure');
     };
 
-    // Spy on console.error to verify the error is logged (not re-thrown)
+    // Silence the expected console.error so test output stays readable
     const errorSpy = mock(() => {});
     const origError = console.error;
     console.error = errorSpy;
 
-    // Fire synced manually — this triggers onSynced → try block → doc.getXmlFragment() → throw → catch → console.error
-    // Should NOT throw — the error is caught, logged, and the entry is evicted.
+    // Fire synced manually — this triggers onSynced → try block → throw → catch
     entry.provider.emit('synced', { state: true });
 
     console.error = origError;
 
-    // Entry should be evicted from the pool
-    expect(pool.has('doc1')).toBe(false);
-    expect(pool.entries.size).toBe(0);
+    // Held syncPromise rejects with BridgeSetupError carrying the docName + cause.
+    try {
+      await consumerPromise;
+      throw new Error('expected promise to reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeSetupError);
+      expect((err as BridgeSetupError).docName).toBe('doc1');
+      expect((err as BridgeSetupError).cause).toBeInstanceOf(Error);
+      expect(((err as BridgeSetupError).cause as Error).message).toContain(
+        'synthetic getXmlFragment failure',
+      );
+    }
 
-    // Active document cleared (was the failing entry)
-    expect(pool.getActive()).toBeNull();
-    expect(pool.getActiveDocName()).toBeNull();
-
-    // onChange was called at least once (from notify() in the catch)
-    expect(onChangeCalls).toBeGreaterThanOrEqual(1);
+    // Entry stays pool-resident with bridgeSetupFailed flag — keeps activeProvider
+    // non-null so EditorArea continues to render the boundary subtree, and the
+    // user-driven recycle path (pool.recycle) can replace the broken provider.
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.entries.get('doc1')?.bridgeSetupFailed).toBe(true);
+    expect(pool.getActiveDocName()).toBe('doc1');
+    expect(pool.getActive()?.provider).toBe(entry.provider);
 
     // Error was logged via console.error with the expected prefix + full error object
     expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -294,6 +317,37 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(loggedError.message).toContain('synthetic getXmlFragment failure');
   });
 
+  test('pool.recycle on a bridge-setup-failed entry replaces it with a fresh provider', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    // Force a setup throw to mark the entry broken
+    entry.provider.document.getXmlFragment = () => {
+      throw new Error('synthetic init failure');
+    };
+    const errorSpy = mock(() => {});
+    const origError = console.error;
+    console.error = errorSpy;
+    entry.provider.emit('synced', { state: true });
+    console.error = origError;
+
+    expect(pool.entries.get('doc1')?.bridgeSetupFailed).toBe(true);
+    const brokenProvider = entry.provider;
+
+    // Recycle — destroys broken entry and creates fresh one, preserving activeDocName
+    pool.recycle('doc1');
+
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.getActiveDocName()).toBe('doc1');
+    const newEntry = pool.entries.get('doc1');
+    expect(newEntry).toBeDefined();
+    expect(newEntry?.provider).not.toBe(brokenProvider);
+    expect(newEntry?.bridgeSetupFailed).toBe(false);
+  });
+
   test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
     // Use recycleDebounceMs: 50 for fast test execution
     pool = new ProviderPool(3, DUMMY_WS, 50);
@@ -302,8 +356,10 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
 
     // Open two docs, only doc1 is active
     const entry1 = pool.open('doc1');
+    if (!entry1) throw new Error('expected entry1');
     pool.setActive('doc1');
     const entry2 = pool.open('doc2');
+    if (!entry2) throw new Error('expected entry2');
     onChangeCalls = 0;
 
     // Mark doc2 as synced with no unsynced changes
@@ -340,6 +396,7 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
     pool = new ProviderPool(3, DUMMY_WS, 200);
     const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
 
     // Pre-set observerCleanup so onSynced skips setupObservers (which would
@@ -368,5 +425,152 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(pool.has('doc1')).toBe(true);
     expect(pool.getActive()?.provider).toBe(entry.provider);
     expect(entry.syncState).toBe('synced');
+  });
+});
+
+describe('ProviderPool admission filter (__system__, DX7)', () => {
+  test('open("__system__") returns null and does not add the pseudo-doc to the pool', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('__system__');
+    expect(entry).toBeNull();
+    expect(pool.has('__system__')).toBe(false);
+    expect(pool.entries.size).toBe(0);
+  });
+
+  test('open("__system__") does not fire onChange notification', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let calls = 0;
+    pool.setOnChange(() => calls++);
+    pool.open('__system__');
+    expect(calls).toBe(0);
+  });
+
+  test('non-system doc names are admitted normally', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    // Ensure a docName containing '__system__' as a substring is NOT filtered
+    const entry = pool.open('my-__system__-notes');
+    expect(entry).not.toBeNull();
+    expect(pool.has('my-__system__-notes')).toBe(true);
+  });
+});
+
+describe('ProviderPool HocuspocusProvider configuration (D8)', () => {
+  test('new providers receive forceSyncInterval: 5000', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    // @hocuspocus/provider exposes the resolved configuration; the default
+    // is `false`, so a set value confirms the pool passed the option through.
+    expect(entry.provider.configuration.forceSyncInterval).toBe(5000);
+  });
+});
+
+describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
+  beforeEach(() => {
+    __resetSyncPromiseCache();
+  });
+
+  afterEach(() => {
+    __resetSyncPromiseCache();
+  });
+
+  test('close(docName) invalidates the cached syncPromise', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    // Create the cached promise (kept alive across later settlement by the .catch handler)
+    const p = syncPromise('doc1', entry.provider);
+    p.catch(() => {}); // swallow any pool-teardown rejection
+    expect(__syncPromiseCacheSize()).toBe(1);
+
+    pool.close('doc1');
+
+    // Invalidation runs inside destroyEntry before provider.destroy() fires close
+    expect(__syncPromiseCacheSize()).toBe(0);
+  });
+
+  test('LRU eviction invalidates the cached syncPromise of the evicted doc', () => {
+    pool = new ProviderPool(2, DUMMY_WS);
+    const e1 = pool.open('doc1');
+    if (!e1) throw new Error('expected e1');
+    pool.setActive('doc1');
+    const e2 = pool.open('doc2');
+    if (!e2) throw new Error('expected e2');
+
+    syncPromise('doc1', e1.provider).catch(() => {});
+    syncPromise('doc2', e2.provider).catch(() => {});
+    expect(__syncPromiseCacheSize()).toBe(2);
+
+    // Opening doc3 evicts doc2 (doc1 is active and protected)
+    const e3 = pool.open('doc3');
+    if (!e3) throw new Error('expected e3');
+
+    expect(pool.has('doc2')).toBe(false);
+    // doc1 + doc3's cache entry (doc3 hasn't had syncPromise called yet so just doc1)
+    expect(__syncPromiseCacheSize()).toBe(1);
+  });
+
+  test('recycle after disconnect invalidates the cached syncPromise', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, 50);
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+    // Pre-set observerCleanup so the recycle path's re-open doesn't try to
+    // setupObservers against a dummy provider.
+    entry.observerCleanup = () => {};
+
+    // Simulate initial sync so the disconnect→recycle guard path is taken
+    entry.hasSynced = true;
+    entry.syncState = 'synced';
+    entry.provider.unsyncedChanges = 0;
+
+    syncPromise('doc1', entry.provider).catch(() => {});
+    expect(__syncPromiseCacheSize()).toBe(1);
+
+    // Disconnect → schedules recycle debounce timer
+    entry.provider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+
+    // Wait for debounce to fire
+    await new Promise((r) => setTimeout(r, 100));
+
+    // After recycle: original cache entry invalidated; re-opened provider has
+    // no fresh syncPromise call yet, so cache is empty
+    expect(__syncPromiseCacheSize()).toBe(0);
+  });
+
+  test('dispose() invalidates all cached syncPromises', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const e1 = pool.open('doc1');
+    const e2 = pool.open('doc2');
+    if (!e1 || !e2) throw new Error('expected entries');
+    syncPromise('doc1', e1.provider).catch(() => {});
+    syncPromise('doc2', e2.provider).catch(() => {});
+    expect(__syncPromiseCacheSize()).toBe(2);
+
+    pool.dispose();
+
+    expect(__syncPromiseCacheSize()).toBe(0);
+  });
+
+  test('natural (network-triggered) close event rejects the syncPromise with PreSyncDisconnectError', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    const p = syncPromise('doc1', entry.provider);
+
+    // Simulate a natural close event (network drop, server disconnect).
+    // This is different from pool.close(docName) which goes through
+    // invalidateSyncPromise first — here the listener fires naturally.
+    entry.provider.emit('close', {
+      event: { code: 1006, reason: 'network drop', wasClean: false },
+    });
+
+    await expect(p).rejects.toBeInstanceOf(PreSyncDisconnectError);
+    // Cache entry stays as a settled sentinel after rejection — see
+    // sync-promise.ts lifecycle docstring (subsequent React renders need to
+    // see the same .status='rejected' thenable so the boundary catches).
+    expect(__syncPromiseCacheSize()).toBe(1);
   });
 });

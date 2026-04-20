@@ -25,7 +25,7 @@ Representative failing-seed evidence (captured during ship):
 
 ## Why Path B's DMP three-way merge does NOT heal this
 
-Path B (`observers.ts:440-500` `applyUserDelta`) uses `diff-match-patch` three-way merge:
+Path B (`observers.ts:280-319` `applyUserDelta`) uses `diff-match-patch` three-way merge:
 - `base` = `lastSyncedXmlMd`
 - `user` = `newXmlMd` (current XmlFragment serialization)
 - `agent` = `currentText` (current Y.Text)
