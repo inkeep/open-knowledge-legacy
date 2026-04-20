@@ -5,7 +5,7 @@ import {
   lastSegment,
   parentDirOfDocName,
   validateMoveToFolder,
-} from '@/components/file-tree-dnd';
+} from './file-tree-dnd';
 
 describe('file-tree-dnd', () => {
   test('parentDirOfDocName', () => {
@@ -59,5 +59,11 @@ describe('file-tree-dnd', () => {
       ok: false,
       reason: 'no_op',
     });
+  });
+
+  test('validateMoveToFolder allows moving folder to root', () => {
+    const r = validateMoveToFolder({ kind: 'folder', path: 'nested/deep' }, '');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.destinationPath).toBe('deep');
   });
 });
