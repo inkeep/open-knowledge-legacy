@@ -130,7 +130,6 @@
         "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
         "commonmark.json": "^0.31.0",
         "fast-check": "^4.6.0",
-        "prosemirror-model": "^1.25.4",
         "remark-mdx": "^3.1.1",
         "remark-parse": "^11.0.0",
         "sirv": "^3.0.2",

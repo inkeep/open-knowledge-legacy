@@ -101,7 +101,6 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
-    "prosemirror-model": "^1.25.4",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
