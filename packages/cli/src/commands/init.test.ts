@@ -1246,9 +1246,7 @@ describe('runInit', () => {
       const result = runInit({ cwd: personalNotes, editors: ['windsurf'], home: fakeHome });
 
       const output = formatInitResult(result, testDir);
-      expect(output).toContain(
-        `(open-knowledge-notes is already registered for ${workNotes})`,
-      );
+      expect(output).toContain(`(open-knowledge-notes is already registered for ${workNotes})`);
     });
 
     it('skipped-existing with non-default key emits "(<matched-key>)" annotation', () => {
