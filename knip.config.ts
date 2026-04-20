@@ -23,16 +23,22 @@ export default {
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
+    'packages/core': {
+      entry: ['tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+    },
     docs: {
       ignoreDependencies: [
         'postcss', // Bundled in Next.js
       ],
     },
     'packages/cli': {
-      entry: 'scripts/*.ts',
+      entry: ['scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
         'ws', // looks like dynamic import isn't checked
         '@types/ws',
+      ],
+      ignoreFiles: [
+        'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts
       ],
     },
   },
