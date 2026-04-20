@@ -169,6 +169,61 @@ Three distinct levers could reduce S3 on large docs. None are in-scope for this 
 
 **Applicability.** Would fix S3 **only if** subsequent-toggle cache survives PM + y-prosemirror hidden-window mutations AND the dominant user flow is multi-toggle (not one-shot). First toggle unchanged. Does NOT fix S2. Smaller-footprint change than §8a; cheap enough to probe pre-freeze.
 
+**Concrete probe protocol (S9-T2, 30-min execution):** executable pre-ship-close experiment ready for a follow-up spec to adopt directly.
+
+1. Apply the class swap in `packages/app/src/components/EditorActivityPool.tsx:525,534`:
+   ```tsx
+   // before
+   <div className={isSourceMode ? 'h-full' : 'hidden'}>
+   // after
+   <div className={isSourceMode ? 'h-full' : 'editor-cv-hidden'}>
+   ```
+   (both `renderSource` and `renderVisual` branches — the hidden side is always the flipped one).
+2. Add a utility in `packages/app/src/globals.css`:
+   ```css
+   /* content-visibility probe — cached rendering state across toggle.
+      Per CSS Containment L2 spec, the element participates in layout but
+      descendants are skipped for rendering; `contain-intrinsic-size: 0`
+      collapses the layout box so the sibling `h-full` div can claim all space. */
+   .editor-cv-hidden {
+     content-visibility: hidden;
+     contain-intrinsic-size: 0;
+     flex: 0 0 0;
+     overflow: hidden;
+   }
+   ```
+3. Extend the `mode-toggle` scenario to measure BOTH first-toggle and repeat-toggle:
+   ```ts
+   // after the existing Source→Visual step, add:
+   await page.waitForTimeout(250);
+   const toSource2At = Date.now();
+   await sourceToggle.click();
+   await page.waitForFunction(/* same CM-visible wait */);
+   ctx.recordMetric('repeatToSourceMs', Date.now() - toSource2At);
+   await page.waitForTimeout(250);
+   const toVisual2At = Date.now();
+   await visualToggle.click();
+   await page.waitForFunction(/* same PM-visible wait */);
+   ctx.recordMetric('repeatModeToggleMs', Date.now() - toVisual2At);
+   ```
+4. Start a dev server from this worktree (`VITE_PORT=5176 bun run dev`), run `bun run profile mode-toggle --target=http://localhost:5176`, capture JSON.
+5. **Expected signals:**
+   - `toSourceMs` and `modeToggleMs` (first toggles): **unchanged vs baseline** — first-transition case, cache not yet populated.
+   - `repeatToSourceMs` and `repeatModeToggleMs`: **target measurable improvement** (2-5× faster than first toggle) if PM + y-prosemirror's mid-hidden DOM mutations don't invalidate the cache.
+   - `trace.layoutMs` scenario-wide: should DROP by the size of the repeat-toggle recalc (originally ~576ms × 2 legs = 1152ms of total layout on the repeat window; under a working cache this collapses to ~0ms).
+6. **Regression checks (MUST all pass before shipping §8b):** `docs-open.e2e.ts` F1/F2/F3 scroll + content continuity; `crdt-stress.e2e.ts` presence/cursor; find-in-page (Cmd+F) across the hidden editor DOM should return results (`content-visibility: hidden` exposes contents to find-in-page per MDN, unlike `display:none`) — assess whether that's desired product behavior.
+
+**Decision matrix (post-probe):**
+
+| Probe outcome | Action |
+|---|---|
+| Repeat toggle unchanged (cache doesn't survive PM/y-prosemirror mutations) | Close §8b as failed. Update CLAUDE.md precedent with the finding so no one re-litigates. |
+| Repeat toggle improves < 2× | Close §8b — the cost of the containment rule + find-in-page behavior change doesn't pay for a sub-2× win on the subsequent-toggle path. |
+| Repeat toggle improves ≥ 2× AND regression checks pass | Open S3-focused follow-up spec. Size-gate via `LARGE_DOC_CHAR_THRESHOLD` (S9-R2) so small docs keep `display:none` and stay at 36ms toggle. |
+| Repeat toggle improves ≥ 2× AND any regression fails | Escalate to product — find-in-page / cursor / scroll behavior changes require a stakeholder call, not a perf one. |
+
+**Execution owner:** Deferred to follow-up S3-focused spec. Current diagnostic-toolkit ship scope is "diagnose, document, instrument" — see §7 AC22 architecturally-bounded framing. The probe's outcome informs the V2 spec's scope but does not affect the diagnostic toolkit's deliverables.
+
 ### 8c. Viewport-virtualized ProseMirror
 
 **Approach.** Only construct DOM for the visible viewport; background-inflate additional blocks as the user scrolls. ProseMirror doesn't support viewport virtualization natively; a local patch or upstream feature is required.
