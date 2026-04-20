@@ -22,7 +22,7 @@ import type { CC1Broadcaster } from './cc1-broadcast.ts';
 import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
-import { createGitInstance, withParentLock } from './git-handle.ts';
+import { createGitInstance, withParentLock, type GitHandle } from './git-handle.ts';
 import { resolveGitIdentity } from './git-identity.ts';
 import { getLogger } from './logger.ts';
 import { computeRemainingMs } from './sync-timing.ts';
@@ -1087,7 +1087,7 @@ export class SyncEngine {
    * `checkTreeCleanAfterContentCommit` and pause if it's not.
    */
   private async commitDirtyContentFilesToHead(
-    handle: import('./git-handle.ts').GitHandle,
+    handle: GitHandle,
   ): Promise<string | null> {
     const status = await handle.git.status();
     if (status.files.length === 0) return null;
@@ -1171,7 +1171,7 @@ export class SyncEngine {
    * with the merge.
    */
   private async pauseIfNonContentDirty(
-    handle: import('./git-handle.ts').GitHandle,
+    handle: GitHandle,
   ): Promise<boolean> {
     // `diff-index --name-only HEAD` lists only TRACKED files whose working-
     // tree content differs from HEAD's. Untracked files are intentionally

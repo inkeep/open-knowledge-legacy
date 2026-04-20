@@ -22,7 +22,7 @@ interface GitHandleOptions {
   gitIndexFile?: string;
 }
 
-interface GitHandle {
+export interface GitHandle {
   git: SimpleGit;
   projectDir: string;
   credentialArgs: string[];

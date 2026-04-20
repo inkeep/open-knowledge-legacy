@@ -15,7 +15,7 @@ import DiffMatchPatch from 'diff-match-patch';
 
 const dmp = new DiffMatchPatch();
 
-interface DiffChange {
+export interface DiffChange {
   value: string;
   added?: boolean;
   removed?: boolean;
