@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
-import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
+import { detectInstalledEditors, formatInitResult, parseEditorFlag, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -1385,5 +1385,42 @@ describe('detectInstalledEditors', () => {
     const missingHome = join(testDir, 'also-not-here');
     const detected = detectInstalledEditors(missingCwd, missingHome);
     expect(detected).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseEditorFlag — claude-desktop aliases (US-007)
+// ---------------------------------------------------------------------------
+
+describe('parseEditorFlag', () => {
+  it('accepts the canonical claude-desktop id', () => {
+    expect(parseEditorFlag('claude-desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('accepts the "desktop" alias', () => {
+    expect(parseEditorFlag('desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('accepts the "claude_desktop" alias (underscore form)', () => {
+    expect(parseEditorFlag('claude_desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('"all" includes claude-desktop', () => {
+    const all = parseEditorFlag('all');
+    expect(all).toContain('claude-desktop');
+  });
+
+  it('comma-separated mix resolves both aliases + canonical ids', () => {
+    expect(parseEditorFlag('claude,claude-desktop')).toEqual(['claude', 'claude-desktop']);
+    expect(parseEditorFlag('claude,desktop,cursor')).toEqual([
+      'claude',
+      'claude-desktop',
+      'cursor',
+    ]);
+  });
+
+  it('throws on unknown editor tokens', () => {
+    expect(() => parseEditorFlag('nope-invalid')).toThrow(/Unknown editor/);
+    expect(() => parseEditorFlag('desktop,bogus')).toThrow(/Unknown editor/);
   });
 });

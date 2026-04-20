@@ -732,10 +732,30 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-function parseEditorFlag(value: string): EditorId[] {
+/**
+ * Map a user-typed editor token to its canonical `EditorId`. Accepts the
+ * canonical IDs directly and a small set of aliases — `desktop` and
+ * `claude_desktop` are shorthands for `claude-desktop`. Anything else passes
+ * through unchanged so `resolveEditorTargets` can produce the authoritative
+ * "Unknown editor(s): …" error with the full valid list.
+ */
+function normalizeEditorToken(token: string): EditorId {
+  switch (token) {
+    case 'desktop':
+    case 'claude_desktop':
+      return 'claude-desktop';
+    default:
+      return token as EditorId;
+  }
+}
+
+export function parseEditorFlag(value: string): EditorId[] {
   if (value === 'all') return [...ALL_EDITOR_IDS];
-  const ids = value.split(',').map((s) => s.trim()) as EditorId[];
-  // Validate — resolveEditorTargets throws on unknown IDs
+  const ids = value
+    .split(',')
+    .map((s) => s.trim())
+    .map(normalizeEditorToken);
+  // Validate — resolveEditorTargets throws on unknown IDs.
   resolveEditorTargets(ids);
   return ids;
 }
