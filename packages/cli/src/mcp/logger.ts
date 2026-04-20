@@ -35,6 +35,9 @@ export class McpLogger {
   }
 
   // ── public API ───────────────────────────────────────────────────────
+  // Intentional divergence from the server package's Pino wrapper:
+  // this logger owns the final JSON envelope, so MCP call sites stay
+  // message-first and pass optional structured context separately.
 
   info(msg: string, ctx: Record<string, unknown> = {}): void {
     this.emit('info', msg, ctx);
@@ -91,8 +94,10 @@ export class McpLogger {
     if (logFile) {
       try {
         appendFileSync(logFile, line);
-      } catch {
-        // best-effort
+      } catch (err) {
+        console.warn(
+          `[mcp-logger] Failed to write to OK_LOG_FILE: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
   }

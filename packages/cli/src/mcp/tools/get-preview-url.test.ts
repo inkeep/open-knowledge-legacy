@@ -177,4 +177,18 @@ describe('buildGetPreviewUrlResult', () => {
       expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
     }
   });
+
+  test('returns resolveCwd failures as tool errors', async () => {
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd: async () => {
+          throw new Error('No client roots');
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome).toEqual({ ok: false, error: 'No client roots' });
+  });
 });

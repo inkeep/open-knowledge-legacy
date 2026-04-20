@@ -240,7 +240,9 @@ export async function ensureServerRunning(
     if (asyncSpawnError) {
       const stderr = readErrorLog(stderrPath);
       opts.logger?.error('spawn failed', undefined, { error: asyncSpawnError, stderr });
-      throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
+      throw new Error(
+        `Error: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`,
+      );
     }
     await sleep(pollIntervalMs);
     const lock = readLock();
@@ -267,7 +269,9 @@ export async function ensureServerRunning(
       error: asyncSpawnError,
       stderr,
     });
-    throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
+    throw new Error(
+      `Error: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`,
+    );
   }
   const stderr = readErrorLog(stderrPath);
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);
@@ -285,7 +289,7 @@ export async function ensureServerRunning(
     stderr: stderr || undefined,
   });
   throw new Error(
-    `OK: server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
+    `Error: server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
   );
 }
 
@@ -334,6 +338,7 @@ export function createProjectServerUrlResolver(
   const ensure = opts.ensureServerRunningFn ?? ensureServerRunning;
   const cacheMs = opts.cacheMs ?? DEFAULT_SERVER_URL_CACHE_MS;
   const cache = new Map<string, { url: string | undefined; expiresAt: number }>();
+  const pendingResolutions = new Map<string, Promise<string | undefined>>();
 
   return async (cwd?: string): Promise<string | undefined> => {
     const effectiveCwd = await normalizeCwd(cwd ?? opts.startupCwd);
@@ -344,31 +349,46 @@ export function createProjectServerUrlResolver(
       return cached.url;
     }
 
+    const pending = pendingResolutions.get(effectiveCwd);
+    if (pending) {
+      opts.logger?.debug('server url resolution pending', { cwd: effectiveCwd });
+      return await pending;
+    }
+
     opts.logger?.debug('server url cache miss', { cwd: effectiveCwd });
-    const config = await opts.resolveConfig(effectiveCwd);
-    const contentDir = resolveContentDir(config, effectiveCwd);
-    const lockDir = resolveLockDir(contentDir);
-    const readLockForDir = opts.readLock;
-    const readLock = readLockForDir ? () => readLockForDir(lockDir) : undefined;
-    const result = await ensure({
-      lockDir,
-      contentDir,
-      host: config.server.host,
-      portOverride: undefined,
-      envAutoStart: opts.envAutoStart,
-      configAutoStart: config.mcp.autoStart,
-      logger: opts.logger,
-      timeoutMs: opts.timeoutMs,
-      pollIntervalMs: opts.pollIntervalMs,
-      spawn: opts.spawn,
-      readLock,
-      isAlive: opts.isAlive,
-      sleep: opts.sleep,
-      readErrorLog: opts.readErrorLog,
-      openErrorLog: opts.openErrorLog,
-      closeFd: opts.closeFd,
-    });
-    cache.set(effectiveCwd, { url: result.serverUrl, expiresAt: now + cacheMs });
-    return result.serverUrl;
+    const resolution = (async (): Promise<string | undefined> => {
+      const config = await opts.resolveConfig(effectiveCwd);
+      const contentDir = resolveContentDir(config, effectiveCwd);
+      const lockDir = resolveLockDir(contentDir);
+      const readLockForDir = opts.readLock;
+      const readLock = readLockForDir ? () => readLockForDir(lockDir) : undefined;
+      const result = await ensure({
+        lockDir,
+        contentDir,
+        host: config.server.host,
+        portOverride: undefined,
+        envAutoStart: opts.envAutoStart,
+        configAutoStart: config.mcp.autoStart,
+        logger: opts.logger,
+        timeoutMs: opts.timeoutMs,
+        pollIntervalMs: opts.pollIntervalMs,
+        spawn: opts.spawn,
+        readLock,
+        isAlive: opts.isAlive,
+        sleep: opts.sleep,
+        readErrorLog: opts.readErrorLog,
+        openErrorLog: opts.openErrorLog,
+        closeFd: opts.closeFd,
+      });
+      cache.set(effectiveCwd, { url: result.serverUrl, expiresAt: Date.now() + cacheMs });
+      return result.serverUrl;
+    })();
+
+    pendingResolutions.set(effectiveCwd, resolution);
+    try {
+      return await resolution;
+    } finally {
+      pendingResolutions.delete(effectiveCwd);
+    }
   };
 }

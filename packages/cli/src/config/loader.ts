@@ -148,6 +148,7 @@ export function createProjectConfigResolver(
   const cacheMs = opts.cacheMs ?? DEFAULT_CONFIG_CACHE_MS;
   const load = opts.loadConfigFn ?? loadConfig;
   const cache = new Map<string, { config: Config; expiresAt: number }>();
+  const pendingResolutions = new Map<string, Promise<Config>>();
   const normalizedStartupCwdPromise = normalizeCwd(opts.startupCwd);
 
   return async (cwd?: string): Promise<Config> => {
@@ -156,14 +157,26 @@ export function createProjectConfigResolver(
     const cached = cache.get(effectiveCwd);
     if (cached && cached.expiresAt > now) return cached.config;
 
-    if (effectiveCwd === (await normalizedStartupCwdPromise)) {
-      const startupResolved = applyProcessEnvConfigOverrides(opts.startupConfig, env);
-      cache.set(effectiveCwd, { config: startupResolved, expiresAt: now + cacheMs });
-      return startupResolved;
-    }
+    const pending = pendingResolutions.get(effectiveCwd);
+    if (pending) return await pending;
 
-    const resolved = applyProcessEnvConfigOverrides(load(effectiveCwd).config, env);
-    cache.set(effectiveCwd, { config: resolved, expiresAt: now + cacheMs });
-    return resolved;
+    const resolution = (async (): Promise<Config> => {
+      if (effectiveCwd === (await normalizedStartupCwdPromise)) {
+        const startupResolved = applyProcessEnvConfigOverrides(opts.startupConfig, env);
+        cache.set(effectiveCwd, { config: startupResolved, expiresAt: Date.now() + cacheMs });
+        return startupResolved;
+      }
+
+      const resolved = applyProcessEnvConfigOverrides(load(effectiveCwd).config, env);
+      cache.set(effectiveCwd, { config: resolved, expiresAt: Date.now() + cacheMs });
+      return resolved;
+    })();
+
+    pendingResolutions.set(effectiveCwd, resolution);
+    try {
+      return await resolution;
+    } finally {
+      pendingResolutions.delete(effectiveCwd);
+    }
   };
 }

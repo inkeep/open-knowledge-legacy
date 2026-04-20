@@ -265,4 +265,29 @@ describe('createProjectConfigResolver', () => {
     await expect(resolveConfig(symlinkProject)).resolves.toMatchObject(startupConfig);
     expect(loadCalls).toBe(0);
   });
+
+  test('deduplicates concurrent config loads for the same cwd', async () => {
+    const projectA = resolve(testDir, 'project-a');
+    const projectB = resolve(testDir, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-b\n');
+
+    const startupConfig = loadConfig(projectA).config;
+    let loadCalls = 0;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: projectA,
+      startupConfig,
+      cacheMs: 10_000,
+      loadConfigFn: (cwd) => {
+        loadCalls += 1;
+        return loadConfig(cwd);
+      },
+    });
+
+    const [first, second] = await Promise.all([resolveConfig(projectB), resolveConfig(projectB)]);
+    expect(first).toMatchObject({ content: { dir: 'docs-b' } });
+    expect(second).toMatchObject({ content: { dir: 'docs-b' } });
+    expect(loadCalls).toBe(1);
+  });
 });
