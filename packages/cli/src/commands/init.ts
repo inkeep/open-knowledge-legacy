@@ -115,6 +115,19 @@ interface EditorMcpResult {
   action: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
   configPath: string;
   error?: string;
+  /** Server key under which the entry was written / matched (defaults to MCP_SERVER_NAME). */
+  serverKey?: string;
+  /**
+   * Set when auto-disambiguation fired (global-scope targets only): the default
+   * key that conflicted with an existing entry bound to a different `--cwd`.
+   */
+  disambiguatedFrom?: string;
+  /**
+   * Set when a legacy entry was rewritten to the project-qualified form
+   * (Windsurf only — Claude Desktop has no legacy state). Carries the old key
+   * so the formatter can emit a migration line.
+   */
+  migratedFromKey?: string;
 }
 
 interface InitCommandOptions {
@@ -285,7 +298,18 @@ function writeEditorMcpConfig(
   force: boolean,
   home?: string,
 ): EditorMcpResult {
-  const configPath = target.configPath(cwd, home);
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch (err) {
+    return {
+      editorId: target.id,
+      label: target.label,
+      action: 'failed',
+      configPath: '',
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   let config: Record<string, unknown>;
   try {
@@ -301,23 +325,56 @@ function writeEditorMcpConfig(
   }
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
-  const existing = servers[MCP_SERVER_NAME];
 
-  if (existing && !force) {
+  // Per-target key resolution. Project-scoped targets omit `resolveServerKey`,
+  // so we fall back to the legacy `MCP_SERVER_NAME` literal — preserves the
+  // existing behavior for claude/cursor/vscode (D6 LOCKED).
+  let resolved: {
+    key: string;
+    existingEntry: unknown | undefined;
+    disambiguatedFrom?: string;
+    migratedFromKey?: string;
+  };
+  try {
+    resolved = target.resolveServerKey?.(servers, cwd) ?? {
+      key: MCP_SERVER_NAME,
+      existingEntry: servers[MCP_SERVER_NAME],
+    };
+  } catch (err) {
+    return {
+      editorId: target.id,
+      label: target.label,
+      action: 'failed',
+      configPath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const { key, existingEntry, disambiguatedFrom, migratedFromKey } = resolved;
+
+  // A migrated legacy entry is always rewritten — no `--force` required (D17 LOCKED).
+  // Otherwise, an entry already at the resolved key short-circuits unless --force.
+  if (existingEntry !== undefined && !force && migratedFromKey === undefined) {
     return {
       editorId: target.id,
       label: target.label,
       action: 'skipped-existing',
       configPath,
+      serverKey: key,
     };
   }
 
+  // Strip the legacy key so the file ends with exactly one open-knowledge entry
+  // for this project (no `open-knowledge` + `open-knowledge-<slug>` duplicate).
+  const nextServers: Record<string, unknown> = { ...servers };
+  if (migratedFromKey !== undefined && migratedFromKey !== key) {
+    delete nextServers[migratedFromKey];
+  }
+  nextServers[key] = target.buildEntry(cwd);
+
   const nextConfig: Record<string, unknown> = {
     ...config,
-    [target.topLevelKey]: {
-      ...servers,
-      [MCP_SERVER_NAME]: target.buildEntry(cwd),
-    },
+    [target.topLevelKey]: nextServers,
   };
 
   try {
@@ -336,11 +393,23 @@ function writeEditorMcpConfig(
     };
   }
 
+  // Disambiguated writes land under a fresh suffix key — `written` (not overwritten),
+  // even though `disambiguatedFrom` is set.
+  const action: EditorMcpResult['action'] =
+    migratedFromKey !== undefined
+      ? 'overwritten'
+      : existingEntry !== undefined
+        ? 'overwritten'
+        : 'written';
+
   return {
     editorId: target.id,
     label: target.label,
-    action: existing ? 'overwritten' : 'written',
+    action,
     configPath,
+    serverKey: key,
+    ...(disambiguatedFrom !== undefined ? { disambiguatedFrom } : {}),
+    ...(migratedFromKey !== undefined ? { migratedFromKey } : {}),
   };
 }
 
@@ -375,11 +444,19 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const editorResults: EditorMcpResult[] = [];
   for (const target of targets) {
     if (options.mcp === false) {
+      let configPath = '';
+      try {
+        configPath = target.configPath(cwd, options.home);
+      } catch {
+        // Unsupported-platform throw (e.g. Claude Desktop on Linux) — surface
+        // an empty path; --no-mcp explicitly means "don't write" so the path
+        // is informational only.
+      }
       editorResults.push({
         editorId: target.id,
         label: target.label,
         action: 'skipped-flag',
-        configPath: target.configPath(cwd, options.home),
+        configPath,
       });
       continue;
     }
@@ -615,7 +692,13 @@ export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
   const detected: EditorId[] = [];
   for (const id of ALL_EDITOR_IDS) {
     const target = EDITOR_TARGETS[id];
-    const configPath = target.configPath(cwd, home);
+    let configPath: string;
+    try {
+      configPath = target.configPath(cwd, home);
+    } catch {
+      // Unsupported platform (e.g. Claude Desktop on Linux) — skip detection.
+      continue;
+    }
     if (existsSync(dirname(configPath))) {
       detected.push(id);
     }
@@ -663,18 +746,28 @@ export function initCommand(): Command {
           );
         }
 
-        const editorChoices = ALL_EDITOR_IDS.map((id) => {
+        const editorChoices = ALL_EDITOR_IDS.flatMap((id) => {
           const target = EDITOR_TARGETS[id];
-          const hint =
-            target.scope === 'global'
-              ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
-              : relative(cwd, target.configPath(cwd));
-          return {
-            value: id,
-            label: target.label,
-            hint,
-            initialValue: detected.has(id),
-          };
+          let hint: string;
+          try {
+            hint =
+              target.scope === 'global'
+                ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
+                : relative(cwd, target.configPath(cwd));
+          } catch {
+            // Unsupported-platform target (e.g. Claude Desktop on Linux) —
+            // omit the entry entirely so the user can't pick something that
+            // would later throw on write.
+            return [];
+          }
+          return [
+            {
+              value: id,
+              label: target.label,
+              hint,
+              initialValue: detected.has(id),
+            },
+          ];
         });
 
         const selected = await multiselect({
