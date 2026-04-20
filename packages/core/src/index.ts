@@ -59,6 +59,18 @@ export {
   resetParseHealth,
 } from './metrics/parse-health.ts';
 
+// Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
+// defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`
+// for the desktop preload, and a future `packages/app/src/lib/desktop-bridge-
+// types.ts` for the app renderer's optional `window.okDesktop` access. Keeping
+// the contract co-located instead of re-exporting from this barrel avoids
+// dragging the full markdown / CRDT-bridge surface into desktop's compilation
+// context (TypeScript follows barrel re-exports through workspace symlinks
+// and complains about transitive deps that desktop doesn't declare directly).
+// `packages/core/src/desktop-bridge.ts` is the canonical reference shape;
+// drift between the per-package copies is caught by a contract-equality test
+// added in US-010.
+
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.

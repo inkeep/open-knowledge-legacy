@@ -1,0 +1,76 @@
+/**
+ * `window.okDesktop` bridge contract — desktop-side canonical source.
+ *
+ * The same shape is also defined at `@inkeep/open-knowledge-core`'s
+ * `desktop-bridge.ts` so that the app package (which consumes the window
+ * global) can import the type via its existing core dependency. The two
+ * definitions are kept in sync by a contract-equality test
+ * (`tests/integration/bridge-contract.test.ts`, added in US-010).
+ *
+ * Why duplicated: moving the types to core's `exports` map + re-exports from
+ * the core barrel pulls core's full compilation tree (markdown, CRDT bridge,
+ * etc.) into desktop's TypeScript program via `moduleResolution: bundler`.
+ * Desktop doesn't have core's mdast-adjacent dependencies declared, so the
+ * module augmentation in core's `mdast-augmentation.ts` fails to resolve in
+ * desktop's context. Duplication avoids the cross-package module-resolution
+ * issue while preserving a single logical contract.
+ */
+
+/** Render mode picked by the main process when creating a BrowserWindow. */
+export type OkDesktopMode = 'editor' | 'navigator';
+
+/** Frozen snapshot of window-level config injected at preload-exposure time. */
+export interface OkDesktopConfig {
+  readonly collabUrl: string;
+  readonly apiOrigin: string;
+  readonly projectPath: string;
+  readonly projectName: string;
+  readonly mode: OkDesktopMode;
+}
+
+/** Menu-action IDs fired by main → renderer on user menu selection. */
+export type OkMenuAction =
+  | 'new-doc'
+  | 'new-folder'
+  | 'rename'
+  | 'delete'
+  | 'toggle-sidebar'
+  | 'toggle-source'
+  | 'save-version'
+  | 'version-history'
+  | 'focus-search'
+  | 'focus-command-palette';
+
+/** Returned by `onProjectSwitched` / `onMenuAction`. Call to detach the listener. */
+export type OkUnsubscribe = () => void;
+
+/** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
+export interface OkDesktopBridge {
+  readonly config: OkDesktopConfig;
+
+  onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
+  onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
+
+  dialog: {
+    openFolder(): Promise<string | null>;
+    createFolder(): Promise<string | null>;
+  };
+
+  shell: {
+    openExternal(url: string): Promise<void>;
+  };
+
+  clipboard: {
+    writeText(text: string): Promise<void>;
+  };
+
+  readonly platform: 'darwin' | 'win32' | 'linux';
+  readonly appVersion: string;
+}
+
+declare global {
+  interface Window {
+    /** Populated by the desktop preload script. Absent in web / CLI distribution. */
+    okDesktop?: OkDesktopBridge;
+  }
+}

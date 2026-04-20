@@ -1,22 +1,11 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "composite": false,
-    "outDir": "out",
-    "rootDir": "src",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": true,
     "noEmit": true,
-    "lib": ["ES2024"],
-    "types": ["node"],
-    "paths": {
-      "@inkeep/open-knowledge-core": ["../core/src/index.ts"],
-      "@inkeep/open-knowledge-core/*": ["../core/src/*"],
-      "@inkeep/open-knowledge-server": ["../server/src/index.ts"],
-      "@inkeep/open-knowledge-server/*": ["../server/src/*"]
-    }
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2024", "DOM"],
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"],
-  "exclude": ["node_modules", "out", "dist-desktop"]
+  "include": ["src", "tests"],
+  "exclude": ["node_modules", "out", "dist-desktop", "**/*.test.ts"]
 }
