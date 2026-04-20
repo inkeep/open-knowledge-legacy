@@ -22,12 +22,12 @@ import type { Config } from '../../config/schema.ts';
 
 export type PreviewUrlSource = 'env' | 'lock' | 'config';
 
-export interface PreviewUrlResult {
+interface PreviewUrlResult {
   url: string;
   source: PreviewUrlSource;
 }
 
-export interface PreviewUrlContext {
+interface PreviewUrlContext {
   config: Config;
   lockDir: string;
 }

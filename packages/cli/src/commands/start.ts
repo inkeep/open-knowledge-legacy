@@ -37,7 +37,7 @@ export type UiSpawnDecision =
   | { action: 'spawn'; reason: 'stale'; stalePid: number }
   | { action: 'skip'; reason: 'alive'; pid: number; port: number };
 
-export interface DecideUiSpawnInput {
+interface DecideUiSpawnInput {
   uiLock: { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
 }
@@ -55,7 +55,7 @@ export function decideUiSpawn(input: DecideUiSpawnInput): UiSpawnDecision {
   return { action: 'skip', reason: 'alive', pid: input.uiLock.pid, port: input.uiLock.port };
 }
 
-export interface SpawnOkUiOptions {
+interface SpawnOkUiOptions {
   lockDir: string;
   cwd: string;
   /** Override for tests — defaults to `node:child_process#spawn`. */
@@ -109,7 +109,7 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   }
 }
 
-export interface BuildIdleShutdownHandlerInput {
+interface BuildIdleShutdownHandlerInput {
   readUiLock: () => { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
   killPid: (pid: number, signal: NodeJS.Signals) => void;
@@ -130,8 +130,8 @@ export interface BuildIdleShutdownHandlerInput {
 /** 10s grace before SIGKILL escalation — long enough for a healthy UI to
  * release its lock + close sockets; short enough that a wedged UI (GC
  * pause, downstream fetch hang) doesn't stall idle-shutdown indefinitely. */
-export const DEFAULT_SIGTERM_GRACE_MS = 10_000;
-export const DEFAULT_SIGTERM_POLL_MS = 200;
+const DEFAULT_SIGTERM_GRACE_MS = 10_000;
+const DEFAULT_SIGTERM_POLL_MS = 200;
 
 /**
  * Build the idle-shutdown `onShutdown` closure. On fire:
@@ -200,7 +200,7 @@ export function buildIdleShutdownHandler(
   };
 }
 
-export interface BootStartServerOptions {
+interface BootStartServerOptions {
   config: Config;
   cwd: string;
   /** Skip auto-init scaffolding of `<cwd>/.open-knowledge/` (tests usually want this). */

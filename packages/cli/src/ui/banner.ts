@@ -9,7 +9,7 @@ import { accent, dim, info, link } from './colors.ts';
 
 const box = cliBoxes.round;
 
-export interface BannerOptions {
+interface BannerOptions {
   name: string;
   version: string;
   /** Primary URL — displayed as "Editor:" when set, else "Local:" (API). */

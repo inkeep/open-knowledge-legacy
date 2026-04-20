@@ -15,7 +15,7 @@ function emit(json: boolean, obj: Record<string, unknown>): void {
   if (json) process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
 
-export interface SyncOptions {
+interface SyncOptions {
   json: boolean;
   op?: 'sync' | 'push' | 'pull';
 }

@@ -42,7 +42,7 @@ const DEFAULT_POLL_INTERVAL_MS = 100;
  * fall back to the default rather than crashing the MCP — the env knob is an
  * operator escape hatch, not a precondition.
  */
-export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefined {
+function parseSpawnTimeoutEnv(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number.parseInt(raw, 10);
   if (Number.isNaN(parsed) || parsed <= 0) return undefined;
@@ -56,7 +56,7 @@ export type AutoStartDecision =
   | { action: 'spawn'; message: string }
   | { action: 'disk-only'; message: string };
 
-export interface DecideAutoStartInput {
+interface DecideAutoStartInput {
   host: string;
   portOverride: string | undefined;
   envAutoStart: string | undefined;
@@ -130,7 +130,7 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
   return { action: 'spawn', message: 'no running instance — spawning ok start' };
 }
 
-export interface EnsureServerRunningOptions {
+interface EnsureServerRunningOptions {
   lockDir: string;
   contentDir: string;
   host: string;
@@ -155,7 +155,7 @@ export interface EnsureServerRunningOptions {
   pollIntervalMs?: number;
 }
 
-export interface EnsureServerRunningResult {
+interface EnsureServerRunningResult {
   serverUrl: string | undefined;
   message: string;
 }

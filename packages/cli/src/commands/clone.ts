@@ -42,12 +42,12 @@ function emit(json: boolean, obj: Record<string, unknown>): void {
 // Core clone logic
 // ---------------------------------------------------------------------------
 
-export interface CloneOptions {
+interface CloneOptions {
   json: boolean;
   dir?: string;
 }
 
-export async function runClone(
+async function runClone(
   url: string,
   opts: CloneOptions,
   _config: Config,

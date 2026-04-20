@@ -12,7 +12,7 @@ import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
-export interface StatusEntry {
+interface StatusEntry {
   name: 'server' | 'ui';
   state: LockState['status'];
   pid?: number;
@@ -24,7 +24,7 @@ export interface StatusEntry {
   alive: boolean | 'unknown';
 }
 
-export interface StatusReport {
+interface StatusReport {
   server: StatusEntry;
   ui: StatusEntry;
 }
@@ -97,7 +97,7 @@ function renderEntry(entry: StatusEntry): string {
   return `${label}  alive  pid=${entry.pid} port=${entry.port} started=${entry.startedAt}`;
 }
 
-export interface RunStatusDeps {
+interface RunStatusDeps {
   lockDir: string;
   json?: boolean;
   inspect?: (name: 'server' | 'ui') => LockState;
