@@ -461,6 +461,13 @@ export function GraphView({
   const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>> | undefined>(undefined);
   const focusStateRef = useRef<FocusState>({ key: '', lastX: null, lastY: null, lastAt: 0 });
   const backgroundPointerRef = useRef<BackgroundPointerState | null>(null);
+  // Tracks whether the force-layout simulation has reached its cooldown
+  // terminus. Flipped true in `onEngineStop`, false on every `onEngineTick`
+  // (engine re-runs whenever graphData mutates or an explicit reheat fires).
+  // Consumed by the DEV-gated `__graphHarness.isSimulationSettled()` so
+  // canvas-click-at-coord tests can gate on a real settlement signal instead
+  // of racing the physics. See precedent §20(a) category C.
+  const simulationSettledRef = useRef(false);
   const [dimensions, setDimensions] = useState({ width: 320, height: 400 });
   const { resolvedTheme } = useTheme();
   const { folderPaths, loading: pageListLoading, pages } = usePageList();
@@ -739,6 +746,15 @@ export function GraphView({
           availableHeight: containerRef.current?.parentElement?.getBoundingClientRect().height ?? 0,
         };
       },
+      // True once the force-layout simulation has reached cooldown — flipped
+      // in `onEngineStop` and cleared on every `onEngineTick`. Playwright
+      // `waitForGraphSimulationSettled` polls this so canvas-click-at-coord
+      // tests can block until node positions have stopped drifting. See
+      // precedent §20(a) category C (physics-simulation race, as distinct
+      // from the PM-state and focus/DOM-selection races).
+      isSimulationSettled() {
+        return simulationSettledRef.current;
+      },
       getLinkClickPoint(sourceDocName: string, targetDocName: string) {
         const fg = fgRef.current;
         if (!fg) return null;
@@ -906,6 +922,7 @@ export function GraphView({
             graphData={displayData}
             cooldownTicks={150}
             onEngineTick={() => {
+              simulationSettledRef.current = false;
               focusStateRef.current = maybeFocusActiveGraphNode({
                 fg: fgRef.current,
                 nodes: graphData.nodes,
@@ -916,6 +933,7 @@ export function GraphView({
               });
             }}
             onEngineStop={() => {
+              simulationSettledRef.current = true;
               const coords = getActiveGraphNodeCoords({
                 nodes: graphData.nodes,
                 activeDocName,

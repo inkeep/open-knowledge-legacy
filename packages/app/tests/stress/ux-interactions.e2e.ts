@@ -9,11 +9,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
-import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import {
+  type ApiHelpers,
+  expect,
+  test,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 /** Get the current Y.Text content from the provider */
 async function getYText(page: Page): Promise<string> {
@@ -31,14 +33,11 @@ function uniqueDocName(label: string): string {
  * Create a per-test doc, reset it on the server, open it, and wait for sync.
  * Returns the docName so tests can pass it to agent-write-md.
  */
-async function openFreshDoc(page: Page, label: string): Promise<string> {
+async function openFreshDoc(api: ApiHelpers, page: Page, label: string): Promise<string> {
   const docName = uniqueDocName(label);
-  await createPage(`${docName}.md`);
-  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
-    method: 'POST',
-  });
-  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
-  await page.goto(`${BASE}/#/${docName}`);
+  await api.createPage(`${docName}.md`);
+  await api.testReset(docName);
+  await page.goto(`/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
   return docName;
@@ -51,11 +50,22 @@ async function openFreshDoc(page: Page, label: string): Promise<string> {
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
-test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
-  await openFreshDoc(page, 'wysiwyg-to-source');
-  // Type in WYSIWYG mode
-  await page.locator('.ProseMirror').focus();
-  await page.keyboard.type('Hello from WYSIWYG', { delay: 10 });
+test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'wysiwyg-to-source');
+  // Insert text in WYSIWYG mode. Two invariants:
+  //   1. `.click()` + `toBeFocused()` before any keyboard call — `.focus()`
+  //      does not await focus-transfer in Chromium, and events dispatched
+  //      before focus lands go to the prior active element. See precedent
+  //      §20(a) category C.
+  //   2. `keyboard.insertText` (atomic single `beforeinput`/`input` event)
+  //      instead of `keyboard.type` (per-character keydown/keypress/keyup).
+  //      Under full-suite parallel CPU contention, per-character dispatch
+  //      can reorder at CM6/PM's async input pipeline — characters can land
+  //      out of order in the editor's internal buffer. `insertText` bypasses
+  //      the per-character race entirely. See precedent §20(i).
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
+  await page.keyboard.insertText('Hello from WYSIWYG');
 
   // Wait for Observer A to sync to Y.Text
   await page.waitForFunction(
@@ -64,6 +74,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
         ?.getText('source')
         ?.toString()
         ?.includes('Hello from WYSIWYG'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -75,29 +86,51 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   expect(cmContent).toContain('Hello from WYSIWYG');
 });
 
-test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page }) => {
-  await openFreshDoc(page, 'source-to-wysiwyg');
+test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'source-to-wysiwyg');
   // Switch to Source mode
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
-  // Type markdown in CodeMirror
-  await page.locator('.cm-content').focus();
-  await page.keyboard.type('# Source Heading\n\nParagraph from source.', { delay: 10 });
+  // Insert markdown in CodeMirror. See the comment at the first test's
+  // keyboard block — same two invariants apply: `.click()+toBeFocused()`
+  // for focus, `keyboard.insertText` for atomic input. Historical evidence
+  // for the keystroke-reorder race this avoids: CI run 24623506375 on PR
+  // #212 captured CodeMirror rendering `#\n\nource Heading\n\nParagraph
+  // from source.\nS\n` when `keyboard.type` was used — the `S` character
+  // reordered past the rest of the string. `insertText` dispatches one
+  // `beforeinput` event with the full payload, making the race
+  // structurally impossible. See precedent §20(i).
+  await page.locator('.cm-content').click();
+  await expect(page.locator('.cm-content')).toBeFocused();
+  await page.keyboard.insertText('# Source Heading\n\nParagraph from source.');
 
   // Wait for Y.Text to have the content
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('Source Heading'),
+    null,
     { timeout: 10_000 },
   );
 
   // Switch back to WYSIWYG
   await visualToggle(page).click();
 
-  // Wait for ProseMirror to render the synced content
+  // Wait for ProseMirror to render the FULL synced content. Checking only
+  // for 'Source Heading' is too permissive: y-prosemirror applies XmlFragment
+  // → PM mutations incrementally over ~50-100ms under CPU contention, so PM
+  // transiently shows a partial render like "Source HeadingParagraph fro"
+  // where the heading substring is already present but the paragraph is
+  // truncated mid-word. The wait condition must match every substring the
+  // subsequent assertion will read — otherwise waitForFunction resolves on
+  // the partial state and the `textContent()` read below catches PM
+  // mid-render. Mirrors the round-trip test's pattern at line 144-148.
   await page.waitForFunction(
-    () => document.querySelector('.ProseMirror')?.textContent?.includes('Source Heading'),
+    () => {
+      const content = document.querySelector('.ProseMirror')?.textContent ?? '';
+      return content.includes('Source Heading') && content.includes('Paragraph from source');
+    },
+    null,
     { timeout: 10_000 },
   );
 
@@ -107,26 +140,32 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   expect(pmContent).toContain('Paragraph from source');
 });
 
-test('round-trip: edits in both modes survive toggle cycle', async ({ page }) => {
-  await openFreshDoc(page, 'round-trip');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
-  await page.keyboard.type('WYSIWYG edit', { delay: 10 });
+test('round-trip: edits in both modes survive toggle cycle', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'round-trip');
+  // Insert in WYSIWYG — `.click()+toBeFocused()` + `insertText` per the
+  // comment block at the first test in this file.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
+  await page.keyboard.insertText('WYSIWYG edit');
 
   // Wait for sync
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('WYSIWYG edit'),
+    null,
     { timeout: 10_000 },
   );
 
-  // Switch to Source, type there
+  // Switch to Source, insert there
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
-  await page.locator('.cm-content').focus();
-  // Move to end before typing
+  await page.locator('.cm-content').click();
+  await expect(page.locator('.cm-content')).toBeFocused();
+  // Move to end before inserting. Bare `End` is end-of-line cross-platform
+  // (no modifier required); single-line content makes it equivalent to
+  // end-of-document here.
   await page.keyboard.press('End');
-  await page.keyboard.type('\n\nSource edit', { delay: 10 });
+  await page.keyboard.insertText('\n\nSource edit');
 
   // Wait for Y.Text to have both edits
   await page.waitForFunction(
@@ -134,6 +173,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
       const txt = window.__activeProvider?.document?.getText('source')?.toString();
       return txt?.includes('WYSIWYG edit') && txt?.includes('Source edit');
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -146,6 +186,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
       const content = document.querySelector('.ProseMirror')?.textContent ?? '';
       return content.includes('WYSIWYG edit') && content.includes('Source edit');
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -155,20 +196,25 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   expect(pmContent).toContain('Source edit');
 });
 
-test('concurrent agent write: user + agent content coexist', async ({ page }) => {
-  const docName = await openFreshDoc(page, 'concurrent-agent');
-  // Type in WYSIWYG
-  await page.locator('.ProseMirror').focus();
-  await page.keyboard.type('User typing', { delay: 10 });
+test('concurrent agent write: user + agent content coexist', async ({ page, api, baseURL }) => {
+  const docName = await openFreshDoc(api, page, 'concurrent-agent');
+  // Insert in WYSIWYG — `.click()+toBeFocused()` + `insertText` per the
+  // comment block at the first test in this file.
+  await page.locator('.ProseMirror').click();
+  await expect(page.locator('.ProseMirror')).toBeFocused();
+  await page.keyboard.insertText('User typing');
 
   // Wait for user content to sync
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('User typing'),
+    null,
     { timeout: 10_000 },
   );
 
-  // Agent writes via API while user is editing
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
+  // Agent writes via API while user is editing. Uses default `position: append`
+  // (omitted) to stack on top of the user's typing — the whole point of this
+  // test is coexistence, not replace.
+  const res = await fetch(`${baseURL}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ docName, markdown: '## Agent Section\n\nAgent content here.' }),
@@ -179,6 +225,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document?.getText('source')?.toString()?.includes('Agent Section'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -211,9 +258,9 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   // for Model A semantics coverage.
   //
   // This test relies only on the pre-seeded sidebar-folder/nested-doc.md
-  // fixture (see playwright.config.ts). It does not write content, so no
-  // per-test doc is required.
-  await page.goto(BASE);
+  // fixture (see `_helpers/fixtures.ts`'s per-worker seeding). It does not
+  // write content, so no per-test doc is required.
+  await page.goto('/');
   const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
   const chevron = page.getByRole('button', { name: 'Expand sidebar-folder' });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
@@ -269,16 +316,12 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
 
 test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({
   page,
+  api,
 }) => {
-  const docName = await openFreshDoc(page, 'link-edit');
+  const docName = await openFreshDoc(api, page, 'link-edit');
   const doc = '[Beta page](beta.md)';
 
-  const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown: doc, position: 'replace' }),
-  });
-  expect(writeRes.ok).toBe(true);
+  await api.replaceDoc(docName, doc);
 
   await page.waitForFunction(
     () =>
@@ -286,6 +329,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
         ?.getText('source')
         ?.toString()
         ?.includes('[Beta page](beta.md)'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -332,6 +376,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
         ?.getText('source')
         ?.toString()
         ?.includes('[Beta page](./sidebar-folder/nested-doc.md)'),
+    null,
     { timeout: 10_000 },
   );
 

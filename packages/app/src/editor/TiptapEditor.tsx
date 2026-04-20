@@ -16,6 +16,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
+import { registerEditor, unregisterEditor } from './active-editor';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
@@ -181,6 +182,26 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     return () => setCurrentDocName(null);
   }, [provider]);
 
+  // DEV-only: register the TipTap editor instance in the module-level
+  // active-editor map so Playwright can resolve `window.__activeEditor` →
+  // the real Editor instance and poll `editor.state.selection` directly.
+  // Needed to close the `click → keyboard.press(Tab|...)` PM-selection-sync
+  // race described in precedent §20(a) category C — under workers>1 CPU
+  // contention the DOMObserver hasn't synced the click-induced DOM
+  // selection into PM state yet, and double-rAF yields aren't enough.
+  //
+  // `unregisterEditor` matches on the editor ref so the StrictMode double-
+  // invoke ordering (register-A, register-B, cleanup-A) doesn't leave the
+  // registry empty. Vite replaces `import.meta.env.DEV` at build time, so
+  // production bundles strip this effect entirely.
+  useEffect(() => {
+    if (!editor || !import.meta.env.DEV) return;
+    const docName = provider.configuration.name;
+    if (!docName) return;
+    registerEditor(docName, editor);
+    return () => unregisterEditor(docName, editor);
+  }, [editor, provider]);
+
   useEffect(() => {
     if (!editor) return;
     // TipTap v3's `editor.view` is a proxy that throws when accessed before
@@ -192,7 +213,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     // view is guaranteed present. If the editor is already created by the
     // time this effect runs (common path), we attach immediately.
     // Regression fixed: QA-002 retry flow + any Activity unhide reconnect.
-    const mark = () => markUserTyping(provider.document);
+    const mark = () => markUserTyping();
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
       if (attachedDom || !editor || editor.isDestroyed) return;
@@ -222,7 +243,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       editor.off('create', attach);
       detach();
     };
-  }, [editor, provider.document]);
+  }, [editor]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.

@@ -30,7 +30,7 @@ export interface ProxyServerHandle {
   close: () => Promise<void>;
 }
 
-export interface StartProxyOptions {
+interface StartProxyOptions {
   listenPort: number;
   host: string;
   upstreamHost: string;
@@ -43,12 +43,12 @@ export interface StartProxyOptions {
 
 /** Default: 10s. Long enough for legitimate slow loads, short enough that a
  * hung upstream doesn't keep browser connections open indefinitely. */
-export const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 
 /** Per-request client-side deadline — prevents a malicious/local slow-loris peer
  * from pinning the proxy socket indefinitely. 30s leaves ample margin over the
  * upstream timeout above so we never time out a healthy request. */
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Hop-by-hop headers per RFC 7230 §6.1 — these MUST NOT be forwarded by a
@@ -102,7 +102,7 @@ export async function startProxyServer(opts: StartProxyOptions): Promise<ProxySe
   };
 }
 
-export interface ProxyRequestOptions {
+interface ProxyRequestOptions {
   upstreamHost: string;
   upstreamPort: number;
   /** Per-request upstream timeout in ms. Default 10_000. 0 disables. */

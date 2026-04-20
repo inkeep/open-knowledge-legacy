@@ -20,6 +20,7 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
+  handleCollabSocketError,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
@@ -157,7 +158,7 @@ if (!isTestIsolated) {
 // them post-init.
 let contentFilter: ReturnType<typeof createContentFilter>;
 let backlinkIndex: BacklinkIndex;
-export let hocuspocus: Hocuspocus;
+let hocuspocus: Hocuspocus;
 let sessionManager: AgentSessionManager;
 let persistence: ReturnType<typeof createPersistenceExtension>;
 let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
@@ -225,7 +226,13 @@ try {
   const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
   const pluginSchema = getSchema(sharedExtensions);
   hocuspocus.configuration.extensions.push(
-    createServerObserverExtension({ mdManager: pluginMdManager, schema: pluginSchema }),
+    createServerObserverExtension({
+      mdManager: pluginMdManager,
+      schema: pluginSchema,
+      shadowRef,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    }),
   );
 } catch (err) {
   try {
@@ -263,7 +270,16 @@ export function hocuspocusPlugin(): Plugin {
           // Attach error handler on the raw TCP socket BEFORE handleUpgrade.
           // Without this, an ECONNRESET during/after upgrade emits an 'error'
           // event with no listener, which crashes the entire Node process.
-          socket.on('error', (err: Error) => {
+          //
+          // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that
+          // surface asynchronously after ws.send()/socket.write() has already
+          // returned — no userspace pre-check can prevent them (see
+          // websockets/ws#1017). Hocuspocus already filters by readyState in
+          // Connection.send (packages/server/src/Connection.ts), so the only
+          // remaining visibility is catching + classifying the async emission
+          // here. Drop the expected codes; surface everything else.
+          socket.on('error', (err: NodeJS.ErrnoException) => {
+            if (handleCollabSocketError(err)) return;
             console.error('[collab] Upgrade socket error:', err);
           });
 
@@ -277,8 +293,10 @@ export function hocuspocusPlugin(): Plugin {
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
-            ws.on('error', (err) => {
-              console.error('[collab] WebSocket error:', err);
+            ws.on('error', (err: NodeJS.ErrnoException) => {
+              if (!handleCollabSocketError(err)) {
+                console.error('[collab] WebSocket error:', err);
+              }
               ws.terminate();
             });
           });
@@ -300,7 +318,12 @@ export function hocuspocusPlugin(): Plugin {
           // Let the Hocuspocus onRequest extensions handle API routes
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
           // Unhandled /api/* route — return 404 JSON, do NOT fall through
           // to the SPA fallback which would return index.html.
           res.statusCode = 404;

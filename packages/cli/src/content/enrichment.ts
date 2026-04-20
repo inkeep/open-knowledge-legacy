@@ -178,7 +178,7 @@ export interface EnrichedMeta {
   projectHistorySource: ProjectHistorySource | null;
 }
 
-export interface EnrichPathDeps {
+interface EnrichPathDeps {
   projectDir: string;
   serverUrl?: string | undefined;
   /** History depth for rich mode; defaults to 5. */
@@ -193,7 +193,7 @@ export interface EnrichPathDeps {
   folderRules?: FolderRule[];
 }
 
-export interface EnrichPathOptions {
+interface EnrichPathOptions {
   /**
    * When `true`, populate `backlinkCount` + `history` + `historySource`
    * (rich mode). When `false` (default), those three fields are `null`

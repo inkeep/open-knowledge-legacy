@@ -70,7 +70,7 @@ import { usePageList } from './PageListContext';
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 
-export interface EditorActivityPoolProps {
+interface EditorActivityPoolProps {
   activeDocName: string;
   isSourceMode: boolean;
   editorPlaceholder?: string;

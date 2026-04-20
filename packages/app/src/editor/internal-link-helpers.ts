@@ -3,21 +3,12 @@ import {
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
   type DocLinkTarget,
-  type ResolvedInternalHref,
-  resolveInternalHref,
 } from '@inkeep/open-knowledge-core';
 import { hashFromDocName } from '../lib/doc-hash';
 
-export function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
+function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
   const hashMatch = locationHash.match(/^#\/([^?#]+)/);
   return hashMatch ? decodeURIComponent(hashMatch[1]) : '';
-}
-
-export function resolveCurrentInternalHref(
-  href: string,
-  locationHash = window.location.hash,
-): ResolvedInternalHref | null {
-  return resolveInternalHref(href, getCurrentDocNameFromHash(locationHash));
 }
 
 export function classifyCurrentMarkdownHref(
@@ -34,13 +25,11 @@ export function toInternalHashHref({
   return anchor ? `#/${docName}?anchor=${encodeURIComponent(anchor)}` : `#/${docName}`;
 }
 
-export function openHashHrefInNewTab(href: string): void {
+function openHashHrefInNewTab(href: string): void {
   window.open(href, '_blank', 'noopener,noreferrer');
 }
 
-export function navigateToInternalHashHref(
-  resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
-): void {
+function navigateToInternalHashHref(resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>): void {
   window.location.assign(toInternalHashHref(resolved));
 }
 
@@ -54,7 +43,7 @@ export function shouldOpenInNewTab(event: { metaKey: boolean; ctrlKey: boolean }
   return event.metaKey || event.ctrlKey;
 }
 
-export function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
+function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
   const currentDocName = getCurrentDocNameFromHash(locationHash);
   if (!currentDocName) return;
 

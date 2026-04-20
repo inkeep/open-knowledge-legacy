@@ -1,22 +1,25 @@
 // ─────────────────────────────────────────────────────────────
-// Server-authoritative observer architecture (precedent #14)
+// Server-authoritative client-observer shell (precedent #14 + #13(b))
 // ─────────────────────────────────────────────────────────────
 //
-// Cross-CRDT sync (Y.XmlFragment ↔ Y.Text) is now performed exclusively
-// by the server observer (packages/server/src/server-observers.ts).
-// The client observer (`setupObservers` in observers.ts) no longer writes
-// to Y.Text (Observer A) or XmlFragment (Observer B). It retains:
-//   - Baseline tracking (lastSyncedXmlMd) for read-side reasoning
-//   - Origin guards (skip self-originated transactions)
-//   - Remote transaction baseline refresh (Bug-B fix)
-//   - Typing-defer state management (markUserTyping / per-doc TypingState)
-//   - Parse validation in Observer B (diagnostic only, no tree writes)
+// Cross-CRDT sync (Y.XmlFragment ↔ Y.Text) runs exclusively on the server
+// observer — see `packages/server/src/server-observers.ts` and its test
+// suite for the write-path contracts. The client observer (`setupObservers`
+// in `observers.ts`) is a shell; per bridge-correctness SPEC §6 R5b / D14
+// DELEGATED = option (a) DELETE, the client's historical debounce + per-doc
+// `TypingState` + cross-CRDT baseline-refresh machinery was removed. The
+// surface it retains is:
+//   1. `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object identities
+//      (consumed by the bridge-invariant watcher's enforcing set).
+//   2. `markUserTyping` / `getLastUserKeystroke` — a global wall-clock
+//      timestamp consumed by `SystemDocSubscriber`'s agent-focus guard.
+//   3. Diagnostic parse validation in Observer B — transient MDX SyntaxError
+//      during mid-edit swallowed at debug log; non-transient failures fire
+//      `onSyncError`. No cross-CRDT write.
 //
-// Tests that asserted cross-CRDT write behavior are marked test.skip with
-// a pointer to server-observers.test.ts where that coverage now lives.
-// Tests that validate client-side behavior still exercised by the observer
-// (baseline tracking, origin guards, typing isolation, scheduler DI) are
-// retained and adapted to the new architecture.
+// Cross-CRDT write-path coverage (Observer A, Observer B, Path A/B dispatch,
+// paired-write short-circuit, settlement dispatch, frontmatter sync) lives
+// in `packages/server/src/server-observers.test.ts`.
 // ─────────────────────────────────────────────────────────────
 
 import { describe, expect, test } from 'bun:test';
@@ -24,7 +27,6 @@ import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
-import { createManualScheduler } from '../../tests/integration/test-harness';
 import { sharedExtensions } from './extensions/shared';
 import {
   getLastUserKeystroke,
@@ -733,10 +735,16 @@ describe('FR-4: Observer A preserves agent-origin CRDT Items', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Group E (A1): applyByPrefixSuffix preserves outer Items
+// Group E (A1): middle-region replacement preserves outer Items
 // ─────────────────────────────────────────────────────────────
+// Pins the invariant that the server bridge's Y.Text materializer
+// (`applyFastDiff` today, formerly `applyByPrefixSuffix`) must preserve
+// CRDT Items outside the mutated region so `Y.UndoManager({ trackedOrigins })`
+// consumers see correct origin attribution through bridge cycles. The test
+// simulates the materializer's effect at the Y.Text layer directly — the
+// underlying server primitive can change without invalidating the invariant.
 
-describe('A1: applyByPrefixSuffix preserves Items in prefix/suffix regions', () => {
+describe('A1: middle-region replacement preserves outer agent Items', () => {
   test('middle-region replacement preserves outer agent Items', () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
@@ -762,7 +770,7 @@ describe('A1: applyByPrefixSuffix preserves Items in prefix/suffix regions', () 
     // Two agent-write transactions → two stack entries
     expect(um.undoStack.length).toBe(2);
 
-    // Simulate applyByPrefixSuffix effect: replace middle region only
+    // Simulate the materializer's middle-region replacement directly on Y.Text.
     doc.transact(() => {
       ytext.delete(3, 3); // remove 'BBB'
       ytext.insert(3, 'XXX'); // insert 'XXX'
@@ -783,113 +791,37 @@ describe('A1: applyByPrefixSuffix preserves Items in prefix/suffix regions', () 
   });
 });
 
-describe('FR-15: Scheduler DI — deterministic observer debounce control', () => {
-  test('Observer A debounce fires only when scheduler advances time (baseline update only)', async () => {
-    // Under server-authoritative architecture, Observer A only updates the
-    // baseline (lastSyncedXmlMd) — it does not write Y.Text. The scheduler
-    // DI still controls when the debounced baseline update fires.
-    const scheduler = createManualScheduler();
-    const doc = new Y.Doc();
-    const fragment = doc.getXmlFragment('default');
-    const ytext = doc.getText('source');
-
-    // Pre-seed with initial content so Observer A has a baseline to diff against
-    applyMarkdown(doc, fragment, 'initial\n');
-
-    const cleanup = setupObservers({
-      doc,
-      xmlFragment: fragment,
-      ytext,
-      mdManager,
-      schema,
-      scheduler,
-    });
-
-    try {
-      // Y.Text is NOT populated by client observer (server-authoritative)
-      expect(ytext.toString()).toBe('');
-
-      // Produce a local XmlFragment change that triggers Observer A's debounce
-      applyMarkdown(doc, fragment, 'initial\n\nfreshly typed\n');
-
-      // One pending timer: the Observer A debounce for our local change.
-      expect(scheduler.pending().length).toBeGreaterThanOrEqual(1);
-
-      // Flush the debounce — Observer A updates baseline, not Y.Text
-      scheduler.flush();
-
-      // Y.Text stays empty — client observer does not write it
-      expect(ytext.toString()).toBe('');
-
-      // Queue is empty: no residual debounces.
-      expect(scheduler.pending().length).toBe(0);
-    } finally {
-      cleanup();
-      doc.destroy();
-    }
-  });
-
-  test('sched.now() is the clock reference for elapsed-time comparisons', () => {
-    // FR-15 clock unification: `markUserTyping` and Observer B's elapsed
-    // windows all read from sched.now(). Under ManualScheduler, now starts
-    // at 0 and advances only via advanceTime. This test proves that
-    // markUserTyping records virtual time, not wall-clock.
-    const scheduler = createManualScheduler();
-    const doc = new Y.Doc();
-    const fragment = doc.getXmlFragment('default');
-    const ytext = doc.getText('source');
-
-    // setupObservers registers the scheduler into TypingState so
-    // markUserTyping reads the same clock.
-    const cleanup = setupObservers({
-      doc,
-      xmlFragment: fragment,
-      ytext,
-      mdManager,
-      schema,
-      scheduler,
-    });
-
-    try {
-      expect(scheduler.now()).toBe(0);
-      markUserTyping(doc);
-      // No virtual time advance → lastUserTypedAt is 0.
-      // Observer B would check elapsed = sched.now() - 0 = 0, which is
-      // < TYPING_DEFER_MS (300), so defer would fire. Advance past the
-      // defer window:
-      scheduler.advanceTime(400);
-      expect(scheduler.now()).toBe(400);
-      // Now elapsed = 400 - 0 = 400 > TYPING_DEFER_MS → defer would not fire.
-      // This is the determinism win: wall-clock jitter cannot push the
-      // comparison onto either side of the threshold.
-    } finally {
-      cleanup();
-      doc.destroy();
-    }
-  });
-});
+// ─── FR-15 Scheduler DI tests deleted ─────────────────────
+//
+// Superseded by bridge-correctness SPEC §6 R5b + D14 DELEGATED outcome =
+// option (a) DELETE. The client observer no longer has a debounce path or
+// per-doc TypingState clock to exercise — cross-CRDT writes are
+// server-authoritative (precedent #14) and bridge dispatch is
+// settlement-based (precedent #13(b), server-observers.ts on
+// afterAllTransactions). Precedent #13(b) CI gate grep-checks
+// `packages/app/src/editor/observers.ts` for `setTimeout`/`Scheduler`
+// residue. Scheduler DI coverage for the server bridge moved to
+// packages/server/src/server-observers.test.ts's `onDispatch` recorder
+// (ObserverDispatchKind dispatches).
 
 describe('markUserTyping — global keystroke timestamp (US-006)', () => {
   test('getLastUserKeystroke advances on markUserTyping', () => {
-    const doc = new Y.Doc();
     const before = getLastUserKeystroke();
-    markUserTyping(doc);
+    markUserTyping();
     const after = getLastUserKeystroke();
     expect(after).toBeGreaterThanOrEqual(before);
     expect(after).toBeGreaterThan(0);
   });
 
-  test('global timestamp is shared across multiple docs', () => {
-    const doc1 = new Y.Doc();
-    const doc2 = new Y.Doc();
-    markUserTyping(doc1);
+  test('global timestamp is shared across call sites (no per-doc state)', () => {
+    markUserTyping();
     const ts1 = getLastUserKeystroke();
     // Small advance so the next call is observably later even on fast systems
     const wait = Date.now() + 1;
     while (Date.now() < wait) {
       /* spin */
     }
-    markUserTyping(doc2);
+    markUserTyping();
     const ts2 = getLastUserKeystroke();
     expect(ts2).toBeGreaterThan(ts1);
   });

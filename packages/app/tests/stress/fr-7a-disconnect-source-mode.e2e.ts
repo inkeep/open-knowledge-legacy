@@ -23,11 +23,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
-import { createPage, waitForActiveProviderSynced as waitForProvider } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
@@ -35,10 +32,10 @@ const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual edi
 test.describe('FR-7a: source-mode toggle disabled during disconnect', () => {
   let docName: string;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, api }) => {
     docName = `test-fr7a-${randomUUID().slice(0, 8)}`;
-    await createPage(`${docName}.md`);
-    await page.goto(`${BASE}/#/${docName}`);
+    await api.createPage(`${docName}.md`);
+    await page.goto(`/#/${docName}`);
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
   });

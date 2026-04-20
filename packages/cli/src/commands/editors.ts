@@ -1,7 +1,7 @@
 /**
  * Editor MCP target registry.
  *
- * Each editor has a different location and JSON structure for MCP server
+ * Each editor has a different location and config format for MCP server
  * configuration. This module encodes those differences declaratively so that
  * `init.ts` can loop over targets without per-editor branching.
  */
@@ -10,7 +10,7 @@ import { join, posix, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 
-export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf';
+export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
 
 export const ALL_EDITOR_IDS: EditorId[] = [
   'claude',
@@ -18,6 +18,7 @@ export const ALL_EDITOR_IDS: EditorId[] = [
   'cursor',
   'vscode',
   'windsurf',
+  'codex',
 ];
 
 const MCP_SERVER_COMMAND = 'npx';
@@ -52,8 +53,25 @@ export function resolveAppSupportPath(options: AppSupportOptions = {}): string {
 
 export function resolveClaudeDesktopConfigPath(options: AppSupportOptions = {}): string {
   const platformName = options.platformName ?? process.platform;
-  const pathApi = pathApiForPlatform(platformName);
-  return pathApi.join(resolveAppSupportPath(options), 'Claude', 'claude_desktop_config.json');
+  const home = options.home ?? homedir();
+  const env = options.env ?? process.env;
+
+  if (platformName === 'darwin') {
+    return posix.join(
+      home,
+      'Library',
+      'Application Support',
+      'Claude',
+      'claude_desktop_config.json',
+    );
+  }
+
+  if (platformName === 'win32') {
+    const appData = env.APPDATA ?? win32.join(home, 'AppData', 'Roaming');
+    return win32.join(appData, 'Claude', 'claude_desktop_config.json');
+  }
+
+  throw new Error(`Claude Desktop is not available on ${platformName}. Supported: macOS, Windows.`);
 }
 
 export interface EditorMcpTarget {
@@ -62,8 +80,10 @@ export interface EditorMcpTarget {
   label: string;
   /** Resolve the absolute path to the MCP config file. */
   configPath: (cwd: string, home?: string) => string;
-  /** Top-level JSON key that holds the server map. */
-  topLevelKey: 'mcpServers' | 'servers';
+  /** On-disk config format for this editor. */
+  format: 'json' | 'toml';
+  /** Top-level key that holds the server map. */
+  topLevelKey: 'mcpServers' | 'servers' | 'mcp_servers';
   /** Config key used for this project's MCP server entry. */
   serverName: (cwd: string) => string;
   /** Build the server entry object for this editor. */
@@ -136,6 +156,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'claude',
     label: 'Claude Code',
     configPath: (cwd) => join(cwd, '.mcp.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
@@ -146,6 +167,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'claude-desktop',
     label: 'Claude Desktop',
     configPath: (_cwd, home) => resolveClaudeDesktopConfigPath({ home }),
+    format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
@@ -155,6 +177,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'cursor',
     label: 'Cursor',
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
@@ -164,6 +187,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'vscode',
     label: 'VS Code',
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
+    format: 'json',
     topLevelKey: 'servers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
@@ -173,10 +197,21 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     id: 'windsurf',
     label: 'Windsurf',
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
+    format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
+  }),
+  codex: createEditorTarget({
+    id: 'codex',
+    label: 'Codex',
+    configPath: (cwd) => join(cwd, '.codex', 'config.toml'),
+    format: 'toml',
+    topLevelKey: 'mcp_servers',
+    serverName: () => MCP_SERVER_NAME,
+    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'project',
   }),
 };
 

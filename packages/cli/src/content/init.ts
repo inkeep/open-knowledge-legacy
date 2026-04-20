@@ -6,7 +6,7 @@ export const OK_MARKER_BEGIN = '<!-- open-knowledge:begin -->';
 export const OK_MARKER_END = '<!-- open-knowledge:end -->';
 const OK_MARKER_RE = /<!-- open-knowledge:begin -->[\s\S]*?<!-- open-knowledge:end -->/;
 
-export const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
+const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
 
 This directory holds Open Knowledge's configuration for this project. It's **not** where content lives — content lives wherever \`content.dir\` + \`content.include\` in \`config.yml\` point. The default is the repo root with \`**/*.md\`, so any markdown file in the project is fair game. Inspect \`config.yml\` for the actual setting.
 
@@ -93,10 +93,10 @@ If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`o
 - **Writes** via \`write_document\` / \`edit_document\` — route through the server so shadow-repo attribution (agent vs human) is captured
 - **Graph queries** via \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`
 
-These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, etc.). \`open-knowledge init\` registers the MCP server in every editor's config for you — Claude Desktop and Windsurf use project-qualified keys like \`open-knowledge-<project>\` so one config file can serve multiple projects on the same machine. Claude Desktop requires a full quit + relaunch to pick up new MCP servers; Windsurf hot-reloads.
 `;
 
-export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below
 # is commented out and shows its current default value. Uncomment any key
@@ -332,10 +332,48 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
+type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
+
+/**
+ * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.
+ *
+ * Used by the `clone` auto-init path: when we scaffold OK into a repo that
+ * wasn't already using it, the local `.open-knowledge/` is per-user editor
+ * config and shouldn't be committed back upstream. This is deliberately NOT
+ * called by `ok init` — there the user is opting into OK for their own
+ * project and config.yml / AGENTS.md are meant to be tracked.
+ *
+ * Idempotent: recognizes the common variants (`.open-knowledge`,
+ * `.open-knowledge/`, leading-slash rooted forms) and only appends when
+ * none are present. Creates the file if missing.
+ */
+export function ensureOkGitignoredAtRoot(projectDir: string): GitignoreEntryAction {
+  const gitignorePath = join(projectDir, '.gitignore');
+  const block = `# Open Knowledge — local editor config (not tracked upstream)\n${OK_DIR}/\n`;
+
+  if (!existsSync(gitignorePath)) {
+    writeFileSync(gitignorePath, block, 'utf-8');
+    return 'created';
+  }
+
+  const existing = readFileSync(gitignorePath, 'utf-8');
+  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
+  const alreadyPresent = existing
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => variants.has(line));
+  if (alreadyPresent) return 'already-present';
+
+  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  const leadingBlank = existing.length > 0 && !existing.endsWith('\n\n') ? '\n' : '';
+  writeFileSync(gitignorePath, `${existing}${separator}${leadingBlank}${block}`, 'utf-8');
+  return 'appended';
+}
+
 /** Static files scaffolded into the open-knowledge directory. */
 const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
   { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },
-  { name: '.gitignore', content: `${CACHE_DIR}/\nserver.lock\nui.lock\n` },
+  { name: '.gitignore', content: `${CACHE_DIR}/\nserver.lock\nui.lock\nsync-state.json\n` },
   { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
 ];
 

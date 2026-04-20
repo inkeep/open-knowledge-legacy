@@ -62,7 +62,7 @@ export function computeTier(elapsedMs: number): PendingTier {
  */
 const TICK_MS = 250;
 
-export interface NavigationPendingBarProps {
+interface NavigationPendingBarProps {
   /** True while navigation is mid-transition (typically from `useTransition`). */
   isPending: boolean;
   /** Called when the user clicks "Try again" at tier 3. No-op if omitted. */
@@ -104,7 +104,7 @@ export function NavigationPendingBar({
 
   const stripHeightClass = tier >= 1 ? 'h-[3px]' : 'h-[2px]';
   const stripBaseClass =
-    'w-full bg-amber-400/70 dark:bg-amber-500/60 transition-opacity duration-150';
+    'w-full bg-azure-400/70 dark:bg-azure-500/60 transition-opacity duration-150';
   const stripAnimClass = tier >= 1 ? 'animate-pulse opacity-100' : 'opacity-60';
 
   return (

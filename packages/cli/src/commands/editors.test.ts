@@ -65,13 +65,13 @@ describe('resolveClaudeDesktopConfigPath', () => {
     ).toBe('C:\\Users\\Alice\\AppData\\Roaming\\Claude\\claude_desktop_config.json');
   });
 
-  it('builds the Linux config path', () => {
-    expect(
+  it('rejects unsupported platforms', () => {
+    expect(() =>
       resolveClaudeDesktopConfigPath({
         home: '/home/alice',
         platformName: 'linux',
         env: { XDG_CONFIG_HOME: '/home/alice/.config' },
       }),
-    ).toBe('/home/alice/.config/Claude/claude_desktop_config.json');
+    ).toThrow(/Claude Desktop is not available on linux\. Supported: macOS, Windows\./);
   });
 });

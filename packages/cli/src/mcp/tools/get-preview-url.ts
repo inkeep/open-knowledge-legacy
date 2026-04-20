@@ -36,13 +36,13 @@ export const DESCRIPTION = [
   'Returns `{ previewUrl, previewUrlSource }` (source: `env` / `lock` / `config`). When no source is configured, returns `{ previewUrl: null }` and the agent may proceed without navigation.',
 ].join('\n');
 
-export interface GetPreviewUrlDeps {
+interface GetPreviewUrlDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
 }
 
-export interface GetPreviewUrlResult {
+interface GetPreviewUrlResult {
   previewUrl: string | null;
   previewUrlSource?: 'env' | 'lock' | 'config';
 }

@@ -40,8 +40,18 @@ export async function waitForActiveProviderSynced(
   page: Page,
   options: WaitForProviderOptions = {},
 ): Promise<void> {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
-    timeout: options.timeout ?? 15_000,
+  // Default timeout bumped from 15s → 60s because the prior `waitForFunction(fn,
+  // { timeout: 15_000 })` was the precedent §20(j) options-as-arg bug — the 15s
+  // was silently dropped and the action fell back to the test-level 120s. That
+  // 120s effective budget absorbed real-world provider sync variance (Vite
+  // cold-start + WebSocket handshake + CRDT initial-sync under `workers=4`
+  // parallel load). Fixing the signature exposed the reality: 15s is too
+  // aggressive. 60s is half the test-level timeout — still surfaces a runaway
+  // sync as a test failure, while matching the empirical upper bound observed
+  // under full-suite CI contention. Callers that need stricter budgets pass
+  // `{ timeout }` explicitly.
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), null, {
+    timeout: options.timeout ?? 60_000,
   });
 }
 

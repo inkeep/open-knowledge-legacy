@@ -11,13 +11,13 @@ import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { inspectLock, type LockState } from './lock-state.ts';
 
-export interface StopTargetPlan {
+interface StopTargetPlan {
   name: 'server' | 'ui';
   pid: number;
   port: number;
 }
 
-export interface StopPlan {
+interface StopPlan {
   targets: StopTargetPlan[];
 }
 
@@ -38,7 +38,7 @@ export function buildStopPlan(server: LockState, ui: LockState): StopPlan {
   return { targets };
 }
 
-export interface RunStopDeps {
+interface RunStopDeps {
   lockDir: string;
   inspect?: (name: 'server' | 'ui') => LockState;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
@@ -46,7 +46,7 @@ export interface RunStopDeps {
   error?: (msg: string) => void;
 }
 
-export interface StopOutcome {
+interface StopOutcome {
   stopped: StopTargetPlan[];
   failed: Array<{ target: StopTargetPlan; error: string }>;
   hadTargets: boolean;

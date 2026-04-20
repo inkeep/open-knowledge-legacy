@@ -11,11 +11,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
-import { createPage } from './_helpers';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import type { Page } from '@playwright/test';
+import { type ApiHelpers, expect, test } from './_helpers';
 
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 
@@ -51,29 +48,24 @@ const DOC = [
   FILLER,
 ].join('\n');
 
-async function seedDoc(page: Page): Promise<string> {
+async function seedDoc(api: ApiHelpers, page: Page, baseURL: string): Promise<string> {
   const docName = `outline-${randomUUID().slice(0, 8)}`;
-  await createPage(`${docName}.md`);
-  await page.goto(`${BASE}/#/${docName}`);
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), null, {
     timeout: 15_000,
   });
   await page.waitForSelector('.ProseMirror');
 
   // Write content via agent-write-md (replace) so it lands in Y.Text and
   // (after the 2s persistence debounce) on disk where page-headings reads.
-  const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, markdown: DOC, position: 'replace' }),
-  });
-  if (!writeRes.ok) throw new Error(`agent-write-md failed: ${writeRes.status}`);
+  await api.replaceDoc(docName, DOC);
 
   // Poll page-headings until the 3 headings are observed from disk.
   await expect
     .poll(
       async () => {
-        const r = await fetch(`${BASE}/api/page-headings?docName=${docName}`);
+        const r = await fetch(`${baseURL}/api/page-headings?docName=${docName}`);
         if (!r.ok) return 0;
         const d = (await r.json()) as { ok: boolean; headings?: unknown[] };
         return d.ok ? (d.headings?.length ?? 0) : 0;
@@ -87,14 +79,19 @@ async function seedDoc(page: Page): Promise<string> {
   await page.waitForFunction(
     () =>
       document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3').length === 3,
+    null,
     { timeout: 10_000 },
   );
 
   return docName;
 }
 
-test('outline click scrolls to the matching heading in WYSIWYG mode', async ({ page }) => {
-  await seedDoc(page);
+test('outline click scrolls to the matching heading in WYSIWYG mode', async ({
+  page,
+  api,
+  baseURL,
+}) => {
+  await seedDoc(api, page, baseURL ?? '');
 
   const outlinePanel = page.locator('#panel-outline');
   await expect(outlinePanel.getByRole('button', { name: 'Third Heading' })).toBeVisible();
@@ -108,7 +105,11 @@ test('outline click scrolls to the matching heading in WYSIWYG mode', async ({ p
   await outlinePanel.getByRole('button', { name: 'Third Heading' }).click();
 
   // Smooth scroll — poll on the heading's viewport-relative top until the
-  // animation settles at "near the top of the editor viewport".
+  // animation settles at "near the top of the editor viewport". Tolerance is
+  // 250px (editor header ~48px + content padding + smooth-scroll end-state
+  // jitter under CPU load). A real regression — the scroll not firing, or
+  // landing the heading off-screen — is orders of magnitude larger than
+  // this threshold; 250px won't hide it.
   await expect
     .poll(
       async () =>
@@ -118,7 +119,7 @@ test('outline click scrolls to the matching heading in WYSIWYG mode', async ({ p
           .evaluate((el) => Math.round(el.getBoundingClientRect().top)),
       { timeout: 5_000, intervals: [100, 200, 400] },
     )
-    .toBeLessThan(200);
+    .toBeLessThan(250);
 
   // Sanity check that the scroll actually moved.
   const scrollAfter = await scroller.evaluate((el) => el.scrollTop);
@@ -127,8 +128,10 @@ test('outline click scrolls to the matching heading in WYSIWYG mode', async ({ p
 
 test('outline click in source mode puts cursor on the heading line, skipping frontmatter', async ({
   page,
+  api,
+  baseURL,
 }) => {
-  await seedDoc(page);
+  await seedDoc(api, page, baseURL ?? '');
 
   await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');

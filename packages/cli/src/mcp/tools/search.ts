@@ -34,7 +34,7 @@ export const DESCRIPTION = [
   '- `case_sensitive` (optional, default false) — case-sensitive match',
 ].join('\n');
 
-export interface SearchDeps {
+interface SearchDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
@@ -45,7 +45,7 @@ export interface SearchDeps {
   serverUrl?: ServerUrlOrResolver;
 }
 
-export interface SearchResultRow {
+interface SearchResultRow {
   path: string;
   docName: string;
   title: string | null;
@@ -56,7 +56,7 @@ export interface SearchResultRow {
   previewUrlSource?: PreviewUrlSource;
 }
 
-export interface SearchStructuredResult {
+interface SearchStructuredResult {
   query: string;
   matchCount: number;
   fileCount: number;
@@ -83,7 +83,7 @@ function groupByFile(matches: GrepMatch[]): FileGroup[] {
   return [...byPath.entries()].map(([path, fileMatches]) => ({ path, matches: fileMatches }));
 }
 
-export interface SearchResult {
+interface SearchResult {
   text: string;
   structured: SearchStructuredResult | null;
 }

@@ -25,7 +25,7 @@ export interface GitCommit {
 
 export type ProjectHistorySource = 'git' | 'git-absent';
 
-export interface ReadProjectGitLogResult {
+interface ReadProjectGitLogResult {
   commits: GitCommit[];
   source: ProjectHistorySource;
 }

@@ -44,7 +44,7 @@ export { shellEscape } from './shell-escape.ts';
 
 // ── just-bash primitives ────────────────────────────────────────────────
 
-export interface ExecBashResult {
+interface ExecBashResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -114,7 +114,7 @@ export interface GrepMatch {
   text: string;
 }
 
-export interface GrepOptions {
+interface GrepOptions {
   caseInsensitive?: boolean;
   /** Absolute or cwd-relative paths to search. Defaults to `.` (the cwd). */
   paths?: string[];

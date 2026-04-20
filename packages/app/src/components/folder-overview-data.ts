@@ -1,23 +1,12 @@
-export interface FolderOverviewFolderEntry {
-  path: string;
-  name: string;
-  title: string;
-}
+import type { PageMeta } from './PageListContext';
 
-export interface FolderOverviewDocEntry {
-  docName: string;
-  name: string;
-  title: string;
-}
+export type FolderOverviewEntry =
+  | { kind: 'folder'; path: string; name: string; title: string }
+  | { kind: 'file'; path: string; name: string; title: string; size: number; modified: string };
 
-export interface FolderOverviewData {
+interface FolderOverviewData {
   title: string;
-  childFolders: FolderOverviewFolderEntry[];
-  childDocs: FolderOverviewDocEntry[];
-}
-
-function sortByTitle<T extends { title: string; name: string }>(items: T[]): T[] {
-  return items.sort((a, b) => a.title.localeCompare(b.title) || a.name.localeCompare(b.name));
+  children: FolderOverviewEntry[];
 }
 
 function getLegacyFolderNoteDocName(folderPath: string): string | null {
@@ -42,49 +31,61 @@ function getFolderTitle(folderPath: string, pageTitles: ReadonlyMap<string, stri
   return folderPath.split('/').pop() ?? folderPath;
 }
 
+function resolveTitle(
+  docNameOrPath: string,
+  leafName: string,
+  pageTitles: ReadonlyMap<string, string>,
+): string {
+  const raw = pageTitles.get(docNameOrPath);
+  if (raw && raw !== docNameOrPath) return raw;
+  return leafName;
+}
+
 export function buildFolderOverviewData(
   folderPath: string,
   options: {
     pages: ReadonlySet<string>;
     pageTitles: ReadonlyMap<string, string>;
+    pageMeta: ReadonlyMap<string, PageMeta>;
     folderPaths: ReadonlySet<string>;
   },
 ): FolderOverviewData {
   const prefix = `${folderPath}/`;
 
-  const childFolders = sortByTitle(
-    [...options.folderPaths]
-      .filter((path) => path.startsWith(prefix))
-      .map((path) => ({
-        path,
-        relativePath: path.slice(prefix.length),
-      }))
-      .filter((entry) => entry.relativePath.length > 0 && !entry.relativePath.includes('/'))
-      .map(({ path, relativePath }) => ({
-        path,
-        name: relativePath,
-        title: getFolderTitle(path, options.pageTitles),
-      })),
-  );
+  const folders: FolderOverviewEntry[] = [...options.folderPaths]
+    .filter((path) => path.startsWith(prefix))
+    .map((path) => ({ path, rel: path.slice(prefix.length) }))
+    .filter((e) => e.rel.length > 0 && !e.rel.includes('/'))
+    .map(({ path, rel }) => ({
+      kind: 'folder' as const,
+      path,
+      name: rel,
+      title: getFolderTitle(path, options.pageTitles),
+    }));
 
-  const childDocs = sortByTitle(
-    [...options.pages]
-      .filter((docName) => docName.startsWith(prefix))
-      .map((docName) => ({
-        docName,
-        relativePath: docName.slice(prefix.length),
-      }))
-      .filter((entry) => entry.relativePath.length > 0 && !entry.relativePath.includes('/'))
-      .map(({ docName, relativePath }) => ({
-        docName,
-        name: relativePath,
-        title: options.pageTitles.get(docName) ?? relativePath,
-      })),
-  );
+  const files: FolderOverviewEntry[] = [...options.pages]
+    .filter((docName) => docName.startsWith(prefix))
+    .map((docName) => ({ docName, rel: docName.slice(prefix.length) }))
+    .filter((e) => e.rel.length > 0 && !e.rel.includes('/'))
+    .map(({ docName, rel }) => {
+      const meta = options.pageMeta.get(docName);
+      return {
+        kind: 'file' as const,
+        path: docName,
+        name: rel,
+        title: resolveTitle(docName, rel, options.pageTitles),
+        size: meta?.size ?? 0,
+        modified: meta?.modified ?? '',
+      };
+    });
+
+  const children = [...folders, ...files].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+    return a.title.localeCompare(b.title) || a.name.localeCompare(b.name);
+  });
 
   return {
     title: getFolderTitle(folderPath, options.pageTitles),
-    childFolders,
-    childDocs,
+    children,
   };
 }

@@ -24,7 +24,7 @@ export type LockState =
   | { status: 'dead-pid'; lockPath: string; lock: ProcessLockMetadata }
   | { status: 'alive'; lockPath: string; lock: ProcessLockMetadata };
 
-export interface InspectLockOptions {
+interface InspectLockOptions {
   /** Override for tests. Defaults to `isProcessAlive` from the server package. */
   isAlive?: (pid: number) => boolean;
   /** Override for tests. Defaults to `os.hostname()`. */

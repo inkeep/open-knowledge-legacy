@@ -73,7 +73,7 @@ export const DESCRIPTION = [
   '- `exec({ command: "ls", cwd: "/abs/path/to/other-repo" })` — run in a different project',
 ].join('\n');
 
-export interface ExecDeps {
+interface ExecDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
   /**

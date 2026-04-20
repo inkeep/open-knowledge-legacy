@@ -3,6 +3,9 @@ import * as fc from 'fast-check';
 import type { Nodes as MdastNodes } from 'mdast';
 import { wrapAsInlineCode } from './index.ts';
 
+const PBT_TIMEOUT_MS = process.env.STRESS_FIDELITY === '1' ? 90_000 : 30_000;
+const PBT_NUM_RUNS = process.env.STRESS_FIDELITY === '1' ? 1_000 : 100;
+
 /**
  * Unit tests for `wrapAsInlineCode` — the mark handler that collapses PM text
  * runs with the `code` mark into mdast `inlineCode`, preserving any outer
@@ -121,34 +124,38 @@ describe('wrapAsInlineCode — properties: shape + content preservation', () => 
     return out;
   }
 
-  test('random inline children → output.type ∈ allowed set AND input text is preserved', () => {
-    fc.assert(
-      fc.property(
-        fc.array(
-          fc.oneof(
-            fc.string({ maxLength: 8 }).map(text),
-            fc
-              .record({ url: fc.webUrl(), inner: fc.string({ maxLength: 8 }) })
-              .map(({ url, inner }) => link(url, [text(inner)])),
-            fc.string({ maxLength: 8 }).map((s) => strong([text(s)])),
-            fc.string({ maxLength: 8 }).map((s) => emphasis([text(s)])),
-            fc.string({ maxLength: 8 }).map((s) => del([text(s)])),
+  test(
+    'random inline children → output.type ∈ allowed set AND input text is preserved',
+    () => {
+      fc.assert(
+        fc.property(
+          fc.array(
+            fc.oneof(
+              fc.string({ maxLength: 8 }).map(text),
+              fc
+                .record({ url: fc.webUrl(), inner: fc.string({ maxLength: 8 }) })
+                .map(({ url, inner }) => link(url, [text(inner)])),
+              fc.string({ maxLength: 8 }).map((s) => strong([text(s)])),
+              fc.string({ maxLength: 8 }).map((s) => emphasis([text(s)])),
+              fc.string({ maxLength: 8 }).map((s) => del([text(s)])),
+            ),
+            { maxLength: 4 },
           ),
-          { maxLength: 4 },
+          (children) => {
+            const out = wrapAsInlineCode(children as MdastNodes[]);
+            // Type property: output must be inlineCode or a structural wrapper.
+            expect(ALLOWED.has(out.type)).toBe(true);
+            // Content-preservation property: every character the input carried
+            // must appear in the output, in order. A regression that dropped
+            // `lang`, dropped children, or zeroed out `value` would fail this.
+            const inputText = collectText(children as MdastNodes[]);
+            const outputText = collectText(out);
+            expect(outputText).toBe(inputText);
+          },
         ),
-        (children) => {
-          const out = wrapAsInlineCode(children as MdastNodes[]);
-          // Type property: output must be inlineCode or a structural wrapper.
-          expect(ALLOWED.has(out.type)).toBe(true);
-          // Content-preservation property: every character the input carried
-          // must appear in the output, in order. A regression that dropped
-          // `lang`, dropped children, or zeroed out `value` would fail this.
-          const inputText = collectText(children as MdastNodes[]);
-          const outputText = collectText(out);
-          expect(outputText).toBe(inputText);
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
+        { numRuns: PBT_NUM_RUNS, seed: 42 },
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
 });

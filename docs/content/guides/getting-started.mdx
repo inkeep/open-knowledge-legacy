@@ -1,13 +1,32 @@
 ---
 title: Getting started
-description: Initialize Open Knowledge on an existing project, start the editor, and connect AI agents.
+description: Initialize Open Knowledge on an existing project or clone a GitHub repo, start the editor, and connect AI agents.
 ---
 ## Prerequisites
 
 - **Bun >= 1.3.11** or **Node.js >= 22**
-- **Git** installed and initialized in your project
+- **Git** installed and on your PATH
 
-## Initialize your project
+## Choose your starting point
+
+There are two ways to get started:
+
+- **Clone a GitHub repo** -- start from an existing repository (public or private).
+- **Initialize an existing project** -- add Open Knowledge to a project already on disk.
+
+## Clone from GitHub
+
+The fastest path from a GitHub URL to editing:
+
+```bash
+npx @inkeep/open-knowledge clone https://github.com/company/docs
+```
+
+This clones the repository, scaffolds `.open-knowledge/`, and starts the editor. Authentication is handled automatically -- if you have the [GitHub CLI](https://cli.github.com/) installed, its session is reused. Otherwise, you'll be prompted to sign in via Device Flow or paste a Personal Access Token.
+
+After cloning, changes sync with the remote automatically. See [GitHub Sync](/guides/github-sync) for details on auto-sync, conflict resolution, and configuration.
+
+## Initialize an existing project
 
 <Steps>
 
@@ -41,6 +60,7 @@ When run interactively, `init` prompts you to select which editors you use. Base
 | Claude Code  | `<project>/.mcp.json`                     | Project     |
 | Cursor       | `<project>/.cursor/mcp.json`              | Project     |
 | VS Code      | `<project>/.vscode/mcp.json`              | Project     |
+| Codex        | `<project>/.codex/config.toml`            | Project     |
 | Windsurf     | `~/.codeium/windsurf/mcp_config.json`     | User-global |
 
 Each MCP entry looks like this (using `npx` as the runner):
@@ -117,7 +137,7 @@ New folders are always created with an initial file (default `index.md`) so they
 <Step>
 ### Open your project in an MCP-compatible editor
 
-Claude Code, Cursor, Windsurf, or Codex all support MCP servers.
+Claude Code, Cursor, Codex, or Windsurf all support MCP servers.
 </Step>
 
 <Step>
@@ -167,6 +187,9 @@ This works before or after `init` and reflects the current state of your config.
 ## Next steps
 
 <Cards>
+  <Card title="GitHub Sync" href="/guides/github-sync">
+    Clone repos, auto-sync with your team, and resolve conflicts.
+  </Card>
   <Card title="Configuration" href="/guides/configuration">
     Customize ports, content directory, and file patterns.
   </Card>

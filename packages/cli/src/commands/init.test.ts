@@ -6,10 +6,11 @@ import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS, resolveClaudeDesktopConfigPath } from './editors.ts';
-import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
+import { detectInstalledEditors, formatInitResult, parseEditorFlag, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
+  const originalPlatform = process.platform;
 
   beforeEach(() => {
     testDir = resolve(
@@ -17,9 +18,14 @@ describe('runInit', () => {
       `init-command-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(testDir, { recursive: true });
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   });
 
   afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
     rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -276,6 +282,44 @@ describe('runInit', () => {
     });
   });
 
+  describe('Codex', () => {
+    it('writes .codex/config.toml with mcp_servers key', () => {
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('codex');
+      expect(result.editors[0].action).toBe('written');
+
+      const configPath = join(testDir, '.codex', 'config.toml');
+      expect(existsSync(configPath)).toBe(true);
+
+      const config = Bun.TOML.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.mcp_servers).toBeDefined();
+      expect(config.mcp_servers[result.editors[0].serverName]).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+
+    it('preserves existing Codex MCP entries', () => {
+      mkdirSync(join(testDir, '.codex'), { recursive: true });
+      writeFileSync(
+        join(testDir, '.codex', 'config.toml'),
+        ['[mcp_servers.other]', 'command = "node"', 'args = ["x"]', ''].join('\n'),
+      );
+
+      const result = runInit({ cwd: testDir, editors: ['codex'] });
+      expect(result.editors[0].action).toBe('written');
+
+      const config = Bun.TOML.parse(readFileSync(join(testDir, '.codex', 'config.toml'), 'utf-8'));
+      expect(config.mcp_servers.other).toEqual({ command: 'node', args: ['x'] });
+      expect(config.mcp_servers[result.editors[0].serverName]).toEqual({
+        command: 'npx',
+        args: ['@inkeep/open-knowledge', 'mcp'],
+      });
+    });
+  });
+
   describe('Claude Desktop', () => {
     it('writes the same simple global open-knowledge entry as the local editors', () => {
       const fakeHome = join(testDir, 'fakehome');
@@ -340,6 +384,28 @@ describe('runInit', () => {
         args: ['some-old-package', 'mcp'],
       });
     });
+
+    it('renders a restart hint after writing the Claude Desktop config', () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+
+      const result = runInit({ cwd: testDir, editors: ['claude-desktop'], home: fakeHome });
+      const output = formatInitResult(result, testDir);
+
+      expect(output).toContain('quit and relaunch Claude Desktop to activate');
+    });
+
+    it('refuses Claude Desktop target on unsupported platforms', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+
+      const result = runInit({ cwd: testDir, editors: ['claude-desktop'] });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].action).toBe('failed');
+      expect(result.editors[0].error).toMatch(
+        /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
+      );
+    });
   });
 
   describe('Windsurf', () => {
@@ -388,7 +454,7 @@ describe('runInit', () => {
         home: fakeHome,
       });
 
-      expect(result.editors).toHaveLength(5);
+      expect(result.editors).toHaveLength(6);
       for (const editor of result.editors) {
         expect(editor.action).toBe('written');
       }
@@ -397,6 +463,7 @@ describe('runInit', () => {
       expect(existsSync(resolveClaudeDesktopConfigPath({ home: fakeHome }))).toBe(true);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(true);
       expect(existsSync(join(fakeHome, '.codeium', 'windsurf', 'mcp_config.json'))).toBe(true);
     });
 
@@ -457,17 +524,18 @@ describe('runInit', () => {
     it('--no-mcp skips all editors', () => {
       const result = runInit({
         cwd: testDir,
-        editors: ['claude', 'cursor', 'vscode'],
+        editors: ['claude', 'cursor', 'vscode', 'codex'],
         mcp: false,
       });
 
-      expect(result.editors).toHaveLength(3);
+      expect(result.editors).toHaveLength(4);
       for (const editor of result.editors) {
         expect(editor.action).toBe('skipped-flag');
       }
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(false);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(false);
     });
   });
 
@@ -809,6 +877,7 @@ describe('runInit', () => {
 describe('detectInstalledEditors', () => {
   let testDir: string;
   let fakeHome: string;
+  const originalPlatform = process.platform;
 
   beforeEach(() => {
     testDir = resolve(
@@ -818,9 +887,14 @@ describe('detectInstalledEditors', () => {
     mkdirSync(testDir, { recursive: true });
     fakeHome = join(testDir, 'fakehome');
     mkdirSync(fakeHome, { recursive: true });
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   });
 
   afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
     rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -845,6 +919,12 @@ describe('detectInstalledEditors', () => {
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
     expect(detected).toContain('vscode');
+  });
+
+  it('detects Codex when .codex/ exists', () => {
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('codex');
   });
 
   it('detects Claude Desktop when its config directory exists', () => {
@@ -873,19 +953,21 @@ describe('detectInstalledEditors', () => {
     mkdirSync(join(resolveClaudeDesktopConfigPath({ home: fakeHome }), '..'), { recursive: true });
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
     expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
-    expect(detected).toHaveLength(5);
+    expect(detected).toHaveLength(6);
   });
 
   it('preserves EDITOR_TARGETS ordering in return value', () => {
     mkdirSync(join(resolveClaudeDesktopConfigPath({ home: fakeHome }), '..'), { recursive: true });
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(testDir, '.codex'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
-    // Order comes from ALL_EDITOR_IDS = ['claude', 'claude-desktop', 'cursor', 'vscode', 'windsurf']
-    expect(detected).toEqual(['claude', 'claude-desktop', 'cursor', 'vscode']);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'claude-desktop', 'cursor', 'vscode', 'windsurf', 'codex']
+    expect(detected).toEqual(['claude', 'claude-desktop', 'cursor', 'vscode', 'codex']);
   });
 
   it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
@@ -897,5 +979,33 @@ describe('detectInstalledEditors', () => {
     const missingHome = join(testDir, 'also-not-here');
     const detected = detectInstalledEditors(missingCwd, missingHome);
     expect(detected).toEqual([]);
+  });
+});
+
+describe('parseEditorFlag', () => {
+  it('accepts the canonical claude-desktop id', () => {
+    expect(parseEditorFlag('claude-desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('accepts the "claude_desktop" alias (underscore form)', () => {
+    expect(parseEditorFlag('claude_desktop')).toEqual(['claude-desktop']);
+  });
+
+  it('rejects the bare "desktop" token', () => {
+    expect(() => parseEditorFlag('desktop')).toThrow(/Unknown editor/);
+  });
+
+  it('"all" includes codex and claude-desktop', () => {
+    const all = parseEditorFlag('all');
+    expect(all).toContain('claude-desktop');
+    expect(all).toContain('codex');
+  });
+
+  it('comma-separated mix resolves aliases and canonical ids', () => {
+    expect(parseEditorFlag('claude,claude_desktop,cursor')).toEqual([
+      'claude',
+      'claude-desktop',
+      'cursor',
+    ]);
   });
 });

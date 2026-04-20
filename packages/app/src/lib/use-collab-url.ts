@@ -35,11 +35,11 @@ const MAX_DELAY_MS = 15_000;
 /** Transition to terminal after this wall-clock elapses without resolution. */
 export const TERMINAL_AFTER_MS = 30_000;
 
-export type CollabUrlError =
+type CollabUrlError =
   | { kind: 'error'; code: number | 'network' | 'invalid-body' }
   | { kind: 'null-collab' };
 
-export interface UseCollabUrlState {
+interface UseCollabUrlState {
   collabUrl: string | null;
   attempts: number;
   /** When true, automatic retries have stopped — consumer should render the
@@ -51,19 +51,19 @@ export interface UseCollabUrlState {
   retry: () => void;
 }
 
-export interface CollabPollState {
+interface CollabPollState {
   collabUrl: string | null;
   attempts: number;
   terminal: boolean;
   lastError: CollabUrlError | null;
 }
 
-export interface CollabPollHandle {
+interface CollabPollHandle {
   /** Stop the loop and abort any in-flight fetch. Safe to call multiple times. */
   cancel: () => void;
 }
 
-export interface CollabPollDeps {
+interface CollabPollDeps {
   fetchConfig: (signal: AbortSignal) => Promise<FetchApiConfigResult>;
   fallbackUrl: () => string;
   /** Current clock reading in ms. Production: `Date.now`. Tests: virtual clock. */

@@ -55,28 +55,28 @@ export interface BacklinkEntry {
   snippet: string | null;
 }
 
-export interface DocumentForwardLinkEntry {
+interface DocumentForwardLinkEntry {
   kind: 'doc';
   target: string;
   anchor: string | null;
   snippet: string | null;
 }
 
-export interface ExternalForwardLinkEntry {
+interface ExternalForwardLinkEntry {
   kind: 'external';
   url: string;
   label: string | null;
   snippet: string | null;
 }
 
-export type ForwardLinkEntry = DocumentForwardLinkEntry | ExternalForwardLinkEntry;
+type ForwardLinkEntry = DocumentForwardLinkEntry | ExternalForwardLinkEntry;
 
 export interface HubEntry {
   docName: string;
   count: number;
 }
 
-export interface DeadLinkEntry {
+interface DeadLinkEntry {
   target: string;
   sources: BacklinkEntry[];
 }
@@ -115,7 +115,7 @@ interface SerializedBranchGraphState {
   >;
 }
 
-export interface BacklinkIndexOptions {
+interface BacklinkIndexOptions {
   projectDir: string;
   contentDir: string;
   contentFilter?: ContentFilter;

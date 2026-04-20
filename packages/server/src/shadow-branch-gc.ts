@@ -5,22 +5,46 @@
  * branches are deleted. Also handles branch rename detection.
  *
  * - WIP refs (refs/wip/<branch>/*) are deleted after 24h grace period
- * - Checkpoint refs (refs/checkpoints/<branch>/*) are retained (reference durable project commits)
+ * - Checkpoint refs (refs/checkpoints/<branch>/*) have kind-aware GC:
+ *   - `Save Version` (no `ok-checkpoint-v1:` body line): retained
+ *     indefinitely — these are the user-intentional permanent-history
+ *     artifacts the original "retained" contract was written for.
+ *   - `bridge-merge-loss` (observer Path B auto-rescue, written silently
+ *     on post-condition violation): keep the most-recent N per branch
+ *     + TTL (bridge-correctness review iteration 5).
+ *   - `external-change-rescue` (reconcile-delete / branch-switch auto-
+ *     rescue): same policy.
+ *   See `gcCheckpointRefs` in `shadow-repo.ts` for the retention numbers
+ *   and SPEC §6 R7 for the motivation.
  * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
  */
 
 import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
-import type { ShadowHandle } from './shadow-repo.ts';
-import { shadowGit } from './shadow-repo.ts';
+import type { CheckpointRetentionPolicy, ShadowHandle } from './shadow-repo.ts';
+import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './shadow-repo.ts';
 
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
-export interface GcResult {
+interface GcResult {
   deletedBranches: string[];
   renamedBranches: { from: string; to: string }[];
   retainedBranches: string[];
+  /**
+   * Per-branch tally of checkpoint refs GC'd under the kind-aware retention
+   * policy (bridge-correctness review iteration 5). Entries with zero deletions
+   * are omitted. Keys are branch names; values are the raw `CheckpointGcResult`.
+   */
+  checkpointGc: Record<
+    string,
+    {
+      scanned: number;
+      deletedBridgeMergeLoss: number;
+      deletedExternalChangeRescue: number;
+      retained: number;
+    }
+  >;
 }
 
 /**
@@ -94,11 +118,13 @@ async function listProjectBranches(projectGitDir: string): Promise<Set<string>> 
 export async function gcShadowBranches(
   shadow: ShadowHandle,
   projectGitDir: string,
+  checkpointRetention: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
 ): Promise<GcResult> {
   const result: GcResult = {
     deletedBranches: [],
     renamedBranches: [],
     retainedBranches: [],
+    checkpointGc: {},
   };
 
   const sg = shadowGit(shadow);
@@ -205,6 +231,31 @@ export async function gcShadowBranches(
       if (!result.retainedBranches.includes(orphanedBranch)) {
         result.deletedBranches.push(orphanedBranch);
       }
+    }
+  }
+
+  // Kind-aware checkpoint GC on every live project branch + every retained
+  // shadow branch (covers detached HEADs that accrued bridge-merge-loss
+  // checkpoints during their lifetime). `Save Version` untyped checkpoints
+  // are never eligible — see `gcCheckpointRefs` JSDoc.
+  const gcBranches = new Set<string>([...projectBranches, ...result.retainedBranches]);
+  for (const branch of gcBranches) {
+    try {
+      const ckResult = await gcCheckpointRefs(shadow, branch, checkpointRetention);
+      if (
+        ckResult.scanned > 0 ||
+        ckResult.deletedBridgeMergeLoss > 0 ||
+        ckResult.deletedExternalChangeRescue > 0
+      ) {
+        result.checkpointGc[branch] = {
+          scanned: ckResult.scanned,
+          deletedBridgeMergeLoss: ckResult.deletedBridgeMergeLoss,
+          deletedExternalChangeRescue: ckResult.deletedExternalChangeRescue,
+          retained: ckResult.retained,
+        };
+      }
+    } catch (err) {
+      console.warn(`[shadow-gc] checkpoint GC failed for branch ${branch}:`, err);
     }
   }
 

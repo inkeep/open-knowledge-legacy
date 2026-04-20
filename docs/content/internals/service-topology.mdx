@@ -29,11 +29,15 @@ In dev (`bun run dev`), a single Vite process serves both surfaces — the produ
   A --> F[HEAD Watcher]
   A --> G[Persistence Extension]
   A --> H[API Extension]
+  A --> S[SyncEngine]
   C -->|WebSocket /collab| I[Browser Editor]
   H -->|HTTP /api/*| J[MCP Server / Agents]
   D -->|disk to CRDT| C
   G -->|CRDT to disk| K[Markdown Files]
-  E -->|disk to git| L[WIP Refs]`} />
+  E -->|disk to git| L[WIP Refs]
+  S -->|fetch/push| M[Git Remote]
+  S -->|CC1 sync-status| C
+`} />
 
 Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The Shadow Repo and HEAD Watcher handle git integration.
 
@@ -90,11 +94,32 @@ It contains:
 The shadow repo never touches the project's git ref namespace or object store. It is an isolated journal for auto-save and attribution.
 </Callout>
 
+On startup, a HEAD-drift check compares the stored `last-known-head` SHA against the current project HEAD. If they differ (including the fresh-clone case of null to SHA), `commitUpstreamImport()` records the drift in the shadow repo so offline git operations appear in the timeline.
+
+## SyncEngine
+
+When the project has a git remote and sync is enabled, `createServer()` starts a `SyncEngine` that keeps the local repository synchronized with origin.
+
+The engine runs two independent timer loops:
+
+- **Pull loop:** fetches from origin on a configurable interval (default 30 seconds, +/-15% jitter). If behind and no conflicts, merges automatically. On merge conflict, pauses and surfaces the conflict through the editor UI.
+- **Push loop:** pushes local commits to origin on a separate interval (default 60 seconds, +/-15% jitter). Never force-pushes. On non-fast-forward rejection, triggers a pull-then-retry.
+
+Both timers use chained `setTimeout` -- the next timer starts only after the current operation completes, preventing overlap.
+
+State persists to `<contentDir>/.open-knowledge/sync-state.json` so restart recovery computes the remaining wait from the last operation timestamp rather than restarting from zero. Conflict state persists to `<contentDir>/.open-knowledge/conflicts.json`.
+
+Error classification uses a 5-class taxonomy (network, auth, semantic, structural, local). Network errors trigger counted exponential backoff (5 min after 3 failures, 15 min after 5, 60 min after 8). Auth errors pause sync and surface a re-authentication prompt. Protected-branch rejection disables sync for the project.
+
+The engine emits state transitions on the `sync-status` CC1 channel (see below), which the editor's `SyncStatusBadge` subscribes to for real-time status updates.
+
 ## Derived-view push (CC1)
 
 A dedicated `__system__` Y.Doc carries push signals for derived views (file list, backlinks, future graph panels). The server pre-materializes it at startup via `openDirectConnection` so events that arrive before any browser connects have a broadcast target. When the file watcher emits a `create`, `delete`, or `rename`, the CC1 broadcaster debounces 100ms and broadcasts a pure signal -- `{v:1, ch:'files', seq}` -- to every connected client via `Document#broadcastStateless`. Clients respond by re-fetching the channel's REST endpoint rather than decoding a per-event payload.
 
-`__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the `isSystemDoc()` helper in `packages/server/src/cc1-broadcast.ts`, and `ContentFilter` rejects user-created `__system__.md` at admit time. V0-3 (backlinks) and V0-11 (graph panels) will inherit this contract on their own channels.
+`__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the `isSystemDoc()` helper in `packages/server/src/cc1-broadcast.ts`, and `ContentFilter` rejects user-created `__system__.md` at admit time.
+
+Active channels: `files` (file list changes), `backlinks`, `graph`, and `sync-status` (SyncEngine state transitions). Each channel is a pure signal -- clients re-fetch the channel's REST endpoint on receipt.
 
 ## Branch awareness
 

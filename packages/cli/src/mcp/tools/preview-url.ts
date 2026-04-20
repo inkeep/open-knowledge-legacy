@@ -23,12 +23,12 @@ import { type ConfigOrResolver, resolveConfig } from './shared.ts';
 
 export type PreviewUrlSource = 'env' | 'lock' | 'config';
 
-export interface PreviewUrlResult {
+interface PreviewUrlResult {
   url: string;
   source: PreviewUrlSource;
 }
 
-export interface PreviewUrlContext {
+interface PreviewUrlContext {
   config: Config;
   lockDir: string;
 }

@@ -23,7 +23,7 @@ import {
 import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
-import type { PinoLogger } from '@inkeep/open-knowledge-server';
+import { handleCollabSocketError, type PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
@@ -37,7 +37,7 @@ export type UiSpawnDecision =
   | { action: 'spawn'; reason: 'stale'; stalePid: number }
   | { action: 'skip'; reason: 'alive'; pid: number; port: number };
 
-export interface DecideUiSpawnInput {
+interface DecideUiSpawnInput {
   uiLock: { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
 }
@@ -55,7 +55,7 @@ export function decideUiSpawn(input: DecideUiSpawnInput): UiSpawnDecision {
   return { action: 'skip', reason: 'alive', pid: input.uiLock.pid, port: input.uiLock.port };
 }
 
-export interface SpawnOkUiOptions {
+interface SpawnOkUiOptions {
   lockDir: string;
   cwd: string;
   /** Override for tests — defaults to `node:child_process#spawn`. */
@@ -109,7 +109,7 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   }
 }
 
-export interface BuildIdleShutdownHandlerInput {
+interface BuildIdleShutdownHandlerInput {
   readUiLock: () => { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
   killPid: (pid: number, signal: NodeJS.Signals) => void;
@@ -130,8 +130,8 @@ export interface BuildIdleShutdownHandlerInput {
 /** 10s grace before SIGKILL escalation — long enough for a healthy UI to
  * release its lock + close sockets; short enough that a wedged UI (GC
  * pause, downstream fetch hang) doesn't stall idle-shutdown indefinitely. */
-export const DEFAULT_SIGTERM_GRACE_MS = 10_000;
-export const DEFAULT_SIGTERM_POLL_MS = 200;
+const DEFAULT_SIGTERM_GRACE_MS = 10_000;
+const DEFAULT_SIGTERM_POLL_MS = 200;
 
 /**
  * Build the idle-shutdown `onShutdown` closure. On fire:
@@ -200,7 +200,7 @@ export function buildIdleShutdownHandler(
   };
 }
 
-export interface BootStartServerOptions {
+interface BootStartServerOptions {
   config: Config;
   cwd: string;
   /** Skip auto-init scaffolding of `<cwd>/.open-knowledge/` (tests usually want this). */
@@ -268,16 +268,24 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const log = opts.log ?? getLogger('start');
 
-  // Auto-init: scaffold .open-knowledge/ on first run (unless skipped).
+  // Auto-init: scaffold .open-knowledge/ on every boot (unless skipped).
+  //
+  // We call initContent (not runInit) so the scaffolding is idempotent and
+  // scoped — it only fills in missing files under .open-knowledge/. We
+  // deliberately do NOT invoke upsertRootInstructions or MCP-config writes
+  // on every boot; those are first-time-setup concerns owned by `ok init`
+  // and the clone auto-init path. This makes partial .open-knowledge/
+  // states (scaffold files deleted, prior boot killed mid-init, etc.)
+  // self-heal on the next `ok start` without surprising the user by
+  // rewriting their root AGENTS.md.
   let didAutoInit = false;
   const okDir = resolve(cwd, OK_DIR);
-  if (!existsSync(okDir) && !skipAutoInit) {
+  const needsScaffold = !existsSync(okDir);
+  if (!skipAutoInit) {
     try {
-      const { runInit } = await import('./init.ts');
-      const result = runInit({ cwd, mcp: false });
-      if (result.mcpAction === 'failed') {
-        console.warn(`Auto-init: ${result.mcpError ?? 'unknown error'}`);
-      } else {
+      const { initContent } = await import('../content/init.ts');
+      const result = initContent(cwd);
+      if (needsScaffold || result.created.length > 0) {
         didAutoInit = true;
       }
     } catch (err) {
@@ -331,6 +339,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
     onAgentWrite,
+    // Pass the exact runtime that started this server so /api/local-op/* can
+    // spawn additional CLI processes without needing open-knowledge on PATH.
+    localOpCliArgs: [process.execPath, process.argv[1]],
   });
 
   // Auto-spawn the UI sibling when none is running. Greenfield: we don't try
@@ -368,16 +379,23 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
         .catch((err) => {
           console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
+          if (!res.writableEnded && !res.headersSent) {
             res.writeHead(500);
             res.end('Internal server error');
+          } else if (!res.writableEnded) {
+            res.end();
           }
         });
       return;
@@ -413,8 +431,15 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // The idle-shutdown listener (registered separately below) already
     // counts this upgrade via its own `/collab*`-prefixed path check; no
     // change is needed there.
+    // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that surface
+    // asynchronously after ws.send()/socket.write() has already returned.
+    // Userspace pre-checks cannot prevent them (see websockets/ws#1017).
+    // Hocuspocus already filters by readyState in Connection.send; this
+    // handler classifies + drops the expected async emission, surfacing
+    // everything else. See CLAUDE.md precedent on async socket errors.
     if (req.url?.startsWith('/collab/keepalive')) {
-      socket.on('error', (err: Error) => {
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        if (handleCollabSocketError(err)) return;
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -430,8 +455,10 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         }, 30_000);
         pingTimer.unref?.();
         ws.on('close', () => clearInterval(pingTimer));
-        ws.on('error', (err: Error) => {
-          log.error({ err }, 'MCP keepalive WS error');
+        ws.on('error', (err: NodeJS.ErrnoException) => {
+          if (!handleCollabSocketError(err)) {
+            log.error({ err }, 'MCP keepalive WS error');
+          }
           ws.terminate();
         });
       });
@@ -439,7 +466,8 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     }
 
     if (req.url?.startsWith('/collab')) {
-      socket.on('error', (err: Error) => {
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        if (handleCollabSocketError(err)) return;
         log.error({ err }, 'Upgrade socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -455,8 +483,10 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         ws.on('close', (code: number, reason: Buffer) => {
           clientConnection.handleClose({ code, reason: reason.toString() });
         });
-        ws.on('error', (err: Error) => {
-          log.error({ err }, 'WebSocket error');
+        ws.on('error', (err: NodeJS.ErrnoException) => {
+          if (!handleCollabSocketError(err)) {
+            log.error({ err }, 'WebSocket error');
+          }
           ws.terminate();
         });
       });

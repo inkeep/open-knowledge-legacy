@@ -1,5 +1,16 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { ArrowDownToLine, Columns2, FolderOpen, History, Pin, PinOff, Rows2 } from 'lucide-react';
+import {
+  Columns2,
+  FolderOpen,
+  GitFork,
+  History,
+  Pin,
+  PinOff,
+  RotateCcw,
+  Rows2,
+  Save,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -23,8 +34,9 @@ import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
-import { displayAuthor, formatRelativeTime } from './TimelinePanel';
+import { Badge } from './ui/badge';
 
 type RenameResponse =
   | {
@@ -72,6 +84,10 @@ interface EditorHeaderProps {
   onRestore: () => void;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
+  onSignIn?: () => void;
+  onSetIdentity?: () => void;
+  onOpenConflictResolver?: () => void;
+  onOpenClone?: () => void;
 }
 
 export function EditorHeader({
@@ -87,6 +103,10 @@ export function EditorHeader({
   onRestore,
   diffLayout,
   onDiffLayoutChange,
+  onSignIn,
+  onSetIdentity,
+  onOpenConflictResolver,
+  onOpenClone,
 }: EditorHeaderProps) {
   const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
@@ -346,7 +366,7 @@ export function EditorHeader({
                 style={isRenaming ? { maxWidth: 0, opacity: 0 } : { maxWidth: '20rem', opacity: 1 }}
               >
                 <span className="truncate">{pathPrefix.slice(0, -1)}</span>
-                <span className="shrink-0">/</span>
+                <span className="shrink-0 pl-2">/</span>
               </span>
             )}
             {isRenaming ? (
@@ -435,16 +455,7 @@ export function EditorHeader({
             </TooltipContent>
           </Tooltip>
         )}
-        {isNewDoc && (
-          <span className="ml-1.5 shrink-0 rounded border border-dashed border-blue-400/50 px-1.5 py-0.5 text-xs text-blue-500 dark:border-blue-400/40 dark:text-blue-400">
-            New file
-          </span>
-        )}
-        {isFolderTarget && (
-          <span className="ml-1.5 shrink-0 rounded border border-dashed border-emerald-400/50 px-1.5 py-0.5 text-xs text-emerald-600 dark:border-emerald-400/40 dark:text-emerald-400">
-            Folder overview
-          </span>
-        )}
+        {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}
@@ -462,10 +473,21 @@ export function EditorHeader({
           className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
           disabled={!activeDocName}
         >
-          <ToggleGroupItem value="visual" aria-label="Visual editor" className="gap-1.5 text-xs">
-            <Textbox className="size-4 text-muted-foreground" />
-            Visual
-          </ToggleGroupItem>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <ToggleGroupItem
+                  value="visual"
+                  aria-label="Visual editor"
+                  className="gap-1.5 text-xs"
+                >
+                  <Textbox className="size-4 text-muted-foreground" />
+                  <span className="hidden md:inline">Visual</span>
+                </ToggleGroupItem>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Visual</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={sourceDisabled ? 0 : undefined}>
@@ -476,7 +498,7 @@ export function EditorHeader({
                   disabled={sourceDisabled}
                 >
                   <Markdown className="size-4 text-muted-foreground" />
-                  Markdown
+                  <span className="hidden md:inline">Markdown</span>
                 </ToggleGroupItem>
               </span>
             </TooltipTrigger>
@@ -485,20 +507,17 @@ export function EditorHeader({
                 Source mode requires a live connection — your edits are saved and will appear when
                 you reconnect.
               </TooltipContent>
-            ) : null}
+            ) : (
+              <TooltipContent className="md:hidden">Markdown</TooltipContent>
+            )}
           </Tooltip>
         </ToggleGroup>
       )}
 
-      {/* Diff mode: version label + layout toggle + controls */}
+      {/* Diff mode: layout toggle + controls (viewing banner is a separate row in EditorPane) */}
       {isDiffMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
-          <span
-            className={`text-xs ${restoreError ? 'text-destructive' : 'text-muted-foreground'}`}
-          >
-            {restoreError ||
-              `Viewing: ${formatRelativeTime(previewEntry.timestamp)} — ${displayAuthor(previewEntry)}`}
-          </span>
+          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
           <ToggleGroup
             type="single"
             value={diffLayout}
@@ -511,25 +530,55 @@ export function EditorHeader({
             spacing={1}
             className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
           >
-            <ToggleGroupItem
-              value="unified"
-              aria-label="Unified diff"
-              className="gap-1 text-xs px-2"
-            >
-              <Rows2 className="size-3.5" />
-              Unified
-            </ToggleGroupItem>
-            <ToggleGroupItem value="split" aria-label="Split diff" className="gap-1 text-xs px-2">
-              <Columns2 className="size-3.5" />
-              Split
-            </ToggleGroupItem>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <ToggleGroupItem
+                    value="unified"
+                    aria-label="Unified diff"
+                    className="gap-1 text-xs px-2"
+                  >
+                    <Rows2 className="size-3.5" />
+                    <span className="hidden md:inline">Unified</span>
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="md:hidden">Unified</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <ToggleGroupItem
+                    value="split"
+                    aria-label="Split diff"
+                    className="gap-1 text-xs px-2"
+                  >
+                    <Columns2 className="size-3.5" />
+                    <span className="hidden md:inline">Split</span>
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="md:hidden">Split</TooltipContent>
+            </Tooltip>
           </ToggleGroup>
-          <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
-            Restore
-          </Button>
-          <Button variant="ghost" size="xs" onClick={onExitPreview}>
-            Exit preview
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
+                <RotateCcw className="size-3.5 md:hidden" />
+                <span className="hidden md:inline">Restore</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Restore</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="xs" onClick={onExitPreview}>
+                <X className="size-3.5 md:hidden" />
+                <span className="hidden md:inline">Exit preview</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="md:hidden">Exit preview</TooltipContent>
+          </Tooltip>
         </div>
       )}
 
@@ -554,18 +603,38 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
+        {!isDiffMode && onOpenClone && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Clone from GitHub"
+                onClick={onOpenClone}
+                className="text-muted-foreground"
+              >
+                <GitFork className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Clone from GitHub…</TooltipContent>
+          </Tooltip>
+        )}
         {!isDiffMode && activeDocName && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Save Version"
-            onClick={onSaveVersion}
-            disabled={saving}
-            className="gap-1.5 text-xs text-muted-foreground"
-          >
-            <ArrowDownToLine className="size-3.5" />
-            {saving ? 'Saving…' : 'Save Version'}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Checkpoint version"
+                onClick={onSaveVersion}
+                disabled={saving}
+                className="text-muted-foreground"
+              >
+                <Save className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
+          </Tooltip>
         )}
         {activeDocName && (
           <Tooltip>
@@ -582,6 +651,11 @@ export function EditorHeader({
             <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
+        <SyncStatusBadge
+          onSignIn={onSignIn}
+          onSetIdentity={onSetIdentity}
+          onOpenConflictResolver={onOpenConflictResolver}
+        />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />

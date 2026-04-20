@@ -91,9 +91,6 @@ import {
   DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
 } from './write-document.ts';
 
-export type { ServerInstance } from './shared.ts';
-export { textResult } from './shared.ts';
-
 /** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
 export const TOOL_DESCRIPTIONS = {
   exec: EXEC_DESCRIPTION,
@@ -126,9 +123,9 @@ export const TOOL_DESCRIPTIONS = {
  *   2. the client's only advertised MCP root
  *   3. otherwise error
  */
-export type ResolveCwd = (explicit?: string) => Promise<string>;
+type ResolveCwd = (explicit?: string) => Promise<string>;
 
-export interface RegisterAllToolsOptions {
+interface RegisterAllToolsOptions {
   /**
    * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
    * lazy resolver that re-discovers per-call from the effective project cwd.

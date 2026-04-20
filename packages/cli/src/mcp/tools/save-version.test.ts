@@ -67,6 +67,6 @@ describe('save_version — previewUrl emission (workspace-level: always null)', 
       checkpointRef: 'refs/checkpoints/2026-04-16-abc',
       previewUrl: null,
     });
-    expect(result.content[0]?.text).toContain('Version saved');
+    expect(result.content[0]?.text).toContain('Checkpoint saved');
   });
 });

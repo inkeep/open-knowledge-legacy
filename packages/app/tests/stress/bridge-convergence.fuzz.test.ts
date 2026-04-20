@@ -53,6 +53,7 @@ import {
   agentPatch,
   agentWriteMd,
   assertBridgeInvariant,
+  awaitDocQuiescence,
   createItemOriginProbe,
   createTestClients,
   createTestServer,
@@ -349,8 +350,18 @@ async function applyOp(
 async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Promise<boolean> {
   const start = Date.now();
 
-  // Phase 1: wait for CRDT sync to settle
-  await wait(1500);
+  // Phase 1: wait for each client's pending local observer work to settle.
+  // Under the settlement-based bridge (SPEC §6 R4), this replaces the
+  // debounce-era `wait(1500)` — `awaitDocQuiescence` returns as soon as
+  // each doc's `afterAllTransactions` has been quiet for a couple of
+  // microtasks (including any OBSERVER_SYNC_ORIGIN inner drains). Runs
+  // in parallel across clients so the gate is bounded by the slowest.
+  // We keep a small wall-clock padding between quiescence-and-check to
+  // absorb WebSocket propagation jitter (~20-60 ms typical). Precedent
+  // #13(b): prefer structural gates; wall-clock only where genuine
+  // network timing lives.
+  await Promise.all(clients.map((c) => awaitDocQuiescence(c.doc, { timeoutMs: 3000 })));
+  await wait(100);
 
   // Phase 2: check + tickle loop
   let attempts = 0;
@@ -382,9 +393,16 @@ async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Pro
       text.applyDelta([{ insert: `r${attempts}` }]);
       paragraph.insert(0, [text]);
       target.fragment.push([paragraph]);
+      // Await the tickled client's local settlement before looping —
+      // structural replacement for the debounce-era `wait(800)`. The
+      // tickled doc's `afterAllTransactions` fires and (via the server's
+      // round-trip) propagates updates back to peers. We keep a small
+      // WebSocket-propagation pad so the round-trip can land before the
+      // next converge check.
+      await awaitDocQuiescence(target.doc, { timeoutMs: 2000 });
     }
     attempts++;
-    await wait(800); // Wait for debounce (50ms) + CRDT propagation
+    await wait(200);
   }
   return false;
 }
@@ -457,18 +475,122 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 
 // ─── Main fuzzer ───
 
-const SEED_COUNT = Number(process.env.BRIDGE_FUZZ_SEEDS ?? (process.env.STRESS_FUZZ_SEED ? 1 : 25));
-const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
+// Seed count calibration (bridge-correctness SPEC §6 R2, §10 D11 DELEGATED,
+// review iteration 4 recalibration).
+//
+//   - Seed-replay mode (`STRESS_FUZZ_SEED=<n>`): exactly 1 seed, for
+//     deterministic reproduction.
+//   - Explicit override (`BRIDGE_FUZZ_SEEDS=<n>`): exact count, for local
+//     scaling / bisection runs.
+//   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): 10000 seeds (tier 2; 30-min
+//     budget). Split across `nightly.yml` + `weekly.yml` as needed.
+//   - PR mode (`STRESS_FUZZ_PR=1`): 75 seeds. Calibrated against CI's
+//     measured per-seed distribution (from main's 25-seed run, job
+//     71850662391): median 4054 ms/seed, mean 8949 ms/seed, p95 24045 ms,
+//     max 45677 ms. The long tail dominates: 200 × mean = ~30 min, which
+//     exceeded the 15-min tier-1 budget regardless of runner size
+//     (ubuntu-latest cancelled at 14m56s; ubuntu-64gb cancelled at
+//     15m14s — the large runner's raw CPU advantage was not enough to
+//     absorb 45 s tail seeds × 200). 75 × 8.9 s mean ≈ 11 min + overhead
+//     ≈ 12 min, fits comfortably with headroom for tail variance. Still
+//     3× the default-mode coverage; the 1K-10K elevated-seed tail runs
+//     in tier-2 nightly / tier-3 weekly on-demand workflows (D11
+//     resolution: split-by-tier, not matrix-shard).
+//   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
+//     and keeps local developer runs cheap.
+const SEED_COUNT_PR = 75;
+const SEED_COUNT_NIGHTLY = 10_000;
+const SEED_COUNT_DEFAULT = 25;
+
+/**
+ * Strict integer-env parser. Non-finite, non-integer, or otherwise malformed
+ * inputs throw with a concrete example message — matches the defense-in-
+ * depth discipline `server-authoritative-stress.test.ts` uses for
+ * STRESS_SEED. The measurement script layer (`measure-fuzz.sh`) also
+ * validates via `assert_numeric_flag`, but this test is also invokable
+ * directly via `bun test` without going through the wrapper — so the
+ * test file must not silently coerce "100.5" or "0x42" to NaN→1 at the
+ * PRNG layer. Evidence log that lies quietly is worse than a loud throw.
+ */
+function parseIntegerEnv(name: string, raw: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error(
+      `${name} must be a finite integer, got ${JSON.stringify(raw)}. ` +
+        `Example: ${name}=42 bun test tests/stress/bridge-convergence.fuzz.test.ts`,
+    );
+  }
+  return parsed;
+}
+
+function resolveSeedCount(): number {
+  if (process.env.STRESS_FUZZ_SEED) return 1;
+  if (process.env.BRIDGE_FUZZ_SEEDS) {
+    return parseIntegerEnv('BRIDGE_FUZZ_SEEDS', process.env.BRIDGE_FUZZ_SEEDS);
+  }
+  if (process.env.STRESS_FUZZ_NIGHTLY === '1') return SEED_COUNT_NIGHTLY;
+  if (process.env.STRESS_FUZZ_PR === '1') return SEED_COUNT_PR;
+  return SEED_COUNT_DEFAULT;
+}
+const SEED_COUNT = resolveSeedCount();
+const FIXED_SEED = process.env.STRESS_FUZZ_SEED
+  ? parseIntegerEnv('STRESS_FUZZ_SEED', process.env.STRESS_FUZZ_SEED)
+  : undefined;
+
+// Surface the resolved seed count in CI logs so reviewers can confirm the
+// PR-tier gate is actually running at its calibrated coverage, not the
+// 25-seed default (bridge-correctness review iteration 4 regression guard).
+// Skipped when only 1 seed is requested (replay runs print the seed itself).
+if (FIXED_SEED === undefined) {
+  const mode =
+    process.env.STRESS_FUZZ_NIGHTLY === '1'
+      ? 'nightly'
+      : process.env.STRESS_FUZZ_PR === '1'
+        ? 'pr'
+        : process.env.BRIDGE_FUZZ_SEEDS
+          ? 'custom'
+          : 'default';
+  console.log(`[bridge-convergence fuzzer] mode=${mode} seeds=${SEED_COUNT}`);
+}
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
   let server: TestServer;
+  // Track per-seed outcomes so the after-all hook can emit a machine-
+  // parseable summary line for `packages/app/scripts/measure-fuzz.sh` to
+  // consume. The script grep-matches:
+  //   [fuzz] RESULT seeds=<total> passed=<n> failed=<n> failingSeeds=[<s1>,<s2>,...]
+  // Written via `process.stdout.write` so it's stdout-only and not subject
+  // to bun's human-summary formatting — mirrors the stress test's approach
+  // (`packages/app/tests/stress/server-authoritative-stress.test.ts`).
+  // Changing the format is a breaking change for the measurement script's
+  // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
+  const fuzzPassed: number[] = [];
+  const fuzzFailed: number[] = [];
 
   beforeAll(async () => {
     server = await createTestServer();
   });
 
   afterAll(async () => {
-    await server?.cleanup();
+    // Emit RESULT BEFORE cleanup. measure-fuzz.sh greps for this exact line
+    // as its only data source — if server.cleanup() threw first (handle leak,
+    // port teardown race), the summary would never reach the script and the
+    // run would be classified as a crash-before-banner with conservative all-
+    // seeds-failed accounting. Ordering this pre-cleanup makes the RESULT
+    // emission unconditional on cleanup outcome. Cleanup itself is wrapped in
+    // try/catch so a cleanup failure surfaces as a warn but does not destroy
+    // the observability signal we just wrote.
+    process.stdout.write(
+      `[fuzz] RESULT seeds=${fuzzPassed.length + fuzzFailed.length} passed=${fuzzPassed.length} failed=${fuzzFailed.length} failingSeeds=[${fuzzFailed.join(',')}]\n`,
+    );
+    try {
+      await server?.cleanup();
+    } catch (err) {
+      console.warn(
+        '[bridge-convergence fuzzer] server.cleanup() failed after RESULT emission:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
   const seeds =
@@ -477,6 +599,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
+    // Per-seed setup try/catch — if the setup path throws (harness init,
+    // port allocation, agentWriteMd, createTestClients) BEFORE we reach
+    // the main test body, the seed must still be accounted for in the
+    // RESULT line. Otherwise the script's seedCount drifts below the
+    // requested --seeds N and trend analysis across runs compares
+    // apples and oranges. Re-throw after recording so the test still
+    // fails loudly — this is accounting hygiene, not error swallowing.
+    let setupOk = false;
+    let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;
     const rng = createPRNG(seed);
     const clientCount = 2 + (seed % 2); // 2..3
     // 12 ops per seed: enough to sample 2-3 agent-write + wysiwyg-type pairs
@@ -486,15 +617,31 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     const opCount = 12;
     const docName = `fuzz-${seed}`;
 
-    // Seed initial content
-    await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
-    await wait(200);
+    try {
+      // Seed initial content
+      await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
+      await wait(200);
 
-    const clients = await createTestClients(server.port, {
-      count: clientCount,
-      docName,
-      perClientOptions: { syncControl: true, skipInvariantWatcher: true },
-    });
+      clients = await createTestClients(server.port, {
+        count: clientCount,
+        docName,
+        perClientOptions: { syncControl: true, skipInvariantWatcher: true },
+      });
+      setupOk = true;
+    } catch (err) {
+      // Setup failure — record as failed seed so RESULT accounting is
+      // complete, then re-throw so the test fails visibly. The catch at
+      // the end of the try-block (below, around the main oracle) records
+      // post-setup failures; this catch records pre-setup failures.
+      fuzzFailed.push(seed);
+      throw err;
+    }
+    // Guard against any unexpected control-flow — if we somehow reached
+    // here with setupOk=false without the catch having run, fail loud.
+    if (!setupOk) {
+      fuzzFailed.push(seed);
+      throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
+    }
 
     const agentProbes = clients.map((c) =>
       createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
@@ -578,22 +725,23 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     try {
       const ops = generateOps(rng, clientCount, opCount);
 
-      // Apply ops with short inter-op waits. Pacing matters for the Bug-A
-      // trigger: a wysiwyg-type edit propagates XmlFragment to the server
-      // via CRDT (<50ms typical). Client Observer A then takes another
-      // DEBOUNCE_MS=50ms before propagating to Y.Text. Bug-A fires when an
-      // agent-write lands at the server in that ~50ms window — when server
-      // XmlFragment has the user's content but server Y.Text hasn't received
-      // it yet from the client's Observer A.
-      //
-      // Strategy: keep inter-op wait SHORT (20ms) so agent-write frequently
-      // hits inside the debounce window. A small pre-agent-write wait (30ms)
-      // skews timing toward mid-debounce. This produces a reliable Bug-A race
-      // on every 2-4 seeds instead of once per ~12 seeds.
+      // Apply ops back-to-back. Under the server-authoritative settlement
+      // bridge (bridge-correctness SPEC §6 R4 — `doc.on('afterAllTransactions',
+      // ...)` in server-observers.ts) there is no 50 ms debounce window for
+      // inter-op wall-clock pacing to target. The historical pre-agent-write
+      // `wait(30)` + post-op `wait(20)` were calibrated to hit "mid-debounce"
+      // for the pre-US-009 Bug-A trigger, which observer-layer paired-write
+      // symmetry (US-001) has closed. The RGA-level race that remains (SPEC
+      // §1 D7) is sampled structurally by the `sync-pause`/`sync-resume` op
+      // kinds, not by wall-clock pacing. Generated `wait` ops still run
+      // through `applyOp` and contribute deliberate fuzz-generated delays.
+      // Convergence timing (WebSocket propagation) is handled at the end
+      // of the run by `driveToConvergence`'s quiescence-gated loop. Net
+      // savings: ~600 ms per seed (~12 ops × ~50 ms average), so the fuzz
+      // harness fits its tier-1 budget at the calibrated 200-seed coverage
+      // and nightly's 10000-seed tier-2 run completes faster. (US-010 /
+      // precedent #13(b): prefer structural gates over wall-clock waits.)
       for (const op of ops) {
-        if (op.kind === 'agent-write' || op.kind === 'agent-patch') {
-          await wait(30);
-        }
         await applyOp(op, clients, server, docName);
 
         // Update marker tracking AFTER the op succeeds (oracle d prefix set).
@@ -606,10 +754,6 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
         // Update full-body expectation (oracle e).
         updateExpectedBody(op);
-
-        if (op.kind !== 'wait' && op.kind !== 'sync-pause' && op.kind !== 'sync-resume') {
-          await wait(20);
-        }
       }
 
       // Resume all paused clients
@@ -850,16 +994,42 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           );
         }
       }
+      // Record the seed as passing BEFORE the `finally` block so a cleanup
+      // throw cannot silently skew RESULT totals. If the try-block completed
+      // every assertion, the seed is a genuine pass; the cleanup machinery
+      // running after is teardown-only and its failure must not retroactively
+      // reclassify the outcome. Cleanup errors are swallowed+logged in the
+      // finally block below for the same reason.
+      fuzzPassed.push(seed);
     } catch (err) {
       writeFuzzSnapshot(seed, {
         ops: generateOps(createPRNG(seed), clientCount, opCount),
         error: err,
         clientStates: snapshotClients(clients),
       });
+      fuzzFailed.push(seed);
       throw err;
     } finally {
-      for (const p of agentProbes) p.cleanup();
-      for (const c of clients) await c.cleanup();
+      for (const p of agentProbes) {
+        try {
+          p.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] agent-probe cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
+      for (const c of clients) {
+        try {
+          await c.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] client cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
     }
     // 120s per seed: the original 90s budget covered macOS scheduler jitter
     // locally (observed ~40s p50, 60s p99 on M-series hardware). On

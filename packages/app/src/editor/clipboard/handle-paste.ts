@@ -43,7 +43,7 @@ import { isMarkdown } from './is-markdown.ts';
 import { notifyPasteDegraded } from './paste-failure-toast.ts';
 import { pasteShiftHeld } from './shift-tracker.ts';
 
-export interface PasteDispatcherDeps {
+interface PasteDispatcherDeps {
   mdManager: MarkdownManager;
 }
 

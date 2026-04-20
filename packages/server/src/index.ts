@@ -10,6 +10,7 @@ export {
 export {
   type ApiExtensionOptions,
   createApiExtension,
+  MANAGED_RENAME_ORIGIN,
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
@@ -90,6 +91,8 @@ export {
 } from './managed-rename-rewrite.ts';
 export {
   getMetrics,
+  handleCollabSocketError,
+  incrementCollabSocketFilteredError,
   incrementServerObserverFire,
   type ReconciliationMetrics,
   resetMetrics,
@@ -135,16 +138,24 @@ export {
 } from './server-observer-extension.ts';
 export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 export {
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  DEFAULT_CHECKPOINT_RETENTION,
+  gcCheckpointRefs,
+  type InMemoryCheckpointParams,
   initShadowRepo,
+  listRescueCheckpoints,
   type SafetyCheckpointParams,
   type SaveVersionResult,
   type ShadowHandle,
   type ShadowRef,
   safetyCheckpoint,
+  saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';

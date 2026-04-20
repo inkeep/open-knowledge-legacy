@@ -8,8 +8,10 @@ import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
@@ -30,6 +32,26 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { layout: docPanelLayout, autoCollapse } = useDocPanelLayout();
+  const isSheetMode = docPanelLayout === 'sheet';
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // Tracks whether the user manually collapsed the panel via the toggle button.
+  // When true, auto-expand on crossing the 1024px breakpoint upward is suppressed
+  // so the panel respects the user's last manual action.
+  // Reset when the user manually expands, or when entering auto-collapse range
+  // (so that leaving auto-collapse range later triggers a fresh expand).
+  const userCollapsedRef = useRef(false);
+
+  useEffect(() => {
+    if (docPanelLayout === 'panel') {
+      if (autoCollapse) {
+        userCollapsedRef.current = false;
+        panelRef.current?.collapse();
+      } else if (!userCollapsedRef.current) {
+        panelRef.current?.expand();
+      }
+    }
+  }, [autoCollapse, docPanelLayout, panelRef]);
 
   // Track the previously-active docName for DocumentErrorBoundary's
   // "Back to previous document" affordance. Updated AFTER render (effect) so
@@ -132,99 +154,127 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   const isDiffMode = editorMode === 'diff';
   const isSourceMode = editorMode === 'source';
 
+  const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
+
+  const toggleButton = (
+    <div className="absolute top-2 right-2 z-10">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              if (isSheetMode) {
+                setSheetOpen((prev) => !prev);
+              } else if (isCollapsed) {
+                userCollapsedRef.current = false;
+                panelRef.current?.expand();
+              } else {
+                userCollapsedRef.current = true;
+                panelRef.current?.collapse();
+              }
+            }}
+            aria-label={showPanelOpen ? 'Show document panel' : 'Hide document panel'}
+            className="text-muted-foreground"
+          >
+            {showPanelOpen ? (
+              <PanelRightOpen className="size-4" />
+            ) : (
+              <PanelRightClose className="size-4" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left">{showPanelOpen ? 'Show panel' : 'Hide panel'}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+
+  const editorContent = (
+    <div className="relative h-full">
+      {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+          internal scroller in diff mode and (b) the per-Activity scroller
+          inside EditorActivityPool in editor mode. Hoisting the scroller
+          to this level would let the Activity subtree's content contract
+          on hidden-mode effect cleanup, clamping scrollTop to 0 and
+          losing the user's position across warm navigation (QA-002 /
+          SPEC US-007/F1). */}
+
+      {/* Diff view — shown when editorMode === 'diff' */}
+      {isDiffMode && previewLoading && (
+        <div
+          className="flex items-center justify-center py-16"
+          role="status"
+          aria-label="Loading version"
+        >
+          <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+        </div>
+      )}
+      {isDiffMode && !previewLoading && diffContent !== null && (
+        <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
+      )}
+
+      {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+          Outer display:none keeps the editor DOM alive when in diff mode.
+          Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
+          inner display:none toggle) is preserved inside EditorActivityPool
+          per spec §9 + audit A2. Each Activity entry owns its own scroll
+          container so scroll position is DOM-local to that doc's subtree
+          and survives the Activity hidden-mode mount/unmount cycle.
+
+          Error + Suspense scoping lives INSIDE EditorActivityPool — each
+          Activity wraps its own DocumentErrorBoundary + Suspense so a
+          hidden doc's cached rejected syncPromise cannot re-throw into
+          the visible UI (QA-023/024). See EditorActivityPool.tsx file
+          docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
+      <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+        <EditorActivityPool
+          activeDocName={activeDocName}
+          isSourceMode={isSourceMode}
+          editorPlaceholder={editorPlaceholder}
+          previousDocName={previousDocName ?? undefined}
+          onNavigateBack={(prev) => {
+            // Navigate via hash so the URL stays in sync with app state —
+            // NavigationHandler's hashchange listener will call
+            // openDocumentTransition(prev). If the hash is already at
+            // prev (rare — happens when back-nav is used after agent
+            // nav without URL update), fall back to direct transition.
+            const nextHash = hashFromDocName(prev);
+            if (window.location.hash === nextHash) {
+              openDocumentTransition(prev);
+            } else {
+              window.location.hash = nextHash;
+            }
+          }}
+          onRecycle={recycleDocument}
+        />
+      </div>
+      {toggleButton}
+    </div>
+  );
+
+  if (isSheetMode) {
+    return (
+      <div className="flex min-h-0 flex-1">
+        <div className="min-w-0 flex-1">{editorContent}</div>
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetContent side="right" className="flex w-80 sm:w-96 flex-col gap-0 p-0">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Document panel</SheetTitle>
+            </SheetHeader>
+            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          </SheetContent>
+        </Sheet>
+      </div>
+    );
+  }
+
   return (
     // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
     // (which uses h-full internally) a correctly-sized height context.
     <div className="flex min-h-0 flex-1">
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">
-          <div className="relative h-full">
-            {/* No outer scroller. Scrolling is owned by (a) DiffView's own
-                internal scroller in diff mode and (b) the per-Activity scroller
-                inside EditorActivityPool in editor mode. Hoisting the scroller
-                to this level would let the Activity subtree's content contract
-                on hidden-mode effect cleanup, clamping scrollTop to 0 and
-                losing the user's position across warm navigation (QA-002 /
-                SPEC US-007/F1). */}
-
-            {/* Diff view — shown when editorMode === 'diff' */}
-            {isDiffMode && previewLoading && (
-              <div
-                className="flex items-center justify-center py-16"
-                role="status"
-                aria-label="Loading version"
-              >
-                <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-              </div>
-            )}
-            {isDiffMode && !previewLoading && diffContent !== null && (
-              <DiffView
-                oldContent={diffContent.old}
-                newContent={diffContent.new}
-                layout={diffLayout}
-              />
-            )}
-
-            {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
-                Outer display:none keeps the editor DOM alive when in diff mode.
-                Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
-                inner display:none toggle) is preserved inside EditorActivityPool
-                per spec §9 + audit A2. Each Activity entry owns its own scroll
-                container so scroll position is DOM-local to that doc's subtree
-                and survives the Activity hidden-mode mount/unmount cycle.
-
-                Error + Suspense scoping lives INSIDE EditorActivityPool — each
-                Activity wraps its own DocumentErrorBoundary + Suspense so a
-                hidden doc's cached rejected syncPromise cannot re-throw into
-                the visible UI (QA-023/024). See EditorActivityPool.tsx file
-                docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-            <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-              <EditorActivityPool
-                activeDocName={activeDocName}
-                isSourceMode={isSourceMode}
-                editorPlaceholder={editorPlaceholder}
-                previousDocName={previousDocName ?? undefined}
-                onNavigateBack={(prev) => {
-                  // Navigate via hash so the URL stays in sync with app state —
-                  // NavigationHandler's hashchange listener will call
-                  // openDocumentTransition(prev). If the hash is already at
-                  // prev (rare — happens when back-nav is used after agent
-                  // nav without URL update), fall back to direct transition.
-                  const nextHash = hashFromDocName(prev);
-                  if (window.location.hash === nextHash) {
-                    openDocumentTransition(prev);
-                  } else {
-                    window.location.hash = nextHash;
-                  }
-                }}
-                onRecycle={recycleDocument}
-              />
-            </div>
-            <div className="absolute top-2 right-2 z-10">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() =>
-                      isCollapsed ? panelRef.current?.expand() : panelRef.current?.collapse()
-                    }
-                    aria-label={isCollapsed ? 'Show document panel' : 'Hide document panel'}
-                    className="text-muted-foreground"
-                  >
-                    {isCollapsed ? (
-                      <PanelRightOpen className="size-4" />
-                    ) : (
-                      <PanelRightClose className="size-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">
-                  {isCollapsed ? 'Show panel' : 'Hide panel'}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
+          {editorContent}
         </ResizablePanel>
 
         <ResizableHandle withHandle />
@@ -232,7 +282,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
         <ResizablePanel
           panelRef={panelRef}
           defaultSize="25%"
-          minSize="15%"
+          minSize="300px"
           maxSize="40%"
           collapsible
           collapsedSize={0}

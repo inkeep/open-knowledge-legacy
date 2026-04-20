@@ -46,7 +46,7 @@ import {
   SyncTimeoutError,
 } from '@/editor/sync-promise';
 
-export interface ErrorCopy {
+interface ErrorCopy {
   title: string;
   summary: string;
 }
@@ -197,7 +197,7 @@ function DocumentErrorFallback({
   );
 }
 
-export interface DocumentErrorBoundaryProps {
+interface DocumentErrorBoundaryProps {
   activeDocName: string;
   previousDocName?: string;
   onNavigateBack?: (previousDocName: string) => void;

@@ -49,7 +49,7 @@ import type { ClipboardSource } from './detect-source.ts';
  * events must be added here first — downstream consumers treat this as
  * the source of truth for dashboard + alert configuration.
  */
-export type ClipboardEventName =
+type ClipboardEventName =
   | 'clipboard-slow-op'
   | 'clipboard-source-detected'
   | 'clipboard-html-conversion-failed'
@@ -57,10 +57,10 @@ export type ClipboardEventName =
   | 'clipboard-chunked-insert-failed';
 
 /** View identifier — one per clipboard-bearing editor surface. */
-export type ClipboardView = 'wysiwyg' | 'source';
+type ClipboardView = 'wysiwyg' | 'source';
 
 /** Operation that triggered the event. */
-export type ClipboardOp = 'copy' | 'cut' | 'paste';
+type ClipboardOp = 'copy' | 'cut' | 'paste';
 
 /**
  * Dispatcher branch the event was emitted from. `A`–`E` match the 5-
@@ -80,7 +80,7 @@ export type ClipboardBranch = 'A' | 'B' | 'C' | 'D' | 'E' | 'shift' | 'codeblock
  * FR-21 partial-insert failure (also surfaces as the typed
  * `ChunkedInsertError`).
  */
-export type ClipboardStage =
+type ClipboardStage =
   | 'htmlToMdast'
   | 'mdastToMarkdown'
   | 'mdManagerParse'
@@ -89,9 +89,9 @@ export type ClipboardStage =
   | 'chunkedYTextInsert';
 
 /** Serialization path — `text` is text/plain, `html` is text/html. */
-export type SerializeKind = 'text' | 'html';
+type SerializeKind = 'text' | 'html';
 
-export interface ClipboardTiming {
+interface ClipboardTiming {
   op: ClipboardOp;
   view: ClipboardView;
   branch: ClipboardBranch;
@@ -99,14 +99,14 @@ export interface ClipboardTiming {
   htmlBytes?: number;
 }
 
-export interface ClipboardLogEvent {
+interface ClipboardLogEvent {
   op?: ClipboardOp;
   view: ClipboardView;
   branch: ClipboardBranch;
   source: ClipboardSource;
 }
 
-export interface ConversionFailInfo {
+interface ConversionFailInfo {
   view: ClipboardView;
   /** Which stage of the pipeline threw. */
   stage: ClipboardStage;
@@ -121,13 +121,13 @@ export interface ConversionFailInfo {
   htmlBytes?: number;
 }
 
-export interface SerializeFailInfo {
+interface SerializeFailInfo {
   view: ClipboardView;
   kind: SerializeKind;
   reason: string;
 }
 
-export interface ChunkedInsertFailInfo {
+interface ChunkedInsertFailInfo {
   view: ClipboardView;
   chunksCompleted: number;
   totalChunks: number;

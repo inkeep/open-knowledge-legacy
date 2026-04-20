@@ -29,7 +29,7 @@ import { createMcpLogger, type McpLogger } from './logger.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 import type { ConfigOrResolver, ServerUrlOrResolver } from './tools/shared.ts';
 
-export interface McpServerOptions {
+interface McpServerOptions {
   projectDir: string;
   serverUrl?: ServerUrlOrResolver;
   config: ConfigOrResolver;

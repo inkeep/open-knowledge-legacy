@@ -17,17 +17,17 @@ import {
   textResult,
 } from './shared.ts';
 
-export interface RenameDocumentMapping {
+interface RenameDocumentMapping {
   fromDocName: string;
   toDocName: string;
 }
 
-export interface RenameDocumentRewrittenDoc {
+interface RenameDocumentRewrittenDoc {
   docName: string;
   rewrites: number;
 }
 
-export interface RenameDocumentSuccess {
+interface RenameDocumentSuccess {
   ok: true;
   renamed: RenameDocumentMapping[];
   rewrittenDocs: RenameDocumentRewrittenDoc[];
@@ -39,7 +39,7 @@ export interface RenameDocumentSuccess {
   previousPreviewUrl?: string;
 }
 
-export interface RenameDocumentError {
+interface RenameDocumentError {
   ok: false;
   error: string;
 }

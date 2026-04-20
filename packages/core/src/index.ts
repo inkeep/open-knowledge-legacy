@@ -67,6 +67,12 @@ export {
 export {
   applyFastDiff,
   applyIncrementalDiff,
+  assertContentPreservation,
+  BridgeMergeContentLossError,
+  type BridgeMergeContentLossInfo,
+  type BridgeMergeContentLossLogPayload,
+  type BridgeMergeContentLossSide,
+  type BridgeMergeContentLossWhich,
   type DiffChange,
   defaultScheduler,
   diffLinesFast,

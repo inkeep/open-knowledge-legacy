@@ -36,7 +36,7 @@ export type ErrorCategory =
   | 'output_overflow'
   | 'security_invariant_violation';
 
-export interface ParseCommandError {
+interface ParseCommandError {
   category: ErrorCategory;
   message: string;
 }
@@ -48,7 +48,7 @@ export interface Stage {
   args: string[];
 }
 
-export type ParseResult = { stages: Stage[] } | { error: ParseCommandError };
+type ParseResult = { stages: Stage[] } | { error: ParseCommandError };
 
 /**
  * Dirs that are never wiki content. Auto-injected on recursive `grep` (as

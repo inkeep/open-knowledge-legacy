@@ -9,14 +9,15 @@
  *      the target entry already matches; if an existing entry differs, reports
  *      that drift and tells the user to re-run with `--force`.
  *
- * Supports Claude Code, Claude Desktop, Cursor, VS Code, and Windsurf. When
- * run interactively (TTY) without `--editor`, prompts the user to select which
- * editors to configure. When `--editor` is passed or stdin is not a TTY, uses
- * the flag value directly (defaults to `claude`).
+ * Supports Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and Codex.
+ * When run interactively (TTY) without `--editor`, prompts the user to select
+ * which editors to configure. When `--editor` is passed or stdin is not a TTY,
+ * uses the flag value directly (defaults to `claude`).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
   initContent,
@@ -39,11 +40,11 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Read an existing MCP config file (if any) and return its parsed shape.
+ * Read an existing JSON MCP config file (if any) and return its parsed shape.
  * Returns an empty object if the file doesn't exist or is empty.
  * Throws on invalid JSON or permission errors.
  */
-function readMcpConfig(path: string): Record<string, unknown> {
+function readJsonConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   const raw = readFileSync(path, 'utf-8');
   const trimmed = raw.trim();
@@ -63,13 +64,46 @@ function readMcpConfig(path: string): Record<string, unknown> {
 }
 
 /**
+ * Read an existing TOML MCP config file (if any) and return its parsed shape.
+ * Returns an empty object if the file doesn't exist or is empty.
+ * Throws on invalid TOML or permission errors.
+ */
+function readTomlConfig(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const raw = readFileSync(path, 'utf-8');
+  const trimmed = raw.trim();
+  if (trimmed === '') return {};
+  try {
+    const parsed = parseToml(trimmed);
+    if (isObject(parsed)) {
+      return parsed;
+    }
+    throw new Error(`${path} root must be a TOML table`);
+  } catch (err) {
+    throw new Error(
+      `${path} contains invalid TOML: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * Write the config to disk as pretty-printed JSON with a trailing newline.
  * Creates parent directories if missing.
  */
-function writeMcpConfig(path: string, config: Record<string, unknown>): void {
+function writeJsonConfig(path: string, config: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
   const serialized = `${JSON.stringify(config, null, 2)}\n`;
   writeFileSync(path, serialized, 'utf-8');
+}
+
+/**
+ * Write the config to disk as TOML with a trailing newline.
+ * Creates parent directories if missing.
+ */
+function writeTomlConfig(path: string, config: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const serialized = stringifyToml(config);
+  writeFileSync(path, serialized.endsWith('\n') ? serialized : `${serialized}\n`, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------
@@ -270,12 +304,24 @@ function writeEditorMcpConfig(
   force: boolean,
   home?: string,
 ): EditorMcpResult {
-  const configPath = target.configPath(cwd, home);
   const serverName = target.serverName(cwd);
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch (err) {
+    return {
+      editorId: target.id,
+      label: target.label,
+      action: 'failed',
+      configPath: '',
+      serverName,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   let config: Record<string, unknown>;
   try {
-    config = readMcpConfig(configPath);
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
   } catch (err) {
     return {
       editorId: target.id,
@@ -292,7 +338,7 @@ function writeEditorMcpConfig(
   const targetEntry =
     isObject(existing) && force ? target.mergeManagedFields(existing, cwd) : target.buildEntry(cwd);
 
-  if (existing && !force) {
+  if (existing !== undefined && !force) {
     const action =
       isObject(existing) && target.isCompatible(existing, cwd)
         ? 'skipped-existing'
@@ -315,7 +361,11 @@ function writeEditorMcpConfig(
   };
 
   try {
-    writeMcpConfig(configPath, nextConfig);
+    if (target.format === 'toml') {
+      writeTomlConfig(configPath, nextConfig);
+    } else {
+      writeJsonConfig(configPath, nextConfig);
+    }
   } catch (err) {
     return {
       editorId: target.id,
@@ -330,7 +380,7 @@ function writeEditorMcpConfig(
   return {
     editorId: target.id,
     label: target.label,
-    action: existing ? 'overwritten' : 'written',
+    action: existing !== undefined ? 'overwritten' : 'written',
     configPath,
     serverName,
   };
@@ -367,11 +417,18 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const editorResults: EditorMcpResult[] = [];
   for (const target of targets) {
     if (options.mcp === false) {
+      let configPath = '';
+      try {
+        configPath = target.configPath(cwd, options.home);
+      } catch {
+        // Unsupported-platform target (e.g. Claude Desktop on Linux) — --no-mcp
+        // explicitly means "don't write", so the path is informational only.
+      }
       editorResults.push({
         editorId: target.id,
         label: target.label,
         action: 'skipped-flag',
-        configPath: target.configPath(cwd, options.home),
+        configPath,
         serverName: target.serverName(cwd),
       });
       continue;
@@ -463,12 +520,21 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         const serverNameNote =
           editor.serverName === MCP_SERVER_NAME ? '' : ` (${editor.serverName})`;
         const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
+        const restartHint =
+          editor.editorId === 'claude-desktop' &&
+          (editor.action === 'written' || editor.action === 'overwritten')
+            ? ' — quit and relaunch Claude Desktop to activate'
+            : '';
         switch (editor.action) {
           case 'written':
-            lines.push(`  ${editor.label}${pad}${displayPath}  registered${serverNameNote}`);
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
+            );
             break;
           case 'overwritten':
-            lines.push(`  ${editor.label}${pad}${displayPath}  updated${serverNameNote}`);
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
+            );
             break;
           case 'skipped-existing':
             lines.push(
@@ -593,9 +659,21 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-function parseEditorFlag(value: string): EditorId[] {
+function normalizeEditorToken(token: string): EditorId {
+  switch (token) {
+    case 'claude_desktop':
+      return 'claude-desktop';
+    default:
+      return token as EditorId;
+  }
+}
+
+export function parseEditorFlag(value: string): EditorId[] {
   if (value === 'all') return [...ALL_EDITOR_IDS];
-  const ids = value.split(',').map((s) => s.trim()) as EditorId[];
+  const ids = value
+    .split(',')
+    .map((s) => s.trim())
+    .map(normalizeEditorToken);
   // Validate — resolveEditorTargets throws on unknown IDs
   resolveEditorTargets(ids);
   return ids;
@@ -606,9 +684,9 @@ function parseEditorFlag(value: string): EditorId[] {
  * directory of each editor's `configPath` is the probe location so an empty
  * editor install (no `mcp.json` yet) still counts as detected. Covers both
  * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
- * Code `.vscode/`) plus user-global editors (Claude Desktop under the
- * platform-specific app-support dir's `Claude/`, Windsurf under
- * `~/.codeium/windsurf/`).
+ * Code `.vscode/`, Codex `.codex/config.toml`) plus user-global editors
+ * (Claude Desktop under the platform-specific app-support dir's `Claude/`,
+ * Windsurf under `~/.codeium/windsurf/`).
  *
  * Used by the Commander action to default to all detected editors in both
  * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
@@ -618,7 +696,12 @@ export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
   const detected: EditorId[] = [];
   for (const id of ALL_EDITOR_IDS) {
     const target = EDITOR_TARGETS[id];
-    const configPath = target.configPath(cwd, home);
+    let configPath: string;
+    try {
+      configPath = target.configPath(cwd, home);
+    } catch {
+      continue;
+    }
     if (existsSync(dirname(configPath))) {
       detected.push(id);
     }
@@ -636,7 +719,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, claude-desktop, cursor, vscode, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
+      `Target editor(s): ${ALL_EDITOR_IDS.join(', ')}, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)`,
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -654,30 +737,37 @@ export function initCommand(): Command {
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
         // Interactive prompt — pre-select every detected editor regardless of
-        // scope. Empty detection set shows all editors unselected alongside a
-        // hint (D-019) so the user can still pick manually or cancel and use
-        // --editor.
+        // scope. Empty detection set shows every supported editor unselected
+        // alongside a hint (D-019) so the user can still pick manually or
+        // cancel and use --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
 
         const detected = new Set(detectInstalledEditors(cwd));
         if (detected.size === 0) {
           process.stdout.write(
-            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|claude-desktop|cursor|vscode|windsurf>.\n',
+            `No MCP-capable editors detected — select manually, or cancel and use --editor <all|${ALL_EDITOR_IDS.join('|')}>.\n`,
           );
         }
 
-        const editorChoices = ALL_EDITOR_IDS.map((id) => {
+        const editorChoices = ALL_EDITOR_IDS.flatMap((id) => {
           const target = EDITOR_TARGETS[id];
-          const hint =
-            target.scope === 'global'
-              ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
-              : relative(cwd, target.configPath(cwd));
-          return {
-            value: id,
-            label: target.label,
-            hint,
-            initialValue: detected.has(id),
-          };
+          try {
+            const configPath = target.configPath(cwd);
+            const hint =
+              target.scope === 'global'
+                ? configPath.replace(/^\/Users\/[^/]+/, '~')
+                : relative(cwd, configPath);
+            return [
+              {
+                value: id,
+                label: target.label,
+                hint,
+                initialValue: detected.has(id),
+              },
+            ];
+          } catch {
+            return [];
+          }
         });
 
         const selected = await multiselect({
@@ -698,7 +788,7 @@ export function initCommand(): Command {
         editors = detectInstalledEditors(cwd);
         if (editors.length === 0) {
           process.stderr.write(
-            'No MCP-capable editors detected. Use --editor <all|claude|claude-desktop|cursor|vscode|windsurf> to force.\n',
+            `No MCP-capable editors detected. Use --editor <all|${ALL_EDITOR_IDS.join('|')}> to force.\n`,
           );
           process.exitCode = 1;
           return;
