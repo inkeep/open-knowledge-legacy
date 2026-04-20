@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
+import simpleGit from 'simple-git';
 import type * as Y from 'yjs';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -94,6 +95,7 @@ async function callApi(
     sessionManager?: Parameters<typeof createApiExtension>[0]['sessionManager'];
     getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
     signalChannel?: Parameters<typeof createApiExtension>[0]['signalChannel'];
+    projectDir?: string;
   },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
@@ -114,6 +116,7 @@ async function callApi(
     getFileIndex: options?.getFileIndex ?? (() => buildFileIndex(contentDir)),
     backlinkIndex: options?.backlinkIndex ?? buildBacklinkIndex(contentDir),
     signalChannel: options?.signalChannel,
+    projectDir: options?.projectDir,
   });
 
   const req = makeReq(url, method, body);
@@ -455,6 +458,43 @@ describe('file operation API routes', () => {
     );
     expect(body.pages.map((page) => page.docName)).not.toContain('docs/index');
     expect(body.pages.map((page) => page.docName)).not.toContain('docs/nested/page');
+  });
+
+  test('folder rename uses git mv for tracked files', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'docs/nested'), { recursive: true });
+    writeFileSync(join(dir, 'docs/index.md'), '# Docs\n', 'utf-8');
+    writeFileSync(join(dir, 'docs/nested/page.md'), '# Nested\n', 'utf-8');
+
+    const git = simpleGit(dir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@example.com');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'folder',
+        fromPath: 'docs',
+        toPath: 'guides',
+      },
+      {
+        backlinkIndex: buildBacklinkIndex(dir),
+        projectDir: dir,
+      },
+    );
+
+    expect(result.status).toBe(200);
+
+    const status = await git.raw('status', '--short');
+    expect(status).toContain('R  docs/index.md -> guides/index.md');
+    expect(status).toContain('R  docs/nested/page.md -> guides/nested/page.md');
+    expect(status).not.toContain(' D docs/index.md');
+    expect(status).not.toContain('?? guides/');
   });
 
   test('deletes a file and reports the removed doc name', async () => {
