@@ -187,6 +187,7 @@
         "@handlewithcare/remark-prosemirror": "0.1.5",
         "@tiptap/core": "^3.22.3",
         "@tiptap/extension-bold": "^3.22.3",
+        "@tiptap/extension-code": "3.22.3",
         "@tiptap/extension-code-block": "^3.22.3",
         "@tiptap/extension-hard-break": "^3.22.3",
         "@tiptap/extension-heading": "^3.22.3",
@@ -223,6 +224,9 @@
         "yjs": "^13.6.30",
       },
       "devDependencies": {
+        "@tiptap/extension-document": "^3.22.3",
+        "@tiptap/extension-paragraph": "^3.22.3",
+        "@tiptap/extension-text": "^3.22.3",
         "@types/diff-match-patch": "^1.0.36",
         "@types/hast": "^3.0.4",
         "@types/mdast": "^4.0.4",
