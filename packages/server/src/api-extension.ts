@@ -2816,6 +2816,45 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
       } else {
         applyRename();
+
+        const fileIndex = getFileIndex();
+          for (const { fromDocName, toDocName } of renamed) {
+            updateFileIndex(
+              {
+                kind: 'rename',
+                oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
+                newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
+                oldDocName: fromDocName,
+                newDocName: toDocName,
+                content:
+                  liveContents.get(fromDocName) ??
+                  readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+              },
+              fileIndex as Map<string, FileIndexEntry>,
+            );
+          }
+
+        if (backlinkIndex) {
+          for (const { fromDocName, toDocName } of renamed) {
+            backlinkIndex.renameDocument(
+              fromDocName,
+              toDocName,
+              liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            );
+          }
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+
+        signalChannel?.('files');
       }
 
       json(res, 200, { ok: true, renamed });
