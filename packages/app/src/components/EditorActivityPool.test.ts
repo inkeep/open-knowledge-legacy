@@ -35,6 +35,11 @@ const entry = (docName: string, lastAccessedAt: number): FakeEntry => ({
 
 describe('ACTIVITY_MOUNT_LIMIT', () => {
   test('is 3 — matches SPEC.md §10 DX9', () => {
+    // US-007 (2026-04-19) investigated lowering to 1 as an S2 warm-switch
+    // fix. Reverted because LIMIT=1 broke `docs-open.e2e.ts:F1` scroll
+    // preservation — `ScrollPreservingContainer` depends on Activity state
+    // preservation (useRef survives hidden mode flips, dies on unmount).
+    // See the constant's docstring + evidence/s2-diagnosis.md.
     expect(ACTIVITY_MOUNT_LIMIT).toBe(3);
   });
 

@@ -68,6 +68,23 @@ import { usePageList } from './PageListContext';
  *
  * Changing either this value or `MAX_POOL` is an ASK_FIRST boundary — they're
  * coupled by design. If one moves, audit the other for sympathetic impact.
+ *
+ * US-007 FINDING (2026-04-19): Reducing this value to 1 was attempted as an S2
+ * warm-switch fix (see evidence/s2-diagnosis.md), then REVERTED — LIMIT=1 broke
+ * `docs-open.e2e.ts:F1` (scroll position survives A→B→A) because
+ * `ScrollPreservingContainer` stores its saved scrollTop in a `useRef`, and
+ * refs persist across `<Activity>` mode flips but are lost on full unmount.
+ * With LIMIT=3, ScrollPreservingContainer stays mounted for non-active docs
+ * (effects paused via Activity-hidden; ref state preserved), so revisiting
+ * restores scroll position. With LIMIT=1, the container unmounts on nav and
+ * the ref is destroyed. TipTap editor state WAS being destroyed regardless
+ * (its `useEditor` schedules destroy on effect-cleanup, so LIMIT=3 + hidden
+ * transition = same destroy path as LIMIT=1 + unmount), but scroll state was
+ * load-bearing. Conclusion: S2 is architecturally bounded by TipTap's
+ * `createEditor` overhead (~350 ms schema + Yjs bind + DOM attach, fixed cost
+ * regardless of doc size or `ACTIVITY_MOUNT_LIMIT`); unlocking <100 ms
+ * warm-switch requires a module-level Editor cache outside React's lifecycle
+ * (V2 refactor, tracked in evidence/s2-diagnosis.md "V2 follow-up").
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 
