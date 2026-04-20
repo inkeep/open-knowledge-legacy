@@ -93,7 +93,7 @@ If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`o
 - **Writes** via \`write_document\` / \`edit_document\` — route through the server so shadow-repo attribution (agent vs human) is captured
 - **Graph queries** via \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`
 
-These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, etc.). \`open-knowledge init\` registers the MCP server in every editor's config for you — Claude Desktop and Windsurf use project-qualified keys like \`open-knowledge-<project>\` so one config file can serve multiple projects on the same machine. Claude Desktop requires a full quit + relaunch to pick up new MCP servers; Windsurf hot-reloads.
 `;
 
 const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
