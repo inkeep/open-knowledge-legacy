@@ -861,7 +861,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
+      // Apply rewrite via XmlFragment-authoritative pattern (PRECEDENTS.md precedent #12;
       // replaces the deleted syncTextToFragment helper). Parse new markdown →
       // updateYFragment (preserves user-content Items at matching positions) →
       // mirror Y.Text via applyFastDiff (character-level CRDT mutation).

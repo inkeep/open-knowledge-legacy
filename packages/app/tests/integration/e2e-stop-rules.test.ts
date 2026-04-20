@@ -229,7 +229,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     //
     // Required shape: `waitForFunction(fn, null, { timeout: N })` — pass
     // `null` (or `undefined`, or a real arg value) as the 2nd positional,
-    // options as the 3rd. See AGENTS.md precedent §20(j).
+    // options as the 3rd. See PRECEDENTS.md precedent #20(j).
     //
     // Detection:
     //   - Single-line:  `waitForFunction(...=>..., { timeout|polling: ...`
