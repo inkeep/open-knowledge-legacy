@@ -78,6 +78,12 @@ const bridge: OkDesktopBridge = {
     writeText: (text: string) => invoke('ok:clipboard:write-text', text),
   },
 
+  project: {
+    listRecent: () => invoke('ok:project:list-recent'),
+    open: (request) => invoke('ok:project:open', request),
+    close: () => invoke('ok:project:close'),
+  },
+
   platform: process.platform as 'darwin' | 'win32' | 'linux',
   appVersion: parseArg('app-version') ?? '0.0.0',
 };

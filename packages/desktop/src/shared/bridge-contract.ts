@@ -44,6 +44,13 @@ export type OkMenuAction =
 /** Returned by `onProjectSwitched` / `onMenuAction`. Call to detach the listener. */
 export type OkUnsubscribe = () => void;
 
+export interface RecentProjectEntry {
+  path: string;
+  name: string;
+  lastOpenedAt: string;
+  missing?: boolean;
+}
+
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
@@ -62,6 +69,12 @@ export interface OkDesktopBridge {
 
   clipboard: {
     writeText(text: string): Promise<void>;
+  };
+
+  project: {
+    listRecent(): Promise<RecentProjectEntry[]>;
+    open(request: { path: string; target: 'new-window' }): Promise<void>;
+    close(): Promise<void>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

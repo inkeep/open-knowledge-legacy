@@ -39,6 +39,13 @@ export type OkMenuAction =
 
 export type OkUnsubscribe = () => void;
 
+export interface RecentProjectEntry {
+  path: string;
+  name: string;
+  lastOpenedAt: string;
+  missing?: boolean;
+}
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
@@ -52,6 +59,11 @@ export interface OkDesktopBridge {
   };
   clipboard: {
     writeText(text: string): Promise<void>;
+  };
+  project: {
+    listRecent(): Promise<RecentProjectEntry[]>;
+    open(request: { path: string; target: 'new-window' }): Promise<void>;
+    close(): Promise<void>;
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;
