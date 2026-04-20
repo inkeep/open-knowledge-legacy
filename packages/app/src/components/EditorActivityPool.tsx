@@ -49,6 +49,7 @@ import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentCon
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
+import { mark, ProfilerBoundary } from '@/lib/perf';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorSkeleton } from './EditorSkeleton';
@@ -132,7 +133,15 @@ export function computeActivityMountList<T extends { docName: string; lastAccess
   return [...top.slice(0, limit - 1), active];
 }
 
-export function EditorActivityPool({
+export function EditorActivityPool(props: EditorActivityPoolProps) {
+  return (
+    <ProfilerBoundary name="activity-pool">
+      <EditorActivityPoolInner {...props} />
+    </ProfilerBoundary>
+  );
+}
+
+function EditorActivityPoolInner({
   activeDocName,
   isSourceMode,
   editorPlaceholder,
@@ -144,6 +153,26 @@ export function EditorActivityPool({
   const { pages, loading } = usePageList();
 
   const mountList = computeActivityMountList(poolEntries, activeDocName, ACTIVITY_MOUNT_LIMIT);
+
+  // Track prior mount list by a stringified doc-name key so we emit
+  // `ok/activity/mount-list-change` once per real change (not once per render).
+  // The prior key is stored in a ref (not state) so the effect fires only when
+  // the composition of mounted docs actually shifts. Mount lists are bounded
+  // at ACTIVITY_MOUNT_LIMIT (3), so the string + diff is trivial.
+  const priorMountKeyRef = useRef<string>('');
+  const mountKey = mountList.map((e) => e.docName).join(',');
+  useEffect(() => {
+    if (priorMountKeyRef.current === mountKey) return;
+    const prior = priorMountKeyRef.current ? priorMountKeyRef.current.split(',') : [];
+    const mounted = mountKey ? mountKey.split(',') : [];
+    const evicted = prior.filter((d) => !mounted.includes(d));
+    mark('ok/activity/mount-list-change', {
+      active: activeDocName,
+      mounted,
+      evicted,
+    });
+    priorMountKeyRef.current = mountKey;
+  }, [mountKey, activeDocName]);
 
   return (
     <>

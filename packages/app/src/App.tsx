@@ -14,6 +14,7 @@ import {
   useDocumentTransition,
 } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
+import { mark, ProfilerBoundary } from '@/lib/perf';
 
 export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 
@@ -39,16 +40,20 @@ function NavigationHandler() {
     function onHashChange() {
       const docName = docNameFromHash(window.location.hash);
       if (!docName) {
+        mark('ok/nav/hash-change', { docName: null, kind: 'clear' });
         clearTarget();
         return;
       }
-      if (loading) return;
-      openTargetTransition(
-        resolveNavigationTarget(docName, {
-          pages,
-          folderPaths,
-        }),
-      );
+      if (loading) {
+        mark('ok/nav/hash-change', { docName, kind: 'deferred-loading' });
+        return;
+      }
+      const target = resolveNavigationTarget(docName, {
+        pages,
+        folderPaths,
+      });
+      mark('ok/nav/hash-change', { docName, kind: target.kind });
+      openTargetTransition(target);
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -98,19 +103,21 @@ function NewItemShortcutHandler() {
 
 export function App() {
   return (
-    <DocumentProvider>
-      <ConnectingBanner />
-      <PageListProvider>
-        <SystemDocSubscriber />
-        <NavigationHandler />
-        <NewItemShortcutHandler />
-        <SidebarProvider className="h-screen overflow-hidden">
-          <FileSidebar />
-          <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-            <EditorPane />
-          </SidebarInset>
-        </SidebarProvider>
-      </PageListProvider>
-    </DocumentProvider>
+    <ProfilerBoundary name="app">
+      <DocumentProvider>
+        <ConnectingBanner />
+        <PageListProvider>
+          <SystemDocSubscriber />
+          <NavigationHandler />
+          <NewItemShortcutHandler />
+          <SidebarProvider className="h-screen overflow-hidden">
+            <FileSidebar />
+            <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+              <EditorPane />
+            </SidebarInset>
+          </SidebarProvider>
+        </PageListProvider>
+      </DocumentProvider>
+    </ProfilerBoundary>
   );
 }

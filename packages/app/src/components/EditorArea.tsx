@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { hashFromDocName } from '@/lib/doc-hash';
+import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
@@ -25,7 +26,15 @@ interface EditorAreaProps {
   onNoDiff?: () => void;
 }
 
-export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
+export function EditorArea(props: EditorAreaProps) {
+  return (
+    <ProfilerBoundary name="editor-area">
+      <EditorAreaInner {...props} />
+    </ProfilerBoundary>
+  );
+}
+
+function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const isNewDoc = activeTarget?.kind === 'missing';

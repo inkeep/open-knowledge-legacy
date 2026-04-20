@@ -2,9 +2,9 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
+import { mark } from '@/lib/perf';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
-import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 
@@ -293,6 +293,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {
+    mark('ok/nav/open-document', { docName, transition: false });
     if (collabUrl === null) return;
     const p = getPool(collabUrl);
     const entry = p.open(docName);
@@ -304,7 +305,12 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // stays as a direct-doc affordance for non-resolver callers (tests, etc.).
     setActiveTarget({ kind: 'doc', target: docName, docName });
   };
-  const openDocumentTransition = createOpenDocumentTransition(openDocument, startTransition);
+  const openDocumentTransition = (docName: string) => {
+    mark('ok/nav/open-document', { docName, transition: true });
+    startTransition(() => {
+      openDocument(docName);
+    });
+  };
 
   const openTarget = (target: ResolvedNavigationTarget) => {
     if (collabUrl === null) return;
@@ -319,6 +325,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     setActiveTarget(target);
   };
   const openTargetTransition = (target: ResolvedNavigationTarget) => {
+    const docName = docNameForNavigationTarget(target);
+    mark('ok/nav/open-target', { docName, kind: target.kind, transition: true });
     startTransition(() => openTarget(target));
   };
 

@@ -10,6 +10,7 @@ import {
   PanelTitle,
 } from '@/components/ui/panel';
 import { useActiveHeading } from '@/hooks/useActiveHeading';
+import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
 
 interface HeadingEntry {
@@ -83,7 +84,19 @@ export interface OutlineNavDetail {
 
 export const OUTLINE_NAV_EVENT = 'open-knowledge:outline-nav';
 
-export function OutlinePanel({
+export function OutlinePanel(props: {
+  docName: string;
+  isSourceMode: boolean;
+  className?: string;
+}) {
+  return (
+    <ProfilerBoundary name="outline-panel">
+      <OutlinePanelInner {...props} />
+    </ProfilerBoundary>
+  );
+}
+
+function OutlinePanelInner({
   docName,
   isSourceMode,
   className = '',

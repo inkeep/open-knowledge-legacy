@@ -21,6 +21,7 @@
  */
 
 import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider';
+import { mark } from '@/lib/perf';
 
 export const SYNC_TIMEOUT_MS = 30_000;
 
@@ -289,6 +290,8 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     console.warn(
       `[syncPromise] ${docName} rejected on creation (test hook, armed ${armed}): ${error.message}`,
     );
+    mark('ok/sync/create', { docName, warm: false, armed });
+    mark('ok/sync/reject', { docName, reason: `armed-${armed}` });
     // Build a pre-settled thenable with `status='rejected'` + `reason=error`.
     // React's `use()` checks `status` synchronously (React 19 shape per
     // `react/src/ReactUseHook.js`): an already-rejected thenable throws on
@@ -306,6 +309,8 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
 
   if (provider.synced) {
     console.log(`[syncPromise] ${docName} resolved synchronously (warm provider)`);
+    mark('ok/sync/create', { docName, warm: true });
+    mark('ok/sync/resolve', { docName, elapsedMs: 0, warm: true });
     const promise = Promise.resolve();
     cache.set(docName, makeSentinelEntry(promise, provider));
     return promise;
@@ -325,6 +330,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.settled = true;
     const elapsed = Date.now() - entry.createdAt;
     console.log(`[syncPromise] ${docName} resolved in ${elapsed}ms`);
+    mark('ok/sync/resolve', { docName, elapsedMs: elapsed, warm: false });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     // Keep entry in cache — see lifecycle docstring above.
@@ -337,6 +343,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     entry.settled = true;
     const error = new PreSyncDisconnectError(docName);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
+    mark('ok/sync/reject', { docName, reason: 'pre-sync-disconnect' });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
@@ -349,6 +356,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const elapsed = Date.now() - entry.createdAt;
     const error = new SyncTimeoutError(docName, elapsed);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
+    mark('ok/sync/reject', { docName, reason: 'timeout', elapsedMs: elapsed });
     detach(entry);
     if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
@@ -379,6 +387,8 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
   // Arm visibility-change watchdog so a tab-sleep that throttles setTimeout
   // doesn't leave this entry stuck as a non-terminating pending promise.
   installVisibilityHandler();
+
+  mark('ok/sync/create', { docName, warm: false });
 
   return promise;
 }
