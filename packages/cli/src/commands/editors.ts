@@ -8,12 +8,31 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf';
+export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf' | 'claude-desktop';
 
-export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'cursor', 'vscode', 'codex', 'windsurf'];
+export const ALL_EDITOR_IDS: EditorId[] = [
+  'claude',
+  'cursor',
+  'vscode',
+  'codex',
+  'windsurf',
+  'claude-desktop',
+];
 
 const MCP_SERVER_COMMAND = 'npx';
 const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+
+/** Result shape for the per-target server-key resolution step. */
+export interface ResolvedServerKey {
+  /** The key under which the server entry should be written. */
+  key: string;
+  /** Existing entry at that key, if any (used to decide written vs overwritten vs skipped-existing). */
+  existingEntry: unknown | undefined;
+  /** If auto-disambiguation fired, the key that conflicted with a different cwd. */
+  disambiguatedFrom?: string;
+  /** If a legacy entry was detected and will be replaced, its old key. */
+  migratedFromKey?: string;
+}
 
 export interface EditorMcpTarget {
   id: EditorId;
@@ -26,7 +45,7 @@ export interface EditorMcpTarget {
   /** Top-level JSON key that holds the server map. */
   topLevelKey: 'mcpServers' | 'servers' | 'mcp_servers';
   /** Build the server entry object for this editor. */
-  buildEntry: () => Record<string, unknown>;
+  buildEntry: (cwd: string) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
   /**
@@ -36,6 +55,12 @@ export interface EditorMcpTarget {
    * Only declared for editors that can't read AGENTS.md directly.
    */
   instructionsPath?: (cwd: string) => string;
+  /**
+   * Optional hook for global-scope targets that need project-qualified server
+   * keys (e.g. Claude Desktop, Windsurf). When absent, the init orchestrator
+   * falls back to the default `MCP_SERVER_NAME` key.
+   */
+  resolveServerKey?: (existingServers: Record<string, unknown>, cwd: string) => ResolvedServerKey;
 }
 
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
@@ -45,7 +70,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.mcp.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
     instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   },
@@ -55,7 +80,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   vscode: {
@@ -64,7 +89,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
     format: 'json',
     topLevelKey: 'servers',
-    buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   codex: {
@@ -73,7 +98,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.codex', 'config.toml'),
     format: 'toml',
     topLevelKey: 'mcp_servers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   windsurf: {
@@ -82,7 +107,28 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    scope: 'global',
+  },
+  'claude-desktop': {
+    id: 'claude-desktop',
+    label: 'Claude Desktop',
+    // Full wiring (macOS + Windows + unsupported-platform throw) lands in
+    // US-003. The stub returns a non-existent sentinel path so the registry
+    // is iterable by `detectInstalledEditors` without exercising real init
+    // logic — any real attempt to use the target before US-003 will fail at
+    // buildEntry.
+    configPath: (_cwd, home) =>
+      join(
+        home ?? homedir(),
+        '.open-knowledge-claude-desktop-stub-not-yet-implemented',
+        'config.json',
+      ),
+    format: 'json',
+    topLevelKey: 'mcpServers',
+    buildEntry: (_cwd) => {
+      throw new Error('Claude Desktop target not yet implemented (pending US-003).');
+    },
     scope: 'global',
   },
 };

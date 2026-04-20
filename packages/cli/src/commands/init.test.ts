@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
-import { ALL_EDITOR_IDS } from './editors.ts';
 import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
@@ -314,13 +313,16 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
     });
 
-    it('writes all supported editors with editors: all', () => {
+    it('writes project-and-windsurf editors with editors: [claude, cursor, vscode, codex, windsurf]', () => {
+      // claude-desktop has platform-specific mocking (macOS / Windows / Linux
+      // refusal) that belongs in its own describe block, not in this
+      // multi-editor smoke test. See the 'Claude Desktop' describe block below.
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
       const result = runInit({
         cwd: testDir,
-        editors: [...ALL_EDITOR_IDS],
+        editors: ['claude', 'cursor', 'vscode', 'codex', 'windsurf'],
         home: fakeHome,
       });
 
@@ -777,13 +779,21 @@ describe('detectInstalledEditors', () => {
     expect(detected).not.toContain('windsurf');
   });
 
-  it('returns all supported editors when all editor config dirs exist', () => {
+  it('returns all existing-editor targets when their config dirs exist (excluding claude-desktop stub)', () => {
+    // claude-desktop is registered in ALL_EDITOR_IDS at US-001 time but its
+    // configPath resolves to a non-existent sentinel path so detection never
+    // fires on it. Later US-003 wires the real configPath (macOS / Windows)
+    // and its detection becomes asserted in the dedicated Claude Desktop
+    // describe block.
     mkdirSync(join(testDir, '.cursor'), { recursive: true });
     mkdirSync(join(testDir, '.vscode'), { recursive: true });
     mkdirSync(join(testDir, '.codex'), { recursive: true });
     mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
     const detected = detectInstalledEditors(testDir, fakeHome);
-    expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
+    expect(detected).toEqual(
+      expect.arrayContaining(['claude', 'cursor', 'vscode', 'codex', 'windsurf']),
+    );
+    expect(detected).not.toContain('claude-desktop');
     expect(detected).toHaveLength(5);
   });
 

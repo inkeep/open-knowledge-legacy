@@ -316,7 +316,7 @@ function writeEditorMcpConfig(
     ...config,
     [target.topLevelKey]: {
       ...servers,
-      [MCP_SERVER_NAME]: target.buildEntry(),
+      [MCP_SERVER_NAME]: target.buildEntry(cwd),
     },
   };
 
