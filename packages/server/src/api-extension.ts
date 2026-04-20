@@ -27,6 +27,7 @@ import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -515,7 +516,9 @@ export function extractHeadings(content: string): HeadingEntry[] {
 
   const headings: HeadingEntry[] = [];
   const slugCounts = new Map<string, number>();
+  const isInCodeFence = createCodeFenceTracker();
   for (const line of body.split('\n')) {
+    if (isInCodeFence(line)) continue;
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();

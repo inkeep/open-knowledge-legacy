@@ -100,6 +100,7 @@ export type {
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
+export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,
