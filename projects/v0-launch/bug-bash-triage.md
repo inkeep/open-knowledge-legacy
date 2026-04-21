@@ -29,7 +29,7 @@ Prioritize these for V0 launch scope decisions. No PR, no in-flight spec, no tic
 
 | #  | Item                                                              | Reporter(s)   | Status | Notes                                                                          | Owner                                                                                                           |
 | -- | ----------------------------------------------------------------- | ------------- | ------ | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| 1  | Collab icon and Claude icon overlapping in top-right              | Justin        | 🔵     | PR #246 (open, 2026-04-21) fixes this directly — `-space-x-1.5` → `gap-1.5` + sectioned bar with divider         | Andrew                                                                                                          |
+| 1  | Collab icon and Claude icon overlapping in top-right              | Justin        | 🔵     | PR #246 (open, 2026-04-21) fixes the visual overlap directly — `-space-x-1.5` → `gap-1.5` + sectioned bar with divider. PR #222 (draft, Nick → Miles) — agent-identity & attribution foundation spec: per-session origin (F1) is the substrate that makes N concurrent agents actually distinguishable at the CRDT layer. | Miles                                                                                                           |
 | 2  | `index.md` hard to locate as sidebar fills with pages             | Justin        | ⬜      | Needs distinct root affordance (pinned, bold, separator, icon)                 | Tim                                                                                                             |
 | 3  | Can't scroll when many nested files in sidebar                    | Shagun        | ⬜      | Sidebar scroll container broken past viewport height                           | Sarah                                                                                                           |
 | 4  | "Outgoing Links" panel opens empty tab                            | HeeGun        | ⬜      | ForwardLinks panel bug; nav target missing or wrong                            | Mike"failed to fetch"\
@@ -47,7 +47,7 @@ reproduce                                                                       
 | 15 | "Install MCP for all coding agents at once"                       | Nick          | 🟡     | PR #209 (Codex), PR #221 (Claude Desktop + Windsurf global), PR #207 (routing + user-scope) all merged; [[specs/2026-04-18-mcp-install-harness-coverage/SPEC]] + PR #223 (draft) covers harness gaps. One-shot multi-editor install still open. | Andrew                                                                                                          |
 | 16 | "Why do we need MCP opt-in at all?"                               | Nick          | ⬜      | Cursor security model blocks auto-enable (noted in transcript)                 | Andrew (requires investigation) Nick has notes                                                                  |
 | 17 | Agent control from UI (tell agent to create page for broken link) | Justin, Miles | ⬜      | Requires UI→MCP back-channel; no spec                                          | defer                                                                                                           |
-| 18 | Multi-parallel-agent follow-along UX not designed                 | Andrew        | ⬜      | Related to [[specs/2026-04-21-multi-agent-presence/SPEC]] but distinct problem |                                                                                                                 |
+| 18 | Multi-parallel-agent follow-along UX not designed                 | Andrew        | ⬜      | Related to [[specs/2026-04-21-multi-agent-presence/SPEC]] but distinct problem | Miles                                                                                                           |
 | 19 | Tool for agent to know what page you are looking at               |               |        | potential future, user activity tool, not just current page                    | Tim                                                                                                             |
 
 ## 2) Not addressed — verbal-only (missing from written sheet)
@@ -80,7 +80,9 @@ Two design proposals in flight that would collapse multiple items from sections 
 
 **Covers:** #17, #18, sheet-rows for Tim/Andrew presence overlap, Justin divert-current-page, Miles Cursor-nav-slow, Nick agent-shouldn't-navigate.
 
-**Prerequisite:** [[specs/2026-04-21-multi-agent-presence/SPEC]] — substrate implementation in PR #246 (open, 2026-04-21); landing unblocks the Activity sidebar surface.
+**Prerequisite:** [[specs/2026-04-21-multi-agent-presence/SPEC]] — substrate implementation in PR #246 (open, 2026-04-21); landing unblocks the Activity sidebar surface. Foundation spec [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] in PR #222 (draft, handed off to Miles) provides per-session CRDT identity (F1) and lifecycle cleanup (F2) that presence depends on for ghost-agent eviction + distinguishability.
+
+**Owner:** Miles (presence + agent-identity foundation)
 
 **Proposal:** Kill auto-navigation. Detect embedded viewer via User-Agent (`Cursor/`, `Claude/`, `Codex/`). If embedded → open Activity sidebar (live git-diff of the agent's edits, click to navigate). If standalone → agent glows in top-right presence indicators.
 
@@ -108,7 +110,7 @@ These are in the sheet but have been addressed by recent commits or Linear ticke
 | Reload needed when folders added                                       | Miles                 | Same CC1 push primitive (PRD-6499)                                                                        | ✅                                                                                                                 |
 | `<!-- open-knowledge:begin -->` confusion                              | Nick                  | Clarified in-meeting as intentional init marker — not a bug                                               | ✅                                                                                                                 |
 | GitHub auth — `allowUnsafeCredentialHelper`, keychain, callback window | Andrew, HeeGun, Miles | PR #219 (fix simple git auth and stream reader, 2026-04-20)                                               | 🟡 Verify against original reproductions — HeeGun's `exit code 1` and device-modal-no-success may still reproduce |
-| Multi-agent presence — Claude + Cursor share one slot                  | Tim, Andrew           | [[specs/2026-04-21-multi-agent-presence/SPEC]] + PR #246 (open, 2026-04-21)                               | 🔵 Spec scope-frozen; implementation PR open (unify on `__system__` awareness)                                    |
+| Multi-agent presence — Claude + Cursor share one slot                  | Tim, Andrew           | [[specs/2026-04-21-multi-agent-presence/SPEC]] + PR #246 (open); [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] + PR #222 (draft, owner Miles) | 🔵 Presence substrate PR open; agent-identity foundation spec in draft (Miles)                                    |
 | Auto-navigation diverts current page                                   | Justin, Miles, Nick   | `pinnedDoc` / `pin` / `unpin` in `DocumentContext.tsx` exists; Slack proposal (Cluster A) is the full fix | 🟡 Workaround shipped, root fix not built                                                                         |
 | Single-shot "install MCP for coding agent"                             | Nick                  | PR #209 (Codex MCP), PR #179 (multi-editor injection)                                                     | 🟡 Per-agent install; "all at once" still open                                                                    |
 
@@ -118,7 +120,7 @@ These are in the sheet but have been addressed by recent commits or Linear ticke
 
 1. **Scope decision:** decide which of section 1 + 2 are V0-launch blockers vs post-launch. Candidates for blocker: V1, V2, V3, V6, V7, V10, V11 — each is a flat-out failure during a fresh onboarding.
 2. **Promote verbal items to Linear:** section 2 (V1–V15) should get tickets so they stop living only here. Each row maps 1:1 to a ticket.
-3. **Land multi-agent-presence PR #246** ([[specs/2026-04-21-multi-agent-presence/SPEC]]) — substrate is scope-frozen and implemented; Activity sidebar (Cluster A's read surface) is the follow-up spec.
+3. **Land multi-agent-presence PR #246** ([[specs/2026-04-21-multi-agent-presence/SPEC]]) — substrate is scope-frozen and implemented; Activity sidebar (Cluster A's read surface) is the follow-up spec. Miles owns the presence surface going forward, including the agent-identity foundation spec in PR #222 which underpins V0-14 agent-undo + attribution completeness.
 4. **Agent-prompting sweep** (items #7, #12, #13): consolidate into one pass on `AGENTS.md` + init-injected instructions — these are prompt fixes, not code fixes, and can ship same-day.
 5. **Verify PR #219 coverage** against the three original GitHub-auth reproductions before closing the cluster.
 
