@@ -37,7 +37,7 @@ import { basename, resolve } from 'node:path';
  * Navigator windows use a static "Open Knowledge" title set in
  * `navigator-window.ts` — no project context there to prepend.
  */
-export function formatEditorTitle(projectName: string): string {
+function formatEditorTitle(projectName: string): string {
   return `${projectName} — Open Knowledge`;
 }
 
@@ -78,7 +78,7 @@ export interface ServerLockMetadataLike {
   worktreeRoot: string;
 }
 
-export interface ProjectContext {
+interface ProjectContext {
   projectPath: string;
   projectName: string;
   port: number;
@@ -98,7 +98,7 @@ export interface ProjectContext {
   ownsServer: boolean;
 }
 
-export interface CreateProjectWindowOpts {
+interface CreateProjectWindowOpts {
   projectPath: string;
 }
 

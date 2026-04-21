@@ -3,7 +3,7 @@ export type ActiveClickLevel = Exclude<ClickLevel, 0>;
 
 export const RAGE_WINDOW_MS = 600;
 export const IDLE_RESET_MS = 1000;
-export const MAX_LEVEL: ActiveClickLevel = 3;
+const MAX_LEVEL: ActiveClickLevel = 3;
 
 export function nextClickLevel(
   previousLevel: ClickLevel,

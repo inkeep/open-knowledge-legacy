@@ -53,5 +53,3 @@ export interface RequestChannels {
   /** Request main to close the current project's window. */
   'ok:project:close': { args: []; result: undefined };
 }
-
-export type RequestChannelName = keyof RequestChannels;

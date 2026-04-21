@@ -12,7 +12,7 @@
  * real Electron runtime — the shape we consume is a single method.
  */
 
-export interface DialogLike {
+interface DialogLike {
   showOpenDialog(opts: {
     properties: ('openDirectory' | 'createDirectory' | 'openFile' | 'multiSelections')[];
   }): Promise<{ canceled: boolean; filePaths: string[] }>;

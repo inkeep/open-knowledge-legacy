@@ -16,7 +16,7 @@
 
 import type { BrowserWindowLike, WindowManagerDeps } from './window-manager.ts';
 
-export interface NavigatorDeps {
+interface NavigatorDeps {
   createWindow: WindowManagerDeps['createWindow'];
   /** Path to the built renderer HTML (used in packaged/prod mode). */
   rendererEntryPath: string;

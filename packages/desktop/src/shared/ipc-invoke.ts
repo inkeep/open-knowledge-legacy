@@ -29,5 +29,3 @@ export function createInvoker(ipc: IpcRenderer) {
     ...args: RequestChannels[K]['args']
   ): Promise<RequestChannels[K]['result']> => ipc.invoke(channel, ...args);
 }
-
-export type TypedInvoker = ReturnType<typeof createInvoker>;

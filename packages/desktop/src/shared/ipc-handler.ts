@@ -38,5 +38,3 @@ export function createHandler(ipc: IpcMain) {
     });
   };
 }
-
-export type TypedHandler = ReturnType<typeof createHandler>;

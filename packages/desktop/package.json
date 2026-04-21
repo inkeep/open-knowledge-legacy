@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
-    "@inkeep/open-knowledge-server": "workspace:*"
+    "@inkeep/open-knowledge-server": "workspace:*",
+    "@napi-rs/keyring": "^1.2.0"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

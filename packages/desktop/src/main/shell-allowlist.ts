@@ -17,7 +17,7 @@ const ALLOWED_SCHEMES: ReadonlySet<string> = new Set([
   'openknowledge:',
 ]);
 
-export interface AllowlistResult {
+interface AllowlistResult {
   ok: boolean;
   reason?: string;
 }
