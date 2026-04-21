@@ -468,3 +468,17 @@ export function parseKeepaliveConnectionId(url: string | undefined): string | nu
     return null;
   }
 }
+
+/**
+ * Translate a raw agentId (as sent by the MCP keepalive URL or by HTTP
+ * body `agentId` field) into the broadcaster-map key used by
+ * `AgentPresenceBroadcaster.setPresence`. The `agent-` prefix is the
+ * server's internal convention (see `extractAgentIdentity` in
+ * `api-extension.ts`); keeping the transform here ensures the close
+ * handler and the write handlers produce identical keys.
+ *
+ * Exported for unit testing + test-harness use.
+ */
+export function toBroadcasterKey(rawAgentId: string): string {
+  return `agent-${rawAgentId}`;
+}
