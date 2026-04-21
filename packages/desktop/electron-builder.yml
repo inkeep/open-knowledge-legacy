@@ -57,6 +57,15 @@ mac:
   # smoke path for M2 scaffolding before cert procurement completes.
 
 dmg:
+  # `dmg.sign: true` is already the electron-builder default — kept explicit to
+  # document that we've thought about the unsigned path. `build:mac:unsigned`
+  # passes `-c.mac.identity=null`, which cascades: `dmg-builder/out/dmg.js:63-69`
+  # reads `qualifier = packager.platformSpecificBuildOptions.identity` and
+  # early-returns ("explicitly disabled if set to null") without attempting
+  # a keychain lookup. So `dmg.sign: true` + `mac.identity=null` = no-op on
+  # the DMG codesign step, no cert required. Verify before upgrading
+  # electron-builder or dmg-builder: confirm the null-identity short-circuit
+  # is still present in `dmg-builder/out/dmg.js:signDmg()`.
   sign: true
 
 # Flip fuses (D17 LOCKED, spec §8.9) on the packed .app before code signing.
