@@ -50,6 +50,7 @@ import type { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
 import type * as Y from 'yjs';
+import { mark } from '@/lib/perf';
 
 /**
  * Emergency kill switch. When `false`:
@@ -69,6 +70,47 @@ export const CACHE_ENABLED = true;
  * ASK_FIRST per V2 SPEC §16.
  */
 export const MAX_CACHE = 10;
+
+/**
+ * FR3 primary gate: view-count threshold above which a doc refuses to cache.
+ * Derived from `grey-zone-and-prod-floor.md` §Part A scaling fit:
+ * ~2 ms / view marginal cost × 50 views ≈ 100 ms CPW delta — comfortably
+ * within the "Acceptable" band. Keeps V2 savings targeted at docs where
+ * the editor can actually be cached cheaply; multi-hundred-view docs
+ * fall through to pre-V2 destroy-on-unmount behavior (no cache bloat).
+ */
+export const VIEW_COUNT_CACHE_THRESHOLD = 50;
+
+/**
+ * FR3 secondary gate: byte-count threshold for multi-MB prose-only docs
+ * whose view counts are low but whose raw size would still inflate the
+ * cache's memory footprint. Matches the existing LARGE_DOC_CHAR_THRESHOLD
+ * in `EditorActivityPool`.
+ */
+export const BYTES_CACHE_THRESHOLD = 500_000;
+
+/** Per-doc size stats captured at mount time to decide whether to cache. */
+export interface SizeStats {
+  /** Count of React MarkView/NodeView targets in the editor at parse time. */
+  viewCount: number;
+  /** Y.Text byte-length at mount time (used as a proxy for on-disk size). */
+  bytes: number;
+}
+
+/**
+ * FR3 gate: evaluated ONCE at mount time. Entry is tagged `__uncached`
+ * when this returns false, so all later park/evict/LRU transitions
+ * correctly skip caching operations for the entry.
+ *
+ * Post-mount size changes (user edits push viewCount past 50) do NOT
+ * evict an already-cached entry. Eviction is purely LRU-driven per
+ * V2 SPEC §6 FR3 — "gate evaluated ONCE at mount time".
+ */
+export function shouldCacheEditor(stats: SizeStats): boolean {
+  if (stats.viewCount >= VIEW_COUNT_CACHE_THRESHOLD) return false;
+  if (stats.bytes > BYTES_CACHE_THRESHOLD) return false;
+  return true;
+}
 
 /** TipTap editor cache entry. */
 export interface TiptapCacheEntry {
@@ -132,12 +174,21 @@ export interface MountTiptapParams {
   docName: string;
   container: HTMLElement;
   factory: TiptapFactory;
+  /**
+   * Size stats at mount time. When provided and `shouldCacheEditor` returns
+   * false, the returned entry is `__uncached: true` — park() will destroy
+   * it rather than stashing it in the cache (FR3 pre-V2 fallthrough).
+   * When omitted, the editor enters the cache unconditionally (legacy path
+   * for callers that don't measure size).
+   */
+  sizeStats?: SizeStats;
 }
 
 export interface MountCmParams {
   docName: string;
   container: HTMLElement;
   factory: CmFactory;
+  sizeStats?: SizeStats;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +201,25 @@ const cmCache = new Map<string, CmCacheEntry>();
 /** LRU order — most-recently-used at the END; oldest at index 0. */
 const tiptapLru: string[] = [];
 const cmLru: string[] = [];
+
+/**
+ * Shared activity-mount list across TipTap + CM caches. Single source of
+ * truth for "which cached docs are currently Activity-visible." The
+ * consumer (EditorActivityPool, US-008) computes the list as the top
+ * ACTIVITY_MOUNT_LIMIT MRU entries and calls setActivityMountList on
+ * every change.
+ *
+ * FR3b — Activity-hidden observer CPU cap:
+ *   Cached docs NOT in this list have their HocuspocusProvider
+ *   disconnected so peer CRDT updates stop arriving. Local Y.js observers
+ *   still fire (Y.Doc-driven), preserving user-local edit UX. When a doc
+ *   is re-promoted into the list, we reconnect the provider.
+ *
+ * Providers are shared between TipTap + CM entries for the same docName
+ * (ProviderPool owns the provider; both caches hold refs). So this
+ * tracking is keyed by docName, not by entry kind.
+ */
+let activityMountList: ReadonlySet<string> = new Set();
 
 /**
  * Lazy detached parking node. Keeps the detached DOM reachable (helps W3C
@@ -189,10 +259,19 @@ function tryGetParkingNode(): HTMLElement | null {
  * The returned entry carries `__uncached: true` so park() destroys it.
  */
 export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
-  const { docName, container, factory } = params;
+  const { docName, container, factory, sizeStats } = params;
 
-  if (!CACHE_ENABLED) {
+  // Size gate + kill-switch — either path returns an __uncached entry so
+  // park() destroys it (pre-V2 destroy-on-unmount behavior).
+  const gateRefuses = sizeStats ? !shouldCacheEditor(sizeStats) : false;
+  if (!CACHE_ENABLED || gateRefuses) {
     const fresh = factory(container);
+    mark('ok/cache/miss', {
+      docName,
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+      reason: !CACHE_ENABLED ? 'kill-switch' : 'size-gate',
+    });
     return {
       editor: fresh.editor,
       ydoc: fresh.ydoc,
@@ -217,6 +296,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     } catch {
       // Editor may be mid-transition or destroyed; focus is best-effort.
     }
+    mark('ok/cache/hit', { docName, kind: 'tiptap' });
     return existing;
   }
 
@@ -239,6 +319,13 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
   };
   tiptapCache.set(docName, entry);
   touchLru(tiptapLru, docName);
+  mark('ok/cache/miss', {
+    docName,
+    viewCount: sizeStats?.viewCount ?? -1,
+    bytes: sizeStats?.bytes ?? -1,
+    reason: 'cold',
+    kind: 'tiptap',
+  });
   return entry;
 }
 
@@ -311,6 +398,7 @@ export function evictTiptapEditor(docName: string): boolean {
   tiptapCache.delete(docName);
   const lruIdx = tiptapLru.indexOf(docName);
   if (lruIdx !== -1) tiptapLru.splice(lruIdx, 1);
+  mark('ok/cache/evict', { docName, kind: 'tiptap' });
   return true;
 }
 
@@ -326,10 +414,18 @@ export function evictTiptapEditor(docName: string): boolean {
  * When CACHE_ENABLED=false: always constructs via factory, never caches.
  */
 export function mountCmEditor(params: MountCmParams): CmCacheEntry {
-  const { docName, container, factory } = params;
+  const { docName, container, factory, sizeStats } = params;
 
-  if (!CACHE_ENABLED) {
+  const gateRefuses = sizeStats ? !shouldCacheEditor(sizeStats) : false;
+  if (!CACHE_ENABLED || gateRefuses) {
     const fresh = factory(container);
+    mark('ok/cache/miss', {
+      docName,
+      viewCount: sizeStats?.viewCount ?? -1,
+      bytes: sizeStats?.bytes ?? -1,
+      reason: !CACHE_ENABLED ? 'kill-switch' : 'size-gate',
+      kind: 'cm',
+    });
     return {
       view: fresh.view,
       ydoc: fresh.ydoc,
@@ -352,6 +448,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     } catch {
       // best-effort focus
     }
+    mark('ok/cache/hit', { docName, kind: 'cm' });
     return existing;
   }
 
@@ -372,6 +469,13 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
   };
   cmCache.set(docName, entry);
   touchLru(cmLru, docName);
+  mark('ok/cache/miss', {
+    docName,
+    viewCount: sizeStats?.viewCount ?? -1,
+    bytes: sizeStats?.bytes ?? -1,
+    reason: 'cold',
+    kind: 'cm',
+  });
   return entry;
 }
 
@@ -431,6 +535,7 @@ export function evictCmEditor(docName: string): boolean {
   cmCache.delete(docName);
   const lruIdx = cmLru.indexOf(docName);
   if (lruIdx !== -1) cmLru.splice(lruIdx, 1);
+  mark('ok/cache/evict', { docName, kind: 'cm' });
   return true;
 }
 
@@ -481,18 +586,91 @@ function touchLru(lru: string[], docName: string): void {
 }
 
 /**
- * Find the oldest entry in `lru` that is NOT the one being mounted (which
- * isn't in the cache yet, but we guard defensively). Returns null if the
- * LRU is empty or only contains the mounting docName.
+ * Find the oldest entry in `lru` that is NOT the one being mounted AND
+ * NOT currently Activity-mounted. Returns null if no evictable candidate
+ * exists (rare in practice — MAX_CACHE=10 with ACTIVITY_MOUNT_LIMIT=3
+ * always leaves 7 parkable slots).
  *
- * US-002 will extend this to skip Activity-mounted entries; for US-001
- * this is pure-LRU.
+ * If every entry is Activity-mounted (edge case: user somehow navigated
+ * to more tabs than the limit without setActivityMountList being called),
+ * fall back to pure-LRU ordering so capacity enforcement isn't blocked.
  */
 function findEvictable(lru: string[], mountingDocName: string): string | null {
+  // Prefer NON-active evictees.
+  for (const docName of lru) {
+    if (docName === mountingDocName) continue;
+    if (activityMountList.has(docName)) continue;
+    return docName;
+  }
+  // Degenerate fallback — pure LRU.
   for (const docName of lru) {
     if (docName === mountingDocName) continue;
     return docName;
   }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Activity-mount list + FR3b provider connect/disconnect
+// ---------------------------------------------------------------------------
+
+/**
+ * Update the activity-mount list. Any cached editor whose docName was in
+ * the previous list but is NOT in the new list has its HocuspocusProvider
+ * disconnected (peer CRDT updates stop arriving — FR3b observer CPU cap).
+ * Any docName newly promoted from hidden → active has its provider
+ * reconnected.
+ *
+ * Single-writer API: called by `EditorActivityPool` on every
+ * `computeActivityMountList` change (US-008 integration).
+ *
+ * Transitions are keyed by docName because the HocuspocusProvider is
+ * shared across the TipTap + CM cache entries for a given doc (owned
+ * by ProviderPool). Connect/disconnect fires at most once per doc per
+ * transition, regardless of which/how-many cache kinds hold a ref.
+ */
+export function setActivityMountList(docNames: readonly string[]): void {
+  const prev = activityMountList;
+  const next = new Set(docNames);
+
+  // Demotion — fired for docs that were active, now aren't.
+  for (const docName of prev) {
+    if (next.has(docName)) continue;
+    const provider = findProvider(docName);
+    if (!provider) continue;
+    try {
+      provider.disconnect();
+    } catch {
+      // provider may already be in tear-down — safe to ignore
+    }
+    mark('ok/cache/disconnect', { docName });
+  }
+
+  // Promotion — fired for docs that are newly active.
+  for (const docName of next) {
+    if (prev.has(docName)) continue;
+    const provider = findProvider(docName);
+    if (!provider) continue;
+    try {
+      // connect() returns a Promise but we don't await; sync happens
+      // asynchronously and the existing `'synced'` listener will re-run
+      // setupObservers' initialization idempotently.
+      void provider.connect();
+    } catch {
+      // provider may be destroyed — safe to ignore
+    }
+    mark('ok/cache/connect', { docName });
+  }
+
+  activityMountList = next;
+}
+
+/** Lookup the provider for a docName via either cache (they share the ref). */
+function findProvider(docName: string): HocuspocusProvider | null {
+  const tip = tiptapCache.get(docName);
+  if (tip) return tip.provider;
+  const cm = cmCache.get(docName);
+  if (cm) return cm.provider;
   return null;
 }
 
@@ -519,9 +697,15 @@ export function __peekCm(docName: string): CmCacheEntry | undefined {
   return cmCache.get(docName);
 }
 
+/** Test-only: inspect the current activity mount list. */
+export function __getActivityMountList(): string[] {
+  return [...activityMountList];
+}
+
 /** Test-only: reset all cache state. Destroys live entries. */
 export function __resetCache(): void {
   for (const docName of [...tiptapCache.keys()]) evictTiptapEditor(docName);
   for (const docName of [...cmCache.keys()]) evictCmEditor(docName);
+  activityMountList = new Set();
   // parking node lives on — it's a plain detached div with no listeners.
 }

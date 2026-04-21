@@ -27,11 +27,13 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
 import * as Y from 'yjs';
 import {
+  __getActivityMountList,
   __getCacheOrder,
   __getCacheSize,
   __peekCm,
   __peekTiptap,
   __resetCache,
+  BYTES_CACHE_THRESHOLD,
   CACHE_ENABLED,
   type CmCacheEntry,
   evictCmEditor,
@@ -41,7 +43,10 @@ import {
   mountTiptapEditor,
   parkCmEditor,
   parkTiptapEditor,
+  setActivityMountList,
+  shouldCacheEditor,
   type TiptapCacheEntry,
+  VIEW_COUNT_CACHE_THRESHOLD,
 } from './editor-cache';
 
 // ---------------------------------------------------------------------------
@@ -141,14 +146,23 @@ function makeFakeCmView(dom: FakeNode): { view: EditorView; spies: FakeCmViewSpi
 
 interface FakeProviderSpies {
   destroyCalls: number;
+  connectCalls: number;
+  disconnectCalls: number;
 }
 
 function makeFakeProvider(ydoc: Y.Doc): { provider: HocuspocusProvider; spies: FakeProviderSpies } {
-  const spies: FakeProviderSpies = { destroyCalls: 0 };
+  const spies: FakeProviderSpies = { destroyCalls: 0, connectCalls: 0, disconnectCalls: 0 };
   const provider = {
     document: ydoc,
     destroy() {
       spies.destroyCalls++;
+    },
+    connect() {
+      spies.connectCalls++;
+      return Promise.resolve();
+    },
+    disconnect() {
+      spies.disconnectCalls++;
     },
   } as unknown as HocuspocusProvider;
   return { provider, spies };
@@ -867,5 +881,337 @@ describe('Module-level cache survives simulated remounts', () => {
     expect(__getCacheSize('tiptap')).toBe(1);
     // Factory called exactly once.
     expect(h.factoryCallCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-002: Size-aware cache policy (FR3)
+// ---------------------------------------------------------------------------
+
+describe('US-002 constants', () => {
+  test('VIEW_COUNT_CACHE_THRESHOLD = 50 (matches SPEC §6 FR3 + grey-zone curve)', () => {
+    expect(VIEW_COUNT_CACHE_THRESHOLD).toBe(50);
+  });
+  test('BYTES_CACHE_THRESHOLD = 500_000 (matches LARGE_DOC_CHAR_THRESHOLD)', () => {
+    expect(BYTES_CACHE_THRESHOLD).toBe(500_000);
+  });
+});
+
+describe('shouldCacheEditor — pure gate', () => {
+  test('small doc: cache admitted', () => {
+    expect(shouldCacheEditor({ viewCount: 5, bytes: 8_000 })).toBe(true);
+  });
+  test('exactly at viewCount threshold: cache refused (>= gate)', () => {
+    expect(shouldCacheEditor({ viewCount: 50, bytes: 1 })).toBe(false);
+  });
+  test('one below viewCount threshold: cache admitted', () => {
+    expect(shouldCacheEditor({ viewCount: 49, bytes: 1 })).toBe(true);
+  });
+  test('exactly at bytes threshold: cache admitted (> gate, not >=)', () => {
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 500_000 })).toBe(true);
+  });
+  test('one above bytes threshold: cache refused', () => {
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 500_001 })).toBe(false);
+  });
+  test('both gates active: refuse on any violation', () => {
+    expect(shouldCacheEditor({ viewCount: 100, bytes: 1_000_000 })).toBe(false);
+  });
+});
+
+describe('mountTiptapEditor — size gate falls through to __uncached', () => {
+  beforeEach(() => __resetCache());
+  afterEach(() => __resetCache());
+
+  test('gate-refused mount: entry is __uncached and NOT stored in cache', () => {
+    const h = makeTiptapHarness('big-doc');
+    const entry = mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 100, bytes: 1_000_000 },
+    });
+    expect(entry.__uncached).toBe(true);
+    expect(__getCacheSize('tiptap')).toBe(0);
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
+  test('gate-admitted mount: entry IS cached (no __uncached tag)', () => {
+    const h = makeTiptapHarness('small-doc');
+    const entry = mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 5, bytes: 8_000 },
+    });
+    expect(entry.__uncached).toBeUndefined();
+    expect(__getCacheSize('tiptap')).toBe(1);
+    expect(__peekTiptap(h.docName)).toBe(entry);
+  });
+
+  test('omitted sizeStats: entry is cached (legacy callers default to cache)', () => {
+    const h = makeTiptapHarness('legacy-doc');
+    const entry = mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(entry.__uncached).toBeUndefined();
+    expect(__getCacheSize('tiptap')).toBe(1);
+  });
+
+  test('gate-refused entry: park() destroys (pre-V2 fallthrough)', () => {
+    const h = makeTiptapHarness('big-doc');
+    const entry = mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 100, bytes: 0 },
+    });
+    expect(h.spies.destroyCalls).toBe(0);
+    parkTiptapEditor(entry);
+    expect(h.spies.destroyCalls).toBe(1);
+  });
+});
+
+describe('mountCmEditor — size gate mirror of TipTap', () => {
+  beforeEach(() => __resetCache());
+  afterEach(() => __resetCache());
+
+  test('CM gate-refused entry: park destroys', () => {
+    const h = makeCmHarness('cm-big');
+    const entry = mountCmEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 200, bytes: 100 },
+    });
+    expect(entry.__uncached).toBe(true);
+    expect(__getCacheSize('cm')).toBe(0);
+    parkCmEditor(entry);
+    expect(h.spies.destroyCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-002: Activity-mount list + FR3b provider connect/disconnect
+// ---------------------------------------------------------------------------
+
+describe('setActivityMountList — connect/disconnect transitions', () => {
+  beforeEach(() => __resetCache());
+  afterEach(() => __resetCache());
+
+  test('promotion: newly active doc triggers provider.connect()', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(h.providerSpies.connectCalls).toBe(0);
+
+    setActivityMountList(['doc-a']);
+    expect(h.providerSpies.connectCalls).toBe(1);
+    expect(__getActivityMountList()).toEqual(['doc-a']);
+  });
+
+  test('demotion: doc falling out of list triggers provider.disconnect()', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    setActivityMountList(['doc-a']);
+    expect(h.providerSpies.connectCalls).toBe(1);
+
+    setActivityMountList([]);
+    expect(h.providerSpies.disconnectCalls).toBe(1);
+    expect(__getActivityMountList()).toEqual([]);
+  });
+
+  test('stable doc: still in list on next call, no extra connect/disconnect', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    setActivityMountList(['doc-a']);
+    expect(h.providerSpies.connectCalls).toBe(1);
+
+    // Same list again — idempotent.
+    setActivityMountList(['doc-a']);
+    expect(h.providerSpies.connectCalls).toBe(1);
+    expect(h.providerSpies.disconnectCalls).toBe(0);
+  });
+
+  test('mixed transition: one demoted + one promoted in a single call', () => {
+    const a = makeTiptapHarness('doc-a');
+    const b = makeTiptapHarness('doc-b');
+    mountTiptapEditor({
+      docName: a.docName,
+      container: a.container as unknown as HTMLElement,
+      factory: a.factory as unknown as (el: HTMLElement) => ReturnType<typeof a.factory>,
+    });
+    mountTiptapEditor({
+      docName: b.docName,
+      container: b.container as unknown as HTMLElement,
+      factory: b.factory as unknown as (el: HTMLElement) => ReturnType<typeof b.factory>,
+    });
+    setActivityMountList(['doc-a']);
+    expect(a.providerSpies.connectCalls).toBe(1);
+    expect(b.providerSpies.connectCalls).toBe(0);
+
+    // Swap: a out, b in.
+    setActivityMountList(['doc-b']);
+    expect(a.providerSpies.disconnectCalls).toBe(1);
+    expect(b.providerSpies.connectCalls).toBe(1);
+  });
+
+  test('unknown docName in list: no crash, no connect (provider not yet in cache)', () => {
+    setActivityMountList(['doc-a']);
+    // No entry for doc-a; should not throw.
+    expect(__getActivityMountList()).toEqual(['doc-a']);
+  });
+
+  test('CM-only cache entry: provider transitions still fire (same docName)', () => {
+    // Provider is shared between TipTap+CM for a given doc. Verify CM-only
+    // is sufficient to resolve the provider ref.
+    const h = makeCmHarness('cm-only-doc');
+    mountCmEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    setActivityMountList(['cm-only-doc']);
+    expect(h.providerSpies.connectCalls).toBe(1);
+  });
+});
+
+describe('LRU eviction respects activity-mount list (never evicts active doc)', () => {
+  beforeEach(() => __resetCache());
+  afterEach(() => __resetCache());
+
+  test('when cache is full, evicts oldest NON-active entry', () => {
+    // Mount MAX_CACHE entries, mark the oldest (doc-0) as Activity-mounted.
+    const harnesses: TiptapHarness[] = [];
+    for (let i = 0; i < MAX_CACHE; i++) {
+      const h = makeTiptapHarness(`doc-${i}`);
+      harnesses.push(h);
+      mountTiptapEditor({
+        docName: h.docName,
+        container: h.container as unknown as HTMLElement,
+        factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      });
+    }
+    // Pin doc-0 in Activity mount list.
+    setActivityMountList(['doc-0']);
+
+    // Mount 11th — the oldest NON-active is doc-1.
+    const extra = makeTiptapHarness('doc-extra');
+    mountTiptapEditor({
+      docName: extra.docName,
+      container: extra.container as unknown as HTMLElement,
+      factory: extra.factory as unknown as (el: HTMLElement) => ReturnType<typeof extra.factory>,
+    });
+
+    expect(__peekTiptap('doc-0')).toBeDefined(); // Activity-mounted — spared
+    expect(__peekTiptap('doc-1')).toBeUndefined(); // Oldest non-active — evicted
+    expect(harnesses[0].spies.destroyCalls).toBe(0);
+    expect(harnesses[1].spies.destroyCalls).toBe(1);
+  });
+
+  test('degenerate fallback: all entries active → LRU picks the oldest anyway', () => {
+    const harnesses: TiptapHarness[] = [];
+    for (let i = 0; i < MAX_CACHE; i++) {
+      const h = makeTiptapHarness(`doc-${i}`);
+      harnesses.push(h);
+      mountTiptapEditor({
+        docName: h.docName,
+        container: h.container as unknown as HTMLElement,
+        factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      });
+    }
+    // Pathological: all 10 docs active (beyond ACTIVITY_MOUNT_LIMIT).
+    setActivityMountList(harnesses.map((x) => x.docName));
+
+    const extra = makeTiptapHarness('doc-extra');
+    mountTiptapEditor({
+      docName: extra.docName,
+      container: extra.container as unknown as HTMLElement,
+      factory: extra.factory as unknown as (el: HTMLElement) => ReturnType<typeof extra.factory>,
+    });
+    // Degenerate fallback kicks in — something gets evicted even though all active.
+    expect(__getCacheSize('tiptap')).toBe(MAX_CACHE);
+  });
+});
+
+describe('US-002 telemetry marks', () => {
+  // Telemetry is side-effect only — the collector's in-test observability
+  // is via performance.getEntriesByName. We spot-check a few key paths.
+  beforeEach(() => {
+    __resetCache();
+    try {
+      performance.clearMeasures();
+    } catch {
+      // some envs
+    }
+  });
+  afterEach(() => __resetCache());
+
+  test('mount emits ok/cache/hit on cache-hit path', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    // Cache hit.
+    mountTiptapEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const hits = performance.getEntriesByName('ok/cache/hit');
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('mount emits ok/cache/miss on cache-miss cold path', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    const misses = performance.getEntriesByName('ok/cache/miss');
+    expect(misses.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('evict emits ok/cache/evict', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    evictTiptapEditor(h.docName);
+    const evicts = performance.getEntriesByName('ok/cache/evict');
+    expect(evicts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('setActivityMountList emits ok/cache/connect + ok/cache/disconnect', () => {
+    const h = makeTiptapHarness('doc-a');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    setActivityMountList(['doc-a']);
+    const connects = performance.getEntriesByName('ok/cache/connect');
+    expect(connects.length).toBeGreaterThanOrEqual(1);
+
+    setActivityMountList([]);
+    const disconnects = performance.getEntriesByName('ok/cache/disconnect');
+    expect(disconnects.length).toBeGreaterThanOrEqual(1);
   });
 });
