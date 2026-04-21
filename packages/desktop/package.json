@@ -8,6 +8,8 @@
     "dev": "electron-vite dev --watch",
     "build:desktop": "electron-vite build",
     "build:dir": "bun run build:desktop && electron-builder --dir",
+    "build:mac": "bun run build:desktop && electron-builder --mac",
+    "build:mac:unsigned": "bun run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac -c.mac.identity=null",
     "postinstall": "node scripts/postinstall.mjs",
     "rebuild:native": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
@@ -19,6 +21,8 @@
     "@napi-rs/keyring": "^1.2.0"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.1",
+    "@electron/notarize": "^3.1.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.16.0",
     "@vitejs/plugin-react": "^5.0.4",

@@ -2,6 +2,14 @@ appId: com.inkeep.open-knowledge
 productName: Open Knowledge
 copyright: Copyright © 2026 Inkeep
 
+# Pin the Electron version explicitly — bun's workspace hoisting puts
+# node_modules/electron at repo root (not in packages/desktop/node_modules),
+# and electron-builder's auto-version-detection walks the package manifest
+# tree and refuses to infer from a caret range. electron-userland/electron-
+# builder#3984 is the canonical reference. Keep this in lockstep with the
+# "electron" devDep in packages/desktop/package.json.
+electronVersion: "41.2.1"
+
 directories:
   output: dist-desktop
   buildResources: build
@@ -39,7 +47,20 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  notarize: false
+  # Notarization is invoked from `scripts/afterSign.mjs` per spec §8.9 (custom
+  # afterSign pipeline) — NOT electron-builder's built-in notarize. Setting
+  # `mac.notarize: true` would double-notarize. The afterSign script gates on
+  # env vars (APPLE_ID/APPLE_TEAM_ID/APPLE_APP_SPECIFIC_PASSWORD or
+  # APPLE_API_KEY triplet) and skips gracefully when absent — the unsigned
+  # smoke path for M2 scaffolding before cert procurement completes.
+
+dmg:
+  sign: true
+
+# Flip fuses (D17 LOCKED, spec §8.9) on the packed .app before code signing.
+afterPack: scripts/afterPack.mjs
+# Post-sign: @electron/notarize → stapler validate → @electron/fuses read verify.
+afterSign: scripts/afterSign.mjs
 
 protocols:
   - name: Open Knowledge URL
