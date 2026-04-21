@@ -190,7 +190,6 @@ n/a — no web routes.
 | `ensureProjectGit`               | `git` binary not on PATH                                            | spawn ENOENT                            | Exit with R6 error message                        | CLI exits non-zero; user installs git |
 | `ensureProjectGit`               | No write permission in projectRoot                                  | spawn non-zero exit                     | Exit with R6 error                                | CLI exits non-zero; user fixes perms  |
 | `ensureProjectGit`               | Partial init (e.g., disk full)                                      | `.git/HEAD` missing after spawn success | Fail fast with generic git-init error             | User cleans up; retries               |
-| Legacy `.openknowledge/` warning | False-positive (user intentionally has that dir for non-OK reasons) | Can't disambiguate                      | Accept false positive; warning is non-destructive | User learns to ignore the warning     |
 | `resolveShadowDir`               | Called with relative path                                           | `resolve(projectRoot)` handles          | —                                                 | —                                     |
 
 ### Alternatives considered
@@ -249,7 +248,6 @@ n/a — no web routes.
   - Delete `ShadowRepoMode` type, simplify `resolveShadowDir`
   - Wire `ensureProjectGit` into `createServer`
   - Remove `.gitignore` auto-append in `initShadowRepo`
-  - Add legacy-dir warning
   - Wire disclosure into CLI preview block (extend `cli-init-clarity` rendering)
   - Update `packages/core/src/shadow-repo-layout.test.ts` (drop standalone tests)
   - Update `packages/server/src/shadow-repo.test.ts` (drop mode tests)

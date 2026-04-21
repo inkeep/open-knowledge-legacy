@@ -55,7 +55,7 @@ Post-change: the "null" case still exists transiently (between `ensureProjectGit
 - Line 895-901: fallback reinit on corruption check
 - NO direct reference to mode; standalone.ts does not branch on shadow location.
 
-Wiring: `ensureProjectGit(projectDir)` runs at the top of `initAsync()` BEFORE `initShadowRepo(projectDir)`. If it throws, `degraded.push('project-git')` and `initShadowRepo` is skipped.
+Wiring (D12 LOCKED): `ensureProjectGit(projectDir)` runs in `bootServer`'s pre-listen hook (`BootServerOptions.ensureProjectGitFn`) BEFORE `createServer()` is invoked and BEFORE `httpServer.listen()` binds. On failure, `ensureProjectGitFn` throws `ProjectGitInitError`; `bootServer` propagates the error out unswallowed (CLI's Commander action + Desktop's utility `setupUtility` error-IPC each surface R6). No degraded-mode fallback — see SPEC §10 D12 and §16 SCOPE. The Vite dev plugin invokes `ensureProjectGit(PROJECT_ROOT)` directly (not via `bootServer`) and on `ProjectGitInitError` logs `[dev] ensureProjectGit failed` + calls `process.exit(1)`. The integration test harness (`createTestServer`) calls `ensureProjectGit(contentDir)` before `createServer(...)` so every tmpdir-scoped test exercises the production auto-init path.
 
 ## 2. Test references to mode split
 
