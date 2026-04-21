@@ -188,7 +188,9 @@ Alternative credentials: App Store Connect API key — set `APPLE_API_KEY` (path
 
 ### CI
 
-`.github/workflows/desktop-build.yml` (manual `workflow_dispatch` for this iteration) runs the same flow on a `macos-14` runner and uploads the DMG + `latest-mac.yml` as a 14-day artifact. Wire the five secrets at Settings → Secrets and the workflow auto-upgrades from unsigned smoke to full signed+notarized output. Path-gated `pull_request` trigger is deferred until the signed path has been green at least once.
+`.github/workflows/desktop-build.yml` (manual `workflow_dispatch` for this iteration) runs the same flow on a `macos-14` runner and uploads the DMG + `latest-mac.yml` as a 14-day artifact. The workflow detects signing mode from `CSC_LINK`'s presence and routes accordingly — `build:mac` when set, `build:mac:unsigned` when absent — and encodes the mode in the artifact name (`open-knowledge-macos-signed-<sha>` vs `open-knowledge-macos-unsigned-<sha>`) so downstream consumers cannot confuse the two. Wire the five secrets at Settings → Secrets to upgrade from unsigned smoke to full signed+notarized output. Path-gated `pull_request` trigger is deferred until the signed path has been green at least once.
+
+Partial Apple credentials (e.g. `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` set but `APPLE_TEAM_ID` omitted) now **fail loud** in `afterSign.mjs` rather than silently skipping notarize. Silent skip only happens when zero notarize credentials are present, which is paired with the explicit `build:mac:unsigned` invocation from the workflow.
 
 ### M2 DOD checklist
 

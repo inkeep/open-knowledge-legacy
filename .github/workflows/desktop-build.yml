@@ -4,9 +4,10 @@ name: Desktop build
 # Produces a Universal DMG (arm64 + x64 merged). When Apple Developer cert
 # + notary credentials are configured as repo secrets, the DMG is signed with
 # Developer ID, notarized via xcrun notarytool, stapled, and fuse-verified
-# (D17 paranoid post-sign check). When secrets are absent, afterSign.mjs logs
-# the skip and the DMG still builds — that's the scaffolding-only smoke path
-# used while cert procurement is in progress.
+# (D17 paranoid post-sign check). When secrets are absent, the workflow runs
+# `build:mac:unsigned` explicitly and uploads the artifact under a name that
+# encodes the unsigned state — consumers can filter by prefix to avoid
+# shipping an unsigned build as if it were a release.
 #
 # Trigger: `workflow_dispatch` only for this iteration. We will add a
 # `pull_request` trigger scoped to `packages/desktop/**` changes once the
@@ -18,6 +19,10 @@ name: Desktop build
 #   CSC_LINK                    Base64-encoded .p12 containing the Developer
 #                               ID Application cert + private key. Generate:
 #                                 base64 -i developer-id.p12 | pbcopy
+#                               CSC_LINK is the signal used here to decide
+#                               signed-vs-unsigned — without it, the workflow
+#                               runs `build:mac:unsigned` and names the
+#                               artifact accordingly.
 #   CSC_KEY_PASSWORD            Password used to export the .p12.
 #   APPLE_ID                    Apple ID email that owns the Developer
 #                               Program membership.
@@ -31,7 +36,8 @@ name: Desktop build
 # App Store Connect API key alternative (simpler for org-level rotation):
 # replace APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID with
 # APPLE_API_KEY (path to .p8) + APPLE_API_KEY_ID + APPLE_API_ISSUER. The
-# afterSign script auto-detects which credential shape is present.
+# afterSign script auto-detects which credential shape is present and fails
+# loud if any shape is partial rather than silently skipping.
 
 on:
   workflow_dispatch: {}
@@ -89,13 +95,35 @@ jobs:
       - name: Build workspace (produces packages/cli/dist/public for extraResources)
         run: bun run build
 
-      - name: Build + package DMG
+      # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
+      # the artifact can be named to match. We key off CSC_LINK alone: it's
+      # the Developer ID cert, so its absence means we cannot produce a
+      # signed build regardless of what notarization creds exist. Missing
+      # notarization creds with CSC_LINK present would be caught by
+      # afterSign.mjs's partial-credential guard.
+      - name: Detect signing mode
+        id: signmode
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if [[ -n "${CSC_LINK}" ]]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+            echo "script=build:mac" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing creds present — running build:mac (signed + notarized + stapled + fuse-verified)."
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "script=build:mac:unsigned" >> "$GITHUB_OUTPUT"
+            echo "::notice::CSC_LINK absent — running build:mac:unsigned. Artifact will be labeled 'unsigned'."
+          fi
+
+      - name: Build + package DMG (${{ steps.signmode.outputs.mode }})
         # electron-builder picks up CSC_LINK / CSC_KEY_PASSWORD from env and
-        # signs automatically. The afterSign hook (scripts/afterSign.mjs)
-        # picks up APPLE_* and runs notarize + staple + fuse-verify. When
-        # any of these are missing the hook logs "skipping notarize" and
-        # the DMG is unsigned — which keeps this workflow green and the
-        # pipeline visible while certs are being procured.
+        # signs automatically when `build:mac` is invoked. The afterSign
+        # hook (scripts/afterSign.mjs) picks up APPLE_* and runs notarize +
+        # staple + fuse-verify. Partial APPLE_* credentials now FAIL LOUD
+        # via the afterSign partial-credential guard — silent skip happens
+        # only when zero credentials are present, which is the unsigned
+        # path handled above by invoking `build:mac:unsigned` explicitly.
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -105,25 +133,25 @@ jobs:
           # GH_TOKEN is not passed — we don't auto-publish from this
           # workflow yet. Release automation is M7.
         working-directory: packages/desktop
-        run: bun run build:mac
+        run: bun run ${{ steps.signmode.outputs.script }}
 
+      # Gate on success() — on build failure, there is no DMG, so running
+      # the upload step would stack a second "no files found" error on top
+      # of the real build error and dilute CI signal. The GHA run log
+      # already captures failure diagnostics and is retained 90 days.
       - name: Upload DMG artifact
-        if: ${{ !cancelled() }}
+        if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: open-knowledge-macos-${{ github.sha }}
+          # Encode signed-vs-unsigned in the artifact name so downstream
+          # consumers (release automation in M7, humans pulling for smoke
+          # on another Mac) can filter by prefix without inspecting the
+          # DMG signature. Unsigned DMGs can run locally after `xattr -cr`
+          # but must never be shipped as if they were a release build.
+          name: open-knowledge-macos-${{ steps.signmode.outputs.mode }}-${{ github.sha }}
           path: |
             packages/desktop/dist-desktop/*.dmg
             packages/desktop/dist-desktop/*.dmg.blockmap
             packages/desktop/dist-desktop/latest-mac.yml
           retention-days: 14
           if-no-files-found: error
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: build-log-${{ github.sha }}
-          path: packages/desktop/dist-desktop/builder-debug.yml
-          retention-days: 14
-          if-no-files-found: ignore

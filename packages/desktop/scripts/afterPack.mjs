@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FuseV1Options, FuseVersion, flipFuses } from '@electron/fuses';
+import { targetFuses } from './target-fuses.mjs';
 
 /**
  * electron-builder `afterPack` hook — runs on the packed `.app` bundle before
@@ -20,22 +21,9 @@ import { FuseV1Options, FuseVersion, flipFuses } from '@electron/fuses';
  *
  * Post-sign verification of these same fuses lives in `afterSign.mjs` per
  * D17 ("Windows signtool has shipped silent fuse-clobber regressions; paranoid
- * verification is load-bearing"). The invariant both hooks enforce: every
- * fuse in the `targetFuses` map below matches at read-time.
+ * verification is load-bearing"). Both hooks import the same `targetFuses`
+ * map from `./target-fuses.mjs` — flip-time and verify-time cannot drift.
  */
-
-/**
- * Spec §8.9 canonical fuse config. Keep this in sync with `targetFuses` in
- * `afterSign.mjs` — the two are paired by design (flip here, verify there).
- */
-const targetFuses = {
-  [FuseV1Options.RunAsNode]: false,
-  [FuseV1Options.EnableCookieEncryption]: true,
-  [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-  [FuseV1Options.EnableNodeCliInspectArguments]: true,
-  [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
-  [FuseV1Options.OnlyLoadAppFromAsar]: true,
-};
 
 export default async function afterPack(context) {
   const { appOutDir, packager, electronPlatformName } = context;
