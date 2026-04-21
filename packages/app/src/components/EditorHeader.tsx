@@ -34,10 +34,10 @@ import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { ProjectSwitcher } from './ProjectSwitcher';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge } from './ui/badge';
-import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 type RenameResponse =
   | {
@@ -358,7 +358,7 @@ export function EditorHeader({
               orientation="vertical"
               className="mx-1 h-4 shrink-0 data-vertical:self-center"
             />
-            <WorkspaceSwitcher bridge={window.okDesktop} />
+            <ProjectSwitcher bridge={window.okDesktop} />
           </>
         ) : null}
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />

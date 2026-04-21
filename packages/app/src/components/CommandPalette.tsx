@@ -2,7 +2,7 @@
  * CommandPalette — Electron-only Cmd+K (Ctrl+K on Win/Linux) overlay that
  * mirrors the File-menu actions as a searchable list. User feedback during
  * Phase 8 review asked for a command-palette UI (beyond the menu bar + the
- * top-bar WorkspaceSwitcher pill) for workspace selection.
+ * top-bar ProjectSwitcher pill) for project selection.
  *
  * Commands (all open a NEW editor BrowserWindow per D3 revised):
  *   - Open folder on disk…            — `bridge.dialog.openFolder()` → open
@@ -34,7 +34,7 @@ import { runWithToast as runWithToastBase } from '@/lib/error-state';
 
 /**
  * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
- * surface WorkspaceSwitcher uses — consistent launcher UX (every rejection
+ * surface ProjectSwitcher uses — consistent launcher UX (every rejection
  * surfaces as a sonner toast). Exported for unit-testing with a mockable
  * `toastApi` indirection; the default uses sonner's module-level `toast`.
  */
@@ -63,7 +63,7 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
     void runWithToast(async () => {
       const result = await bridge.project.listRecent();
       if (!cancelled) setRecents(result);
-    }, 'Failed to load recent workspaces.');
+    }, 'Failed to load recent projects.');
     return () => {
       cancelled = true;
     };
@@ -98,14 +98,14 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
-      title="Workspace Command Palette"
-      description="Switch workspaces, open folders, or start a new project."
+      title="Project Command Palette"
+      description="Switch projects, open folders, or start a new project."
     >
       <CommandInput placeholder="Type a command or search recent projects…" />
       <CommandList>
         <CommandEmpty>No matching commands.</CommandEmpty>
 
-        <CommandGroup heading="Workspace">
+        <CommandGroup heading="Project">
           <CommandItem
             onSelect={() =>
               runAction(async () => {

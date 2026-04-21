@@ -96,7 +96,7 @@ function NewItemShortcutHandler() {
 }
 
 export function App() {
-  // Electron-only Cmd+K palette for workspace-level commands (open folder,
+  // Electron-only Cmd+K palette for project-level commands (open folder,
   // start fresh, switch to a recent project). Gated on `window.okDesktop`
   // so the web/CLI distribution never mounts the handler — zero footprint
   // outside Electron. Mounted at the App root so Cmd+K works regardless of

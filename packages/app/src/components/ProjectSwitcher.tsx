@@ -1,13 +1,13 @@
 /**
- * WorkspaceSwitcher — Electron-only UI affordance in the top bar for switching
- * between projects (aka workspaces). Renders as a compact pill showing the
- * current project name; clicking opens a dropdown with:
+ * ProjectSwitcher — Electron-only UI affordance in the top bar for switching
+ * between projects. Renders as a compact pill showing the current project
+ * name; clicking opens a dropdown with:
  *   - Recents (from `bridge.project.listRecent()`), opens each in a new window
  *   - "Open folder…" — native picker → open in a new window
  *
  * Web / CLI distribution does NOT render this — it's gated on
  * `window.okDesktop` being present. Without a window manager the concept
- * of "switch workspace" collapses to opening a new browser tab manually.
+ * of "switch project" collapses to opening a new browser tab manually.
  *
  * Per D3 revised: opening a recent project spawns a NEW editor BrowserWindow.
  * The current window is untouched — users end up with N windows, one per
@@ -40,13 +40,13 @@ export const runWithToast = (
   fn: () => Promise<void>,
   fallback: string,
   toastApi?: { error(msg: string): void },
-): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'WorkspaceSwitcher');
+): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'ProjectSwitcher');
 
-interface WorkspaceSwitcherProps {
+interface ProjectSwitcherProps {
   bridge: OkDesktopBridge;
 }
 
-export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
+export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
   const [recents, setRecents] = useState<RecentProjectEntry[]>([]);
   const [open, setOpen] = useState(false);
 
@@ -60,7 +60,7 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
     void runWithToast(async () => {
       const result = await bridge.project.listRecent();
       if (!cancelled) setRecents(result);
-    }, 'Failed to load recent workspaces.');
+    }, 'Failed to load recent projects.');
     return () => {
       cancelled = true;
     };
@@ -70,7 +70,7 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
     setOpen(false);
     void runWithToast(
       () => bridge.project.open({ path, target: 'new-window' }),
-      'Failed to open workspace.',
+      'Failed to open project.',
     );
   };
 
@@ -97,8 +97,8 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
           variant="ghost"
           size="sm"
           className="gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-          data-testid="workspace-switcher-trigger"
-          title="Switch workspace"
+          data-testid="project-switcher-trigger"
+          title="Switch project"
         >
           <FolderOpen className="size-4 shrink-0" />
           <span className="max-w-[160px] truncate">{bridge.config.projectName}</span>
@@ -108,9 +108,9 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
       <DropdownMenuContent
         align="start"
         className="min-w-[260px]"
-        data-testid="workspace-switcher-menu"
+        data-testid="project-switcher-menu"
       >
-        <DropdownMenuLabel>Switch workspace</DropdownMenuLabel>
+        <DropdownMenuLabel>Switch project</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {switchable.length === 0 ? (
           <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">
@@ -123,7 +123,7 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
               disabled={row.missing}
               onSelect={() => openProject(row.path)}
               className="flex flex-col items-start gap-0.5"
-              data-testid={`workspace-switcher-recent-${row.path}`}
+              data-testid={`project-switcher-recent-${row.path}`}
             >
               <span className="font-medium text-sm">{row.name}</span>
               <span className="max-w-[240px] truncate text-muted-foreground text-xs">
@@ -134,7 +134,7 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
           ))
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onOpenFolder} data-testid="workspace-switcher-open-folder">
+        <DropdownMenuItem onSelect={onOpenFolder} data-testid="project-switcher-open-folder">
           <FolderPlus className="mr-2 size-4" />
           Open folder…
         </DropdownMenuItem>

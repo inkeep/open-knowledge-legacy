@@ -26,6 +26,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  session,
   shell,
   utilityProcess,
 } from 'electron';
@@ -352,8 +353,58 @@ function installDockIcon() {
   }
 }
 
+/**
+ * Defensive CORS injector for localhost responses — bulletproofs the attach
+ * path against older `ok start` CLI servers that predate the api-extension
+ * CORS change. Background: the renderer origin (electron-vite dev server OR
+ * `file://` in packaged builds) is cross-origin to the utility process's
+ * `http://localhost:<port>`, so browser CORS policy applies to every `/api/*`
+ * fetch. Our current server emits `Access-Control-Allow-Origin: *` natively,
+ * but if an older CLI owns the `server.lock` (attach mode) it does NOT — every
+ * sidebar load surfaces as "Could not reach server" even though `curl` shows
+ * HTTP 200 + valid JSON.
+ *
+ * Two behaviors:
+ *   1. Any localhost response missing `Access-Control-Allow-Origin` gets
+ *      `*` + `Allow-Methods` + `Allow-Headers` injected. Safe because the
+ *      server binds 127.0.0.1 only — no remote origin could ever reach it.
+ *   2. A `405`/`404` to an `OPTIONS` preflight from such a server is rewritten
+ *      to `204 No Content` with the CORS headers so POSTs with a JSON body
+ *      (which trigger a preflight) don't fail before the real request fires.
+ *
+ * Both are gated on hostname (`localhost` / `127.0.0.1`) and on `hasAcao`
+ * being false — we leave responses from CORS-aware servers (our current
+ * api-extension + any future release) untouched.
+ */
+function installLocalhostCorsInjector() {
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['http://localhost:*/*', 'http://127.0.0.1:*/*'] },
+    (details, callback) => {
+      const headers: Record<string, string[]> = { ...(details.responseHeaders ?? {}) };
+      const hasAcao = Object.keys(headers).some(
+        (k) => k.toLowerCase() === 'access-control-allow-origin',
+      );
+      if (hasAcao) {
+        callback({});
+        return;
+      }
+      headers['Access-Control-Allow-Origin'] = ['*'];
+      headers['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+      headers['Access-Control-Allow-Headers'] = ['Content-Type, Authorization'];
+      const isPreflightReject =
+        details.method === 'OPTIONS' && details.statusCode >= 400 && details.statusCode < 500;
+      if (isPreflightReject) {
+        callback({ responseHeaders: headers, statusLine: 'HTTP/1.1 204 No Content' });
+        return;
+      }
+      callback({ responseHeaders: headers });
+    },
+  );
+}
+
 app.whenReady().then(() => {
   appState = loadAppState();
+  installLocalhostCorsInjector();
   registerIpcHandlers();
   refreshApplicationMenu();
   installDockIcon();

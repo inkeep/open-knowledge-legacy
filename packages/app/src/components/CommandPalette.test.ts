@@ -1,5 +1,5 @@
 /**
- * CommandPalette unit tests — mirrors `WorkspaceSwitcher.test.ts`'s shape.
+ * CommandPalette unit tests — mirrors `ProjectSwitcher.test.ts`'s shape.
  *
  * Repo convention (see `EditorActivityPool.test.ts`) is no
  * @testing-library/react; full DOM + keyboard interaction is exercised by
