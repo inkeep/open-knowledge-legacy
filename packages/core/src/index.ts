@@ -49,6 +49,12 @@ export {
 export { MarkdownManager } from './markdown/index.ts';
 export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
+  type ComponentMap,
+  type CreateElement,
+  mdastToReact,
+  type WalkerOptions,
+} from './markdown/to-react.ts';
+export {
   getParseHealth,
   incrementBlockFallback,
   incrementWholeDocFallback,

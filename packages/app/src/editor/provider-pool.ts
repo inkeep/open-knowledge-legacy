@@ -262,6 +262,49 @@ export class ProviderPool {
     return entry;
   }
 
+  /**
+   * V2 SPEC FR12 (Option G): pre-warm a provider on sidebar hover.
+   *
+   * Opens a HocuspocusProvider for `docName` WITHOUT promoting it in the
+   * LRU order — the returned entry sits at LRU-oldest, evictable by any
+   * subsequent user-initiated `open()`. Rate-limiting and concurrency
+   * caps are the caller's responsibility (FileSidebar uses an 80 ms
+   * intent debounce + a 3-concurrent cap per Audit §S4).
+   *
+   * Idempotent: if the doc is already in the pool (any state), returns
+   * the existing entry without modification. The existing entry's LRU
+   * position is unchanged by prewarm — calls to `touch()` only happen on
+   * user-initiated `open()` / `setActive()`.
+   *
+   * Returns null for system docs. The pool does not evict an Activity-
+   * mounted doc on prewarm admission — evictLru() always skips the
+   * active doc. When the pool is at capacity, prewarm's cold-path
+   * returns the newly-constructed entry even though it sits at the
+   * oldest position and will be the first to be evicted.
+   */
+  prewarm(docName: string): PoolEntry | null {
+    if (isSystemDoc(docName)) return null;
+    const existing = this.entries.get(docName);
+    if (existing) {
+      // Already warm — return without touching LRU.
+      return existing;
+    }
+    // Cold path: use `open()` to construct the provider but DO NOT touch
+    // LRU or active. `open()` internally calls `touch(docName)` which
+    // bumps LRU to most-recent — we need to counter-act so prewarms are
+    // at the oldest slot. The simplest approach: let `open()` run its
+    // full init, then move the docName to LRU-oldest immediately.
+    const entry = this.open(docName);
+    if (!entry) return null;
+    // Demote to LRU-oldest — prewarms should never evict user-initiated docs.
+    const idx = this.lruOrder.indexOf(docName);
+    if (idx !== -1) {
+      this.lruOrder.splice(idx, 1);
+      this.lruOrder.unshift(docName);
+    }
+    return entry;
+  }
+
   /** Close a specific document — disconnect and clean up. */
   close(docName: string): void {
     const entry = this.entries.get(docName);

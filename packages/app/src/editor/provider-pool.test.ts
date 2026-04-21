@@ -428,6 +428,52 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   });
 });
 
+describe('ProviderPool prewarm (V2 SPEC FR12 / Option G)', () => {
+  test('prewarm admits a cold doc and returns its entry', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const entry = pool.prewarm('prewarm-doc');
+    expect(entry).not.toBeNull();
+    expect(pool.has('prewarm-doc')).toBe(true);
+    pool.dispose();
+  });
+
+  test('prewarm places new entry at LRU-oldest — it is the first evicted', () => {
+    const pool = new ProviderPool(3, 'ws://localhost:9999');
+    // User-initiated opens — go to MRU (LRU-newest).
+    pool.open('user-a');
+    pool.open('user-b');
+    pool.setActive('user-b'); // Pin active to prevent eviction
+
+    // Prewarm should go to LRU-oldest.
+    pool.prewarm('prewarm-c');
+    expect(pool.has('prewarm-c')).toBe(true);
+
+    // Next user-initiated open at capacity → should evict the prewarm first.
+    pool.open('user-d');
+    expect(pool.has('prewarm-c')).toBe(false);
+    expect(pool.has('user-a')).toBe(true);
+    expect(pool.has('user-b')).toBe(true);
+    expect(pool.has('user-d')).toBe(true);
+    pool.dispose();
+  });
+
+  test('prewarm is idempotent — re-prewarming an existing doc returns same entry', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const first = pool.prewarm('idempotent-doc');
+    const second = pool.prewarm('idempotent-doc');
+    expect(second).toBe(first);
+    pool.dispose();
+  });
+
+  test('prewarm rejects system docs (__system__)', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const entry = pool.prewarm('__system__');
+    expect(entry).toBeNull();
+    expect(pool.has('__system__')).toBe(false);
+    pool.dispose();
+  });
+});
+
 describe('ProviderPool admission filter (__system__, DX7)', () => {
   test('open("__system__") returns null and does not add the pseudo-doc to the pool', () => {
     pool = new ProviderPool(3, DUMMY_WS);
