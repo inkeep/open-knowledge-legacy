@@ -430,10 +430,12 @@ export interface ApiExtensionOptions {
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests and
-   * local dev mode.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use (reset wipes document
+   * content; rescan-backlinks rebuilds the index from disk, dropping
+   * unpersisted in-memory state) and must never be exposed in production.
+   * Enable only in tests and local dev mode.
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
@@ -1807,6 +1809,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
+   *
+   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
+   * files written into freshly-created subdirectories (the recursive subwatch
+   * is registered asynchronously after the IN_CREATE for the directory, so
+   * rapid follow-up file writes race the registration). That leaves the
+   * backlink index out of sync with the content directory on disk, which the
+   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
+   * orphan-hint shape) cannot otherwise recover from.
+   *
+   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
+   * resync from the filesystem that covers dropped events. It is NOT suitable
+   * for production: rebuild wipes any in-memory backlink state not yet
+   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
+   * behind `enableTestRoutes` for that reason.
+   */
+  async function handleTestRescanBacklinks(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      if (!backlinkIndex) {
+        json(res, 503, { ok: false, error: 'Backlink index not configured' });
+        return;
+      }
+      backlinkIndex.rebuildFromDisk();
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+      });
+      signalChannel?.('backlinks');
+      signalChannel?.('graph');
+      json(res, 200, { ok: true });
+    } catch (e) {
+      console.error('[test-rescan-backlinks]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -4234,6 +4280,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   if (enableTestRoutes) {
     routes['/api/test-reset'] = handleTestReset;
+    routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
   return {
