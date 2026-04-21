@@ -29,7 +29,11 @@ import {
   emptyState,
   parseAppState,
 } from './state-store.ts';
-import { type BrowserWindowLike, WindowManager } from './window-manager.ts';
+import {
+  type BrowserWindowLike,
+  type UtilityProcessLike,
+  WindowManager,
+} from './window-manager.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,13 +107,7 @@ function ensureWindowManager() {
       const child = utilityProcess.fork(entry, [], {
         ...opts,
       } as unknown as Parameters<typeof utilityProcess.fork>[2]);
-      return child as unknown as ReturnType<WindowManager['createProjectWindow']> extends Promise<
-        infer P
-      >
-        ? P extends { utility: infer U }
-          ? U
-          : never
-        : never;
+      return child as unknown as UtilityProcessLike;
     },
     utilityEntryPath,
     rendererEntryPath,
@@ -156,6 +154,18 @@ async function openProject(projectPath: string) {
   saveAppState(appState);
 }
 
+async function openProjectOrFallbackToNavigator(projectPath: string) {
+  try {
+    await openProject(projectPath);
+  } catch (err) {
+    console.error('[main] openProject failed, falling back to Navigator', {
+      projectPath,
+      err: (err as Error).message,
+    });
+    openNavigator();
+  }
+}
+
 function registerIpcHandlers() {
   const handle = createHandler(ipcMain);
 
@@ -188,20 +198,15 @@ function registerIpcHandlers() {
   handle('ok:project:get-info', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('webContents has no parent BrowserWindow');
-    // Find the project context for this window
-    for (const projectPath of [...appState.recentProjects.map((p) => p.path)]) {
-      const ctx = wm?.getWindowFor(projectPath);
-      if (ctx && (ctx.window as unknown as typeof win) === win) {
-        return {
-          collabUrl: `ws://localhost:${ctx.port}/collab`,
-          apiOrigin: ctx.apiOrigin,
-          projectPath: ctx.projectPath,
-          projectName: ctx.projectName,
-          mode: 'editor' as const,
-        };
-      }
-    }
-    throw new Error('No project context for this window');
+    const ctx = wm?.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+    if (!ctx) throw new Error('No project context for this window');
+    return {
+      collabUrl: `ws://localhost:${ctx.port}/collab`,
+      apiOrigin: ctx.apiOrigin,
+      projectPath: ctx.projectPath,
+      projectName: ctx.projectName,
+      mode: 'editor' as const,
+    };
   });
 
   handle('ok:project:list-recent', async () => {
@@ -216,11 +221,9 @@ function registerIpcHandlers() {
   handle('ok:project:close', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || !wm) return undefined;
-    for (const ctx of [...appState.recentProjects.map((p) => wm.getWindowFor(p.path))]) {
-      if (ctx && (ctx.window as unknown as typeof win) === win) {
-        wm.closeProjectWindow(ctx.projectPath);
-        return undefined;
-      }
+    const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+    if (ctx) {
+      wm.closeProjectWindow(ctx.projectPath);
     }
     return undefined;
   });
@@ -235,7 +238,7 @@ app.whenReady().then(() => {
   // opens the Navigator if the user holds Option at launch (or no last project).
   const optionHeld = process.argv.includes('--navigator');
   if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
-    void openProject(appState.lastOpenedProject);
+    void openProjectOrFallbackToNavigator(appState.lastOpenedProject);
   } else {
     openNavigator();
   }

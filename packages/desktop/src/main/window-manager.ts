@@ -92,6 +92,21 @@ export class WindowManager {
     return this.windowsByPath.get(projectPath);
   }
 
+  /**
+   * Resolve the ProjectContext that owns a given BrowserWindow. Used by IPC
+   * handlers that receive `event.sender.webContents` → BrowserWindow and need
+   * to look up the window's project. Iterates `windowsByPath` (authoritative
+   * map) instead of going through `appState.recentProjects`, which avoids a
+   * stale-state race between `createProjectWindow` resolving and
+   * `addRecentProject` persisting.
+   */
+  getContextForBrowserWindow(win: BrowserWindowLike): ProjectContext | undefined {
+    for (const ctx of this.windowsByPath.values()) {
+      if (ctx.window === win) return ctx;
+    }
+    return undefined;
+  }
+
   windowCount(): number {
     return this.windowsByPath.size;
   }
@@ -183,10 +198,19 @@ export class WindowManager {
     await window.loadFile(this.deps.rendererEntryPath);
 
     window.on('closed', () => {
-      utility.postMessage({ type: 'shutdown' });
-      // The utility's shutdown drain + parentLifecycleBound takes care of the
-      // forked process. windowsByPath.delete fires from the utility's exit
-      // event above.
+      // Guard against detached IPC port — the utility may have already exited
+      // (e.g. crash, parent-death poll beat us) in which case `postMessage`
+      // throws ERR_IPC_CHANNEL_CLOSED. The utility's shutdown drain +
+      // parentLifecycleBound takes care of the forked process regardless;
+      // windowsByPath.delete fires from the utility's exit event above.
+      try {
+        utility.postMessage({ type: 'shutdown' });
+      } catch (err) {
+        this.deps.log?.warn(
+          { err: (err as Error).message, projectPath },
+          'utility shutdown IPC failed on window close (likely already exited)',
+        );
+      }
     });
 
     const context: ProjectContext = {
@@ -205,7 +229,16 @@ export class WindowManager {
   closeProjectWindow(projectPath: string): boolean {
     const ctx = this.windowsByPath.get(resolve(projectPath));
     if (!ctx) return false;
-    ctx.utility.postMessage({ type: 'shutdown' });
+    // Guard against detached IPC port — see rationale in the window-close
+    // handler above.
+    try {
+      ctx.utility.postMessage({ type: 'shutdown' });
+    } catch (err) {
+      this.deps.log?.warn(
+        { err: (err as Error).message, projectPath },
+        'utility shutdown IPC failed in closeProjectWindow (likely already exited)',
+      );
+    }
     return true;
   }
 }

@@ -239,4 +239,41 @@ describe('WindowManager', () => {
     const wm = new WindowManager(env.deps);
     expect(wm.closeProjectWindow('/tmp/never-opened')).toBe(false);
   });
+
+  test('closeProjectWindow swallows postMessage errors (utility already exited)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/detached-port' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51099, apiOrigin: 'http://localhost:51099' });
+    await p;
+
+    // Simulate the utility having already exited — postMessage throws
+    // (ERR_IPC_CHANNEL_CLOSED in production).
+    const utility = env.utilities[0];
+    if (!utility) throw new Error('utility missing');
+    utility.postMessage = mock(() => {
+      throw new Error('ERR_IPC_CHANNEL_CLOSED');
+    });
+
+    // Must not throw — the handler swallows the error + logs.
+    expect(() => wm.closeProjectWindow('/tmp/detached-port')).not.toThrow();
+  });
+
+  test('getContextForBrowserWindow resolves the project for a given window', async () => {
+    const wm = new WindowManager(env.deps);
+    const p1 = wm.createProjectWindow({ projectPath: '/tmp/ctx-a' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52001, apiOrigin: 'http://localhost:52001' });
+    const ctxA = await p1;
+    const p2 = wm.createProjectWindow({ projectPath: '/tmp/ctx-b' });
+    env.utilities[1]?.fire({ type: 'ready', port: 52002, apiOrigin: 'http://localhost:52002' });
+    const ctxB = await p2;
+
+    expect(wm.getContextForBrowserWindow(ctxA.window)).toBe(ctxA);
+    expect(wm.getContextForBrowserWindow(ctxB.window)).toBe(ctxB);
+  });
+
+  test('getContextForBrowserWindow returns undefined for unknown window', () => {
+    const wm = new WindowManager(env.deps);
+    const stranger = makeWindow();
+    expect(wm.getContextForBrowserWindow(stranger)).toBeUndefined();
+  });
 });

@@ -80,7 +80,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 
@@ -123,7 +123,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 
@@ -160,7 +160,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
       parentPollMs: 100,
     });
@@ -194,7 +194,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 
@@ -209,6 +209,10 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
 
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(env.exit).toHaveBeenCalledWith(0);
+    // stopParentPoll must actually stop the interval on shutdown — otherwise
+    // the parent-death poll keeps firing and can re-enter shutdown in tests
+    // where `exit` is mocked.
+    expect(env.intervalCancel).toHaveBeenCalled();
   });
 
   test('SIGTERM handler triggers same shutdown path as IPC', async () => {
@@ -228,7 +232,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 
@@ -264,7 +268,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 
@@ -299,7 +303,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       onSignal: (sig, h) => env.signalHandlers.set(sig, h),
       setInterval: (cb, ms) => {
         env.intervals.push({ cb, ms });
-        return { unref: mock(() => {}) };
+        return { unref: mock(() => {}), clear: env.intervalCancel };
       },
     });
 

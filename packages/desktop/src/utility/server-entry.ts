@@ -75,8 +75,13 @@ export interface SetupUtilityDeps {
   killProbe: (pid: number, signal: number | string) => void;
   /** Signal subscription for SIGTERM/SIGINT. */
   onSignal: (signal: 'SIGTERM' | 'SIGINT', handler: () => void) => void;
-  /** `setInterval` (injectable for tests). */
-  setInterval: (cb: () => void, ms: number) => { unref?: () => void };
+  /**
+   * `setInterval` (injectable for tests). Returns a handle that supports
+   * `clear()` so `stopParentPoll` can actually stop the interval — required
+   * for test lifecycle and for any future shutdown path that doesn't
+   * immediately exit the process.
+   */
+  setInterval: (cb: () => void, ms: number) => { unref?: () => void; clear: () => void };
   /** Poll cadence for parent-death check (ms). Default 5000. */
   parentPollMs?: number;
 }
@@ -96,7 +101,7 @@ export interface UtilityHandle {
  */
 export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   let booted: BootedServer | null = null;
-  let parentPollHandle: { unref?: () => void } | null = null;
+  let parentPollHandle: { unref?: () => void; clear: () => void } | null = null;
   let shuttingDown = false;
   let resolveReady!: (msg: UtilityReadyMessage) => void;
   let rejectReady!: (err: Error) => void;
@@ -126,13 +131,8 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   }
 
   function stopParentPoll() {
+    parentPollHandle?.clear();
     parentPollHandle = null;
-    // Note: Bun's setInterval returns a Timer with no clear method exposed in
-    // this typed surface. Production wiring uses `clearInterval` directly via
-    // a closure-captured handle; the test-injected version exposes its own
-    // cancel via the returned `unref`-bearing object's identity. The shutdown
-    // path's `process.exit` short-circuits any further fires, so leakage is
-    // bounded to a single tick in production.
   }
 
   async function shutdown(reason: string): Promise<void> {
@@ -233,6 +233,7 @@ if ((process as NodeJS.Process & { parentPort?: unknown }).parentPort) {
       const handle = setInterval(cb, ms);
       return {
         unref: () => handle.unref(),
+        clear: () => clearInterval(handle),
       };
     },
   });
