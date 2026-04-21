@@ -278,16 +278,16 @@ describe('commitUpstreamImport', () => {
     shadow = await initHistoryRepo(projectRoot);
   });
 
-  test('creates commit on refs/wip/<branch>/upstream', async () => {
+  test('creates commit on refs/wip/<branch>/git-upstream', async () => {
     writeFileSync(resolve(contentDir, 'api.md'), '# API Reference\n');
 
     const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabbccdd', '11223344');
 
     expect(sha).toHaveLength(40);
 
-    // Default branch = 'main'
+    // Default branch = 'main' — writer ID is now 'git-upstream' (D8 taxonomy)
     const sg = historyGit(shadow);
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/upstream')).trim();
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/git-upstream')).trim();
     expect(refSha).toBe(sha);
   });
 
@@ -323,7 +323,7 @@ describe('commitUpstreamImport', () => {
 
     const sg = historyGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
-    expect(authorName).toBe('upstream');
+    expect(authorName).toBe('Git (upstream)');
   });
 });
 
