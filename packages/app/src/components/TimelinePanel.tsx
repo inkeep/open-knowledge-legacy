@@ -273,28 +273,36 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
       return;
     }
 
+    let cancelled = false;
+
     async function fetchHistory() {
       if (!docName) return;
       try {
         const res = await fetch(`/api/history?docName=${encodeURIComponent(docName)}&limit=100`);
+        if (cancelled) return;
         if (!res.ok) {
           setError('History unavailable');
           return;
         }
         const data = (await res.json()) as { entries: TimelineEntry[] };
+        if (cancelled) return;
         setEntries(data.entries ?? []);
         setError(null);
       } catch (e) {
+        if (cancelled) return;
         setError('History unavailable');
         console.error('[timeline]', e);
       }
     }
 
     setLoading(true);
-    fetchHistory().finally(() => setLoading(false));
+    fetchHistory().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
     intervalRef.current = setInterval(fetchHistory, 10_000);
 
     return () => {
+      cancelled = true;
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [docName]);
