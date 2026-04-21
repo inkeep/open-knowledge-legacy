@@ -192,7 +192,7 @@ Hocuspocus Server
 ├── Content Filter (gitignore + config exclude/include filtering)
 ├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
-├── Shadow Repo (.git/openknowledge/ — attribution journal)
+├── Shadow Repo (.git/open-knowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 ├── Shadow Branch GC (orphaned ref cleanup)
 └── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
@@ -218,7 +218,7 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 
 ### Shadow repo & branch runtime
 
-The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode, no project `.git/`). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store.
+The shadow repo is a bare git repo at `<projectRoot>/.git/open-knowledge/`. It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store. Projects that lack `.git/` are auto-init'd by `ensureProjectGit` (SPEC 2026-04-21-shadow-repo-single-mode R2 / D12) before any shadow op runs — this is a fail-fast entrypoint, not a degraded-mode fallback. Legacy `.git/openknowledge/` shadows from pre-spec installs are silently renamed in place on first run (R9 shim in `initShadowRepo`).
 
 **Branch-scoped state:** `reconciledBase` (the three-way merge base) is `Map<branch, Map<docName, string>>`. On branch switch, the active scope switches to the target branch's map. WIP refs are namespaced as `refs/wip/<branch>/<writer-id>`.
 

@@ -7,6 +7,14 @@
  * without an explicit `--port` override it discovers / auto-starts the target
  * project's Hocuspocus server lazily from the effective cwd of each tool call
  * (explicit tool cwd → exactly one client root → error).
+ *
+ * Transitive auto-git-init (SPEC 2026-04-21-shadow-repo-single-mode D13):
+ * when this command auto-spawns `ok start` to service a tool call against a
+ * project that has no running server, the spawned `ok start` runs
+ * `ensureProjectGit` which may create `.git/` in the project directory. Opt
+ * out via `OK_MCP_AUTOSTART=0` or config `mcp.autoStart: false`. `ok mcp`
+ * itself never runs `ensureProjectGit` — the auto-init is strictly a
+ * side-effect of the auto-spawned `ok start`.
  */
 
 import { Command } from 'commander';
