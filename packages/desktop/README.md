@@ -6,7 +6,7 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the rest of the M2 DOD closes the moment credentials land in GitHub secrets. See SPEC §14 for M3–M7.
+M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. See SPEC §14 for M3–M7.
 
 ## Process model
 
@@ -99,6 +99,7 @@ Agents never set this — they want the full env. Add it to your shell profile i
 Every renderer↔main call goes through the typed channel map in `src/shared/ipc-channels.ts` (requests) or `src/shared/ipc-events.ts` (events). **Never call `ipcMain.handle` or `ipcRenderer.invoke` directly** — use `createHandler` / `createInvoker`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` (configured at the repo root, D19) fails lint on violations.
 
 File-scoped allowlist for direct IPC access (the wrapper implementations themselves):
+
 - `src/shared/ipc-handler.ts`
 - `src/shared/ipc-invoke.ts`
 - `src/preload/index.ts`
@@ -120,16 +121,16 @@ The editor renderer is the existing `packages/app/` Vite bundle, loaded through 
 
 ## Testing
 
-| File | What it covers |
-|---|---|
-| `tests/integration/m1-smoke.test.ts` | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release |
-| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code |
-| `tests/main/shell-allowlist.test.ts` | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
-| `tests/main/state-store.test.ts` | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery |
-| `tests/main/window-manager.test.ts` | Spawning + tracking + collision-dialog dispatch |
-| `tests/preload/bridge.test.ts` | `window.okDesktop` config parsing, subscription wrapper correctness |
-| `tests/utility/server-entry.test.ts` | IPC handshake, graceful shutdown drain, parent-death exit |
-| `tests/unit/scaffold.test.ts` | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop |
+| File                                                         | What it covers                                                                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `tests/integration/m1-smoke.test.ts`                         | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release         |
+| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
+| `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
+| `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
+| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch                                                                     |
+| `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
+| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit                                                           |
+| `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
 
 Run the full gate from the repo root (`bun run check`) or scope to this package with `cd packages/desktop && bun test`.
 
@@ -184,7 +185,7 @@ bun run build:mac
 
 `afterSign.mjs` runs `@electron/notarize` (which staples on success), `xcrun stapler validate`, then `@electron/fuses.getCurrentFuseWire` and asserts every fuse matches `afterPack.mjs`'s `targetFuses` map. Any mismatch fails the build loud (D17).
 
-Alternative credentials: App Store Connect API key — set `APPLE_API_KEY` (path to `.p8`) + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` instead of the APPLE_ID triplet. The afterSign script auto-detects which shape is present.
+Alternative credentials: App Store Connect API key — set `APPLE_API_KEY` (path to `.p8`) + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` instead of the APPLE\_ID triplet. The afterSign script auto-detects which shape is present.
 
 ### CI
 
@@ -194,12 +195,12 @@ Partial Apple credentials (e.g. `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` set b
 
 ### M2 DOD checklist
 
-- [x] Universal DMG target (D29) configured.
+- [x] Universal DMG target (D29) wired in `electron-builder.yml` (`mac.target.arch: [universal]`, fuse-flip + notarize hooks).
+- [ ] **(follow-up)** Universal DMG merge produces a valid DMG end-to-end. Blocked by `@napi-rs/keyring` single-arch install under bun — configured, not yet green. See ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) above.
 - [x] `afterPack` flips fuses per spec §8.9 (D17); verified on packaged arm64 binary via `electron-fuses read`.
 - [x] `afterSign` invokes `@electron/notarize` + `xcrun stapler validate` + `@electron/fuses.getCurrentFuseWire` verification; graceful-skip on absent creds smoke-tested.
 - [x] Hardened runtime + entitlements applied (unchanged from M1 — already matches spec).
 - [x] CI workflow structure in place; artifact upload on success.
-- [ ] **(follow-up)** Universal-merge blocker (`@napi-rs/keyring` single-arch install under bun). See "Universal DMG + bun workspace: known gap" above.
 - [ ] **(creds-gated)** Fresh-Mac install of signed DMG: drag to `/Applications`, open, **no Gatekeeper warning**, M1 dev loop works end-to-end in packaged mode.
 - [ ] **(creds-gated)** First-launch Keychain prompt shows `CFBundleDisplayName` correctly (R16).
 

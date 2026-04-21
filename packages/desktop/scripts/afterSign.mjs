@@ -148,7 +148,20 @@ function resolveNotarizeCredentials() {
 }
 
 async function verifyFuses(electronBinary, expected) {
-  const wire = await getCurrentFuseWire(electronBinary);
+  let wire;
+  try {
+    wire = await getCurrentFuseWire(electronBinary);
+  } catch (err) {
+    // Phase-annotated so a wire-read failure is distinguishable from a
+    // value-mismatch failure — the former points at @electron/fuses or
+    // the binary state, the latter points at the signing pipeline.
+    throw new Error(
+      `[afterSign] getCurrentFuseWire failed on ${electronBinary}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
+  }
   const mismatches = [];
   for (const [optIndex, expectedValue] of Object.entries(expected)) {
     const key = Number(optIndex);
@@ -185,6 +198,16 @@ export default async function afterSign(context) {
     throw new Error(`[afterSign] .app bundle not found at ${appPath}`);
   }
 
+  // Always verify fuses — D17's paranoid post-flip check runs regardless of
+  // whether we're about to notarize. The unsigned path still has an
+  // ad-hoc re-sign (via `flipFuses`' `resetAdHocDarwinSignature: true`) and
+  // electron-builder may still invoke codesign with `identity=null` between
+  // afterPack and afterSign — any of those steps could silently perturb
+  // fuse state. Verify-before-notarize means both paths share the same
+  // defense-in-depth guarantee; verify-after-notarize would miss bugs on
+  // the unsigned path where local developers exercise the pipeline most.
+  await verifyFuses(electronBinary, targetFuses);
+
   const credentials = resolveNotarizeCredentials();
 
   if (!credentials) {
@@ -199,24 +222,62 @@ export default async function afterSign(context) {
   console.log(`[afterSign] notarizing ${appPath} via ${credentials.kind} credentials`);
   console.log('[afterSign]   this typically takes 1-5 minutes...');
 
-  await notarize({
-    appPath,
-    ...credentials.creds,
-  });
-
-  console.log('[afterSign] notarize + staple complete; validating stapled ticket');
   try {
-    execFileSync('xcrun', ['stapler', 'validate', appPath], {
-      stdio: 'inherit',
+    await notarize({
+      appPath,
+      ...credentials.creds,
     });
   } catch (err) {
+    // Attach the credential kind so the operator's first debugging question
+    // — "which credential shape was being used?" — is answered in the
+    // exception itself, not inferred from secrets config. Structured log
+    // transports (CloudWatch, Datadog) capture the Error object, not the
+    // console.log preamble above.
     throw new Error(
-      `[afterSign] stapler validation failed — notarization succeeded but ticket was not ` +
-        `stapled correctly. This will cause Gatekeeper warnings on first launch. ` +
-        `Original error: ${err instanceof Error ? err.message : String(err)}`,
+      `[afterSign] notarize failed (credential kind: ${credentials.kind}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
     );
   }
 
+  console.log('[afterSign] notarize + staple complete; validating stapled ticket');
+  try {
+    // Capture stdout/stderr explicitly rather than `stdio: 'inherit'`.
+    // `inherit` pipes child streams directly to the parent TTY at runtime
+    // (visible in GHA logs), but `err.stdout` / `err.stderr` on the thrown
+    // exception are `undefined` — the re-thrown Error loses the diagnostic
+    // payload for any log scraper that only sees the exception object.
+    execFileSync('xcrun', ['stapler', 'validate', appPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    const stderr =
+      err && typeof err === 'object' && 'stderr' in err && err.stderr
+        ? err.stderr.toString().trim()
+        : '';
+    const stdout =
+      err && typeof err === 'object' && 'stdout' in err && err.stdout
+        ? err.stdout.toString().trim()
+        : '';
+    // Echo the captured streams to the parent TTY for human-readable CI log
+    // continuity before re-throwing the enriched Error.
+    if (stdout) console.error(`[afterSign] stapler stdout: ${stdout}`);
+    if (stderr) console.error(`[afterSign] stapler stderr: ${stderr}`);
+    throw new Error(
+      `[afterSign] stapler validation failed — notarization succeeded but ticket was not ` +
+        `stapled correctly. This will cause Gatekeeper warnings on first launch. ` +
+        `Original error: ${err instanceof Error ? err.message : String(err)}` +
+        (stderr ? `\nstapler stderr: ${stderr}` : '') +
+        (stdout ? `\nstapler stdout: ${stdout}` : ''),
+      { cause: err },
+    );
+  }
+
+  // Re-verify fuses AFTER notarize+staple. The pre-notarize verify above
+  // catches fuse corruption from flipFuses / codesign (unsigned path);
+  // this second verify catches any mutation from the notary-ticket staple
+  // step — belt-and-suspenders per D17.
   await verifyFuses(electronBinary, targetFuses);
 
   console.log('[afterSign] signed + notarized + stapled + fuse-verified successfully');

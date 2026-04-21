@@ -69,11 +69,23 @@ export default async function afterPack(context) {
     console.log(`[afterPack]   ${name} = ${value}`);
   }
 
-  await flipFuses(electronBinary, {
-    version: FuseVersion.V1,
-    resetAdHocDarwinSignature: true,
-    ...targetFuses,
-  });
+  try {
+    await flipFuses(electronBinary, {
+      version: FuseVersion.V1,
+      resetAdHocDarwinSignature: true,
+      ...targetFuses,
+    });
+  } catch (err) {
+    // Phase-annotated so a fuse-flip failure is distinguishable from a
+    // post-sign verification failure in afterSign.mjs — the remediation
+    // paths differ (rollback vs investigate re-sign pipeline).
+    throw new Error(
+      `[afterPack] fuse flip failed on ${electronBinary}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
+  }
 
   console.log('[afterPack] fuses flipped successfully; electron-builder will re-sign next');
 }

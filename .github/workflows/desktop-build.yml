@@ -51,9 +51,14 @@ on:
 permissions:
   contents: read
 
+# NOTE: cancel-in-progress is `false` because a mid-notarize cancel is costly.
+# Apple notary submissions take 1-5 minutes of wall-clock and don't resume
+# cleanly — cancellation leaves a half-stapled bundle and the next attempt
+# starts from scratch. workflow_dispatch is manual so accidental re-dispatch
+# is rare, and re-runs are cheap compared to the wasted notary round-trip.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-macos-dmg:
@@ -81,12 +86,14 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      # Turbo cache keeps `build` fast across runs; keyed per SHA so a
-      # dirty cache never cross-contaminates a fresh build.
+      # Turbo cache keeps `build` fast across runs. Keying on bun.lock
+      # warm-caches across commits that don't change dependencies — cold
+      # cache only when the lockfile actually moves. `github.sha` in the
+      # restore-keys fallback still picks up same-commit re-runs.
       - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: .turbo
-          key: ${{ runner.os }}-turbo-desktop-${{ github.sha }}
+          key: ${{ runner.os }}-turbo-desktop-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-turbo-desktop-
 
@@ -98,8 +105,19 @@ jobs:
           ELECTRON_SKIP_REBUILD: "0"
         run: bun install --frozen-lockfile
 
+      # electron-builder.yml's `extraResources` rule copies from
+      # `packages/cli/dist/public/`, which the CLI's `build:assets` populates
+      # via `cp -r ../app/dist dist/public`. The CLI does not declare the
+      # app as a workspace dep (app is private, and the CLI ships the
+      # compiled bundle — not a package reference), so turbo's `^build`
+      # runs them in parallel. Without explicit sequencing, cli's
+      # `build:assets` races app's vite build and can fail (no `app/dist`
+      # yet) or copy stale content. Match the explicit ordering the README
+      # documents: app → cli.
       - name: Build workspace (produces packages/cli/dist/public for extraResources)
-        run: bun run build
+        run: |
+          bun run --filter=@inkeep/open-knowledge-app build
+          bun run --filter=@inkeep/open-knowledge build
 
       # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
       # the artifact can be named to match. We key off CSC_LINK alone: it's

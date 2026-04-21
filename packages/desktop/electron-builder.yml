@@ -6,8 +6,10 @@ copyright: Copyright © 2026 Inkeep
 # node_modules/electron at repo root (not in packages/desktop/node_modules),
 # and electron-builder's auto-version-detection walks the package manifest
 # tree and refuses to infer from a caret range. electron-userland/electron-
-# builder#3984 is the canonical reference. Keep this in lockstep with the
-# "electron" devDep in packages/desktop/package.json.
+# builder#3984 is the canonical reference. Keep this byte-identical to the
+# "electron" devDep in packages/desktop/package.json — that devDep is
+# pinned exact (no caret) so the packaged runtime and the version used by
+# electron-rebuild / native-module ABI compilation cannot drift.
 electronVersion: "41.2.1"
 
 directories:
