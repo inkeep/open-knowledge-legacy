@@ -3,7 +3,6 @@ import type { ComponentProps, FC } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-// import { GithubIcon } from './icons/github';
 import { LinkedinIcon } from './icons/linkedin';
 import { XTwitterIcon } from './icons/x-twitter';
 
@@ -13,7 +12,6 @@ const links: Array<{
   icon: FC<ComponentProps<'svg'>>;
 }> = [
   { label: 'Documentation', href: 'https://docs.inkeep.com/overview', icon: BookOpen },
-  // { label: 'GitHub', href: 'https://github.com/inkeep/open-knowledge', icon: GithubIcon },
   { label: 'Homepage', href: 'https://inkeep.com/', icon: Globe },
   { label: 'Twitter / X', href: 'https://x.com/inkeep', icon: XTwitterIcon },
   { label: 'LinkedIn', href: 'https://www.linkedin.com/company/inkeep/', icon: LinkedinIcon },
@@ -49,7 +47,7 @@ export const HelpPopover: FC = () => {
                   rel="noopener noreferrer"
                   className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-azure-900/5 dark:hover:bg-white/20 hover:text-primary"
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon aria-hidden="true" className="size-4 shrink-0" />
                   {label}
                 </a>
               </li>
