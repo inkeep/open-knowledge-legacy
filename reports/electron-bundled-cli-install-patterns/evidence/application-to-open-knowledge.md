@@ -39,11 +39,13 @@ This divergence matters because:
 2. **VS Code's `app.asar`** contains all the compiled JS; the `bin/` directory is in `Resources/app/` (sibling, not nested). OK's topology puts CLI inside `app.asar.unpacked/` because OK's packages/cli/dist/ bundle is already produced at build time and electron-builder's default behavior puts it there.
 3. **Functional equivalent**: both patterns result in signed plain-text files inside the signed .app bundle. No security implication.
 
-**Recommendation**: confirm during M6 implementation that the symlink target path matches the actual placement. The spec currently says "app.asar.unpacked/cli/" — the wrapper script inside should be the install target:
+**Recommendation**: confirm during M6 implementation that the symlink target path matches the actual placement. The spec currently says "app.asar.unpacked/cli/", but that's the `asarUnpack` mechanism — the CLI dist isn't inside `app.asar` to begin with, so it wants `extraResources` instead. `extraResources` copies to `Contents/Resources/<to>` (no `app.asar.unpacked/` prefix). The symlink target for the wrapper is therefore:
 
 ```
-/usr/local/bin/ok → /Applications/Open Knowledge.app/Contents/Resources/app.asar.unpacked/cli/bin/ok.sh
+/usr/local/bin/ok → /Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh
 ```
+
+`evidence/m6-implementation-design.md` (D16) encodes this path in both `wrapperPathInBundle` and the `extraResources` amendment; the spec's "app.asar.unpacked/cli/" phrasing in §8.12 is worth post-hoc correcting on a future /ship pass. Out of scope for this research PR.
 
 Make `bin/ok.sh` a dedicated shim that exists specifically to be the symlink target (VS Code pattern). Its content: same as VS Code's `code.sh`, adapted for OK's Electron binary name + CLI entry point.
 
@@ -73,7 +75,7 @@ fi
 
 CONTENTS="$APP_PATH/Contents"
 ELECTRON="$CONTENTS/MacOS/Open Knowledge"
-CLI="$CONTENTS/Resources/app.asar.unpacked/cli/dist/cli.mjs"
+CLI="$CONTENTS/Resources/cli/dist/cli.mjs"
 
 ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" "$@"
 exit $?
@@ -85,7 +87,7 @@ Simpler than VS Code's — no remote-IPC case (OK has no SSH remote story), no `
 
 1. **App translocation guard (missing from D52)** — before creating the symlink, detect `/AppTranslocation/` or `/private/var/folders/` in `app.getPath('exe')` and refuse with a clear dialog ("Please move Open Knowledge to your Applications folder first"). Without this guard, fresh-DMG users who double-click-to-run without dragging will end up with a broken symlink pointing to a temp dir that disappears on reboot. VS Code closed the bug as "drag to Applications is the answer" but we can ship the guard cheaply and avoid the support ticket.
 
-2. **Bun-in-CLI audit (risk for Electron-Node-mode execution)** — if any of OK's CLI code or its transitive deps imports from `bun:*` built-ins (bun:sqlite, bun:test, Bun shell), the wrapper's `ELECTRON_RUN_AS_NODE=1` path breaks because Electron's embedded Node has no `bun:*` modules. Audit `packages/cli/` for Bun-specific imports before M6 lands. Known-good: Commander v14, js-yaml, @napi-rs/keyring (Node-native), Zod. Known-risk: any code that assumes Bun runtime APIs. A quick `grep -rn "bun:" packages/cli/src/` audit before M6 answers this in 10 seconds.
+2. **Bun-in-CLI audit (risk for Electron-Node-mode execution)** — if any of OK's CLI code or its transitive deps imports from `bun:*` built-ins (bun:sqlite, bun:test, Bun shell), the wrapper's `ELECTRON_RUN_AS_NODE=1` path breaks because Electron's embedded Node has no `bun:*` modules. Audit `packages/cli/` for Bun-specific imports before M6 lands. Known-good: Commander v14, js-yaml, @napi-rs/keyring (Node-native), Zod. Known-risk: any code that assumes Bun runtime APIs. A quick `grep -rn "bun:" packages/cli/src/` audit before M6 answers this in 10 seconds.<br>_[Updated 2026-04-21 post-D14: audit completed with **zero matches** across `packages/cli/src/` + `packages/core/src/` + `packages/server/src/` (excluding test files). `ELECTRON_RUN_AS_NODE=1` is zero-change for OK today. See [`evidence/bun-import-audit.md`](bun-import-audit.md). The checklist item below is retired._]
 
 3. **Homebrew Cask + /opt/homebrew PATH conflict** — on Apple Silicon with Homebrew, `/opt/homebrew/bin` tends to precede `/usr/local/bin` in user PATH. A user who also has `npm i -g @inkeep/open-knowledge` via Apple-Silicon Homebrew Node would have `/opt/homebrew/bin/ok` AND `/usr/local/bin/ok` — `/opt/homebrew/bin/ok` (npm-installed) wins. This is not a bug — both CLIs execute equivalent code — but the user sees the npm version's `--version`, not the Electron-bundled version's. Documentation should mention this. D52's "shell resolves to whichever appears first" posture handles it.
 
@@ -102,9 +104,9 @@ Simpler than VS Code's — no remote-IPC case (OK has no SSH remote story), no `
 **M6 checklist additions (not spec amendments, just implementation reminders):**
 
 1. ✋ App translocation guard in the install handler.
-2. ✋ Bun-specific import audit in `packages/cli/`.
+2. ~~✋ Bun-specific import audit in `packages/cli/`.~~ **Retired 2026-04-21 per D14** — `evidence/bun-import-audit.md` returned zero matches; no blocker.
 3. ✋ Broken-symlink detection + repair offer on launch.
 4. 📝 Document the `/opt/homebrew/bin/ok` coexistence in `packages/desktop/README.md`.
 5. 📝 Document `$HOME/.local/bin` fallback (future option).
 
-**No spec amendment needed.** All five are implementation-layer concerns discoverable from this research; none invalidate D52 or §8.12.
+**No spec amendment needed.** All five are implementation-layer concerns discoverable from this research; none invalidate D52 or §8.12. D16 (`evidence/m6-implementation-design.md`) turns the four remaining reminders into concrete code + smoke-test procedure.

@@ -28,7 +28,7 @@ Menu/command text (verbatim from docs):
 
 > "Shell Command: Install 'code' command in PATH"
 
-Accessed via Command Palette (`Cmd+Shift+P`). Symlink/copy placed at `/usr/local/bin/code` pointing at `/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`.
+Accessed via Command Palette (`Cmd+Shift+P`). Symlink placed at `/usr/local/bin/code` pointing at `/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`. (The install is always a symlink, not a copy — `app_realpath` in the wrapper script depends on the symlink chain to find the `.app` bundle.)
 
 **Implications:** The install action is user-triggered, not automatic on first launch. This is the pattern the OK Electron spec §8.12 (D52) already cites as its model.
 

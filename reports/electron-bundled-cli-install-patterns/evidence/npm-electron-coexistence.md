@@ -105,14 +105,15 @@ When `/usr/local/bin/ok` is contested (Intel Mac, legacy Node, both want the pat
 
 1. OK's install creates symlink `/usr/local/bin/ok` → app bundle.
 2. User runs `npm i -g @inkeep/open-knowledge`.
-3. npm's behavior: it replaces the existing file at `/usr/local/bin/ok` with its shim. npm does NOT check whether the existing file is a foreign symlink. **npm wins, silently.**
-4. OK Electron's next launch: has no notification; the menu status indicator still says "Installed" (assuming it only checks existence, not target). Broken until `ok mcp` fails with a different-content error.
+3. npm's default behavior: installs fail with an **`EEXIST`** error when the bin target is already occupied by a non-npm file. The user sees a visible error naming the conflicting path. To proceed, the user must either manually remove the foreign file OR pass `--force`. This is consistent behavior across npm v7+ and is documented across [npm/cli issue threads](https://github.com/npm/cli/issues) and community-facing recipes for EEXIST recovery.
+4. The user-visible outcome: the npm install fails-safe; no silent stomping. The user then chooses whether to `rm /usr/local/bin/ok` (breaks Electron's install) or resolve some other way.
 
 **Implications:**
 
-- **This is an asymmetric collision.** npm will silently overwrite the Electron symlink; Electron (per D52) can choose to not overwrite npm's shim. The defensive posture for OK is:
-  1. Install action checks `fs.lstat` result against expected symlink target; if the path exists and is NOT the expected symlink, DO NOT overwrite — prompt the user.
-  2. On app launch, **status check** the install state: if `/usr/local/bin/ok` exists but points somewhere unexpected (npm shim, old app path), offer "Fix / Replace" action.
+- **The collision is symmetric-fail-safe at the default floor.** Both sides refuse to silently overwrite a foreign file: Electron prompts (per D52 + the D16 `fs.lstat` guard in `evidence/m6-implementation-design.md`), npm errors with EEXIST. Only explicit user opt-in — `--force` for npm, a Replace-button click for Electron — actually stomps.
+- **Defensive posture for OK remains unchanged** from what D52 + D16 already prescribe:
+  1. Install action checks `fs.lstat` before writing; prompts on foreign-owner path. (This is better copy than letting npm's EEXIST path surface a raw error.)
+  2. On app launch, **status check** the install state: if `/usr/local/bin/ok` exists but points somewhere unexpected (stale from a prior install, a `rm`'d-then-re-created npm shim, etc.), offer "Fix / Replace" action.
 - **Documentation needed** in `packages/desktop/README.md`: "If you have both `npm i -g @inkeep/open-knowledge` and the desktop app installed, remove one to avoid PATH shadowing. Running `which -a ok` tells you which one is active."
 
 ---

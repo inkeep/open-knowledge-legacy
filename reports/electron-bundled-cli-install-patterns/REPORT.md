@@ -40,7 +40,7 @@ There is one canonical pattern for bundling a CLI inside an Electron `.app` on m
 4. **The wrapper uses `ELECTRON_RUN_AS_NODE=1`** to invoke the app's Electron binary in Node-mode, passing the CLI JS entry as argv. No separate Node runtime is shipped.
 5. **Version coupling is free**: the symlink target path is static, but the file AT that path is replaced atomically when the app updates. `ok --version` and the desktop app ship as one unit.
 
-This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code (2015+) → Cursor / Windsurf / Trae (2023+) lineage. It is robust, well-understood, and exactly what Open Knowledge's spec D52 (LOCKED 2026-04-17) already adopts.
+This pattern has **~10 years of continuous production shipping under VS Code** (since the 2015/2016 1.0 stable release), with Atom (2014–2022) preceding it as the direct ancestor for another ~7 years of overlap. Combined, ~12 years of real-world hardening through the Atom → VS Code → Cursor / Windsurf / Trae (2023+) lineage. It is robust, well-understood, and exactly what Open Knowledge's spec D52 (LOCKED 2026-04-17) already adopts.
 
 **Three bugs recur across every implementation** and must be defended against:
 
@@ -57,14 +57,14 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 
 **Key Findings:**
 
-- **The VS Code pattern is the single dominant incumbent**, with a continuous 10-year provenance through Atom → VS Code → Cursor → Windsurf → Trae. Fork-stable; zero redesign across descendants.
+- **The VS Code pattern is the single dominant incumbent**, with ~12 years of combined provenance through the Atom (2014–2022) → VS Code (2015/2016–present) → Cursor / Windsurf / Trae (2023+) lineage. Fork-stable; zero redesign across descendants.
 - **`ELECTRON_RUN_AS_NODE=1` is the enabling technology** — the Electron main binary doubles as the CLI's Node runtime. No second Node install inside the `.app`.
 - **`/usr/local/bin/` is the uncontested target** on macOS (not SIP-protected, writable by admin, in default PATH). `/opt/homebrew/bin/` coexists harmlessly on Apple Silicon.
 - **`osascript "do shell script ... with administrator privileges"`** is the portable admin-prompt shape; stable across macOS 11–15.
 - **App translocation is the critical gotcha**. Runtime detection (`app.getPath('exe')` matches `/AppTranslocation/` or `/private/var/folders/`) is cheap and avoided by no surveyed incumbent. Open Knowledge should ship this guard.
 - **Bundled-CLI signing is free under electron-builder's `codesign --deep` pass** for shell scripts and JS files. Only `.node` native modules need individual signing, and OK's existing `app.asar.unpacked` globs cover that.
 - **Version coupling is automatic** through the static symlink → replaced-file shape. Zero extra infra; VS Code / Zed / Cursor / Atom all ship this way.
-- **npm-distributed CLIs coexist on PATH without conflict on modern Macs** — Apple Silicon + Homebrew Node / fnm / nvm / volta puts the npm `ok` at a different path than `/usr/local/bin/ok`. Shell resolution picks whichever appears first in `$PATH`. The one **direct collision scenario** is Intel Mac + Homebrew-intel or legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. OK's install action must `fs.lstat`-check before overwriting (D15 finding) — Docker-Desktop's aggressive silent overwrite is the anti-pattern.
+- **npm-distributed CLIs coexist on PATH without conflict on modern Macs** — Apple Silicon + Homebrew Node / fnm / nvm / volta puts the npm `ok` at a different path than `/usr/local/bin/ok`. Shell resolution picks whichever appears first in `$PATH`. The one **direct collision scenario** is Intel Mac + Homebrew-intel or legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. The collision is **symmetric-fail-safe**: npm errors with `EEXIST` rather than stomping a foreign file; Electron (per D52 + D16's `fs.lstat` guard) prompts. Only `--force` or a user click actually overwrites. Docker-Desktop's aggressive silent overwrite is the anti-pattern that neither side replicates.
 - **Uninstall is a user-responsibility tradition** across every incumbent. OK can match VS Code (no in-app uninstall) OR ship a symmetric "Uninstall Command-Line Tools" action.
 - **ZERO Bun-specific runtime imports in `packages/cli/` non-test code** (audit via `grep -rn` across `packages/cli/src/` + `packages/core/src/` + `packages/server/src/`). The `ELECTRON_RUN_AS_NODE=1` pattern is zero-change for OK today. All `Bun.*` + `bun:test` usage is confined to test files, which don't ship in the `dist/` tarball (D14 finding).
 - **A full M6 implementation design is now checked in** — concrete `ok.sh` wrapper script, `cli-install.ts` TypeScript module with `isTranslocated` / `wrapperPathInBundle` / `installCli` / `uninstallCli` / `getInstallStatus` functions, menu-item wiring, electron-builder.yml amendments, and a four-stage smoke-test procedure (dev-mode → unsigned DMG → translocation simulation → signed DMG). No source files modified in this PR; the design is ready to hand off to `/implement` or `/ship` for M6.
@@ -112,7 +112,7 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 **Evidence:** [evidence/vscode-pattern.md](evidence/vscode-pattern.md)
 
 **Implications:**
-- 10-year-stable mechanism with complete public source (`resources/darwin/bin/code.sh` in [microsoft/vscode](https://github.com/microsoft/vscode)) — implementable with zero research risk.
+- ~10-year-stable mechanism under VS Code (Atom shipped a near-identical pattern from 2014–2022) with complete public source (`resources/darwin/bin/code.sh` in [microsoft/vscode](https://github.com/microsoft/vscode)) — implementable with zero research risk.
 - One wrapper script, one symlink, one in-app menu entry. Minimal moving parts.
 - No separate Node.js runtime shipped — Electron is the runtime.
 
@@ -163,7 +163,7 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 **Evidence:** [evidence/sublime-atom-github-desktop.md](evidence/sublime-atom-github-desktop.md)
 
 **Implications:**
-- Atom → VS Code lineage is the direct pattern ancestor. ~10 years of combined production hardening.
+- Atom → VS Code lineage is the direct pattern ancestor. ~12 years of combined production hardening (Atom 2014–2022 overlapping with VS Code 2015+).
 - The GitHub Desktop counterexample demonstrates: shipping a bundled CLI is a choice, not a requirement. Open Knowledge made the opposite choice (bundled CLI via D52) because of the agent-first story (P1 without Node cannot wire MCP otherwise) — and that's the correct call for OK's product scope.
 
 ### D6 — Install mechanism matrix: three distinct shapes
@@ -263,7 +263,7 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 
 ### D15 — Desktop-bundled `ok` vs npm-global `ok` — coexistence and collision (added 2026-04-21)
 
-**Finding:** The two install paths are **compatible on modern Macs (Apple Silicon + Homebrew Node / fnm / nvm / volta)**: npm's prefix lands at a non-`/usr/local/` path, so the npm `ok` and the Electron-installed `/usr/local/bin/ok` live at different locations and coexist via shell PATH precedence. **One direct collision scenario exists**: Intel Mac + Homebrew-intel Node OR legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. Npm's install behavior in this case silently overwrites a pre-existing foreign symlink; Electron's install (per D52) can defensively check and prompt. MCP configs written by the Electron-origin `runInit` hard-code `/usr/local/bin/ok`; CLI-origin configs use `npx @inkeep/open-knowledge mcp` — both work, with different durability properties.
+**Finding:** The two install paths are **compatible on modern Macs (Apple Silicon + Homebrew Node / fnm / nvm / volta)**: npm's prefix lands at a non-`/usr/local/` path, so the npm `ok` and the Electron-installed `/usr/local/bin/ok` live at different locations and coexist via shell PATH precedence. **One direct collision scenario exists**: Intel Mac + Homebrew-intel Node OR legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. In that case the collision is **symmetric-fail-safe by default**: npm errors with `EEXIST` rather than overwriting a foreign file; Electron's install (per D52 + the D16 `fs.lstat` guard) prompts before overwriting. Only explicit user opt-in stomps — `--force` for npm, a Replace-button click for Electron. MCP configs written by the Electron-origin `runInit` hard-code `/usr/local/bin/ok`; CLI-origin configs use `npx @inkeep/open-knowledge mcp` — both work, with different durability properties.
 
 **Evidence:** [evidence/npm-electron-coexistence.md](evidence/npm-electron-coexistence.md)
 
@@ -281,7 +281,7 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 
 **Implications:**
 - **Implementation is hand-off-ready.** A future `/implement` or `/ship` pass can read the design, apply the file inventory, and ship M6 without re-deriving from the 3P evidence.
-- **Rough LOC estimate**: ~300 net lines. One well-scoped PR, not a multi-week effort.
+- **Rough LOC estimate**: ~435 net lines of code + tests + docs (detailed breakdown in `evidence/m6-implementation-design.md` §7). One well-scoped PR, not a multi-week effort.
 - **No source files were modified in this research PR** — the design is `.md`-only, per the user-confirmed scope boundary.
 
 ---

@@ -56,7 +56,7 @@ Command Palette: `Window: Install Shell Commands`.
 Symlinks created:
 
 - `/usr/local/bin/atom` → `/Applications/Atom.app/Contents/Resources/app/atom.sh`
-- `/usr/local/bin/apm` → `/Applications/Atom.app/Contents/Resources/app/apm/bin/apm`
+- `/usr/local/bin/apm` → `/Applications/Atom.app/Contents/Resources/app/apm/node_modules/.bin/apm` (apm is itself a published Node CLI shipped inside Atom's bundle, so its bin stub lives under `node_modules/.bin/`, not `bin/`)
 
 Admin prompt surfaces for writing to `/usr/local/bin`.
 

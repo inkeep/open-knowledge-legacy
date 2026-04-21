@@ -526,7 +526,20 @@ Blocked on same pre-req as M2 DOD (Apple certs). When Apple certs are on hand:
 **Documentation:**
 - `packages/desktop/README.md` — add "Command-Line Tools" subsection covering the install action, translocation gotcha, coexistence with `npm i -g @inkeep/open-knowledge`, and `which -a ok` diagnostic command.
 
-**Rough LOC estimate:** ~300 lines net (~250 in `cli-install.ts`, ~30 in menu.ts + index.ts, ~10 in electron-builder.yml, ~10 in ok.sh).
+**Rough LOC estimate:** ~400 lines net total:
+
+| File | New / Modified | Lines |
+|---|---|---|
+| `packages/desktop/src/main/cli-install.ts` | new | ~250 (code + JSDoc) |
+| `packages/desktop/src/main/cli-install.test.ts` | new | ~60 (pure-function unit tests) |
+| `packages/desktop/resources/cli/bin/ok.sh` | new | ~30 |
+| `packages/desktop/src/main/menu.ts` | modified | ~20 (conditional File-menu entry + `MenuDeps` extension) |
+| `packages/desktop/src/main/index.ts` | modified | ~25 (menu-deps wiring + optional launch-time broken-symlink repair) |
+| `packages/desktop/electron-builder.yml` | modified | ~10 (two new `extraResources` entries) |
+| `packages/desktop/README.md` | modified | ~40 (Command-Line Tools section — install / uninstall / coexistence / troubleshoot) |
+| **Total** | | **~435** |
+
+One well-scoped PR, not a multi-week effort. The doc addition (`README.md`) carries the Medium-severity "document the coexistence" reminders from D13 and D15 in one place.
 
 ---
 
