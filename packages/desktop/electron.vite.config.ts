@@ -1,6 +1,5 @@
 import { resolve } from 'node:path';
-import babel from '@rolldown/plugin-babel';
-import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import react from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
@@ -15,6 +14,13 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
  * Keeping `configFile: false` in the renderer prevents Vite from auto-discovering
  * `packages/app/vite.config.ts` when `root` points at `../app`, which would
  * re-enable the hocuspocus plugin and launch a competing server.
+ *
+ * Plugin pinning: electron-vite 5.x bundles Vite 7 internally (see
+ * node_modules/electron-vite/node_modules/vite@7.3.2), so plugin-react is pinned
+ * to ^5 (Vite 6/7-compatible) here. packages/app can stay on plugin-react@6 +
+ * Vite 8 + rolldown because its web build runs against a different Vite
+ * instance. React Compiler is applied via plugin-react@5's babel option
+ * rather than @rolldown/plugin-babel (rolldown-only).
  */
 
 const reactCompilerConfig: PluginOptions = {
@@ -56,7 +62,13 @@ export default defineConfig({
   renderer: {
     root: appRoot,
     configFile: false,
-    plugins: [react(), babel({ presets: [reactCompilerPreset(reactCompilerConfig)] })],
+    plugins: [
+      react({
+        babel: {
+          plugins: [['babel-plugin-react-compiler', reactCompilerConfig]],
+        },
+      }),
+    ],
     resolve: {
       alias: {
         '@': resolve(appRoot, 'src'),
