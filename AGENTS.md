@@ -180,11 +180,10 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
-- `src/registry/` — Component descriptor registry subsystem
+- `src/registry/` — Component descriptor registry subsystem (single source of truth for descriptors; `built-ins.ts` is the hand-authored manifest, `createRegistry()` returns the runtime `ComponentRegistry` with wildcard `'*'` fallback)
   - `types.ts` — `PropDef` (discriminated union: string/boolean/number/enum/reactnode) + `JsxComponentMeta` (name, props, icon, category, searchTerms, emptyChildName)
   - `built-ins.ts` — Manifest of 18 built-in component descriptors (Callout, Card, Cards, Steps, Step, Tabs, Tab, Accordions, Accordion, Files, Folder, File, ImageZoom, Banner, TypeTable, InlineTOC, Mermaid, Audio)
   - `index.ts` — `createRegistry()` factory returning `ComponentRegistry` (get/set/has/entries), pre-populated with built-ins + wildcard `'*'` fallback
-- `src/generated/components.ts` — Build-time generated component metadata (from `scripts/build-registry.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
