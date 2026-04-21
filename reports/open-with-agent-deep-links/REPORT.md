@@ -34,7 +34,7 @@ topics:
 
 ---
 
-> **UPDATE 2026-04-21 (same day, user-requested follow-up):** Second pass added (a) a **new dimension** for the `claude.ai/new?q=` **web-URL prompt-pass pattern** used by Inkeep/Mintlify docs sites — missed in initial pass and arguably the simplest universal launch vector; (b) empirical verification of 6 UNCERTAIN items including a **material behavior change** in Codex's stdin handling (PR #15917, v0.122.0); (c) broader capability matrix across Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands. See [§ Follow-up Findings (2026-04-21)](#follow-up-findings-2026-04-21) for the delta. The sections below are the original pass; corrigendum breadcrumbs flag points that the follow-up revised.
+> **UPDATE 2026-04-21 (same day, user-requested follow-up):** Second and third passes added (a) a **new dimension** for the `claude.ai/new?q=` **web-URL prompt-pass pattern** used by Inkeep/Mintlify docs sites — missed in initial pass and arguably the simplest universal launch vector; (b) empirical verification of 6 UNCERTAIN items including a **material behavior change** in Codex's stdin handling (PR #15917, v0.122.0); (c) broader capability matrix across Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands; (d) **F5 material correction:** Claude Code CLI DOES register its own `claude-cli://open?q=<encoded>` prompt-bearing URL scheme — missed in pass 1 + 2 because it's documented under the `disableDeepLinkRegistration` setting, not in the CLI reference or any Deep Links page. See [§ Follow-up Findings (2026-04-21)](#follow-up-findings-2026-04-21) for the delta. The sections below are the original pass; corrigendum breadcrumbs flag points that the follow-up revised.
 
 ## Executive Summary
 
@@ -44,7 +44,7 @@ The asymmetry is structural, not a spec-process artifact:
 
 1. **Cursor is the only target with a documented third-party URL contract for prompt pre-fill.** `cursor://anysphere.cursor-deeplink/prompt?text=<encoded>` pre-fills chat (8,000-char cap); the user must confirm — Cursor declined an auto-execute variant on security grounds. Separately, `cursor <dir>` (VS Code-shim CLI) opens folders. The canonical shape for "prompt + dir" is a **two-step**: spawn `cursor <dir>`, then `shell.openExternal("cursor://...prompt?text=...")`.
 2. **Claude Desktop (unified Chat + Cowork + Code) registers `claude://` but has no public prompt-pass path.** Only two observed paths: `claude://resume?session=<uuid>&cwd=<path>` (requires a session transcript pre-staged on disk by the CLI's `/desktop` handoff), and an OAuth callback. Fresh-prompt delivery via URL is **not supported**. Best wrapper behavior: `open -a "Claude"` / `start Claude.exe` with no prompt; user types it. Prompts-via-URL is a feature request (Issue #19023) for Claude Code on the Web, not Desktop.
-3. **Claude Code CLI and Codex CLI are TUIs.** Both require a terminal context when spawned from Electron. Both accept a seed prompt as a positional argv. Both have a non-interactive escape hatch (`claude -p` / `codex exec`) that can be `spawn()`'d headlessly without a terminal — streams stdout, suitable for an Electron panel. Neither CLI registers a URL scheme of its own. Directory handling differs: Claude Code has no `--cwd` flag (spawn with `{ cwd: dir }` or `cd dir &&`); Codex has `-C/--cd <dir>` but refuses non-git-repo dirs without `--skip-git-repo-check`.
+3. **Claude Code CLI and Codex CLI are TUIs.** Both require a terminal context when spawned from Electron. Both accept a seed prompt as a positional argv. Both have a non-interactive escape hatch (`claude -p` / `codex exec`) that can be `spawn()`'d headlessly without a terminal — streams stdout, suitable for an Electron panel. Neither CLI registers a URL scheme of its own.<br>_[Corrected 2026-04-21 F5: Claude Code CLI DOES register `claude-cli://open?<params>` on startup (controllable via `disableDeepLinkRegistration`). Source-verified in `@anthropic-ai/claude-code@2.1.104` `cli.js` — parser accepts exactly three params: **`q`** (prompt, ≤5K chars, `%0A` for newlines), **`cwd`** (absolute path, ≤4K chars), and **`repo`** (`owner/repo` form, undocumented fallback). This makes Claude Code CLI a FULLY-HONORED single-call primitive: `openExternal("claude-cli://open?cwd=<abs>&q=<enc>")`. Codex CLI still has no URL scheme. Authoritative source-code walkthrough in [F5 evidence](evidence/f5-claude-cli-scheme-correction.md) + § Follow-up Findings F5.]_ Directory handling differs: Claude Code has no `--cwd` flag on the CLI itself (spawn with `{ cwd: dir }` or `cd dir &&`) — but `claude-cli://` does accept `cwd`; Codex has `-C/--cd <dir>` but refuses non-git-repo dirs without `--skip-git-repo-check`.
 4. **Registering our own outbound scheme is NOT required.** The user's intuition is confirmed — `shell.openExternal("cursor://...")` invokes the OS default-handler machinery; our Electron app does nothing scheme-specific. The existing `shell-allowlist.ts` controls which *outbound* schemes our app is willing to dispatch to, and would need `cursor:`, `claude:`, `vscode:` added before an `openWithAgent` wrapper can fire them. The `openknowledge:` entry (inbound handler, deferred to desktop M4) is unrelated to this feature.
 5. **Security surface is non-trivial.** Two 2025 Cursor CVEs (CVE-2025-54133, CVE-2025-54136 — the "CursorJack" class) demonstrate that target-app URL parsers are the real trust boundary. Windows ShellExecute caps URLs at 2,081 chars; macOS LaunchServices is undocumented but practically ~2,000; Cursor self-limits `cursor://` to 8,000. For long prompts, a file/stdin transport outperforms URL-based handoff.
 
@@ -53,7 +53,7 @@ The asymmetry is structural, not a spec-process artifact:
 - **Unified minimal wrapper is feasible,** but it's `{ kind: 'gui-scheme' | 'gui-no-scheme' | 'cli-tui' | 'cli-headless', handler: ... }` internally, not a single dispatch primitive. See §4 for the per-agent matrix.
 - **v1 shipping set is defensible as {Cursor, Claude Code CLI, Codex CLI}.** Cursor has the richest deep-link surface. The two CLIs cover terminal-inclined users symmetrically. Claude Desktop is shippable as "open app, no prompt" but offers little value-add beyond `open -a "Claude"`. `/spec` decides.
 - **Platform coverage.** Cursor + Claude Code CLI + Codex CLI: macOS, Windows (w/ quirks), Linux. Claude Desktop: **macOS + Windows only, no Linux** — a hard v1 policy choice if Linux support matters.
-- **Security additions required before ship.** Add `cursor:`, `claude:`, `vscode:` to `packages/desktop/src/main/shell-allowlist.ts`. Without this, `checkOutboundUrl` returns `{ ok: false, reason: "scheme-not-allowed: cursor:" }` and every invocation fails closed — blocker, not polish.
+- **Security additions required before ship.** Add `cursor:`, `claude:`, `claude-cli:`, `vscode:` to `packages/desktop/src/main/shell-allowlist.ts`. Without this, `checkOutboundUrl` returns `{ ok: false, reason: "scheme-not-allowed: cursor:" }` and every invocation fails closed — blocker, not polish.<br>_[Corrected 2026-04-21 F5: `claude-cli:` added — it's a distinct scheme from `claude:` (the Desktop scheme). Both need allowlist entries.]_
 
 ---
 
@@ -141,6 +141,7 @@ There is **no documented path that accepts a free-form prompt.** Issue #19023 re
 ### D3 — Claude Code CLI (terminal `claude`)
 
 **Finding.** Binary `claude` installed via native installer / Homebrew / WinGet / npm. No `--cwd` or `--dir` flag — canonical pattern is `cd <dir> && claude` or spawn with `{ cwd: dir }`. Two prompt modes:
+<br>_[Corrected 2026-04-21 F5: Claude Code CLI also registers a `claude-cli://` URL scheme on startup, with `claude-cli://open?q=<encoded>` accepting a prompt (multi-line via `%0A`). This is a third launch mode alongside TUI and headless `-p`. See [F5 evidence](evidence/f5-claude-cli-scheme-correction.md) for the full surface and UNCERTAIN items (whether `cwd=`/`session=` params are accepted)._
 
 | Mode | Pattern | Result |
 |---|---|---|
@@ -273,6 +274,7 @@ Registry note for Windows URL-scheme registration: `HKCU\Software\Classes\<schem
 | **Cursor** (IDE + prompt) | ⚠️ 2-step | ✅ | `cursor://...prompt?text=` (8K cap, user-confirm) | `cursor <dir>` (CLI) | **No** — declined for security | macOS, Win, Linux | `spawn("cursor", [dir])` + `openExternal("cursor://...prompt?text=...")` |
 | **Cursor** (headless `agent`) | ✅ | ✅ | `-p "<prompt>"` argv | `--workspace <dir>` | ✅ | macOS, Win, Linux | `spawn("agent", ["--workspace", dir, "-p", prompt])`, requires **paid subscription** |
 | **Claude Desktop** | ❌ | ⚠️ via `/desktop` handoff only | none (URL accepts no prompt) | `claude://resume?cwd=<path>` only with staged session | n/a | **macOS + Win only** | `spawn("open", ["-a", "Claude"])` / `start Claude.exe`; user types prompt |
+| **Claude Code CLI** (`claude-cli://` scheme, NEW F5) | ✅ | ✅ `cwd=<absolute>` (source-verified) | `claude-cli://open?q=<encoded>` (multi-line via `%0A`, ≤5K chars) | `cwd=<absolute>` (≤4K chars) + optional `repo=<owner/repo>` | ✅ spawns new terminal via detected emulator | macOS, Windows, Linux | `openExternal("claude-cli://open?cwd=" + enc(dir) + "&q=" + enc(prompt))` — **cleanest single-call path of any agent** |
 | **Claude Code CLI** (TUI) | ✅ | ⚠️ no flag, use cwd | positional argv: `claude "prompt"` | `{ cwd: dir }` on spawn | ✅ (user continues in TUI) | macOS, Win, Linux | Per-OS terminal spawn running `cd <dir> && claude "<prompt>"` |
 | **Claude Code CLI** (headless `-p`) | ✅ | ⚠️ | `-p "<prompt>"` | `{ cwd: dir }` | ✅ | macOS, Win, Linux | `spawn("claude", ["-p", prompt], { cwd: dir })` — no terminal needed |
 | **Claude Code** (VS Code ext) | ✅ | via VS Code | `vscode://anthropic.claude-code/open?prompt=...&session=...` | VS Code opens current workspace; explicit dir via `vscode://file/<path>` | ✅ | macOS, Win, Linux (wherever VS Code + ext) | `openExternal("vscode://...?prompt=...")` — **requires VS Code + ext detection** |
@@ -414,6 +416,51 @@ Two payload strategies:
 
 ---
 
+### F5. `claude-cli://` — Claude Code CLI's own URL scheme (MATERIAL CORRECTION)
+
+**Pass 1 + 2 reported the Claude Code CLI has no URL scheme. That was wrong.** The user flagged the omission via [code.claude.com/docs/en/settings](https://code.claude.com/docs/en/settings) — the scheme is documented only as a footnote under the `disableDeepLinkRegistration` setting (not in CLI reference or any Deep Links doc), which is why we missed it.
+
+Deep research into `@anthropic-ai/claude-code@2.1.104` `cli.js` extracted the complete parser — answering the user's follow-on question "can I set working directory?" with **yes**, and surfacing one additional undocumented param:
+
+| Param | Status | Constraints |
+|---|---|---|
+| **`q`** | documented | Prompt text. Max 5,000 chars (post-decode). Multi-line via `%0A`. |
+| **`cwd`** | **source-verified, undocumented** | Absolute path. Max 4,096 chars. No control chars. |
+| **`repo`** | **source-verified, undocumented** | `owner/repo` regex. Fallback when `cwd` absent → resolves to local clone → `$HOME`. |
+
+**Only endpoint:** `claude-cli://open?…`. Parser throws `Unknown deep link action` on any other hostname (`resume`, `new`, `chat`, etc. — NOT supported).
+
+**Params that do NOT work** (confirmed absent from parser): `session`, `model`, `system`, `permission-mode`, `sandbox`, `prompt` (the param name is `q`, not `prompt` — a cross-tool interop hazard since Cursor uses `text` and VS Code ext uses `prompt`).
+
+**Registration per platform** (from source):
+
+| Platform | Mechanism | Path |
+|---|---|---|
+| macOS | Separate `.app` bundle `Claude Code URL Handler.app` with `CFBundleURLSchemes=[claude-cli]`, bundle id `com.anthropic.claude-code-url-handler`. `CFBundleExecutable` is a symlink to `claude`. `lsregister -R` registers it. Auto-recreated every 24h. | **`~/Applications/`** (user-local; Issue [#41015](https://github.com/anthropics/claude-code/issues/41015) flags this as a corporate-IT blocker) |
+| Linux | `.desktop` file with `MimeType=x-scheme-handler/claude-cli;` + `xdg-mime default`. Respects `XDG_DATA_HOME`. | `~/.local/share/applications/claude-code-url-handler.desktop` |
+| Windows | Registry (user-level, no admin). | `HKEY_CURRENT_USER\Software\Classes\claude-cli\shell\open\command` = `"<claude.exe>" --handle-uri "%1"` |
+
+**Cold-launch behavior.** OS routes URL to handler → `claude --handle-uri <url>` → parses via `$K5` → opens a **new terminal window** via detected emulator with prompt pre-filled and `cwd` set. Fallback error if no terminal detected: `"Failed to open a terminal. Make sure a supported terminal emulator is installed."`
+
+**Version history.** Scheme shipped **early 2026** (within past ~3-4 months). Changelog milestones: v2.1.83 first mentions `disableDeepLinkRegistration`; v2.1.88 raised `q` to 5K chars; v2.1.90 fixed macOS open issue; v2.1.91 added multi-line support.
+
+**Corrected canonical `openWithAgent` shape for Claude Code CLI:**
+
+```ts
+const url = `claude-cli://open?cwd=${encodeURIComponent(dir)}&q=${encodeURIComponent(prompt)}`;
+shell.openExternal(url);
+```
+
+Preconditions: `dir` absolute; `prompt` ≤5K chars after encode; `claude-cli:` in `shell-allowlist.ts`; Claude Code CLI installed AND run at least once (registration happens on CLI startup).
+
+**Implication.** Claude Code CLI becomes the cleanest single-call primitive in the matrix — honors full `(dir, prompt)` atomically, OS opens the terminal, no CLI-detection plumbing in our Electron. Moves from "Tier 2" to "Tier 1 with allowlist addition."
+
+**Evidence.** [evidence/f5-claude-cli-scheme-correction.md](evidence/f5-claude-cli-scheme-correction.md) — full source-code walkthrough + all references.
+
+**Confirmed-negative: no analogous Claude Desktop scheme.** Scanned the full Desktop docs page. The only Desktop URL route remains `claude://resume?session=<uuid>&cwd=<path>` (requires pre-staged transcript) — no `claude://open?q=` or similar. Desktop's prompt-pass surface is still empty. The user's specific question "are deep links possible on claude not just claude cli?" → **CLI yes (`claude-cli://open?cwd=&q=&repo=`); Desktop no.**
+
+---
+
 ### F4. Claude Desktop watch + auth UX (light)
 
 **Claude Desktop deep-link surface (re-probed 2026-04-21):** No expansion since initial pass. `claude://` still a narrow handoff surface; `https://claude.ai/*` still not a documented Universal Link target. 2026-04-15 redesign is UI-only per MacRumors/TNS coverage; no new URL routes. Re-probe again before v1 ship.
@@ -444,6 +491,7 @@ Complete roll-up. Legend: ✅ ✓ native / ⚠ conditional / ❌ not supported.
 | **Cursor** (IDE + scheme) | `cursor://...prompt?text=` (8K, user-confirm) | ❌ | ❌ (editor CLI no prompt flag) | ✅ `cursor <dir>` | ⚠ 2-step | prelude `cursor <dir>` + scheme |
 | **Cursor** (`agent` headless) | ❌ | ❌ | ✅ `-p` | ✅ `--workspace` | ✅ | `spawn("agent", ["--workspace", dir, "-p", prompt])` (paid) |
 | **Claude Desktop** | `claude://resume` only (no fresh prompt) | ⚠ `claude.ai/new?q=` (opens browser, not native) | ❌ (macOS); Windows PATH-shim | ❌ | ❌ for prompt | `open -a Claude` / `start Claude.exe` + web-URL fallback |
+| **Claude Code CLI** (`claude-cli://` scheme, F5) | ✅ `open?q=` | ❌ | ✅ `q=<enc>` | ✅ `cwd=<abs>` + bonus `repo=<owner/repo>` | ✅ OS opens new terminal | `openExternal("claude-cli://open?cwd=" + enc(dir) + "&q=" + enc(prompt))` — **cleanest** |
 | **Claude Code CLI** (TUI) | ❌ | ❌ | ✅ positional | ✅ via `cwd` | ✅ (terminal) | terminal spawn `cd <dir> && claude "<prompt>"` |
 | **Claude Code CLI** (`-p` headless) | ❌ | ❌ | ✅ `-p` | ✅ via `cwd` | ✅ | `spawn("claude", ["-p", prompt], { cwd: dir })` |
 | **Claude Code** (VS Code ext) | `vscode://anthropic.claude-code/open?prompt=` | ❌ | — | via VS Code workspace | ✅ | `openExternal("vscode://anthropic.claude-code/open?prompt=...&session=...")` |
@@ -471,11 +519,11 @@ type LaunchPlan =
   | { kind: 'cli-headless'; cmd: string; args: string[]; cwd: string };
 ```
 
-**Recommended v1 shipping tiers (for `/spec` to confirm):**
+**Recommended v1 shipping tiers (for `/spec` to confirm; revised after F5):**
 
-- **Tier 1 — ship now, zero friction.** `claude.ai/new?q=`, `chatgpt.com/?q=`, `perplexity.ai/search?q=`. `https:` already in allowlist; no CLI detection; works everywhere. Ship the whole Mintlify-style contextual dropdown.
-- **Tier 2 — ship with allowlist additions.** Cursor (scheme + CLI), Claude Code CLI (`-p` or TUI), Codex CLI (`exec`). Requires adding `cursor:`, `vscode:` to `shell-allowlist.ts` + terminal spawn plumbing.
-- **Tier 3 — follow-on.** Claude Desktop (open-app-only, degraded), VS Code → Claude Code extension URI, Windsurf (dir-only), Aider/Copilot/Cline/Continue/OpenHands (CLI with presence detection).
+- **Tier 1 — ship now, zero friction.** Web-URL entries (`claude.ai/new?q=`, `chatgpt.com/?q=`, `perplexity.ai/search?q=`) — `https:` already in allowlist; no CLI detection. **PLUS `claude-cli://open?cwd=&q=`** (requires one allowlist addition; no CLI detection since OS handles routing; honors full `(dir, prompt)` atomically). F5 promoted Claude Code CLI from Tier 2 to Tier 1.
+- **Tier 2 — allowlist additions + some CLI detection.** Cursor (scheme + CLI prelude for dir), Codex CLI (`exec` with dir probe for git-repo), VS Code → Claude Code extension URI (needs VS Code + ext presence check). Allowlist: add `cursor:`, `vscode:`.
+- **Tier 3 — follow-on.** Claude Desktop (open-app-only, degraded), Windsurf (dir-only), Aider/Copilot/Cline/Continue/OpenHands (CLI with presence detection).
 
 ---
 
@@ -511,6 +559,7 @@ type LaunchPlan =
 - [evidence/f1-empirical.md](evidence/f1-empirical.md) — **Follow-up 2026-04-21:** empirical resolutions (incl. Codex stdin behavior change); local `/Applications/` + PATH probe
 - [evidence/f2-broader-agents.md](evidence/f2-broader-agents.md) — **Follow-up 2026-04-21:** Windsurf, Aider, Copilot CLI, Cline, Continue, OpenHands
 - [evidence/f3-web-url-pattern.md](evidence/f3-web-url-pattern.md) — **Follow-up 2026-04-21:** `claude.ai/new?q=` web URL + Mintlify contextual menu + Inkeep URL-reference pattern
+- [evidence/f5-claude-cli-scheme-correction.md](evidence/f5-claude-cli-scheme-correction.md) — **Follow-up 2026-04-21:** `claude-cli://open?q=&cwd=&repo=` scheme — complete parser-verified parameter surface (fixes pass 1+2 omission)
 
 ### External sources (selected; full list in evidence files)
 
@@ -532,6 +581,9 @@ type LaunchPlan =
 - [openai/codex#15917 — stdin piping PR](https://github.com/openai/codex/pull/15917/files) *(F1 follow-up)*
 - [microsoft/vscode — externalTerminalService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/externalTerminal/node/externalTerminalService.ts) *(F1 follow-up)*
 - [github/copilot-cli — new `@github/copilot` CLI](https://github.com/features/copilot/cli/) *(F2 follow-up)*
+- [code.claude.com/docs/en/settings — `disableDeepLinkRegistration`](https://code.claude.com/docs/en/settings) *(F5 follow-up)*
+- [anthropics/claude-code#41015 — URL Handler install location](https://github.com/anthropics/claude-code/issues/41015) *(F5 follow-up)*
+- [anthropics/claude-code#29145 — URI handler tracking issue](https://github.com/anthropics/claude-code/issues/29145) *(F5 follow-up)*
 
 ### Related research (navigation aids, not evidence)
 
