@@ -15,37 +15,22 @@
 
 import { useEffect, useState } from 'react';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import {
+  resolveErrorMessage,
+  runWithErrorStatePure as runWithErrorStatePureBase,
+} from '@/lib/error-state';
 
-type RecentProject = RecentProjectEntry;
-
-/**
- * Resolve the user-visible error message for a thrown/rejected value.
- * Prefers `err.message` when present, otherwise the `fallback`. Exported so
- * unit tests can pin the surface ("non-Error throws yield fallback", "empty-
- * message Error falls back", "Error with message wins").
- */
-export function resolveErrorMessage(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
-
-/**
- * Shape of the error-state wrapper — injected by the component, usable pure
- * so tests can verify the "rejection → setError called" behavior without
- * mounting React.
- */
-export async function runWithErrorStatePure(
+// Re-exports for tests — callers previously imported these directly from
+// NavigatorApp.tsx; keeping the surface here avoids churn in existing test
+// files and keeps the shared-helper move transparent.
+export { resolveErrorMessage };
+export const runWithErrorStatePure = (
   fn: () => Promise<void>,
   fallback: string,
   setError: (msg: string | null) => void,
-): Promise<void> {
-  try {
-    setError(null);
-    await fn();
-  } catch (err) {
-    console.error('[NavigatorApp] action failed:', err);
-    setError(resolveErrorMessage(err, fallback));
-  }
-}
+) => runWithErrorStatePureBase(fn, fallback, setError, 'NavigatorApp');
+
+type RecentProject = RecentProjectEntry;
 
 export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);

@@ -18,6 +18,7 @@
 
 import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenuContent,
@@ -28,6 +29,30 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { runWithErrorStatePure } from '@/lib/error-state';
+
+/**
+ * Bridge the shared `runWithErrorStatePure` helper to a sonner toast. The
+ * dropdown auto-closes on any action click, so an inline banner wouldn't be
+ * visible — toasts are the right surface for transient failure feedback.
+ * Exported for unit testing via a mockable `toastApi` indirection.
+ */
+export async function runWithToast(
+  fn: () => Promise<void>,
+  fallback: string,
+  toastApi: { error(msg: string): void } = toast,
+): Promise<void> {
+  await runWithErrorStatePure(
+    fn,
+    fallback,
+    (msg) => {
+      // setError(null) fires at the start; ignore the clear — toasts auto-
+      // dismiss. Only surface non-null messages (actual rejections).
+      if (msg !== null) toastApi.error(msg);
+    },
+    'WorkspaceSwitcher',
+  );
+}
 
 interface WorkspaceSwitcherProps {
   bridge: OkDesktopBridge;
@@ -39,17 +64,15 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
 
   // Lazy-load recents when the dropdown opens. Keeps initial render cheap
   // and always shows the latest list rather than a stale snapshot from mount.
+  // IPC rejection surfaces as a toast so the user knows the list is stale
+  // (rather than silently seeing an empty dropdown).
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    bridge.project
-      .listRecent()
-      .then((result) => {
-        if (!cancelled) setRecents(result);
-      })
-      .catch((err) => {
-        console.error('[WorkspaceSwitcher] listRecent failed:', err);
-      });
+    void runWithToast(async () => {
+      const result = await bridge.project.listRecent();
+      if (!cancelled) setRecents(result);
+    }, 'Failed to load recent workspaces.');
     return () => {
       cancelled = true;
     };
@@ -57,20 +80,19 @@ export function WorkspaceSwitcher({ bridge }: WorkspaceSwitcherProps) {
 
   const openProject = (path: string) => {
     setOpen(false);
-    void bridge.project.open({ path, target: 'new-window' }).catch((err) => {
-      console.error('[WorkspaceSwitcher] open failed:', err);
-    });
+    void runWithToast(
+      () => bridge.project.open({ path, target: 'new-window' }),
+      'Failed to open workspace.',
+    );
   };
 
-  const onOpenFolder = async () => {
+  const onOpenFolder = () => {
     setOpen(false);
-    try {
+    void runWithToast(async () => {
       const path = await bridge.dialog.openFolder();
       if (!path) return;
       await bridge.project.open({ path, target: 'new-window' });
-    } catch (err) {
-      console.error('[WorkspaceSwitcher] openFolder flow failed:', err);
-    }
+    }, 'Failed to open folder.');
   };
 
   // Filter out the current project from recents — no value in "switch to the
