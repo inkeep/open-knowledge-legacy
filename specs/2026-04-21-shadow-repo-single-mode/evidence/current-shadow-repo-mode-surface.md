@@ -29,7 +29,7 @@ Inventory used to validate the R1 scope (remove standalone) and confirm the blas
 - Line 82: standalone path `resolve(abs, '.openknowledge')`
 - Line 93: internal consumer (`getShadowRepoPath`) destructures `.path`
 
-After R1+R3: type deleted; `resolveShadowDir` returns `string` unconditionally = `resolve(projectRoot, '.git/openknowledge')`.
+After R1+R3: type deleted; `resolveShadowDir` returns `string` unconditionally = `resolve(projectRoot, '.git/open-knowledge')`.
 
 ### `packages/server/src/shadow-repo.ts`
 
@@ -61,10 +61,10 @@ Wiring: `ensureProjectGit(projectDir)` runs at the top of `initAsync()` BEFORE `
 
 ### `packages/core/src/shadow-repo-layout.test.ts`
 
-- Line 180-186: "prefers integrated mode when project has its own .git/" — adapt to "always resolves to .git/openknowledge/"
+- Line 180-186: "prefers integrated mode when project has its own .git/" — adapt to "always resolves to .git/open-knowledge/"
 - Line 187-192: "falls back to standalone mode when no project .git/ exists" — DELETE (violates R1)
 - Line 194-201: "both exist" test case — refer to evidence check; standalone assertion at line 199-200 lives INSIDE this test, not a separate standalone test. Keep the integrated assertion; drop the `.openknowledge` assertion.
-- Line 206: "returns null when no shadow repo exists" — test stays but with `.git/openknowledge/` path
+- Line 206: "returns null when no shadow repo exists" — test stays but with `.git/open-knowledge/` path
 
 ### `packages/server/src/shadow-repo.test.ts`
 

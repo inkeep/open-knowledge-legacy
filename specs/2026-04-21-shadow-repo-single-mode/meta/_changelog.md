@@ -10,7 +10,7 @@ Append-only process history for [[specs/2026-04-21-shadow-repo-single-mode/SPEC]
 - Intake clarification round 1:
   - Q1 (scope bundling): user picked **W1 + W2 only**; W3 (shadow relocation) dropped.
   - Q2 (auto-git-init UX): user picked **Option C** — silent with preview-block disclosure.
-  - Q3 (shadow location): user clarified they misspoke; shadow stays at `.git/openknowledge/`.
+  - Q3 (shadow location): user clarified they misspoke; shadow stays at `.git/open-knowledge/`.
   - Q4 (legacy `.openknowledge/` handling): user picked **Option C** — no migration, greenfield only.
   - Q5 (D22): user picked "keep function, path different" — `resolveShadowDir` signature simplifies.
 - Baseline commit stamped: `05c7e371`.
@@ -105,3 +105,29 @@ Open follow-up: the worktree-handling spec (owned elsewhere) must ship before or
 - Baseline commit updated from `05c7e371` (scaffold) to `54c97051` (finalization).
 - Status remains Draft pending user review — the spec workflow writes Finalize to the changelog but does not flip the Status field; that's a user move once they review.
 
+
+## 2026-04-21 · Post-PR revision: rename + drop macOS Notification
+
+Two user corrections after PR #244 was opened:
+
+1. **Rename `.git/openknowledge/` → `.git/open-knowledge/`** for naming consistency with the `.open-knowledge/` config dir.
+   - D14 LOCKED: silent in-place rename shim (`existsSync + renameSync`) on first run. Lossless; preserves attribution history.
+   - R9 added: shim behavior + integration test.
+   - G5 added to goals.
+   - NG2 re-pointed from `.git/openknowledge/` to `.git/open-knowledge/` as the new anchor.
+   - Resolution paragraph updated: "renamed from today's `.git/openknowledge/`" (was "today's integrated-mode location — unchanged").
+   - Deployment-considerations and risks tables updated.
+   - Writer identity strings (`user.name 'openknowledge'`, author email `noreply@openknowledge.local`) deliberately NOT renamed — out of scope.
+   - 18 directory-path references updated in SPEC.md; 3 in evidence/; 1 in this changelog.
+
+2. **Drop macOS `Notification`; use existing sonner toast system.**
+   - User directive: "macOS notifications are not a goal of this spec... keep using our existing notification toast system."
+   - D10 rewritten: disclosure routes through a new `git-init-notice` push-event on the existing `OkDesktopBridge` (sibling to `onProjectSwitched` / `onMenuAction`), terminates at `toast.info(...)` in the renderer via `packages/app/src/components/ui/sonner.tsx`.
+   - R5b rewritten: toast-based disclosure with main → renderer bridge event instead of `new Notification(...).show()`.
+   - NG7 added: NEVER use macOS system notifications for this spec's disclosure.
+   - §16 SCOPE (Desktop) grew by 3 files (`ipc-events.ts`, `bridge-contract.ts`, `preload/index.ts`) + a renderer subscriber (likely adjacent to `use-sync-toasts.ts`).
+   - ASK_FIRST gained "using `new Notification(...)`" as a tripwire.
+   - Risks table: dropped the "Notification permissions disabled" row; added "toast subscriber mount race" row.
+   - Q5 Resolution annotated with the correction.
+
+My earlier interpretation of "the in product toast is important notification system" as endorsing macOS `Notification` was wrong — user meant in-app toasts all along. Acknowledged.
