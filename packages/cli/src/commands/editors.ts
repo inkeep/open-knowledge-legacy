@@ -154,7 +154,7 @@ export function resolveWindsurfConfigPath(options: AppSupportOptions = {}): stri
   return pathApiForPlatform(platformName).join(home, '.codeium', 'windsurf', 'mcp_config.json');
 }
 
-export function resolveCodexHomePath(options: AppSupportOptions = {}): string {
+function resolveCodexHomePath(options: AppSupportOptions = {}): string {
   const platformName = options.platformName ?? process.platform;
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;

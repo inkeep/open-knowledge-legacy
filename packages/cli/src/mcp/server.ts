@@ -49,18 +49,18 @@ function classifyRootsLoadError(err: unknown): string {
   return typeof err;
 }
 
-export class ProjectRoutingError extends Error {}
+class ProjectRoutingError extends Error {}
 
 interface RootsListResult {
   roots: Array<{ uri: string }>;
 }
 
-export interface ProjectRoutingResolver {
+interface ProjectRoutingResolver {
   resolveCwd: (explicit?: string) => Promise<string>;
   invalidateRoots: () => void;
 }
 
-export interface KeepaliveProjectState {
+interface KeepaliveProjectState {
   resolveCwdForTools: (explicit?: string) => Promise<string>;
   getKeepaliveCwd: () => Promise<string | undefined>;
 }

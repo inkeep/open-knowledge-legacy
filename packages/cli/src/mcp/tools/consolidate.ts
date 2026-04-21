@@ -183,7 +183,7 @@ export const DESCRIPTION = [
   '- Research has stabilized and a destination article is needed',
 ].join('\n');
 
-export interface ConsolidateDeps {
+interface ConsolidateDeps {
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }

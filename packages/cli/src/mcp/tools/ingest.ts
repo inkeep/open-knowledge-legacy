@@ -91,7 +91,7 @@ export const DESCRIPTION = [
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 
-export interface IngestDeps {
+interface IngestDeps {
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }

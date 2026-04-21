@@ -60,10 +60,7 @@ export type ServerUrlOrResolver =
  * server is not reachable). Call this at the top of every tool handler that
  * hits the Hocuspocus HTTP API.
  */
-export async function resolveServerUrl(
-  x: ServerUrlOrResolver,
-  cwd?: string,
-): Promise<string | undefined> {
+async function resolveServerUrl(x: ServerUrlOrResolver, cwd?: string): Promise<string | undefined> {
   return typeof x === 'function' ? await x(cwd) : x;
 }
 

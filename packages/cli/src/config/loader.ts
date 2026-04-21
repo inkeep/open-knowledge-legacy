@@ -102,7 +102,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
  * on purpose: only values that already override the loaded config in the CLI
  * entrypoint belong here.
  */
-export function applyProcessEnvConfigOverrides(
+function applyProcessEnvConfigOverrides(
   config: Config,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
@@ -128,7 +128,7 @@ export function applyProcessEnvConfigOverrides(
   return next;
 }
 
-export interface CreateProjectConfigResolverOptions {
+interface CreateProjectConfigResolverOptions {
   startupCwd: string;
   startupConfig: Config;
   env?: NodeJS.ProcessEnv;

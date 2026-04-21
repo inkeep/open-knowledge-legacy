@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 
-export interface McpLogEntry {
+interface McpLogEntry {
   ts: string;
   level: 'debug' | 'info' | 'warn' | 'error';
   sessionId: string;

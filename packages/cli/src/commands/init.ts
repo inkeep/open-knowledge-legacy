@@ -112,7 +112,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface EditorMcpResult {
+interface EditorMcpResult {
   editorId: EditorId;
   label: string;
   action:
@@ -127,13 +127,13 @@ export interface EditorMcpResult {
   error?: string;
 }
 
-export interface LegacyProjectConfigResult {
+interface LegacyProjectConfigResult {
   editorId: EditorId;
   label: string;
   path: string;
 }
 
-export interface InitCommandOptions {
+interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
   force?: boolean;
@@ -148,7 +148,7 @@ export interface InitCommandOptions {
   cliEntryPath?: string;
 }
 
-export interface InitCommandResult {
+interface InitCommandResult {
   contentCreated: string[];
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
@@ -181,14 +181,9 @@ export interface InitCommandResult {
 const LAUNCH_JSON_VERSION = '0.0.1';
 const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
 
-export type LaunchJsonAction =
-  | 'created'
-  | 'merged'
-  | 'skipped-existing'
-  | 'skipped-stale'
-  | 'failed';
+type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'skipped-stale' | 'failed';
 
-export interface LaunchJsonResult {
+interface LaunchJsonResult {
   action: LaunchJsonAction;
   configPath: string;
   error?: string;

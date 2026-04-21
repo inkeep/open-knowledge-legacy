@@ -39,7 +39,7 @@ export type AutoStartDecision =
   | { action: 'spawn'; message: string }
   | { action: 'disk-only'; message: string };
 
-export interface DecideAutoStartInput {
+interface DecideAutoStartInput {
   host: string;
   portOverride: string | undefined;
   envAutoStart: string | undefined;
@@ -113,7 +113,7 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
   return { action: 'spawn', message: 'no running instance — spawning ok start' };
 }
 
-export interface EnsureServerRunningOptions {
+interface EnsureServerRunningOptions {
   lockDir: string;
   contentDir: string;
   host: string;
@@ -140,7 +140,7 @@ export interface EnsureServerRunningOptions {
   pollIntervalMs?: number;
 }
 
-export interface EnsureServerRunningResult {
+interface EnsureServerRunningResult {
   serverUrl: string | undefined;
   message: string;
 }
@@ -297,7 +297,7 @@ type EnsureServerRunningFn = (
   opts: EnsureServerRunningOptions,
 ) => Promise<EnsureServerRunningResult>;
 
-export interface CreateProjectServerUrlResolverOptions {
+interface CreateProjectServerUrlResolverOptions {
   startupCwd: string;
   resolveConfig: (cwd?: string) => Promise<Config>;
   host: string;

@@ -188,7 +188,7 @@ export const DESCRIPTION = [
   '- A decision needs structured analysis grounded in external sources',
 ].join('\n');
 
-export interface ResearchDeps {
+interface ResearchDeps {
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }

@@ -15,12 +15,6 @@ import type { Config } from '../config/schema.ts';
 import { startMcpServer } from '../mcp/server.ts';
 import { createProjectServerUrlResolver, parseSpawnTimeoutEnv } from '../mcp/server-discovery.ts';
 
-export {
-  decideAutoStart,
-  ensureServerRunning,
-  parseSpawnTimeoutEnv,
-} from '../mcp/server-discovery.ts';
-
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')
     .description('Start MCP stdio server for project knowledge base')
