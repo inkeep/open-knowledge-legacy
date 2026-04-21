@@ -435,6 +435,67 @@ describe('server-discovery', () => {
       ).rejects.toThrow(/Error: server did not start within/);
     });
 
+    test('sync spawn throw surfaces a spawn-failed error', async () => {
+      const throwingSpawn = (() => {
+        throw new Error('EACCES');
+      }) as never;
+
+      await expect(
+        ensureServerRunning({
+          lockDir,
+          contentDir: tmpDir,
+          host: 'localhost',
+          portOverride: undefined,
+          envAutoStart: undefined,
+          configAutoStart: true,
+          readLock: () => null,
+          isAlive: () => false,
+          sleep: async () => {},
+          spawn: throwingSpawn,
+          pollIntervalMs: 1,
+          timeoutMs: 5,
+        }),
+      ).rejects.toThrow(/Error: spawn failed: EACCES/);
+    });
+
+    test('async spawn error events surface a spawn-failed error', async () => {
+      let emitError: ((err: unknown) => void) | undefined;
+      const eventingSpawn = ((cmd: string, args: readonly string[], opts: unknown) => {
+        const call = { cmd, args, opts };
+        void call;
+        return {
+          unref: () => {},
+          on: (event: string, listener: (err: unknown) => void) => {
+            if (event === 'error') emitError = listener;
+          },
+          kill: () => {},
+        };
+      }) as never;
+      let triggered = false;
+
+      await expect(
+        ensureServerRunning({
+          lockDir,
+          contentDir: tmpDir,
+          host: 'localhost',
+          portOverride: undefined,
+          envAutoStart: undefined,
+          configAutoStart: true,
+          readLock: () => null,
+          isAlive: () => false,
+          sleep: async () => {
+            if (!triggered) {
+              triggered = true;
+              emitError?.(new Error('ENOENT'));
+            }
+          },
+          spawn: eventingSpawn,
+          pollIntervalMs: 1,
+          timeoutMs: 5,
+        }),
+      ).rejects.toThrow(/Error: spawn failed: ENOENT/);
+    });
+
     test('--port override short-circuits spawn', async () => {
       const calls: SpawnCall[] = [];
       const result = await ensureServerRunning({

@@ -167,6 +167,40 @@ describe('createProjectRoutingResolver', () => {
     expect(listRootsCalls).toBe(1);
   });
 
+  test('deduplicates concurrent roots/list loads', async () => {
+    const onlyRoot = join(tmpRoot, 'only-root');
+    mkdirSync(onlyRoot, { recursive: true });
+    const normalizedRoot = await normalizeCwd(onlyRoot);
+    let listRootsCalls = 0;
+    let markLoadStarted!: () => void;
+    let releaseLoad!: () => void;
+    const loadStarted = new Promise<void>((resolveStarted) => {
+      markLoadStarted = resolveStarted;
+    });
+    const blockedLoad = new Promise<void>((resolveBlocked) => {
+      releaseLoad = resolveBlocked;
+    });
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        listRootsCalls += 1;
+        markLoadStarted();
+        await blockedLoad;
+        return { roots: [{ uri: pathToFileURL(onlyRoot).href }] };
+      },
+    });
+
+    const first = resolver.resolveCwd();
+    const second = resolver.resolveCwd();
+    await loadStarted;
+    await Promise.resolve();
+
+    expect(listRootsCalls).toBe(1);
+
+    releaseLoad();
+    await expect(Promise.all([first, second])).resolves.toEqual([normalizedRoot, normalizedRoot]);
+  });
+
   test('multiple roots without cwd errors clearly', async () => {
     const rootA = join(tmpRoot, 'root-a');
     const rootB = join(tmpRoot, 'root-b');
@@ -203,6 +237,39 @@ describe('createProjectRoutingResolver', () => {
 
     await expect(resolver.resolveCwd()).rejects.toThrow(ROOTS_UNAVAILABLE_ERROR);
     await expect(resolver.resolveCwd(explicit)).resolves.toBe(await normalizeCwd(explicit));
+  });
+
+  test('roots/list failures log error classification for diagnostics', async () => {
+    const warnings: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const logger = {
+      sessionId: 'routing-test',
+      info: () => {},
+      debug: () => {},
+      error: () => {},
+      warn: (msg: string, ctx: Record<string, unknown> = {}) => {
+        warnings.push({ msg, ctx });
+      },
+      child: () => logger,
+      asCallback: () => () => {},
+    };
+    const resolver = createProjectRoutingResolver({
+      startupCwd: tmpRoot,
+      listRoots: async () => {
+        const err = new Error('unsupported roots');
+        Object.assign(err, { code: 'EUNSUPPORTED' });
+        throw err;
+      },
+      logger,
+    });
+
+    await expect(resolver.resolveCwd()).rejects.toThrow(ROOTS_UNAVAILABLE_ERROR);
+    expect(warnings).toContainEqual({
+      msg: 'roots/list unavailable',
+      ctx: {
+        error: 'unsupported roots',
+        errorType: 'EUNSUPPORTED',
+      },
+    });
   });
 
   test('roots/list_changed invalidates cached roots', async () => {

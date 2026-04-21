@@ -172,7 +172,13 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
 
     ws.addEventListener('error', () => {
       // `close` fires after every error that kills the socket; reconnect
-      // logic lives there. Swallow here to avoid an unhandled-error crash.
+      // logic lives there. Emit a debug breadcrumb first so operators can
+      // correlate the close/retry with the socket that faulted.
+      emit('debug', 'websocket error observed', {
+        url: baseUrl,
+        readyState: ws?.readyState,
+        reason: 'error-event',
+      });
     });
   }
 

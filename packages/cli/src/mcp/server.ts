@@ -41,6 +41,14 @@ export const NO_CLIENT_ROOTS_ERROR = 'No client roots available; pass cwd explic
 export const MULTIPLE_ROOTS_ERROR = 'Multiple roots available; pass cwd explicitly.';
 export const ROOTS_UNAVAILABLE_ERROR = 'Client roots unavailable; pass cwd explicitly.';
 
+function classifyRootsLoadError(err: unknown): string {
+  if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'string') {
+    return err.code;
+  }
+  if (err instanceof Error && err.name) return err.name;
+  return typeof err;
+}
+
 export class ProjectRoutingError extends Error {}
 
 interface RootsListResult {
@@ -112,6 +120,7 @@ export function createProjectRoutingResolver(
       } catch (err) {
         opts.logger?.warn('roots/list unavailable', {
           error: err instanceof Error ? err.message : String(err),
+          errorType: classifyRootsLoadError(err),
         });
         throw new ProjectRoutingError(ROOTS_UNAVAILABLE_ERROR);
       }

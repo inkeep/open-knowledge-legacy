@@ -290,4 +290,36 @@ describe('createProjectConfigResolver', () => {
     expect(second).toMatchObject({ content: { dir: 'docs-b' } });
     expect(loadCalls).toBe(1);
   });
+
+  test('reloads config after cache expiration', async () => {
+    const projectA = resolve(testDir, 'project-a');
+    const projectB = resolve(testDir, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-b\n');
+
+    const startupConfig = loadConfig(projectA).config;
+    let loadCalls = 0;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: projectA,
+      startupConfig,
+      cacheMs: 1,
+      loadConfigFn: (cwd) => {
+        loadCalls += 1;
+        return loadConfig(cwd);
+      },
+    });
+
+    await expect(resolveConfig(projectB)).resolves.toMatchObject({
+      content: { dir: 'docs-b' },
+    });
+
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-c\n');
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+
+    await expect(resolveConfig(projectB)).resolves.toMatchObject({
+      content: { dir: 'docs-c' },
+    });
+    expect(loadCalls).toBe(2);
+  });
 });
