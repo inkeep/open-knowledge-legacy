@@ -1,3 +1,7 @@
+import { css } from '@codemirror/lang-css';
+import { html } from '@codemirror/lang-html';
+import { javascript } from '@codemirror/lang-javascript';
+import { markdown } from '@codemirror/lang-markdown';
 import { LanguageDescription } from '@codemirror/language';
 
 /**
@@ -10,16 +14,13 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'javascript',
     alias: ['js', 'jsx'],
     extensions: ['js', 'mjs', 'cjs', 'jsx'],
-    load: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
+    load: () => javascript({ jsx: true }),
   }),
   LanguageDescription.of({
     name: 'typescript',
     alias: ['ts', 'tsx'],
     extensions: ['ts', 'mts', 'cts', 'tsx'],
-    load: () =>
-      import('@codemirror/lang-javascript').then((m) =>
-        m.javascript({ typescript: true, jsx: true }),
-      ),
+    load: () => javascript({ typescript: true, jsx: true }),
   }),
   LanguageDescription.of({
     name: 'json',
@@ -37,13 +38,13 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'css',
     alias: ['scss', 'less'],
     extensions: ['css', 'scss', 'less'],
-    load: () => import('@codemirror/lang-css').then((m) => m.css()),
+    load: () => css(),
   }),
   LanguageDescription.of({
     name: 'html',
     alias: ['htm'],
     extensions: ['html', 'htm'],
-    load: () => import('@codemirror/lang-html').then((m) => m.html()),
+    load: () => html(),
   }),
   LanguageDescription.of({
     name: 'python',
@@ -61,7 +62,7 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'markdown',
     alias: ['md', 'mdx'],
     extensions: ['md', 'mdx', 'markdown'],
-    load: () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
+    load: () => markdown(),
   }),
   LanguageDescription.of({
     name: 'bash',
