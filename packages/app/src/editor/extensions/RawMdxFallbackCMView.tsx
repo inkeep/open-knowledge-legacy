@@ -18,6 +18,7 @@
 import { Compartment } from '@codemirror/state';
 import { EditorView as CMEditorView, keymap } from '@codemirror/view';
 import type { NodeViewProps } from '@tiptap/core';
+import { NodeSelection, Selection } from '@tiptap/pm/state';
 import { NodeViewWrapper } from '@tiptap/react';
 import { Trash2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -26,6 +27,38 @@ import { markUserTyping } from '../observers';
 import { getYDoc } from '../utils/get-ydoc';
 import { classifySeverity, SEVERITY_STYLES } from '../utils/severity';
 import { createNestedCMExtensions, darkTheme, lightTheme } from './nested-cm-extensions';
+
+/**
+ * Decide whether an arrow keystroke at the CM cursor should escape out of
+ * the nested CM into the outer PM document. Returns the direction to escape
+ * (`-1` = before the node, `+1` = after the node) or `null` if the key
+ * should stay inside CM.
+ *
+ * Mirrors the canonical PM+CM example's `maybeEscape` per
+ * <https://prosemirror.net/examples/codemirror/> adapted for CM 6's selection
+ * API. Escapes only when the selection is a collapsed cursor at the document
+ * boundary in the given direction — anything inside the doc keeps default
+ * CM navigation.
+ *
+ * @param cmView CodeMirror view whose selection is being inspected
+ * @param unit  `'line'` for Up/Down (check line boundary), `'char'` for
+ *              Left/Right (check caret boundary)
+ * @param dir   `-1` for Up/Left, `+1` for Down/Right
+ */
+export function shouldEscapeNestedCM(
+  cmView: CMEditorView,
+  unit: 'line' | 'char',
+  dir: -1 | 1,
+): boolean {
+  const { state } = cmView;
+  const main = state.selection.main;
+  if (!main.empty) return false;
+  if (unit === 'line') {
+    const line = state.doc.lineAt(main.head);
+    return dir < 0 ? line.from === 0 : line.to === state.doc.length;
+  }
+  return dir < 0 ? main.head === 0 : main.head === state.doc.length;
+}
 
 /**
  * Compute the minimal change between two strings.
@@ -137,6 +170,44 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       },
     ]);
 
+    // Arrow-at-boundary escape to outer PM (canonical PM+CM pattern).
+    // When the cursor reaches a CM doc boundary in a given direction, move
+    // PM selection past the fallback node in that direction and hand focus
+    // back. Canonical reference: https://prosemirror.net/examples/codemirror/
+    // Without these, the cursor traps inside the nested CM — no keyboard
+    // path exists to leave the block without clicking.
+    const escapeToPM = (dir: -1 | 1): boolean => {
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (typeof pos !== 'number') return false;
+      const pmView = editor.view;
+      if (!pmView) return false;
+      const currentNode = pmView.state.doc.nodeAt(pos);
+      if (!currentNode) return false;
+      const targetPos = dir < 0 ? pos : pos + currentNode.nodeSize;
+      const selection = Selection.near(pmView.state.doc.resolve(targetPos), dir);
+      pmView.dispatch(pmView.state.tr.setSelection(selection).scrollIntoView());
+      pmView.focus();
+      return true;
+    };
+    const escapeKeymap = keymap.of([
+      {
+        key: 'ArrowUp',
+        run: (v) => (shouldEscapeNestedCM(v, 'line', -1) ? escapeToPM(-1) : false),
+      },
+      {
+        key: 'ArrowLeft',
+        run: (v) => (shouldEscapeNestedCM(v, 'char', -1) ? escapeToPM(-1) : false),
+      },
+      {
+        key: 'ArrowDown',
+        run: (v) => (shouldEscapeNestedCM(v, 'line', 1) ? escapeToPM(1) : false),
+      },
+      {
+        key: 'ArrowRight',
+        run: (v) => (shouldEscapeNestedCM(v, 'char', 1) ? escapeToPM(1) : false),
+      },
+    ]);
+
     const ydoc = getYDoc(editor);
     const extensions = createNestedCMExtensions({
       themeCompartment,
@@ -144,12 +215,42 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       ydoc: ydoc ?? undefined,
       extraKeymaps: undoRedoKeymap,
     });
+    extensions.push(escapeKeymap);
 
-    // CM→PM sync via update listener
+    // CM→PM sync via update listener. Two responsibilities:
+    //   1. Doc changes → forward text into PM (existing behavior).
+    //   2. Focus changes → set PM NodeSelection on this block when CM gains
+    //      focus (e.g. user clicks inside CM). Without this, SelectionStatePlugin
+    //      (Precedent #27) sees stale `state.selection` whenever CM has focus,
+    //      so halo/breadcrumb/aria-live report the wrong block. The guard in
+    //      the canonical PM+CM example uses `updatingRef` to prevent PM→CM→PM
+    //      loops; we reuse the same flag.
     extensions.push(
       CMEditorView.updateListener.of((update) => {
-        if (updatingRef.current || !update.docChanged) return;
-        forwardUpdate(update.state.doc.toString());
+        if (update.docChanged && !updatingRef.current) {
+          forwardUpdate(update.state.doc.toString());
+        }
+        if (update.focusChanged && update.view.hasFocus && !updatingRef.current) {
+          const pos = typeof getPos === 'function' ? getPos() : undefined;
+          if (typeof pos !== 'number') return;
+          const pmView = editor.view;
+          if (!pmView) return;
+          const currentSel = pmView.state.selection;
+          // Already a NodeSelection on this exact node → nothing to do
+          if (currentSel instanceof NodeSelection && currentSel.from === pos) return;
+          const currentNode = pmView.state.doc.nodeAt(pos);
+          if (!currentNode) return;
+          updatingRef.current = true;
+          try {
+            pmView.dispatch(
+              pmView.state.tr.setSelection(NodeSelection.create(pmView.state.doc, pos)),
+            );
+          } catch (err) {
+            updatingRef.current = false;
+            throw err;
+          }
+          updatingRef.current = false;
+        }
       }),
     );
 
@@ -193,6 +294,72 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       effects: themeCompartmentRef.current.reconfigure(theme),
     });
   }, [resolvedTheme]);
+
+  // PM→CM selection sync (Precedent #27 + canonical PM+CM pattern): when
+  // PM selection lands on or inside this node — via outer arrow navigation,
+  // slash-insert-with-focus, programmatic commands — mirror it into CM so
+  // the nested editor reflects the intended caret. Two cases:
+  //   (a) NodeSelection on this node → CM just gets focus (cursor stays at
+  //       its previous position, matching canonical `selectNode` behavior).
+  //   (b) TextSelection inside the content range → forward the offsets into
+  //       CM so the caret lands where PM meant it to.
+  // Without this effect, the outer arrow handler (in raw-mdx-fallback.ts)
+  // can move PM selection into the node but CM never reflects it, so the
+  // visible caret is wherever CM happened to be.
+  useEffect(() => {
+    const handler = () => {
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (typeof pos !== 'number') return;
+      const cmView = cmViewRef.current;
+      if (!cmView) return;
+      if (updatingRef.current) return;
+      const pmView = editor.view;
+      if (!pmView) return;
+      const currentNode = pmView.state.doc.nodeAt(pos);
+      if (!currentNode) return;
+
+      const sel = pmView.state.selection;
+      const nodeStart = pos + 1; // offset 0 of content
+      const nodeEnd = pos + currentNode.nodeSize - 1;
+
+      // NodeSelection on this exact node — just take focus
+      if (sel instanceof NodeSelection && sel.from === pos) {
+        if (!cmView.hasFocus) {
+          updatingRef.current = true;
+          try {
+            cmView.focus();
+          } catch (err) {
+            updatingRef.current = false;
+            throw err;
+          }
+          updatingRef.current = false;
+        }
+        return;
+      }
+
+      // TextSelection inside this node's content range — forward anchor/head
+      if (sel.from >= nodeStart && sel.to <= nodeEnd) {
+        const maxOffset = cmView.state.doc.length;
+        const anchor = Math.max(0, Math.min(sel.anchor - nodeStart, maxOffset));
+        const head = Math.max(0, Math.min(sel.head - nodeStart, maxOffset));
+        const cmSel = cmView.state.selection.main;
+        if (cmSel.anchor === anchor && cmSel.head === head && cmView.hasFocus) return;
+        updatingRef.current = true;
+        try {
+          cmView.dispatch({ selection: { anchor, head } });
+          if (!cmView.hasFocus) cmView.focus();
+        } catch (err) {
+          updatingRef.current = false;
+          throw err;
+        }
+        updatingRef.current = false;
+      }
+    };
+    editor.on('selectionUpdate', handler);
+    return () => {
+      editor.off('selectionUpdate', handler);
+    };
+  }, [editor, getPos]);
 
   // PM→CM sync: when the PM node's text content changes externally
   // (e.g., remote peer edit, agent write), update the CM view.

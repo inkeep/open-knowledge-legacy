@@ -2,11 +2,30 @@
  * Nested CodeMirror sync math tests (NCM02-NCM04, M15).
  *
  * Tests the `computeChange` function that computes minimal string diffs
- * for PM→CM and CM→PM synchronization.
+ * for PM→CM and CM→PM synchronization, and the `shouldEscapeNestedCM`
+ * boundary predicate that drives arrow-key escape from nested CM to outer PM.
  */
 
 import { describe, expect, test } from 'bun:test';
-import { computeChange } from './RawMdxFallbackCMView';
+import { EditorState } from '@codemirror/state';
+import type { EditorView as CMEditorView } from '@codemirror/view';
+import { computeChange, shouldEscapeNestedCM } from './RawMdxFallbackCMView';
+
+/**
+ * Build a minimal CM EditorView stand-in that satisfies
+ * `shouldEscapeNestedCM`'s surface: `.state.selection.main` +
+ * `.state.doc.lineAt` + `.state.doc.length`. We use a real CM `EditorState`
+ * so `doc.lineAt` returns the true CM `Line` shape — no mocking the shape.
+ */
+function makeCMView(doc: string, selPos: number | { anchor: number; head: number }): CMEditorView {
+  const selection =
+    typeof selPos === 'number'
+      ? { anchor: selPos, head: selPos }
+      : { anchor: selPos.anchor, head: selPos.head };
+  const state = EditorState.create({ doc, selection });
+  // We never mount the view — only `.state` is read by shouldEscapeNestedCM.
+  return { state } as unknown as CMEditorView;
+}
 
 describe('computeChange', () => {
   test('returns null for identical strings', () => {
@@ -96,5 +115,96 @@ describe('computeChange', () => {
       expect(applied).toBe(next);
       current = next;
     }
+  });
+});
+
+describe('shouldEscapeNestedCM', () => {
+  // char × Left (dir=-1): escape only when cursor is at offset 0
+  test('char/Left: cursor at start → escape', () => {
+    const view = makeCMView('hello', 0);
+    expect(shouldEscapeNestedCM(view, 'char', -1)).toBe(true);
+  });
+  test('char/Left: cursor mid-doc → no escape', () => {
+    const view = makeCMView('hello', 3);
+    expect(shouldEscapeNestedCM(view, 'char', -1)).toBe(false);
+  });
+  test('char/Left: cursor at end → no escape (wrong direction)', () => {
+    const view = makeCMView('hello', 5);
+    expect(shouldEscapeNestedCM(view, 'char', -1)).toBe(false);
+  });
+
+  // char × Right (dir=+1): escape only when cursor is at doc end
+  test('char/Right: cursor at end → escape', () => {
+    const view = makeCMView('hello', 5);
+    expect(shouldEscapeNestedCM(view, 'char', 1)).toBe(true);
+  });
+  test('char/Right: cursor mid-doc → no escape', () => {
+    const view = makeCMView('hello', 3);
+    expect(shouldEscapeNestedCM(view, 'char', 1)).toBe(false);
+  });
+  test('char/Right: cursor at start → no escape (wrong direction)', () => {
+    const view = makeCMView('hello', 0);
+    expect(shouldEscapeNestedCM(view, 'char', 1)).toBe(false);
+  });
+
+  // line × Up (dir=-1): escape only when cursor is on the first line
+  test('line/Up: cursor on first line (col 3) → escape', () => {
+    const view = makeCMView('hello\nworld\n!', 3);
+    expect(shouldEscapeNestedCM(view, 'line', -1)).toBe(true);
+  });
+  test('line/Up: cursor on second line → no escape', () => {
+    const view = makeCMView('hello\nworld\n!', 8);
+    expect(shouldEscapeNestedCM(view, 'line', -1)).toBe(false);
+  });
+
+  // line × Down (dir=+1): escape only when cursor is on the last line
+  test('line/Down: cursor on last line → escape', () => {
+    const view = makeCMView('hello\nworld\n!', 13);
+    expect(shouldEscapeNestedCM(view, 'line', 1)).toBe(true);
+  });
+  test('line/Down: cursor on middle line → no escape', () => {
+    const view = makeCMView('hello\nworld\n!', 8);
+    expect(shouldEscapeNestedCM(view, 'line', 1)).toBe(false);
+  });
+
+  // Non-empty selection never escapes — prevents accidentally blowing
+  // away a shift-arrow range expansion that crosses the boundary
+  test('non-empty selection at start → no escape (protect range expansion)', () => {
+    const view = makeCMView('hello', { anchor: 0, head: 3 });
+    expect(shouldEscapeNestedCM(view, 'char', -1)).toBe(false);
+  });
+  test('non-empty selection at end → no escape', () => {
+    const view = makeCMView('hello', { anchor: 3, head: 5 });
+    expect(shouldEscapeNestedCM(view, 'char', 1)).toBe(false);
+  });
+
+  // Empty document: cursor is simultaneously at start AND end — escapes
+  // in whichever direction is requested. This matches the canonical
+  // pattern: an empty fallback block should not trap the caret.
+  test('empty doc: char/Left → escape', () => {
+    const view = makeCMView('', 0);
+    expect(shouldEscapeNestedCM(view, 'char', -1)).toBe(true);
+  });
+  test('empty doc: char/Right → escape', () => {
+    const view = makeCMView('', 0);
+    expect(shouldEscapeNestedCM(view, 'char', 1)).toBe(true);
+  });
+  test('empty doc: line/Up → escape', () => {
+    const view = makeCMView('', 0);
+    expect(shouldEscapeNestedCM(view, 'line', -1)).toBe(true);
+  });
+  test('empty doc: line/Down → escape', () => {
+    const view = makeCMView('', 0);
+    expect(shouldEscapeNestedCM(view, 'line', 1)).toBe(true);
+  });
+
+  // Single-line doc: Up/Down both escape because first line == last line
+  test('single line: line/Up (col 2) → escape', () => {
+    const view = makeCMView('hello', 2);
+    expect(shouldEscapeNestedCM(view, 'line', -1)).toBe(true);
+  });
+  test('single line: line/Down (col 2) → escape', () => {
+    const view = makeCMView('hello', 2);
+    expect(shouldEscapeNestedCM(view, 'line', 1)).toBe(true);
   });
 });
