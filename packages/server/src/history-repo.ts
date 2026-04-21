@@ -1,17 +1,17 @@
 /**
- * Shadow repo — attribution journal at .git/openknowledge/
+ * History repo — attribution journal at .open-knowledge/history/ (D56)
  *
  * A bare repo (core.bare unset, core.worktree → project root) that stores
  * per-writer WIP refs and upstream-import commits. Isolated from the project
  * repo so user staging area and history are never touched.
  *
- * Layout:
- *   Integrated mode: .git/openknowledge/   (inside project .git — no .gitignore needed)
- *   Standalone mode: .openknowledge/       (added to .gitignore)
+ * D56: unified path is always `<projectRoot>/.open-knowledge/history/`.
+ * Legacy locations (`.git/openknowledge/` and `.openknowledge/`) are migrated
+ * atomically on first server start via `migrateHistoryRepo()`.
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
@@ -58,17 +58,65 @@ export function historyGit(shadow: HistoryHandle) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 /**
- * Initialize the shadow bare repo.
+ * Migrate a legacy history-repo location to the unified D56 path.
  *
- * - Integrated mode (.git/ exists): creates .git/openknowledge/
- * - Standalone mode (no .git/):     creates .openknowledge/ and adds to .gitignore
+ * Checks `.git/openknowledge/` (old integrated-mode) and `.openknowledge/`
+ * (old standalone-mode). If either contains a valid bare repo (HEAD present),
+ * atomically renames it to `<projectRoot>/.open-knowledge/history/`. Idempotent:
+ * if the target already exists, skips silently. Logs via bracket prefix.
+ */
+function migrateHistoryRepo(projectRoot: string, targetDir: string): void {
+  const legacyPaths = [
+    resolve(projectRoot, '.git', 'openknowledge'),
+    resolve(projectRoot, '.openknowledge'),
+  ];
+  for (const legacy of legacyPaths) {
+    if (!existsSync(resolve(legacy, 'HEAD'))) continue;
+    if (existsSync(resolve(targetDir, 'HEAD'))) {
+      // Target already initialized — legacy is stale, skip.
+      break;
+    }
+    mkdirSync(resolve(targetDir, '..'), { recursive: true });
+    renameSync(legacy, targetDir);
+    console.warn(`[history-migration] relocated history from ${legacy} to ${targetDir}`);
+    break;
+  }
+}
+
+/**
+ * Ensure `.open-knowledge/` is listed in `<projectRoot>/.gitignore` (D56).
+ * Idempotent: if already present, no-op.
+ */
+function ensureGitignoreEntry(projectRoot: string): void {
+  const gitignorePath = resolve(projectRoot, '.gitignore');
+  const entry = '.open-knowledge/';
+  let content = '';
+  try {
+    content = readFileSync(gitignorePath, 'utf-8');
+  } catch {
+    // no .gitignore yet
+  }
+  if (!content.split('\n').some((line) => line.trim() === entry)) {
+    const suffix = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+    writeFileSync(gitignorePath, `${content}${suffix}${entry}\n`, 'utf-8');
+  }
+}
+
+/**
+ * Initialize the history bare repo at `<projectRoot>/.open-knowledge/history/` (D56).
+ *
+ * On first call, migrates legacy locations (`.git/openknowledge/`, `.openknowledge/`)
+ * atomically before initializing. Adds `.open-knowledge/` to `.gitignore` if absent.
  */
 export async function initHistoryRepo(projectRoot: string): Promise<HistoryHandle> {
-  // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
+  // Path resolution lives in @inkeep/open-knowledge-core so the CLI
   // read path and this server write path use exactly the same rule (D22).
-  const { path: shadowDir, mode } = resolveHistoryDir(projectRoot);
+  const shadowDir = resolveHistoryDir(projectRoot);
 
-  // Skip init if already valid
+  // D56 migration: move legacy locations to unified path before init check
+  migrateHistoryRepo(projectRoot, shadowDir);
+
+  // Skip bare-repo init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
   if (!alreadyInit) {
     mkdirSync(shadowDir, { recursive: true });
@@ -83,21 +131,9 @@ export async function initHistoryRepo(projectRoot: string): Promise<HistoryHandl
     await sg.raw('config', 'user.email', 'noreply@openknowledge.local');
   }
 
-  // Standalone mode: ensure .openknowledge/ is in .gitignore
-  if (mode === 'standalone') {
-    const gitignorePath = resolve(projectRoot, '.gitignore');
-    const entry = '.openknowledge/';
-    let content = '';
-    try {
-      content = readFileSync(gitignorePath, 'utf-8');
-    } catch {
-      // no .gitignore yet
-    }
-    if (!content.split('\n').some((line) => line.trim() === entry)) {
-      const suffix = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-      writeFileSync(gitignorePath, `${content}${suffix}${entry}\n`, 'utf-8');
-    }
-  }
+  // D56: always ensure .open-knowledge/ is in .gitignore (regardless of whether
+  // the project has a .git/ — the state dir is never committed to project VCS)
+  ensureGitignoreEntry(projectRoot);
 
   // Acquire exclusive writer lock
   acquireLock(shadowDir, projectRoot);

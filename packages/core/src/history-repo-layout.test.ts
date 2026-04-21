@@ -173,44 +173,28 @@ describe('getWipRefPattern', () => {
 });
 
 describe('getHistoryRepoPath', () => {
-  test('returns null when no shadow repo exists', () => {
+  test('returns null when no history repo exists', () => {
     expect(getHistoryRepoPath(tmp)).toBe(null);
   });
 
-  test('prefers integrated mode when project has its own .git/', () => {
+  test('returns the unified path when .open-knowledge/history/HEAD exists', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
+    mkdirSync(resolve(project, '.open-knowledge/history'), { recursive: true });
+    writeFileSync(resolve(project, '.open-knowledge/history/HEAD'), 'ref: refs/heads/main\n');
+    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.open-knowledge', 'history'));
   });
 
-  test('falls back to standalone mode when no project .git/ exists', () => {
+  test('returns null when .open-knowledge/history exists but HEAD is missing', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.openknowledge'));
-  });
-
-  test('prefers integrated over standalone when both exist', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('returns null when .git/openknowledge exists but HEAD is missing', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
+    mkdirSync(resolve(project, '.open-knowledge/history'), { recursive: true });
     expect(getHistoryRepoPath(project)).toBe(null);
   });
 
-  test('returns null when the shadow dir is a file (not a directory)', () => {
+  test('legacy locations do not satisfy getHistoryRepoPath (migration happens in server, not layout)', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(project, { recursive: true });
-    writeFileSync(resolve(project, '.git'), 'not a dir');
-    // Neither integrated nor standalone exists
+    // Simulate old integrated-mode location — layout helper does NOT see it
+    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
     expect(getHistoryRepoPath(project)).toBe(null);
   });
 });

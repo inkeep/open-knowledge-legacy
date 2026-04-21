@@ -2,9 +2,10 @@
  * History-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The history repo at `.git/openknowledge/` (integrated mode, when the project
- * has its own `.git/`) or `.openknowledge/` (standalone mode) is OK's
- * attribution journal. Its on-disk layout is a documented invariant:
+ * The history repo lives at `<projectRoot>/.open-knowledge/history/` (D56 —
+ * unified state dir). Legacy locations (`.git/openknowledge/` integrated-mode
+ * and `.openknowledge/` standalone-mode) are migrated by `initHistoryRepo()`
+ * on first server start. Its on-disk layout is a documented invariant:
  *
  *   refs/wip/<project-branch>/<writer-id>
  *
@@ -21,7 +22,7 @@
  * This file uses only `node:fs` (no other server/runtime deps) so it is safe
  * to include from any workspace package.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export type WriterClassification = 'agent' | 'human' | 'upstream' | 'server' | 'unknown';
@@ -50,47 +51,34 @@ export interface ParsedWriter {
  */
 const WRITER_ID_RE = /^(human-[^/]+|agent-[^/]+|upstream|server)$/;
 
-/** Mode of the shadow-repo location; determined by whether the project has its own `.git/`. */
-export type HistoryRepoMode = 'integrated' | 'standalone';
-
-export interface ResolvedHistoryDir {
-  /** Absolute path where the history repo lives (or would live, if not yet initialized). */
-  path: string;
-  mode: HistoryRepoMode;
-}
-
 /**
- * Resolve the shadow-repo bare git dir's target path for a project — WITHOUT
- * checking whether it exists yet. Used by init (`packages/server/src/history-repo.ts`)
- * to pick where to create the repo, and internally by `getHistoryRepoPath`.
- *
- * Rule matches server's historical `initHistoryRepo` logic:
- *   - Integrated mode (`<projectRoot>/.git/openknowledge/`) when the project
- *     has its own `.git/` directory
- *   - Standalone mode (`<projectRoot>/.openknowledge/`) otherwise
+ * Canonical history-repo directory name inside `.open-knowledge/` (D56).
+ * The bare git repo always lives at `<projectRoot>/.open-knowledge/history/`.
  */
-export function resolveHistoryDir(projectRoot: string): ResolvedHistoryDir {
-  const abs = resolve(projectRoot);
-  const projectGit = resolve(abs, '.git');
-  try {
-    if (statSync(projectGit).isDirectory()) {
-      return { path: resolve(projectGit, 'openknowledge'), mode: 'integrated' };
-    }
-  } catch {
-    // no project .git/ — fall through to standalone
-  }
-  return { path: resolve(abs, '.openknowledge'), mode: 'standalone' };
+const HISTORY_DIR_NAME = 'history';
+
+/**
+ * Return the absolute path of the history bare-git-repo directory for the
+ * given project root — WITHOUT checking whether it exists.
+ *
+ * D56: unified path is always `<projectRoot>/.open-knowledge/history/`.
+ * Legacy locations (`.git/openknowledge/`, `.openknowledge/`) are migrated by
+ * `initHistoryRepo()` on first server start; the CLI read path sees only the
+ * new location after migration.
+ */
+export function resolveHistoryDir(projectRoot: string): string {
+  return resolve(projectRoot, '.open-knowledge', HISTORY_DIR_NAME);
 }
 
 /**
- * Return the shadow-repo bare git dir's path, or `null` when the history repo
+ * Return the history-repo bare git dir's path, or `null` when the history repo
  * has not been initialized yet (HEAD file absent).
  *
- * Consumers that need the path regardless of existence should use
+ * Consumers that need the path regardless of existence should call
  * `resolveHistoryDir` directly.
  */
 export function getHistoryRepoPath(projectRoot: string): string | null {
-  const { path } = resolveHistoryDir(projectRoot);
+  const path = resolveHistoryDir(projectRoot);
   return existsSync(resolve(path, 'HEAD')) ? path : null;
 }
 

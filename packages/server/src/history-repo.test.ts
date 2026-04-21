@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('initHistoryRepo', () => {
-  test('creates shadow at .git/openknowledge/ when project .git/ exists', async () => {
+  test('creates history repo at .open-knowledge/history/ (D56 unified path)', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -43,7 +43,7 @@ describe('initHistoryRepo', () => {
 
     const shadow = await initHistoryRepo(projectRoot);
 
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/openknowledge'));
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.open-knowledge', 'history'));
     expect(shadow.workTree).toBe(projectRoot);
     expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
 
@@ -56,7 +56,8 @@ describe('initHistoryRepo', () => {
     expect(userName).toBe('openknowledge');
   });
 
-  test('does not modify .gitignore in integrated mode', async () => {
+  test('adds .open-knowledge/ to .gitignore in both integrated and standalone modes (D56)', async () => {
+    // Integrated mode (has .git/)
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -67,21 +68,22 @@ describe('initHistoryRepo', () => {
 
     await initHistoryRepo(projectRoot);
 
-    expect(existsSync(resolve(projectRoot, '.gitignore'))).toBe(false);
+    const gitignore = readFileSync(resolve(projectRoot, '.gitignore'), 'utf-8');
+    expect(gitignore).toContain('.open-knowledge/');
   });
 
-  test('creates shadow at .openknowledge/ when no project .git/ exists (standalone)', async () => {
+  test('creates history repo at .open-knowledge/history/ in standalone mode (no project .git/)', async () => {
     const projectRoot = resolve(tmpDir, 'standalone');
     mkdirSync(projectRoot, { recursive: true });
 
     const shadow = await initHistoryRepo(projectRoot);
 
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.openknowledge'));
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.open-knowledge', 'history'));
     expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
 
-    // Verify .gitignore was created with .openknowledge/
+    // Verify .gitignore was created with .open-knowledge/
     const gitignore = readFileSync(resolve(projectRoot, '.gitignore'), 'utf-8');
-    expect(gitignore).toContain('.openknowledge/');
+    expect(gitignore).toContain('.open-knowledge/');
   });
 
   test('is idempotent — second call does not error', async () => {
@@ -98,6 +100,46 @@ describe('initHistoryRepo', () => {
 
     expect(shadow1.gitDir).toBe(shadow2.gitDir);
     expect(existsSync(resolve(shadow2.gitDir, 'HEAD'))).toBe(true);
+  });
+
+  test('migrates legacy integrated-mode location (.git/openknowledge/) to unified path', async () => {
+    const projectRoot = resolve(tmpDir, 'migrate-integrated');
+    mkdirSync(projectRoot, { recursive: true });
+
+    // Bootstrap a git project with old integrated-mode history repo
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    const legacyDir = resolve(projectRoot, '.git', 'openknowledge');
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(resolve(legacyDir, 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(resolve(legacyDir, 'marker'), 'legacy');
+
+    const shadow = await initHistoryRepo(projectRoot);
+
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.open-knowledge', 'history'));
+    // Legacy location should be gone
+    expect(existsSync(legacyDir)).toBe(false);
+    // Marker file should be in the new location
+    expect(existsSync(resolve(shadow.gitDir, 'marker'))).toBe(true);
+  });
+
+  test('migrates legacy standalone-mode location (.openknowledge/) to unified path', async () => {
+    const projectRoot = resolve(tmpDir, 'migrate-standalone');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const legacyDir = resolve(projectRoot, '.openknowledge');
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(resolve(legacyDir, 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(resolve(legacyDir, 'marker'), 'legacy-standalone');
+
+    const shadow = await initHistoryRepo(projectRoot);
+
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.open-knowledge', 'history'));
+    expect(existsSync(legacyDir)).toBe(false);
+    expect(existsSync(resolve(shadow.gitDir, 'marker'))).toBe(true);
   });
 });
 
