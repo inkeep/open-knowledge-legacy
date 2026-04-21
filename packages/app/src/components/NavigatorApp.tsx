@@ -103,13 +103,18 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     }, 'Failed to open project.');
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-background p-8 text-foreground">
-      <header className="mb-8">
-        <h1 className="font-semibold text-2xl tracking-tight">Open Knowledge</h1>
-        <p className="text-muted-foreground text-sm">v{bridge.appVersion}</p>
+    // `overflow-hidden` on the outer flex column + `shrink-0` on everything
+    // fixed-height + `min-h-0 overflow-y-auto` on the Recent list pins the
+    // primary affordances (header + three cards + footer) on-screen at the
+    // default 720×520 Navigator window size. Only the Recent list can scroll,
+    // and only when a user has >~6 entries. Matches VS Code / Cursor Welcome.
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background p-5 text-foreground">
+      <header className="mb-4 shrink-0">
+        <h1 className="font-semibold text-xl tracking-tight">Open Knowledge</h1>
+        <p className="text-muted-foreground text-xs">v{bridge.appVersion}</p>
       </header>
 
-      <section className="mb-10 grid grid-cols-3 gap-4">
+      <section className="mb-5 grid shrink-0 grid-cols-3 gap-3">
         <NavigatorCard
           title="Clone from GitHub"
           description="Bring a remote repository onto this machine."
@@ -132,11 +137,11 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
 
       {error !== null ? (
         <div
-          className="mb-6 flex items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3"
+          className="mb-3 flex shrink-0 items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2"
           data-testid="nav-error-banner"
           role="alert"
         >
-          <span className="text-red-700 text-sm dark:text-red-300">{error}</span>
+          <span className="text-red-700 text-xs dark:text-red-300">{error}</span>
           <button
             type="button"
             onClick={() => setError(null)}
@@ -148,18 +153,21 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         </div>
       ) : null}
 
-      <section className="flex-1">
-        <h2 className="mb-4 font-medium text-sm uppercase tracking-wide text-muted-foreground">
+      <section className="flex min-h-0 flex-1 flex-col">
+        <h2 className="mb-2 shrink-0 font-medium text-muted-foreground text-xs uppercase tracking-wide">
           Recent
         </h2>
         {loading ? (
-          <p className="text-muted-foreground text-sm">Loading recent projects…</p>
+          <p className="text-muted-foreground text-xs">Loading recent projects…</p>
         ) : recents.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-xs">
             No recent projects yet. Open or create one above to get started.
           </p>
         ) : (
-          <ul className="divide-y divide-border" data-testid="nav-recent-list">
+          <ul
+            className="min-h-0 flex-1 divide-y divide-border overflow-y-auto"
+            data-testid="nav-recent-list"
+          >
             {recents.map((r) => (
               <RecentRow key={r.path} project={r} onOpen={() => onOpenRecent(r.path)} />
             ))}
@@ -167,7 +175,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         )}
       </section>
 
-      <footer className="mt-6 text-center text-muted-foreground text-xs">
+      <footer className="mt-3 shrink-0 text-center text-muted-foreground text-xs">
         Click a project to open it in a new window. Navigator stays open for launching more.
       </footer>
     </div>
@@ -187,28 +195,32 @@ function NavigatorCard({ title, description, onClick, dataTestId }: NavigatorCar
       type="button"
       onClick={onClick}
       data-testid={dataTestId}
-      className="flex flex-col items-start gap-2 rounded-lg border border-border bg-card p-6 text-left transition-colors hover:bg-accent"
+      className="flex flex-col items-start gap-1.5 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-accent"
     >
-      <span className="font-medium text-base">{title}</span>
-      <span className="text-muted-foreground text-sm">{description}</span>
+      <span className="font-medium text-sm">{title}</span>
+      <span className="text-muted-foreground text-xs leading-snug">{description}</span>
     </button>
   );
 }
 
 function RecentRow({ project, onOpen }: { project: RecentProject; onOpen: () => void }) {
   return (
-    <li className={`flex items-center justify-between py-2 ${project.missing ? 'opacity-50' : ''}`}>
+    <li
+      className={`flex items-center justify-between py-1.5 ${project.missing ? 'opacity-50' : ''}`}
+    >
       <button
         type="button"
         onClick={onOpen}
         disabled={project.missing}
-        className="flex flex-1 flex-col items-start text-left disabled:cursor-not-allowed"
+        className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-not-allowed"
       >
         <span className="font-medium text-sm">{project.name}</span>
-        <span className="text-muted-foreground text-xs">{project.path}</span>
+        <span className="truncate w-full text-muted-foreground text-xs">{project.path}</span>
       </button>
       {project.missing ? (
-        <span className="rounded bg-yellow-500/10 px-2 py-1 text-xs text-yellow-600">Missing</span>
+        <span className="rounded bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-600">
+          Missing
+        </span>
       ) : null}
     </li>
   );
