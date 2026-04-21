@@ -95,6 +95,7 @@ export {
   type Scheduler,
 } from './bridge/index.ts';
 // Types
+export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
   AgentFocusEntry,
@@ -102,6 +103,7 @@ export type {
   AwarenessUser,
 } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
+export type { Principal } from './types/principal.ts';
 export type {
   DiffLine,
   DiffLineType,

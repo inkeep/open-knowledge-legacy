@@ -34,8 +34,8 @@ export interface AgentFocusEntry {
   agentName: string;
   /** Path of the doc the agent most recently wrote to; null between writes. */
   currentDoc: string | null;
-  /** Which MCP tool produced the update. */
-  writeKind: 'write' | 'edit' | null;
+  /** Which MCP tool produced the update (D43). */
+  writeKind: 'write' | 'edit' | 'undo' | 'rollback-apply' | null;
   /** `Date.now()` at publication time. Stale entries (>5s) are ignored. */
   ts: number;
 }
