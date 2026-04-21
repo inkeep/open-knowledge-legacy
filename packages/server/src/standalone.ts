@@ -6,6 +6,7 @@ import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core'
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
+import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -119,6 +120,7 @@ export interface ServerInstance {
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
   agentFocusBroadcaster: AgentFocusBroadcaster;
+  agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -199,6 +201,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
   // Mutable principal holder — populated in initAsync (D50, US-024)
   let loadedPrincipal: Principal | null = null;
 
@@ -239,6 +242,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
     agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
+    agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -320,6 +324,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
+      agentPresenceBroadcaster,
       onAgentWrite: options.onAgentWrite,
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
@@ -1428,6 +1433,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     cc1Broadcaster,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     contentFilter,
     destroy,
     ready,

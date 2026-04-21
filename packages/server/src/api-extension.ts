@@ -25,8 +25,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  colorFromSeed,
   createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
@@ -46,10 +48,12 @@ import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
+import type { AgentPresenceBroadcaster } from './agent-presence.ts';
 import {
   type AgentSessionManager,
   applyAgentMarkdownWrite,
   applyAgentUndo,
+  iconFromClientName,
 } from './agent-sessions.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
@@ -499,11 +503,20 @@ export interface ApiExtensionOptions {
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   /**
-   * Optional. When present, agent write handlers publish the active doc on
-   * `__system__` awareness so clients can push-navigate to follow the agent.
-   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   * Optional. When present, agent write handlers publish per-write attribution
+   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
+   * currentDoc — the signal that drives browser push-navigation to the doc the
+   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
+   * publishes sustained session state.
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. When present, agent write handlers publish presence entries on
+   * `__system__` awareness (`agentPresence` map) so clients can render the
+   * multi-agent presence bar and follow the active agent. Omit to disable
+   * presence broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   /**
    * Optional. Called after every successful agent write (write_document /
    * edit_document). The handler is expected to be cheap and idempotent —
@@ -653,6 +666,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     onAgentWrite,
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
@@ -1378,15 +1392,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus on __system__ awareness so browser clients can
-      // push-navigate to the doc just written. Uses per-write agentId from
-      // attribution (PR #134).
+      // Publish agent focus (attribution) and presence (UI state) on
+      // __system__ awareness. Focus drives browser push-navigation to the
+      // doc the agent just wrote (writeKind); presence drives the multi-agent
+      // presence bar (displayName/icon/color/mode/ts).
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
         writeKind: 'write',
         ts: Date.now(),
       });
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'idle',
+          ts: Date.now(),
+        });
+      }
       onAgentWrite?.();
 
       // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
@@ -1953,6 +1980,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         writeKind: 'edit',
         ts: Date.now(),
       });
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'idle',
+          ts: Date.now(),
+        });
+      }
       onAgentWrite?.();
 
       const subscriberCount = getSubscriberCount(docName);

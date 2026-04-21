@@ -17,9 +17,11 @@ export interface AwarenessState {
   /**
    * Map of active-agent focus entries keyed by agentId. Only populated on the
    * `__system__` Y.Doc's awareness (not on content docs), published by the
-   * server-side `AgentFocusBroadcaster` on a shared DirectConnection. Clients
-   * aggregate across all awareness states to compute the primary focus that
-   * the browser should navigate to.
+   * server-side `AgentFocusBroadcaster` on a shared DirectConnection.
+   *
+   * Scope: per-write attribution (writeKind + doc the agent wrote to). Distinct
+   * from `agentPresence` below, which carries sustained session state
+   * (displayName, icon, color, mode, ts). Both fields coexist on `__system__`.
    */
   agentFocus?: Record<string, AgentFocusEntry>;
   /**
