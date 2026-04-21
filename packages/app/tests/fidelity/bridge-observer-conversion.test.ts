@@ -114,7 +114,7 @@ import {
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 
@@ -221,7 +221,7 @@ function applyPairedExternalChange(
 
 /** Serialize the fragment back to markdown. */
 function serializeFragment(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /**

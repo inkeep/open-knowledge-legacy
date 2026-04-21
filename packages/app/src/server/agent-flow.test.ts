@@ -15,7 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../editor/extensions/shared';
 
@@ -54,7 +54,7 @@ describe('Agent write → Editor reflection', () => {
 
     // Now serialize Y.Doc → markdown (this is what getMarkdown() does in TiptapEditor)
     const fragment = getFragment(conn);
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const markdown = mdManager.serialize(json);
 
     expect(markdown).toContain('Hello from the agent!');
@@ -93,7 +93,7 @@ describe('Agent write → Editor reflection', () => {
 
     // Step 3: Toggle to source — serialize Y.Doc → markdown
     const fragment = getFragment(conn);
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const sourceMarkdown = mdManager.serialize(json);
 
     // Both user and agent content should be in the markdown
@@ -115,7 +115,7 @@ describe('Agent write → Editor reflection', () => {
     });
 
     // Step 6: Verify — serialize again to check all content survived
-    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const finalMarkdown = mdManager.serialize(finalJson);
 
     expect(finalMarkdown).toContain('User wrote this paragraph');
@@ -154,7 +154,7 @@ describe('Agent write → Editor reflection', () => {
 
     // Serialize and verify all writes are present
     const fragment = getFragment(conn);
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const markdown = mdManager.serialize(json);
 
     expect(markdown).toContain('Existing content');
@@ -190,7 +190,7 @@ describe('Agent write → Editor reflection', () => {
 
     // First, populate Y.Text (simulates Observer A initial sync)
     const fragment = getFragment(conn);
-    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const currentJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const currentMarkdown = mdManager.serialize(currentJson);
     doc.transact(() => {
       ytext.insert(0, currentMarkdown);
@@ -229,14 +229,14 @@ describe('Agent write → Editor reflection', () => {
 
     // Simulate entering source mode: take a snapshot
     const fragment = getFragment(conn);
-    const snapshotJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const snapshotJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const snapshotMarkdown = mdManager.serialize(snapshotJson);
     expect(snapshotMarkdown).toContain('User content in source mode');
 
     // Set up Y.Doc observer (simulates what App.tsx does in source mode)
     let latestMarkdown = snapshotMarkdown;
     const observer = () => {
-      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
       latestMarkdown = mdManager.serialize(json);
     };
     fragment.observeDeep(observer);
@@ -276,7 +276,7 @@ describe('Agent write → Editor reflection', () => {
 
     // Prepend agent markdown
     const fragment = getFragment(conn);
-    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const currentJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const currentMarkdown = mdManager.serialize(currentJson);
 
     const agentMarkdown = 'Agent prepended this';
@@ -291,7 +291,7 @@ describe('Agent write → Editor reflection', () => {
     });
 
     // Verify order: agent's paragraph first, then original
-    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const finalMarkdown = mdManager.serialize(finalJson);
 
     expect(finalMarkdown).toContain('Agent prepended this');

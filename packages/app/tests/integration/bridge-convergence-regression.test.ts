@@ -167,9 +167,9 @@ describe('Bridge convergence regression', () => {
       await wait(1000);
 
       // Both XmlFragments must converge (CRDT tree sync).
-      const { yXmlFragmentToProsemirrorJSON: toJson } = await import('@tiptap/y-tiptap');
-      const aMd = mdManager.serialize(toJson(clientA.fragment));
-      const bMd = mdManager.serialize(toJson(clientB.fragment));
+      const { yXmlFragmentToProseMirrorRootNode: toRootNode } = await import('@tiptap/y-tiptap');
+      const aMd = mdManager.serialize(toRootNode(clientA.fragment, schema).toJSON());
+      const bMd = mdManager.serialize(toRootNode(clientB.fragment, schema).toJSON());
       expect(aMd).toContain('AAA from A');
       expect(aMd).toContain('BBB from B');
       expect(bMd).toContain('AAA from A');
