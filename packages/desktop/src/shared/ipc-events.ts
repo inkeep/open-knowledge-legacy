@@ -89,3 +89,22 @@ export function createSender(getTargets: () => readonly SendTarget[]) {
     }
   };
 }
+
+/**
+ * Build a typed sender that delivers an EventChannels-declared event to a
+ * SINGLE target returned by `getTarget()`. Companion to `createSender` for
+ * channels that must not fan-out across multiple BrowserWindows — update-
+ * toast channels under D24 multi-window mode would otherwise render N
+ * independent toasts with N "Relaunch now" buttons (see `auto-updater.ts`).
+ *
+ * `getTarget()` may return `null` when no suitable window is open — the
+ * returned sender no-ops in that case. Production wires this to
+ * `() => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null`.
+ */
+export function createSingleSender(getTarget: () => SendTarget | null) {
+  return <K extends EventChannelName>(channel: K, payload: EventChannels[K]['payload']): void => {
+    const target = getTarget();
+    if (!target) return;
+    target.webContents.send(channel, payload);
+  };
+}

@@ -444,20 +444,45 @@ app.whenReady().then(async () => {
   // must run on every boot path. `electron-updater` is imported dynamically
   // so unit tests that import main/index.ts indirectly don't pull in the
   // Electron-only runtime dependency.
-  const { autoUpdater } = await import('electron-updater');
-  autoUpdaterHandle = startAutoUpdater({
-    updater: autoUpdater,
-    ipcMain,
-    readState: () => appState,
-    writeState: (next) => {
-      appState = next;
-      saveAppState(appState);
-    },
-    getWindows: () => BrowserWindow.getAllWindows(),
-    getAppVersion: () => app.getVersion(),
-    isPackaged: app.isPackaged,
-    forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
-  });
+  //
+  // Wrapped in try/catch: auto-update is the mechanism that ships every
+  // future fix, including fixes for auto-update itself. A silent dynamic-
+  // import failure (bundling drift, corrupt node_modules, future Electron
+  // upgrade that desyncs the electron-updater version) would leave the app
+  // session unwired with no user signal. Surface the failure in the
+  // structured `[updater]` log so operators see it in the packaged-app
+  // console output.
+  try {
+    const { autoUpdater } = await import('electron-updater');
+    autoUpdaterHandle = startAutoUpdater({
+      updater: autoUpdater,
+      ipcMain,
+      readState: () => appState,
+      writeState: (next) => {
+        appState = next;
+        saveAppState(appState);
+      },
+      // Target exactly one window per update event (D24 multi-window fix).
+      // Prefer the currently-focused window so the toast lands on the window
+      // the user is looking at; fall back to the first open window when none
+      // is focused (e.g., editor minimized); return null when no window is
+      // open so the broadcast helper no-ops.
+      getPrimaryWindow: () => {
+        const focused = BrowserWindow.getFocusedWindow();
+        if (focused) return focused;
+        const all = BrowserWindow.getAllWindows();
+        return all[0] ?? null;
+      },
+      getAppVersion: () => app.getVersion(),
+      isPackaged: app.isPackaged,
+      forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+    });
+  } catch (err) {
+    console.error('[main] auto-updater boot failed', {
+      message: (err as Error).message,
+      stack: (err as Error).stack,
+    });
+  }
 });
 
 // F17 audit: cleared on `will-quit` (parent D40 canonical ordering — NOT

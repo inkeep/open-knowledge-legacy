@@ -25,8 +25,8 @@
  * 1 hour via setInterval(60 * 60 * 1000). Singleton per app launch.
  */
 
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron';
-import { createSender, type EventChannels, type SendTarget } from '../shared/ipc-events.ts';
+import type { IpcMain, IpcMainInvokeEvent } from 'electron';
+import { createSingleSender, type SendTarget } from '../shared/ipc-events.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import type { AppState } from './state-store.ts';
 
@@ -43,6 +43,10 @@ export interface UpdaterLike {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   channel: string | null;
+  /** NG3 — no beta channel; locked via explicit set alongside `channel`. */
+  allowPrerelease: boolean;
+  /** Locked via explicit set — no downgrade path. */
+  allowDowngrade: boolean;
   on(event: 'checking-for-update', listener: () => void): this;
   on(event: 'update-available', listener: (info: { version?: string }) => void): this;
   on(event: 'update-not-available', listener: (info: { version?: string }) => void): this;
@@ -87,7 +91,17 @@ export interface StartAutoUpdaterOpts {
   ipcMain: IpcMainLike;
   readState: () => AppState;
   writeState: (next: AppState) => void;
-  getWindows: () => readonly SendTarget[];
+  /**
+   * Single target for update-toast delivery. With D24 multi-window mode
+   * ("every project pick spawns a new editor window"), fanning out to every
+   * open BrowserWindow would render N independent toasts per event and give
+   * the user N "Relaunch now" buttons. Production passes
+   * `() => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null`
+   * so the toast lands on the window the user is looking at (falling back
+   * to the first open window when none is focused). Returns null if no
+   * window is open — broadcast is a no-op.
+   */
+  getPrimaryWindow: () => SendTarget | null;
   getAppVersion: () => string;
   isPackaged: boolean;
   /** True when `OK_UPDATER_FORCE_DEV=1` — lets Tier-2 smoke harness opt in. */
@@ -132,9 +146,17 @@ export const STUCK_HINT_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 /** D12: manual-download URL for Toast C. */
 export const STUCK_HINT_DOWNLOAD_URL = 'https://inkeep.com/open-knowledge/download';
 
-/** D9: GitHub Releases tag URL shape for Toast B. */
+/**
+ * D9: GitHub Releases tag URL shape for Toast B.
+ *
+ * `version` is `app.getVersion()` output (effectively trusted — read from
+ * the app's own package.json at boot), but encode it defensively so a
+ * malformed version string (e.g. containing `/` or `..`) cannot produce a
+ * path-confusion URL. The resulting URL still passes the D47 scheme
+ * allowlist; the encoding only locks the path segment shape.
+ */
 export function releaseUrlFor(version: string): string {
-  return `https://github.com/inkeep/open-knowledge/releases/tag/v${version}`;
+  return `https://github.com/inkeep/open-knowledge/releases/tag/v${encodeURIComponent(version)}`;
 }
 
 /** Classified `err.code` prefixes per evidence/electron-updater-api.md §2. */
@@ -155,7 +177,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     ipcMain,
     readState,
     writeState,
-    getWindows,
+    getPrimaryWindow,
     getAppVersion,
     isPackaged,
     forceDevBypass = false,
@@ -170,20 +192,49 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
   updater.channel = 'latest';
+  // NG3: single `latest` channel, no beta. Locking the electron-updater
+  // defaults explicitly so a future library bump can't silently flip them.
+  updater.allowPrerelease = false;
+  updater.allowDowngrade = false;
 
   // ————————————————————————————————————————————————————————
   // Helpers over AppState — isolate persistence seam
   // ————————————————————————————————————————————————————————
 
-  // Typed main→renderer sender — routed through `createSender` per D19
-  // (lint rule bans direct `webContents.send`). Fan-out to every open
-  // BrowserWindow so every window's toast subscriber fires once.
-  const send = createSender(getWindows);
-  const broadcast = <K extends keyof EventChannels>(
-    channel: K,
-    payload: EventChannels[K]['payload'],
-  ): void => {
-    send(channel, payload);
+  /**
+   * Send an update event to a single window (D24 multi-window fan-out fix).
+   * Routes through `createSingleSender` — the typed D19 companion to
+   * `createSender` for channels that must not fan-out. Fan-out would render
+   * N independent toasts across N editor windows with N "Relaunch now"
+   * buttons. When no window is open (unusual — updater is wired after the
+   * first window opens), the sender no-ops; the state gate still arms so
+   * the event doesn't re-emit repeatedly once a window opens.
+   */
+  const broadcast = createSingleSender(() => {
+    const target = getPrimaryWindow();
+    if (!target) {
+      logger.debug('broadcast skipped — no primary window');
+    }
+    return target;
+  });
+
+  /**
+   * Persist state, swallowing any I/O error so the caller can treat a failed
+   * write as "no gate armed, will retry next event." Returns true on success,
+   * false on failure — callers that must gate user-visible effects on the
+   * write succeeding (Toast A / Toast C) check this before emitting.
+   */
+  const persistSafely = (next: AppState, ctx: string): boolean => {
+    try {
+      writeState(next);
+      return true;
+    } catch (err) {
+      logger.error('writeState failed — state gate not armed', {
+        ctx,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   };
 
   /** Evaluate D12 stuck-hint gate on every `error` emission. */
@@ -196,8 +247,13 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     const elapsedMs = now().getTime() - last;
     if (elapsedMs < STUCK_HINT_THRESHOLD_MS) return;
 
+    // Persist-before-emit: arm the dedupe gate first so a disk-write failure
+    // cannot leave Toast C visible with no state to prevent re-emission on
+    // subsequent error events. If the write fails, skip dispatch; the next
+    // error event will try again.
+    if (!persistSafely({ ...state, stuckHintShown: true }, 'stuck-hint')) return;
+
     broadcast('ok:update:stuck-hint', { downloadUrl: STUCK_HINT_DOWNLOAD_URL });
-    writeState({ ...state, stuckHintShown: true });
     logger.warn('stuck-hint dispatched', {
       lastSuccessfulCheckAt: state.lastSuccessfulCheckAt,
       elapsedDays: Math.floor(elapsedMs / (24 * 60 * 60 * 1000)),
@@ -259,8 +315,13 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       onDispatch?.('update-downloaded-deduped');
       return;
     }
+    // Persist-before-emit: arm the versionPendingInstall gate BEFORE Toast A
+    // so an atomic-write failure (disk full, EACCES, etc.) cannot produce a
+    // user-visible toast with no state to prevent re-emission on the next
+    // update-downloaded event. If persist fails, skip dispatch — electron-
+    // updater will re-fire from its on-disk cache and we get another shot.
+    if (!persistSafely({ ...state, versionPendingInstall: version }, 'update-downloaded')) return;
     broadcast('ok:update:downloaded', { version });
-    writeState({ ...state, versionPendingInstall: version });
     logger.info('update-downloaded dispatched Toast A', { version });
     onDispatch?.('update-downloaded-toast-a');
   };
@@ -297,7 +358,18 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   const register = createHandler(ipcMain as IpcMain);
   register('ok:update:relaunch-now', (_event: IpcMainInvokeEvent): undefined => {
-    logger.info('relaunch-now invoked — calling autoUpdater.quitAndInstall');
+    // Gate on versionPendingInstall — the only legitimate caller is Toast A's
+    // "Relaunch now" button, which the renderer only shows after the main-side
+    // `onUpdateDownloaded` gate armed the state. Invoking `quitAndInstall()`
+    // with nothing staged is undefined behavior in Squirrel.Mac (best case:
+    // app quits and relaunches same version; worst case: inconsistent state).
+    // Ignore + log any invocation that reaches main without state backing it.
+    const pending = readState().versionPendingInstall;
+    if (!pending) {
+      logger.warn('relaunch-now invoked without versionPendingInstall — ignoring');
+      return undefined;
+    }
+    logger.info('relaunch-now invoked — calling autoUpdater.quitAndInstall', { pending });
     onDispatch?.('relaunch-now');
     updater.quitAndInstall();
     return undefined;
@@ -321,9 +393,11 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     onDispatch?.('whats-new-toast-b');
   }
   // Always advance lastSeenVersion so the toast fires at most once per
-  // transition (fresh-install case: null → current, silent; no toast).
+  // transition (fresh-install case: null → current, silent; no toast). Boot
+  // is synchronous — the `state` captured above is still current; no need to
+  // re-read before spreading.
   if (state.lastSeenVersion !== currentVersion) {
-    writeState({ ...readState(), lastSeenVersion: currentVersion });
+    persistSafely({ ...state, lastSeenVersion: currentVersion }, 'lastSeenVersion-advance');
   }
 
   // ————————————————————————————————————————————————————————
@@ -378,18 +452,26 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
         clock.clearInterval(intervalHandle);
         intervalHandle = null;
       }
-      try {
-        updater.off('checking-for-update', onCheckingForUpdate as (...args: unknown[]) => void);
-        updater.off('update-available', onUpdateAvailable as (...args: unknown[]) => void);
-        updater.off('update-not-available', onUpdateNotAvailable as (...args: unknown[]) => void);
-        updater.off('download-progress', onDownloadProgress as (...args: unknown[]) => void);
-        updater.off('update-downloaded', onUpdateDownloaded as (...args: unknown[]) => void);
-        updater.off('error', onError as (...args: unknown[]) => void);
-      } catch (err) {
-        logger.warn('updater.off failed during destroy', {
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
+      // Detach each listener under its own try/catch — a single `updater.off`
+      // throw must not leave the remaining subscribers wired. electron-
+      // updater extends Node's EventEmitter so `off` is unlikely to throw,
+      // but teardown is exactly where defensive code earns its keep.
+      const detach = (event: string, handler: (...args: unknown[]) => void): void => {
+        try {
+          updater.off(event, handler);
+        } catch (err) {
+          logger.warn('updater.off failed during destroy', {
+            event,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      };
+      detach('checking-for-update', onCheckingForUpdate as (...args: unknown[]) => void);
+      detach('update-available', onUpdateAvailable as (...args: unknown[]) => void);
+      detach('update-not-available', onUpdateNotAvailable as (...args: unknown[]) => void);
+      detach('download-progress', onDownloadProgress as (...args: unknown[]) => void);
+      detach('update-downloaded', onUpdateDownloaded as (...args: unknown[]) => void);
+      detach('error', onError as (...args: unknown[]) => void);
       try {
         ipcMain.removeHandler('ok:update:relaunch-now');
       } catch (err) {
@@ -401,14 +483,3 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     },
   };
 }
-
-// ————————————————————————————————————————————————————————
-// Type compatibility shim — BrowserWindow satisfies SendTarget.
-// Exists as a compile-time assertion; not exported for runtime use.
-// ————————————————————————————————————————————————————————
-
-type _BrowserWindowIsSendTarget = BrowserWindow extends SendTarget ? true : false;
-const _sendTargetCheck: _BrowserWindowIsSendTarget = true;
-// Silence "declared but never used" — this variable exists purely to force
-// the conditional-type check above to be evaluated.
-export const __SEND_TARGET_CHECK__ = _sendTargetCheck;

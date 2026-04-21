@@ -2,6 +2,8 @@
 "@inkeep/open-knowledge-desktop": minor
 "@inkeep/open-knowledge-core": minor
 "@inkeep/open-knowledge-app": minor
+"@inkeep/open-knowledge-server": minor
+"@inkeep/open-knowledge": minor
 ---
 
 feat(desktop): M3 — Auto-update (electron-updater + install-on-quit).

@@ -43,6 +43,8 @@ class FakeUpdater extends EventEmitter implements UpdaterLike {
   autoDownload = false;
   autoInstallOnAppQuit = false;
   channel: string | null = null;
+  allowPrerelease = true; // deliberately non-default so the lock-down is observable
+  allowDowngrade = true;
   checkForUpdatesAndNotify = mock(() => Promise.resolve(undefined));
   quitAndInstall = mock(() => {});
   override on(event: string, listener: (...args: unknown[]) => void): this {
@@ -162,6 +164,7 @@ function makeRig(overrides?: Partial<AppState> & { appVersion?: string; isPackag
       debug: mock(() => {}),
     },
   };
+  const primaryWindow = makeFakeWindow(rig.captured);
   const handle = startAutoUpdater({
     updater: rig.updater,
     ipcMain: rig.ipc,
@@ -169,7 +172,7 @@ function makeRig(overrides?: Partial<AppState> & { appVersion?: string; isPackag
     writeState: (next) => {
       rig.state = next;
     },
-    getWindows: () => [makeFakeWindow(rig.captured)],
+    getPrimaryWindow: () => primaryWindow,
     getAppVersion: () => appVersion,
     isPackaged,
     clock: rig.clock,
@@ -213,6 +216,101 @@ describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', ()
     expect(rig.updater.autoDownload).toBe(true);
     expect(rig.updater.autoInstallOnAppQuit).toBe(true);
     expect(rig.updater.channel).toBe('latest');
+  });
+
+  test('explicitly locks allowPrerelease=false + allowDowngrade=false (Finding #6)', () => {
+    const { rig } = makeRig();
+    // FakeUpdater starts with both true so the lock-down is observable.
+    expect(rig.updater.allowPrerelease).toBe(false);
+    expect(rig.updater.allowDowngrade).toBe(false);
+  });
+});
+
+// ————————————————————————————————————————————————————————
+// Finding #2: persist-before-emit ordering
+// ————————————————————————————————————————————————————————
+
+describe('persist-before-emit ordering (Finding #2)', () => {
+  test('update-downloaded: writeState failure → NO Toast A dispatch', () => {
+    const { rig, handle } = makeRig();
+    handle.destroy(); // detach and re-wire with throwing writeState
+
+    // Wire a fresh instance with writeState that always throws.
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = emptyState();
+    const dispatches: DispatchKind[] = [];
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      onDispatch: (k) => dispatches.push(k),
+      logger,
+    });
+
+    updater.emit('update-downloaded', { version: '0.3.2' });
+    // Gate did not arm → no toast dispatched
+    expect(captured.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(0);
+    expect(dispatches).not.toContain('update-downloaded-toast-a' as DispatchKind);
+    expect(state.versionPendingInstall).toBeNull();
+    expect(logger.error).toHaveBeenCalled();
+    // A re-fire must get another shot (state still unarmed).
+    expect(state.versionPendingInstall).toBeNull();
+    // rig unused here — pin compile-time reference so TS doesn't complain about unused binding.
+    void rig;
+  });
+
+  test('stuck-hint: writeState failure → NO Toast C dispatch', () => {
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = { ...emptyState(), lastSuccessfulCheckAt: eightDaysAgo };
+    const dispatches: DispatchKind[] = [];
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      onDispatch: (k) => dispatches.push(k),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+
+    updater.emit('error', new Error('network'));
+    expect(captured.filter((c) => c.channel === 'ok:update:stuck-hint')).toHaveLength(0);
+    expect(dispatches).not.toContain('stuck-hint-toast-c' as DispatchKind);
+    expect(state.stuckHintShown).toBe(false);
   });
 });
 
@@ -470,6 +568,15 @@ describe('first-launch post-update (Toast B — AC7, D9)', () => {
       'https://github.com/inkeep/open-knowledge/releases/tag/v1.2.3',
     );
   });
+
+  test('releaseUrlFor percent-encodes path-traversal chars (Finding #11)', () => {
+    expect(releaseUrlFor('../../../etc/passwd')).toBe(
+      'https://github.com/inkeep/open-knowledge/releases/tag/v..%2F..%2F..%2Fetc%2Fpasswd',
+    );
+    expect(releaseUrlFor('1.2.3/..')).toBe(
+      'https://github.com/inkeep/open-knowledge/releases/tag/v1.2.3%2F..',
+    );
+  });
 });
 
 // ————————————————————————————————————————————————————————
@@ -523,11 +630,19 @@ describe('ok:update:relaunch-now IPC handler (AC18)', () => {
     expect(rig.ipc.handlers.has('ok:update:relaunch-now')).toBe(true);
   });
 
-  test('handler invocation calls autoUpdater.quitAndInstall', () => {
-    const { rig } = makeRig();
+  test('handler invocation WITH versionPendingInstall calls autoUpdater.quitAndInstall', () => {
+    const { rig } = makeRig({ versionPendingInstall: '0.3.2' });
     rig.ipc.invoke('ok:update:relaunch-now');
     expect(rig.updater.quitAndInstall).toHaveBeenCalledTimes(1);
     expect(rig.dispatches).toContain('relaunch-now' as DispatchKind);
+  });
+
+  test('handler invocation WITHOUT versionPendingInstall is ignored (Finding #5 guard)', () => {
+    const { rig } = makeRig({ versionPendingInstall: null });
+    rig.ipc.invoke('ok:update:relaunch-now');
+    expect(rig.updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(rig.dispatches).not.toContain('relaunch-now' as DispatchKind);
+    expect(rig.logger.warn).toHaveBeenCalled();
   });
 
   test('destroy() removes the IPC handler', () => {
@@ -555,6 +670,7 @@ describe('dev-mode guard (isPackaged=false)', () => {
     const clock = makeFakeClock();
     const captured: CapturedSend[] = [];
     let state: AppState = emptyState();
+    const primaryWindow = makeFakeWindow(captured);
     startAutoUpdater({
       updater,
       ipcMain: ipc,
@@ -562,7 +678,7 @@ describe('dev-mode guard (isPackaged=false)', () => {
       writeState: (next) => {
         state = next;
       },
-      getWindows: () => [makeFakeWindow(captured)],
+      getPrimaryWindow: () => primaryWindow,
       getAppVersion: () => '0.3.1',
       isPackaged: false,
       forceDevBypass: true,
@@ -629,22 +745,26 @@ describe('destroy() teardown', () => {
 });
 
 // ————————————————————————————————————————————————————————
-// Broadcast fan-out: every open window receives the event
+// Single-window dispatch (Finding #1 regression guard — D24 multi-window fix)
+//
+// Under D24 ("every project pick spawns a new editor window"), fanning out
+// update events to `BrowserWindow.getAllWindows()` produced N visible
+// toasts with N independent "Relaunch now" buttons. The module now targets
+// a single primary window via `getPrimaryWindow()`. These tests lock the
+// new contract and catch any regression back to fan-out semantics.
 // ————————————————————————————————————————————————————————
 
-describe('broadcast fan-out (dispatch to all BrowserWindows)', () => {
-  test('update-downloaded dispatches to every getWindows() target', () => {
+describe('single-window dispatch (Finding #1 guard)', () => {
+  test('update-downloaded sends to exactly one target even when primary changes between dispatches', () => {
     const updater = new FakeUpdater();
     const ipc = makeFakeIpc();
     const clock = makeFakeClock();
-    const captured: CapturedSend[] = [];
-    // Three simulated windows — each records into the shared captured array
-    // but the captured sequence preserves per-window ordering.
-    const windows: SendTarget[] = [
-      makeFakeWindow(captured),
-      makeFakeWindow(captured),
-      makeFakeWindow(captured),
-    ];
+    const capturedA: CapturedSend[] = [];
+    const capturedB: CapturedSend[] = [];
+    const windowA = makeFakeWindow(capturedA);
+    const windowB = makeFakeWindow(capturedB);
+    // Simulate "user focuses window B between two downloaded events"
+    let primary: SendTarget = windowA;
     let state: AppState = emptyState();
     startAutoUpdater({
       updater,
@@ -653,14 +773,47 @@ describe('broadcast fan-out (dispatch to all BrowserWindows)', () => {
       writeState: (next) => {
         state = next;
       },
-      getWindows: () => windows,
+      getPrimaryWindow: () => primary,
       getAppVersion: () => '0.3.1',
       isPackaged: true,
       clock,
       now: () => new Date(),
     });
+
     updater.emit('update-downloaded', { version: '0.3.3' });
-    const toastA = captured.filter((c) => c.channel === 'ok:update:downloaded');
-    expect(toastA).toHaveLength(3);
+    expect(capturedA.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
+    expect(capturedB.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(0);
+
+    primary = windowB;
+    updater.emit('update-downloaded', { version: '0.3.4' });
+    // windowA still has the first toast only; windowB receives the second.
+    expect(capturedA.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
+    expect(capturedB.filter((c) => c.channel === 'ok:update:downloaded')).toHaveLength(1);
+  });
+
+  test('getPrimaryWindow returning null → broadcast no-ops (no crash)', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    let state: AppState = emptyState();
+    expect(() => {
+      startAutoUpdater({
+        updater,
+        ipcMain: ipc,
+        readState: () => state,
+        writeState: (next) => {
+          state = next;
+        },
+        getPrimaryWindow: () => null,
+        getAppVersion: () => '0.3.1',
+        isPackaged: true,
+        clock,
+        now: () => new Date(),
+      });
+      updater.emit('update-downloaded', { version: '0.3.3' });
+    }).not.toThrow();
+    // Even though no window received the toast, the state gate must still
+    // arm so the event doesn't re-fire repeatedly once a window opens.
+    expect(state.versionPendingInstall).toBe('0.3.3');
   });
 });
