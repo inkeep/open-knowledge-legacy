@@ -35,6 +35,11 @@ interface PageSummary {
   modified: string;
 }
 
+interface PageListResponse {
+  pages: PageSummary[];
+  folders: string[];
+}
+
 export function mergePageSets(
   serverPages: ReadonlySet<string>,
   optimisticPages: ReadonlySet<string>,
@@ -70,16 +75,18 @@ function mergePageTitles(
   return merged;
 }
 
-async function loadPages(): Promise<PageSummary[]> {
+async function loadPages(): Promise<PageListResponse> {
   const r = await fetch('/api/pages');
   if (!r.ok) {
     throw new Error(`/api/pages responded with ${r.status}`);
   }
-  const data = (await r.json()) as { ok?: boolean; pages?: PageSummary[] };
-  if (Array.isArray(data.pages)) {
-    return data.pages;
-  }
-  return [];
+  const data: { ok?: boolean; pages?: PageSummary[]; folders?: string[] } = await r.json();
+  return {
+    pages: Array.isArray(data.pages) ? data.pages : [],
+    folders: Array.isArray(data.folders)
+      ? data.folders.filter((folder): folder is string => typeof folder === 'string')
+      : [],
+  };
 }
 
 function logLoadPagesError(err: unknown) {
@@ -90,6 +97,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const [serverPages, setServerPages] = useState(new Set<string>());
   const [serverPageTitles, setServerPageTitles] = useState(new Map<string, string>());
   const [serverPageMeta, setServerPageMeta] = useState(new Map<string, PageMeta>());
+  const [serverFolderPaths, setServerFolderPaths] = useState(new Set<string>());
   const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +107,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
     const requestId = ++latestRequestIdRef.current;
     setLoading(true);
     void loadPages()
-      .then((pageSummaries) => {
+      .then(({ pages: pageSummaries, folders }) => {
         if (requestId !== latestRequestIdRef.current) return;
         const pageNames = new Set(pageSummaries.map((page) => page.docName));
         setServerPages(pageNames);
@@ -113,6 +121,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
             ),
           ),
         );
+        setServerFolderPaths(new Set(folders));
         setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, pageNames));
         setError(null);
       })
@@ -162,7 +171,10 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pages = mergePageSets(serverPages, optimisticPages);
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
-  const folderPaths = deriveKnownFolderPaths(pages);
+  const folderPaths = new Set(serverFolderPaths);
+  for (const folderPath of deriveKnownFolderPaths(pages)) {
+    folderPaths.add(folderPath);
+  }
 
   return (
     <PageListContext

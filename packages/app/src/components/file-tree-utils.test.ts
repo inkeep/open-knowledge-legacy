@@ -112,6 +112,25 @@ describe('buildTree', () => {
     expect(tree[0].children[0].children[0].path).toBe('a/b/c');
   });
 
+  test('materializes folder-only branches for empty folders', () => {
+    const tree = buildTree([doc('docs/guide')], ['docs', 'docs/empty', 'notes']);
+
+    expect(tree.map((node) => node.path)).toEqual(['docs', 'notes']);
+    expect(tree[0].children.map((node) => node.path)).toEqual(['docs/empty', 'docs/guide']);
+    expect(tree[0].children[0]).toEqual({
+      name: 'empty',
+      path: 'docs/empty',
+      kind: 'folder',
+      children: [],
+    });
+    expect(tree[1]).toEqual({
+      name: 'notes',
+      path: 'notes',
+      kind: 'folder',
+      children: [],
+    });
+  });
+
   test('propagates symlink metadata to file TreeNode', () => {
     const tree = buildTree([
       { docName: 'bar', size: 100, modified: '2026-01-01T00:00:00Z' },

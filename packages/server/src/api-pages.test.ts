@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createApiExtension, extractHeadings, extractPageTitle } from './api-extension.ts';
+import { createContentFilter } from './content-filter.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 
 describe('extractPageTitle', () => {
@@ -198,11 +199,18 @@ function buildFileIndex(dir: string, base = ''): ReadonlyMap<string, FileIndexEn
 
 async function callPages(contentDir: string, method = 'GET'): Promise<CapturedResponse> {
   const fileIndex = buildFileIndex(contentDir);
+  const contentFilter = createContentFilter({
+    projectDir: contentDir,
+    contentDir,
+    includePatterns: ['**/*.md'],
+    excludePatterns: [],
+  });
   const ext = createApiExtension({
     hocuspocus: {} as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {} as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
     getFileIndex: () => fileIndex,
+    contentFilter,
   });
   const req = makeReq(method);
   const { res, captured } = makeRes();
@@ -228,6 +236,7 @@ describe('GET /api/pages', () => {
       const body = JSON.parse(result.body) as {
         ok?: boolean;
         pages?: Array<{ docName: string; title: string; size: number; modified: string }>;
+        folders?: string[];
       };
       expect(body.ok).toBe(true);
       expect(body.pages).toEqual(
@@ -241,6 +250,31 @@ describe('GET /api/pages', () => {
         expect(typeof page.size).toBe('number');
         expect(typeof page.modified).toBe('string');
       }
+      expect(body.folders).toEqual(expect.arrayContaining(['nested', 'nested/deeper']));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('returns empty folders and skips ignored directories', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ok-pages-'));
+    try {
+      mkdirSync(join(dir, 'docs/empty'), { recursive: true });
+      mkdirSync(join(dir, 'dist/generated'), { recursive: true });
+      writeFileSync(join(dir, '.gitignore'), 'dist/\n');
+      writeFileSync(join(dir, 'docs/readme.md'), '# Docs\n');
+
+      const result = await callPages(dir);
+
+      expect(result.status).toBe(200);
+      const body = JSON.parse(result.body) as {
+        ok?: boolean;
+        folders?: string[];
+      };
+      expect(body.ok).toBe(true);
+      expect(body.folders).toEqual(expect.arrayContaining(['docs', 'docs/empty']));
+      expect(body.folders).not.toContain('dist');
+      expect(body.folders).not.toContain('dist/generated');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -71,11 +71,15 @@ export function composeInlineFolderPath(parentDir: string, name: string): string
 }
 
 /**
- * Build a hierarchical tree from a flat list of documents.
- * Each docName is split on '/' to create folder structure.
+ * Build a hierarchical tree from a flat list of documents plus any known
+ * folder-only paths.
+ *
+ * Each docName is split on '/' to create folder structure. `folderPaths` fills
+ * in directories that do not currently contain a markdown document, so the UI
+ * can still render and navigate empty folders.
  * Result is sorted: folders first, then alphabetically within each group.
  */
-export function buildTree(documents: DocEntry[]): TreeNode[] {
+export function buildTree(documents: DocEntry[], folderPaths: Iterable<string> = []): TreeNode[] {
   const root: TreeNode[] = [];
 
   for (const doc of documents) {
@@ -98,6 +102,28 @@ export function buildTree(documents: DocEntry[]): TreeNode[] {
             canonicalDocName: doc.canonicalDocName,
             targetPath: doc.targetPath,
           }),
+        };
+        children.push(node);
+      }
+
+      children = node.children;
+    }
+  }
+
+  for (const folderPath of folderPaths) {
+    const segments = folderPath.split('/').filter(Boolean);
+    let children = root;
+
+    for (const [index, segment] of segments.entries()) {
+      const path = segments.slice(0, index + 1).join('/');
+      let node = children.find((child) => child.path === path);
+
+      if (!node) {
+        node = {
+          name: segment,
+          path,
+          kind: 'folder',
+          children: [],
         };
         children.push(node);
       }
