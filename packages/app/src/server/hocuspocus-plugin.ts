@@ -44,6 +44,15 @@ let activeWatcher: WatcherHandle | null = null;
 const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
 const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
+// Vite evaluates this module during both `vite dev` and `vite build`. The
+// `configureServer` hook below only fires in dev, so during build every
+// module-scope side effect is waste — most are harmless (new Hocuspocus
+// doesn't bind a port, watcher starts lazily in configureServer) but the
+// server-lock acquisition actively collides with any running dev server
+// that holds the lock in the same contentDir, breaking `turbo run test`
+// when `app#build` runs as a dependency. Gate the lock specifically.
+const IS_BUILD_MODE = process.argv.some((a) => a === 'build');
+
 interface ContentConfig {
   dir: string;
   include: string[];
@@ -105,11 +114,13 @@ mkdirSync(CONTENT_DIR, { recursive: true });
 // `configureServer` once Vite tells us what port the dev server bound to.
 // HMR restarts in the same process are idempotent (same pid).
 const LOCK_DIR = resolve(CONTENT_DIR, '.open-knowledge');
-try {
-  acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
-} catch (err) {
-  console.error(`\n[hocuspocus] ${err instanceof Error ? err.message : String(err)}\n`);
-  throw err;
+if (!IS_BUILD_MODE) {
+  try {
+    acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
+  } catch (err) {
+    console.error(`\n[hocuspocus] ${err instanceof Error ? err.message : String(err)}\n`);
+    throw err;
+  }
 }
 
 // Release on process exit even if Vite's shutdown path doesn't call the plugin's

@@ -1157,6 +1157,16 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper {
   position: relative;
   border-radius: 0.375rem;
+  /* Establishes a stacking context for the behind-content halo (§7a).
+   * `position: relative` alone is NOT sufficient: with `z-index: auto`
+   * the wrapper doesn't open its own stacking context, so the `::after`
+   * at `z-index: -1` escapes to the viewport root and paints BEHIND
+   * `body { background-color: ... }` — the halo becomes invisible.
+   * `isolation: isolate` creates a stacking context without affecting
+   * z-index cascade for siblings, trapping the halo at -1 behind the
+   * wrapper's own content but above the body background. SPEC §3.3
+   * T10 evidence assumed `position: relative` was enough; it's not. */
+  isolation: isolate;
 }
 /* Child component drag prevention is handled via onDragStart={preventDefault}
    on the NodeViewWrapper in JsxComponentView.tsx. CSS-level -webkit-user-drag
@@ -1174,11 +1184,104 @@ button:active:not(:disabled) {
   z-index: 9;
 }
 
-/* No hover outlines/tints on component blocks. All chrome is overlays
- * (badge+gear bar, add-child pill). Components render clean like production.
- * Selection ring is subtle and only for keyboard nav (NodeSelection). */
-.ProseMirror .jsx-component-wrapper.is-selected {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 40%, transparent);
+/* 7a. Selection halo — per-block-type tokens, behind-content (T10),
+ * transparent-outline placeholder (T3), forced-colors compliant,
+ * reduced-motion gated, compositor-safe opacity transition.
+ *
+ * Consumes data-* attrs emitted by JsxComponentView from SelectionStatePlugin
+ * (see selection-state-plugin.ts). The pseudo-element is `::after` because
+ * `::before` is already used above as an invisible hover hit-zone; the
+ * T10 (behind-content) + T3 (transparent-outline) architecture is identical
+ * either way — only the name differs from the reference SPEC.
+ *
+ * Per-type tuning is opt-in via --selection-halo-* custom properties scoped
+ * under [data-component-type="..."] — extends the existing --color-fd-*
+ * token bridge pattern (Precedent #29). */
+.ProseMirror .jsx-component-wrapper {
+  /* Default halo tokens (overridden per component type below). */
+  --selection-halo-inset: -4px;
+  --selection-halo-radius: calc(0.375rem + 4px);
+  --selection-halo-color: var(--ring);
+  --selection-halo-opacity: 0;
+  --selection-halo-width: 2px;
+}
+
+.ProseMirror .jsx-component-wrapper::after {
+  content: "";
+  position: absolute;
+  inset: var(--selection-halo-inset);
+  /* T3: transparent-outline placeholder — forced-colors mode forces
+     border-color, making the element visible in Windows High Contrast
+     even when the browser strips box-shadow. */
+  border: var(--selection-halo-width) solid transparent;
+  border-radius: var(--selection-halo-radius);
+  opacity: var(--selection-halo-opacity);
+  pointer-events: none;
+  /* T10: behind-content — halo paints below the wrapper's chrome and its
+     own content, so Card/Accordion/Callout borders don't stack a second
+     ring. Requires position:relative on the wrapper (set above) + the
+     wrapper having a transparent default background (it does). */
+  z-index: -1;
+  box-sizing: border-box;
+}
+
+/* Compositor-safe fade — only animate when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .ProseMirror .jsx-component-wrapper::after {
+    /* Use the repo's custom easing token (defined ~L32) — matches the
+       Emil Kowalski "strong ease-out" used by every other interactive
+       transition in this file (7 usages incl. Popover, Callout). */
+    transition: opacity 180ms var(--ease-out-strong);
+  }
+}
+
+/* Paint the halo for the innermost selected wrapper. */
+.ProseMirror .jsx-component-wrapper[data-selected="true"]::after {
+  --selection-halo-opacity: 1;
+  border-color: var(--selection-halo-color);
+}
+
+/* Innermost-wins defense-in-depth: the plugin never sets both attrs on the
+ * same wrapper (store-enforced), but if a future refactor were to regress
+ * that invariant, this rule keeps only the innermost halo visible. */
+.ProseMirror .jsx-component-wrapper[data-has-child-selected="true"][data-selected="true"]::after {
+  --selection-halo-opacity: 0;
+}
+
+/* Drag suppresses the halo + transition (Vaul pattern — halo re-appears
+ * cleanly on drop rather than fading during the gesture). */
+.ProseMirror .jsx-component-wrapper[data-dragging="true"]::after {
+  --selection-halo-opacity: 0;
+  transition: none;
+}
+
+/* Forced-colors (Windows High Contrast): CanvasText is the current system
+ * foreground color, guaranteed visible regardless of WHCM theme. */
+@media (forced-colors: active) {
+  .ProseMirror .jsx-component-wrapper[data-selected="true"]::after {
+    border-color: CanvasText;
+  }
+}
+
+/* Per-block-type tuning. Media blocks (ImageZoom, Mermaid) use a tight inset
+ * because their visual bounds are sharper than text-heavy blocks. Cards and
+ * Steps containers breathe wider because their chrome — counters, grid
+ * borders — already lives on the outer edges. Callouts inherit their
+ * type-color so the halo matches the callout's chroma. */
+.ProseMirror .jsx-component-wrapper[data-component-type="imagezoom"],
+.ProseMirror .jsx-component-wrapper[data-component-type="mermaid"] {
+  --selection-halo-inset: -2px;
+  --selection-halo-radius: calc(0.375rem + 2px);
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="callout"] {
+  --selection-halo-color: var(--callout-type-color, var(--ring));
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="cards"],
+.ProseMirror .jsx-component-wrapper[data-component-type="steps"] {
+  --selection-halo-inset: -6px;
+  --selection-halo-radius: calc(0.375rem + 6px);
 }
 
 /* Hover-revealed chrome bar (component name + gear icon) — top-right overlay.

@@ -14,6 +14,8 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
+import { Breadcrumb } from '@/components/editor/Breadcrumb';
+import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
@@ -244,6 +246,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       detach();
     };
   }, [editor]);
+
+  // Note: `window.__activeEditor` is exposed centrally from DocumentContext
+  // via `Object.defineProperty({get})` reading the `active-editor.ts`
+  // registry — populated by the `registerEditor`/`unregisterEditor` effect
+  // above. Direct assignment here used to collide with that getter-only
+  // accessor and throw "Cannot set property __activeEditor of #<Window>
+  // which has only a getter" on any doc open in DEV.
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -521,11 +530,18 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
           'removeChild' on 'Node'` — regression validated against
           docs-open F1/F4/F5/F10, 2026-04-18. */}
       <EditorContent editor={editor} className="h-full" />
+      {/* Selection layer footer — ancestry breadcrumb + aria-live announcer.
+          Breadcrumb renders only when a block is selected; announcer is
+          always in the DOM (role=status + sr-only) and updates imperatively. */}
+      {editor && <Breadcrumb editor={editor} />}
+      {editor && <SelectionAnnouncer editor={editor} />}
     </div>
   );
 };
 
-// Expose flash state type on window for test access
+// Expose flash state type on window for test access.
+// `__activeEditor` is declared globally in env.d.ts (DocumentContext owns the
+// accessor); no duplicate Window augmentation here.
 declare global {
   interface Window {
     __agentFlashState?: AgentFlashState;

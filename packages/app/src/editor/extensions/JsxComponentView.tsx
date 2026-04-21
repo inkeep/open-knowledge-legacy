@@ -22,6 +22,8 @@ import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } fr
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { EditorContextProvider } from '../components/EditorContext.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
+import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
+import { useBlockSelection } from '../hooks/use-block-selection.ts';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
 import {
@@ -156,6 +158,35 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const canMoveUp = isChildOfComponent && siblingIndex > 0;
   const canMoveDown = isChildOfComponent && siblingIndex < siblingCount - 1;
 
+  // Selection layer (Precedent #27): read canonical block-selection state
+  // from SelectionStatePlugin and derive this wrapper's role.
+  //
+  //  - isInnermostSelected: THIS wrapper is the selected block. Paints halo.
+  //  - hasChildSelected:    THIS wrapper is an ancestor of the selected block.
+  //                         Gets `data-has-child-selected` so the CSS layer
+  //                         can hide its own halo in favor of the innermost
+  //                         (Gutenberg-style innermost-wins, store-driven
+  //                         rather than `:has()`-based — Precedent #30).
+  //  - selectionOrigin:     How the user arrived at this selection
+  //                         ('keyboard' | 'pointer' | 'programmatic').
+  //                         Plumbed-through for future keyboard-only focus-
+  //                         ring differentiation; no v1 visual treatment.
+  //  - isDragging:          An HTML5 drag is active; suppress the halo.
+  //
+  // Plugin may not be registered during intermediate build states (US-008
+  // activates it) — `useBlockSelection` then returns EMPTY (all flags off).
+  const blockSelection = useBlockSelection(editor);
+  const wrapperBridgeId = typeof pos === 'number' ? getWrapperBridgeId(editor.state, pos) : null;
+  const isInnermostSelected =
+    wrapperBridgeId !== null && blockSelection?.selectedBlockId === wrapperBridgeId;
+  const hasChildSelected =
+    wrapperBridgeId !== null &&
+    !isInnermostSelected &&
+    (blockSelection?.ancestorChain.some((entry) => entry.bridgeId === wrapperBridgeId) ?? false);
+  const selectionOrigin =
+    isInnermostSelected && blockSelection ? blockSelection.selectionOrigin : undefined;
+  const isDraggingSelf = isInnermostSelected && (blockSelection?.isDragging ?? false);
+
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
@@ -185,7 +216,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   // Auto-open popover when: (1) component becomes selected AND (2) the
   // pendingAutoOpen flag is set. Uses controlled state so it works across
-  // React re-renders (defaultOpen only reads on first mount).
+  // React re-renders (defaultOpen only reads on first mount). `wasSelected`
+  // ref prevents double-fire under Strict Mode; explicit deps ensure the
+  // effect only runs when one of the watched values actually changes.
   useEffect(() => {
     if (selected && !wasSelected.current && hasEditableProps && consumeAutoOpen(pos)) {
       setPopoverOpen(true);
@@ -213,7 +246,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   // ── Auto-convert to rawMdxFallback for wildcard + render errors ────────
   // Fires once on mount (guarded by convertedRef). The rawMdxFallback CM
-  // handles source editing + re-parse on commit.
+  // handles source editing + re-parse on commit. Dep array tracks the
+  // inputs that flip `needsConversion` or determine the replacement node;
+  // the convertedRef guard still enforces single-fire under Strict Mode.
   const needsConversion = descriptor.name === '*' || renderError !== null;
   const convertedRef = useRef(false);
   useEffect(() => {
@@ -306,6 +341,23 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     editor.chain().focus().setNodeSelection(pos).run();
   };
 
+  // ARIA: role="group" for typed-children containers, with a descriptive
+  // aria-label summarizing content. Screen readers announce on focus/select.
+  // See precedent "A11y codified in the selection plugin, not retrofitted
+  // per-block" and its consumers (Breadcrumb, SelectionAnnouncer).
+  // TODO(i18n): pluralization is English-only (`+ 's'` heuristic) — this
+  // breaks for irregular plurals (Foot → Foots) and any non-English locale.
+  // When i18n lands, route through `Intl.PluralRules` + a localized message
+  // catalog. The same heuristic appears nowhere else in this layer; do not
+  // copy this pattern.
+  const componentLabel = descriptor.displayName ?? descriptor.name;
+  const isGroupContainer = Boolean(descriptor.emptyChildName);
+  const groupAriaLabel = isGroupContainer
+    ? node.childCount > 0
+      ? `${componentLabel} with ${node.childCount} ${(descriptor.emptyChildName as string).toLowerCase()}${node.childCount === 1 ? '' : 's'}`
+      : `${componentLabel} (empty)`
+    : undefined;
+
   // WCAG 2.1.1 keyboard-equivalent to the click-to-select path. When the
   // block is NodeSelected (via arrow-key L2 nav in KeyboardNav), pressing
   // Enter/Space opens the PropPanel if the descriptor has editable props —
@@ -327,8 +379,32 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   return (
     <NodeViewWrapper
-      className={`jsx-component-wrapper my-2 ${selected ? 'is-selected' : ''}`}
+      className="jsx-component-wrapper my-2"
+      data-component-type={descriptor.name.toLowerCase()}
+      data-selected={isInnermostSelected ? 'true' : undefined}
+      data-has-child-selected={hasChildSelected ? 'true' : undefined}
+      data-selection-origin={selectionOrigin}
+      data-dragging={isDraggingSelf ? 'true' : undefined}
       data-needs-config={needsConfig ? 'true' : undefined}
+      // `aria-selected` is intentionally omitted — per WAI-ARIA 1.2, it's
+      // only valid on `role` values that support selection semantics
+      // (option, tab, row, gridcell, treeitem, columnheader, rowheader).
+      // Our wrappers carry `role="group"` (for emptyChildName containers)
+      // or no role (for generic block components). Emitting `aria-selected`
+      // on those roles is an ARIA conformance violation caught by axe-core.
+      // Selection announcement to AT is handled via the `<SelectionAnnouncer>`
+      // aria-live region (SPEC §3.6) which works regardless of wrapper role.
+      role={isGroupContainer ? 'group' : undefined}
+      aria-label={groupAriaLabel}
+      // Roving tabindex (W3C ARIA Authoring Practices, "Composite Widgets"):
+      // exactly one wrapper per editor is in the document tab order at a
+      // time — the currently-selected one. Without this, every top-level
+      // jsxComponent created an O(N) Tab cost before the user could reach
+      // anything outside the editor (Breadcrumb buttons, presence bar). The
+      // wrappers remain reachable via PM's NodeSelection arrow-nav; Tab
+      // stays a "leave the editor" affordance, not "step through every
+      // block." Matches Gutenberg / Lexical block-editor conventions.
+      tabIndex={isInnermostSelected ? 0 : -1}
       {...(!isChildOfComponent
         ? { 'data-drag-handle': '', draggable: 'true' }
         : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
