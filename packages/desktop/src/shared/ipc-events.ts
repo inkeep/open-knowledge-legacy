@@ -24,4 +24,24 @@ export interface EventChannels {
    * per SPEC R5b / D10. Absent when the project already had `.git/`.
    */
   'ok:git-init-notice': { payload: { gitDir: string } };
+  /**
+   * `autoUpdater.on('update-downloaded')` fan-out to every open BrowserWindow
+   * so renderer Toast A ("Update downloaded" + "Relaunch now" action) can
+   * render. Main gates firing to once-per-version via
+   * `AppState.versionPendingInstall`. M3 D11.
+   */
+  'ok:update:downloaded': { payload: { version: string } };
+  /**
+   * First-launch-post-update signal: main compared `app.getVersion()` to
+   * `AppState.lastSeenVersion` at updater start and decided a version
+   * transition happened. Renderer Toast B (`"Updated to v${VERSION} —
+   * see what's new"` + link to GitHub Releases). M3 D9/D11.
+   */
+  'ok:update:whats-new': { payload: { version: string; releaseUrl: string } };
+  /**
+   * D12 stuck-update hint: main detected `>7 calendar days` since the last
+   * successful update check AND `!stuckHintShown`. Renderer Toast C points
+   * the user at the manual-download page. Fires at most once per installation.
+   */
+  'ok:update:stuck-hint': { payload: { downloadUrl: string } };
 }

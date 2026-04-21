@@ -51,6 +51,22 @@ export interface RecentProjectEntry {
   missing?: boolean;
 }
 
+/** Payload passed to `onUpdateDownloaded` subscribers. Mirrors ok:update:downloaded. */
+export interface OkUpdateDownloadedInfo {
+  readonly version: string;
+}
+
+/** Payload passed to `onWhatsNew` subscribers. Mirrors ok:update:whats-new. */
+export interface OkWhatsNewInfo {
+  readonly version: string;
+  readonly releaseUrl: string;
+}
+
+/** Payload passed to `onUpdateStuckHint` subscribers. Mirrors ok:update:stuck-hint. */
+export interface OkUpdateStuckHintInfo {
+  readonly downloadUrl: string;
+}
+
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
@@ -63,6 +79,9 @@ export interface OkDesktopBridge {
    * this to surface a sonner toast (SPEC R5b / D10).
    */
   onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
+  onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
+  onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
+  onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
 
   dialog: {
     openFolder(): Promise<string | null>;
@@ -81,6 +100,11 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
+  };
+
+  update: {
+    /** Invokes `autoUpdater.quitAndInstall()` in main. Triggered by Toast A's "Relaunch now" action. */
+    relaunchNow(): Promise<void>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

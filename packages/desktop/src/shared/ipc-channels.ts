@@ -52,4 +52,11 @@ export interface RequestChannels {
   'ok:project:open': { args: [request: ProjectOpenRequest]; result: undefined };
   /** Request main to close the current project's window. */
   'ok:project:close': { args: []; result: undefined };
+  /**
+   * M3 Toast A "Relaunch now" action: renderer invokes this after the user
+   * clicks the sonner action button. Main handler calls
+   * `autoUpdater.quitAndInstall()` which triggers Squirrel.Mac's ZIP swap
+   * and relaunches on the new version. AC18 / D3 revised.
+   */
+  'ok:update:relaunch-now': { args: []; result: undefined };
 }
