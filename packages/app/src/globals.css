@@ -217,6 +217,13 @@
 }
 
 /* OK Blob mascot */
+
+/* Group wrapper — the click bounce animates the group so body + eyes squish together. */
+.ok-blob-group {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+
 .ok-blob-body {
   fill: var(--color-azure-blue);
   animation: ok-blob-squish 6s ease-in-out infinite;
@@ -355,37 +362,33 @@
   animation: ok-blob-click-bounce-3 650ms var(--ease-out-strong) forwards;
 }
 
-/* Sparkle burst — level-3 rage-click reward */
-.ok-blob-sparkle {
-  fill: var(--color-azure-blue);
+/* Firework burst — radial particles launch from the blob center, translate
+   outward with varied distance/size/delay/duration, then fade. Per-particle
+   variation is pumped in via CSS custom properties (--fx-tx, --fx-ty,
+   --fx-delay, --fx-duration) set inline by the React component so one keyframe
+   serves every spark. */
+.ok-blob-firework {
   transform-box: fill-box;
   transform-origin: center;
-  animation: ok-blob-sparkle-pop 600ms var(--ease-out-strong) forwards;
-}
-.dark .ok-blob-sparkle {
-  fill: var(--color-sky-blue);
-}
-.ok-blob-sparkle-0 {
-  animation-delay: 0ms;
-}
-.ok-blob-sparkle-1 {
-  animation-delay: 55ms;
-}
-.ok-blob-sparkle-2 {
-  animation-delay: 110ms;
+  animation: ok-blob-firework-pop var(--fx-duration, 700ms) var(--ease-out-strong)
+    var(--fx-delay, 0ms) forwards;
 }
 
-@keyframes ok-blob-sparkle-pop {
+@keyframes ok-blob-firework-pop {
   0% {
-    transform: scale(0);
+    transform: translate(0, 0) scale(0.2);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(calc(var(--fx-tx, 0px) * 0.22), calc(var(--fx-ty, 0px) * 0.22)) scale(1.35);
     opacity: 1;
   }
-  40% {
-    transform: scale(1.6);
-    opacity: 1;
+  70% {
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.7);
+    opacity: 0.7;
   }
   100% {
-    transform: scale(0);
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.1);
     opacity: 0;
   }
 }
@@ -402,7 +405,7 @@
   .ok-blob-clicked-3 {
     animation: none;
   }
-  .ok-blob-sparkle {
+  .ok-blob-firework {
     display: none;
   }
 }
