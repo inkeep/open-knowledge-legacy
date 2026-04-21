@@ -1,5 +1,5 @@
 /**
- * Cold-pool-warm reproduction — target the specific state where PROJECT.md
+ * Cold-pool-warm reproduction — target the specific state where the big-doc
  * is provider-pool-resident but Activity-evicted, so revisiting it forces
  * a fresh TipTap mount without the provider/Y.Doc re-sync.
  *
@@ -10,13 +10,13 @@
  *
  * Scenario flow:
  *   1. Cold-load README (small, 5 KB) — warms ProviderPool for README.
- *   2. Navigate to PROJECT (large, multi-MB) — warms pool for PROJECT, mounts Activity
- *      entry for PROJECT.
- *   3. Navigate to 3 OTHER docs (to force Activity eviction of PROJECT via
- *      ACTIVITY_MOUNT_LIMIT=3). PROJECT's provider stays pool-resident.
- *   4. Navigate BACK to PROJECT — measure time until PM content visible.
+ *   2. Navigate to BIG_DOC (large) — warms pool for BIG_DOC, mounts Activity
+ *      entry for BIG_DOC.
+ *   3. Navigate to 3 OTHER docs (to force Activity eviction of BIG_DOC via
+ *      ACTIVITY_MOUNT_LIMIT=3). BIG_DOC's provider stays pool-resident.
+ *   4. Navigate BACK to BIG_DOC — measure time until PM content visible.
  *
- * The measured boundary is step 4. PROJECT's provider is still pool-resident
+ * The measured boundary is step 4. BIG_DOC's provider is still pool-resident
  * (ytext already hydrated), so the measurement is:
  *   [useState lazy init (new Editor → new EditorView → _forceRerender → docView)
  *    → React commit → EditorContent.init (createNodeViews) → portal reconcile →
@@ -25,6 +25,22 @@
  * No Y.Doc sync on this path. Any difference vs `cold-load-big-doc` is the
  * sync cost. The monkey-patched `ok/cold/*` marks decompose the TipTap/PM/React
  * cost within this window.
+ *
+ * G2 regression-gate invocation (canonical, per V2 SPEC §11):
+ *   OK_PERF_BIG_DOC=STORIES bun run perf:profile --scenario=cold-pool-warm
+ *
+ * STORIES is the designated G2 reference doc (≈176 MarkView portals, fits
+ * the ≤200-view target band). Pre-V2 baseline: 541 ms. Post-V2 target:
+ * < 300 ms. Depends on doc-markers.ts entry for STORIES — without it the
+ * scenario falls through to a content-length heuristic that races against
+ * still-Activity-mounted previous docs and produces pmLen numbers matching
+ * the wrong editor (see tmp/ship/v2-perf-benchmark.md §"Scenario-coverage
+ * gap discovered").
+ *
+ * Default (BIG_DOC=PROJECT) is a 768-view stress case used for attribution
+ * measurements and precedent #25 validation — informative but outside the
+ * G2 target scope. Use it for "how bad was pre-V2 on the worst case" and
+ * the STORIES invocation for "does V2 still hit the G2 gate."
  */
 
 import { markerFor } from '../lib/doc-markers';

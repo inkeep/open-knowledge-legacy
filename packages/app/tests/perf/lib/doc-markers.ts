@@ -16,6 +16,13 @@ export const DOC_MARKERS: Record<string, string> = {
   PROJECT: 'Build an agent-native knowledge platform',
   CLAUDE: 'Bun monorepo',
   AGENTS: 'Bun monorepo',
+  // STORIES is the canonical G2 regression-gate reference doc per V2 SPEC §11
+  // (STORIES 541ms pre-V2 → target <300ms post-V2). Without this marker,
+  // scenarios with OK_PERF_BIG_DOC=STORIES fall through to the content-length
+  // heuristic and race against still-Activity-mounted previous docs —
+  // producing pmLen numbers that match the wrong editor. See
+  // tmp/ship/v2-perf-benchmark.md §"Scenario-coverage gap discovered".
+  STORIES: 'Now phase workstreams',
 };
 
 export function markerFor(docName: string): string | null {
