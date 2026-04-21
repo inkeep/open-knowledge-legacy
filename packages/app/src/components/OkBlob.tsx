@@ -89,7 +89,10 @@ export function OkBlob({ size = 48, className, trackMouse = true }: OkBlobProps)
     setClickSeq((prev) => prev + 1);
     setParticles(generateFireworkParticles(level));
     clearTimeout(decayTimerRef.current);
-    decayTimerRef.current = setTimeout(() => setClickLevel(0), IDLE_RESET_MS);
+    decayTimerRef.current = setTimeout(() => {
+      setClickLevel(0);
+      setParticles([]);
+    }, IDLE_RESET_MS);
   }
 
   useEffect(() => () => clearTimeout(decayTimerRef.current), []);
