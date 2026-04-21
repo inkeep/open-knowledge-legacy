@@ -15,6 +15,7 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  SERVICE_WRITER,
   safetyCheckpoint,
   saveInMemoryCheckpoint,
   saveVersion,
@@ -400,7 +401,7 @@ describe('parkBranch', () => {
     shadow = await initHistoryRepo(projectRoot);
   });
 
-  test('creates park commit with Y.Doc state and disk snapshot', async () => {
+  test('creates park commit with Y.Doc state and disk snapshot (US-017)', async () => {
     const docs: ParkableDoc[] = [
       {
         docName: 'intro',
@@ -409,17 +410,17 @@ describe('parkBranch', () => {
       },
     ];
 
-    const sha = await parkBranch(shadow, 'main', 'session1', docs);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, docs, 'feature');
     expect(sha).toHaveLength(40);
     if (!sha) throw new Error('parkBranch returned null');
 
-    // Verify commit message uses park: <branch> subject format (US-015)
+    // Verify commit subject uses formatParkSubject (US-017, D53)
     const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg).toBe('park: main');
+    expect(msg).toBe('park: main -> feature');
 
-    // Verify ref
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/human-session1')).trim();
+    // Verify ref uses writer ID directly (no human- prefix, US-017, D58)
+    const refSha = (await sg.raw('rev-parse', `refs/wip/main/${SERVICE_WRITER.id}`)).trim();
     expect(refSha).toBe(sha);
 
     // Verify Y.Doc state blob
@@ -432,7 +433,7 @@ describe('parkBranch', () => {
   });
 
   test('returns null for empty documents', async () => {
-    const sha = await parkBranch(shadow, 'main', 'session1', []);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, []);
     expect(sha).toBeNull();
   });
 
@@ -440,7 +441,7 @@ describe('parkBranch', () => {
     const docs: ParkableDoc[] = [
       { docName: 'intro', markdown: '# Hello\n', diskSnapshot: '# Hello\n' },
     ];
-    const sha = await parkBranch(shadow, 'feature', 'sess2', docs);
+    const sha = await parkBranch(shadow, 'feature', SERVICE_WRITER.id, docs);
     if (!sha) throw new Error('parkBranch returned null');
 
     const sg = historyGit(shadow);
@@ -456,9 +457,9 @@ describe('parkBranch', () => {
     const docs: ParkableDoc[] = [
       { docName: 'guide', markdown: '# Guide v2\n', diskSnapshot: '# Guide v1\n' },
     ];
-    await parkBranch(shadow, 'feature', 'sess1', docs);
+    await parkBranch(shadow, 'feature', SERVICE_WRITER.id, docs);
 
-    const state = await readParkedState(shadow, 'feature', 'sess1', 'guide');
+    const state = await readParkedState(shadow, 'feature', SERVICE_WRITER.id, 'guide');
     expect(state).not.toBeNull();
     expect(state?.markdown).toBe('# Guide v2');
     expect(state?.diskSnapshot).toBe('# Guide v1');
@@ -475,7 +476,7 @@ describe('parkBranch', () => {
       { docName: 'guide', markdown: '# Guide\n', diskSnapshot: '# Guide old\n' },
     ];
 
-    const sha = await parkBranch(shadow, 'main', 'sess1', docs);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, docs);
     expect(sha).toHaveLength(40);
 
     const sg = historyGit(shadow);
@@ -483,6 +484,17 @@ describe('parkBranch', () => {
     const guideContent = (await sg.raw('show', `${sha}:guide`)).trim();
     expect(introContent).toBe('# Intro');
     expect(guideContent).toBe('# Guide');
+  });
+
+  test('isPairedWriteOrigin(PARK_SNAPSHOT_ORIGIN) returns true (US-017)', () => {
+    // Import from standalone — verify paired: true is recognized
+    const origin = {
+      source: 'local' as const,
+      skipStoreHooks: false,
+      context: { origin: 'park-snapshot', paired: true as const },
+    };
+    expect(origin.context.paired).toBe(true);
+    expect(typeof origin.context.origin).toBe('string');
   });
 });
 

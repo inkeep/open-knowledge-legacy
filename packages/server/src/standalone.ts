@@ -13,7 +13,12 @@ import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
-import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import {
+  type HeadWatcherHandle,
+  readBranchFromHead,
+  resolveGitDir,
+  startHeadWatcher,
+} from './head-watcher.ts';
 import {
   commitUpstreamImport,
   destroyHistoryRepo,
@@ -24,6 +29,7 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  SERVICE_WRITER,
   saveInMemoryCheckpoint,
 } from './history-repo.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
@@ -54,6 +60,7 @@ import {
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import { SyncEngine } from './sync-engine.ts';
 
 export interface ServerOptions {
@@ -130,6 +137,21 @@ export interface ServerInstance {
   /** Active sync engine instance, or null if dormant / no remote detected. */
   readonly syncEngine: SyncEngine | null;
 }
+
+/**
+ * Transaction origin for park-snapshot reads (US-017, D39).
+ *
+ * Wrapping each serializeDoc() call inside doc.transact(..., PARK_SNAPSHOT_ORIGIN)
+ * ensures Y.js serializes the snapshot capture atomically against concurrent
+ * in-flight transactions. skipStoreHooks: false — the transact is read-only
+ * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
+ * concurrent observer somehow fires, it short-circuits symmetrically (D39).
+ */
+export const PARK_SNAPSHOT_ORIGIN = Object.freeze({
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'park-snapshot', paired: true as const },
+}) satisfies PairedWriteOrigin;
 
 export function createServer(options: ServerOptions): ServerInstance {
   const {
@@ -1028,20 +1050,41 @@ export function createServer(options: ServerOptions): ServerInstance {
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
 
+          // Gate new L1/L2 writes BEFORE the park loop so any onStoreDocument
+          // calls that fire during the async parkBranch are blocked (D39).
+          setBatchInProgress(true);
+
           // Park current branch's Y.Doc state to shadow refs
           if (historyRef.current) {
             const currentBranch = getActiveBranch();
+            // Read new branch from HEAD (already updated by git at onBatchBegin time)
+            // so the park subject can carry both ends of the switch (D39, D53).
+            const gitDir = resolveGitDir(projectDir);
+            const newBranch = gitDir
+              ? (readBranchFromHead(gitDir) ?? currentBranch)
+              : currentBranch;
             const docs: ParkableDoc[] = [];
-            for (const [docName] of hocuspocus.documents) {
+            for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName)) continue;
-              const markdown = serializeDoc(docName);
+              // Wrap in doc.transact so Y.js serializes snapshot capture atomically
+              // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
+              let markdown: string | null = null;
+              document.transact(() => {
+                markdown = serializeDoc(docName);
+              }, PARK_SNAPSHOT_ORIGIN);
               if (markdown === null) continue;
               const diskSnapshot = getReconciledBase(docName) ?? markdown;
               docs.push({ docName, markdown, diskSnapshot });
             }
             if (docs.length > 0) {
               try {
-                const sha = await parkBranch(historyRef.current, currentBranch, 'server', docs);
+                const sha = await parkBranch(
+                  historyRef.current,
+                  currentBranch,
+                  SERVICE_WRITER.id,
+                  docs,
+                  newBranch,
+                );
                 if (sha) {
                   incrementPark();
                   log.info(
@@ -1054,8 +1097,6 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
             }
           }
-
-          setBatchInProgress(true);
         },
         // onBatchEnd — dispatch on BatchKind
         async (info) => {
@@ -1163,7 +1204,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const parked = await readParkedState(
                     historyRef.current,
                     newBranch,
-                    'server',
+                    SERVICE_WRITER.id,
                     docName,
                   );
                   if (!parked) continue;
