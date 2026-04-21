@@ -1,6 +1,6 @@
 ---
 title: "Bundling a CLI Inside an Electron DMG: Install Patterns, Gotchas, and the VS Code Lineage"
-description: "How VS Code, Cursor, Zed, Docker Desktop, Sublime, and Atom ship (or decline to ship) a PATH-installable CLI alongside a desktop app. Covers install mechanisms (symlink vs wrapper vs PATH append), osascript admin prompts, `ELECTRON_RUN_AS_NODE=1`, app-translocation traps, version coupling through symlinks, signing/notarization of inner executables, uninstall hygiene, and cross-platform divergence. Concludes with an Open Knowledge 1P application validating the D52 decision and surfacing five M6 implementation reminders."
+description: "How VS Code, Cursor, Zed, Docker Desktop, Sublime, and Atom ship (or decline to ship) a PATH-installable CLI alongside a desktop app. Covers install mechanisms (symlink vs wrapper vs PATH append), osascript admin prompts, `ELECTRON_RUN_AS_NODE=1`, app-translocation traps, version coupling through symlinks, signing/notarization of inner executables, uninstall hygiene, npm-vs-Electron coexistence, cross-platform divergence, and a concrete M6 implementation design for Open Knowledge. Concludes with an Open Knowledge 1P application validating the D52 decision."
 createdAt: 2026-04-21
 updatedAt: 2026-04-21
 subjects:
@@ -64,8 +64,10 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 - **App translocation is the critical gotcha**. Runtime detection (`app.getPath('exe')` matches `/AppTranslocation/` or `/private/var/folders/`) is cheap and avoided by no surveyed incumbent. Open Knowledge should ship this guard.
 - **Bundled-CLI signing is free under electron-builder's `codesign --deep` pass** for shell scripts and JS files. Only `.node` native modules need individual signing, and OK's existing `app.asar.unpacked` globs cover that.
 - **Version coupling is automatic** through the static symlink → replaced-file shape. Zero extra infra; VS Code / Zed / Cursor / Atom all ship this way.
-- **npm-distributed CLIs coexist on PATH without conflict** — shell resolution picks whichever appears first in `$PATH`. Both CLIs execute equivalent code; no reconciliation needed.
+- **npm-distributed CLIs coexist on PATH without conflict on modern Macs** — Apple Silicon + Homebrew Node / fnm / nvm / volta puts the npm `ok` at a different path than `/usr/local/bin/ok`. Shell resolution picks whichever appears first in `$PATH`. The one **direct collision scenario** is Intel Mac + Homebrew-intel or legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. OK's install action must `fs.lstat`-check before overwriting (D15 finding) — Docker-Desktop's aggressive silent overwrite is the anti-pattern.
 - **Uninstall is a user-responsibility tradition** across every incumbent. OK can match VS Code (no in-app uninstall) OR ship a symmetric "Uninstall Command-Line Tools" action.
+- **ZERO Bun-specific runtime imports in `packages/cli/` non-test code** (audit via `grep -rn` across `packages/cli/src/` + `packages/core/src/` + `packages/server/src/`). The `ELECTRON_RUN_AS_NODE=1` pattern is zero-change for OK today. All `Bun.*` + `bun:test` usage is confined to test files, which don't ship in the `dist/` tarball (D14 finding).
+- **A full M6 implementation design is now checked in** — concrete `ok.sh` wrapper script, `cli-install.ts` TypeScript module with `isTranslocated` / `wrapperPathInBundle` / `installCli` / `uninstallCli` / `getInstallStatus` functions, menu-item wiring, electron-builder.yml amendments, and a four-stage smoke-test procedure (dev-mode → unsigned DMG → translocation simulation → signed DMG). No source files modified in this PR; the design is ready to hand off to `/implement` or `/ship` for M6.
 
 ---
 
@@ -86,6 +88,9 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 | D11 | Cross-platform — Windows installer PATH, Linux package managers | Moderate | P1 | Covered |
 | D12 | ~~GitHub Desktop CLI~~ | — | — | **Negative finding** — no CLI ships |
 | D13 | 1P: Application to Open Knowledge — reconcile with D52 LOCKED | Light | P1 | Covered |
+| D14 | 1P: Bun-specific runtime import audit in `packages/cli/` | Moderate | P0 | Added 2026-04-21 — Covered |
+| D15 | Desktop-bundled `ok` vs npm-global `ok` — coexistence, collision, version drift | Deep | P0 | Added 2026-04-21 — Covered |
+| D16 | 1P: M6 implementation design (pre-code spike — no source changes) | Deep | P1 | Added 2026-04-21 — Covered |
 
 **Non-goals:**
 
@@ -245,6 +250,40 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 - Five reminders are implementation details, not spec amendments. They should land as M6 PR checklist items or code comments, not as Decision Log entries.
 - A proposed wrapper-script shape (adapted from VS Code's `code.sh` for OK's Electron binary name + `cli.mjs` entry) is provided in the evidence file.
 
+### D14 — Bun-specific runtime import audit of `packages/cli/` (added 2026-04-21)
+
+**Finding:** `grep -rn --include='*.ts' --exclude='*.test.ts' -E "(Bun\.|from ['\"]bun:|require\(['\"]bun:)"` across `packages/cli/src/`, `packages/core/src/`, and `packages/server/src/` returns **zero matches**. All `Bun.*` and `bun:test` usage is confined to `*.test.ts` files, which don't ship in the published tarball (`files: ["dist"]`). `packages/cli/package.json` declares `engines.node: ">=22"`; production deps (Commander v14, Zod v4, simple-git, @napi-rs/keyring, @modelcontextprotocol/sdk, yaml, smol-toml, ws) are all Node-compatible.
+
+**Evidence:** [evidence/bun-import-audit.md](evidence/bun-import-audit.md)
+
+**Implications:**
+- The `ELECTRON_RUN_AS_NODE=1` pattern is a **zero-change approach for OK today.** No de-Bun work needed before M6.
+- The risk flag from the original report (D13 reminder #2) is retired — audit clean.
+- **Forward guard**: suggest a `prepublishOnly` or `check`-task shell script that fails if Bun imports appear in non-test sources. ~5 lines. Prevents future regression.
+
+### D15 — Desktop-bundled `ok` vs npm-global `ok` — coexistence and collision (added 2026-04-21)
+
+**Finding:** The two install paths are **compatible on modern Macs (Apple Silicon + Homebrew Node / fnm / nvm / volta)**: npm's prefix lands at a non-`/usr/local/` path, so the npm `ok` and the Electron-installed `/usr/local/bin/ok` live at different locations and coexist via shell PATH precedence. **One direct collision scenario exists**: Intel Mac + Homebrew-intel Node OR legacy `nodejs.org` installer — both want `/usr/local/bin/ok`. Npm's install behavior in this case silently overwrites a pre-existing foreign symlink; Electron's install (per D52) can defensively check and prompt. MCP configs written by the Electron-origin `runInit` hard-code `/usr/local/bin/ok`; CLI-origin configs use `npx @inkeep/open-knowledge mcp` — both work, with different durability properties.
+
+**Evidence:** [evidence/npm-electron-coexistence.md](evidence/npm-electron-coexistence.md)
+
+**Implications:**
+- **Compatible by default** for the dominant Mac developer setup.
+- **Guard with `fs.lstat`** at install time — check whether `/usr/local/bin/ok` is already owned by someone else; prompt before overwriting. Never silently stomp (Docker Desktop anti-pattern).
+- **Document coexistence** in `packages/desktop/README.md` — a `which -a ok` one-liner tells the user which of the two binaries PATH is resolving to.
+- **Uninstall isolation is correct** — `npm uninstall -g` doesn't touch the Electron symlink; trashing the `.app` doesn't touch the npm install. Users can mix, match, and clean up independently.
+
+### D16 — M6 implementation design (pre-code spike, added 2026-04-21)
+
+**Finding:** A concrete, code-ready design for M6 is now captured — matching the VS Code pattern exactly but with OK-specific guards. New files: `packages/desktop/resources/cli/bin/ok.sh` (wrapper script, ~30 LOC) + `packages/desktop/src/main/cli-install.ts` (~250 LOC with exported pure functions `isTranslocated`, `wrapperPathInBundle`, `getInstallStatus` + runtime wrappers `installCli`, `uninstallCli`) + `packages/desktop/src/main/cli-install.test.ts` (unit tests for the pure functions). Modified files: `packages/desktop/electron-builder.yml` (add `cli/dist` + `cli/bin/ok.sh` to `extraResources`), `packages/desktop/src/main/menu.ts` (add File → "Install Command-Line Tools…" item with status indicator), `packages/desktop/src/main/index.ts` (optional launch-time broken-symlink repair). Smoke-test procedure spans dev-mode, unsigned DMG (`build:mac:unsigned`), translocation simulation (DevTools-injected `app.getPath('exe')` override), and signed-DMG end-to-end (blocked on the same Apple certs as M2 DOD).
+
+**Evidence:** [evidence/m6-implementation-design.md](evidence/m6-implementation-design.md)
+
+**Implications:**
+- **Implementation is hand-off-ready.** A future `/implement` or `/ship` pass can read the design, apply the file inventory, and ship M6 without re-deriving from the 3P evidence.
+- **Rough LOC estimate**: ~300 net lines. One well-scoped PR, not a multi-week effort.
+- **No source files were modified in this research PR** — the design is `.md`-only, per the user-confirmed scope boundary.
+
 ---
 
 ## Limitations & Open Questions
@@ -277,6 +316,9 @@ This pattern is **~10 years battle-tested** through the Atom (2014) → VS Code 
 - [evidence/signing-notarization-and-lifecycle.md](evidence/signing-notarization-and-lifecycle.md) — deep signing, known gotchas, versioning, uninstall
 - [evidence/cross-platform-windows-linux.md](evidence/cross-platform-windows-linux.md) — Windows installer PATH, Linux package-manager patterns
 - [evidence/application-to-open-knowledge.md](evidence/application-to-open-knowledge.md) — 1P synthesis applying findings to OK's D52 LOCKED state
+- [evidence/bun-import-audit.md](evidence/bun-import-audit.md) — 1P audit: zero Bun-runtime imports in non-test code; Electron-Node-mode is safe
+- [evidence/npm-electron-coexistence.md](evidence/npm-electron-coexistence.md) — PATH precedence, collision scenarios, MCP-config durability, uninstall isolation
+- [evidence/m6-implementation-design.md](evidence/m6-implementation-design.md) — 1P design spike: concrete `ok.sh`, `cli-install.ts`, menu wiring, electron-builder amendments, smoke-test procedure
 
 ### External Sources
 
