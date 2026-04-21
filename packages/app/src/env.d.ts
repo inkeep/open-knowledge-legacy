@@ -68,4 +68,10 @@ declare namespace globalThis {
    * `AgentPresenceEntry`).
    */
   var __test_injectAgentPresence: ((docName: string) => boolean) | undefined;
+  /**
+   * DEV-only: the `__system__` HocuspocusProvider created by
+   * SystemDocSubscriber and lifted into DocumentContext. Playwright reads
+   * `awareness.getStates()` to verify server→client sync of agent presence.
+   */
+  var __systemProvider: HocuspocusProvider | null;
 }

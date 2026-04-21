@@ -1,4 +1,6 @@
 export type { Principal } from '@inkeep/open-knowledge-core';
+export { AgentFocusBroadcaster } from './agent-focus.ts';
+export { AgentPresenceBroadcaster } from './agent-presence.ts';
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,

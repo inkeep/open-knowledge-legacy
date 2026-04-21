@@ -1101,11 +1101,11 @@ test.describe('docs-open — WS-interception scenarios', () => {
   });
 
   // ── QA-010: Agent-driven nav via awareness injection ──
-  // Validates that injecting a fake agent-focus awareness state on the
+  // Validates that injecting a fake agent-presence awareness state on the
   // __system__ provider triggers SystemDocSubscriber's nav check and
   // changes the URL hash to the agent's focus doc. No second browser tab
-  // or agent-sim process needed — the __test_injectAgentFocus hook pokes
-  // the __system__ awareness directly from page.evaluate().
+  // or agent-sim process needed — the __test_injectAgentPresence hook
+  // pokes the __system__ awareness directly from page.evaluate().
   test('QA-010: agent focus injection → hash changes to agent focus doc', async ({
     context,
     api,
@@ -1128,13 +1128,15 @@ test.describe('docs-open — WS-interception scenarios', () => {
 
     // Wait for SystemDocSubscriber's __system__ provider to sync.
     // The hook is registered inside the useEffect after sync.
-    await page.waitForFunction(() => typeof window.__test_injectAgentFocus === 'function', null, {
-      timeout: 10_000,
-    });
+    await page.waitForFunction(
+      () => typeof window.__test_injectAgentPresence === 'function',
+      null,
+      { timeout: 10_000 },
+    );
 
-    // Inject fake agent focus on doc-b.
+    // Inject fake agent presence on doc-b.
     const injected = await page.evaluate(() => {
-      return window.__test_injectAgentFocus?.('doc-b') ?? false;
+      return window.__test_injectAgentPresence?.('doc-b') ?? false;
     });
     expect(injected).toBe(true);
 

@@ -267,6 +267,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         // principal unavailable — pool opens providers with anonymous auth token
       });
 
+    // systemProvider exposure happens in a dedicated effect below because it
+    // depends on `systemProvider` state, not `collabUrl`.
     // Expose pool + test hooks on window for Playwright E2E access. Gated on
     // `import.meta.env.DEV` so production bundles don't ship a sync-promise
     // rejection trigger or a WebSocket close primitive — both useful for E2E,
@@ -320,6 +322,21 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       p.setOnChange(null);
     };
   }, [collabUrl]);
+
+  // DEV-only: expose `systemProvider` on window for Playwright E2E — the
+  // multi-agent-presence test needs to inspect the `__system__` provider's
+  // awareness.getStates() to verify server→client sync. Tree-shaken in
+  // production via the `import.meta.env.DEV` gate (Vite replaces it
+  // statically). Gated on window to skip SSR.
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    (window as unknown as { __systemProvider: HocuspocusProvider | null }).__systemProvider =
+      systemProvider;
+    return () => {
+      (window as unknown as { __systemProvider: HocuspocusProvider | null }).__systemProvider =
+        null;
+    };
+  }, [systemProvider]);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {

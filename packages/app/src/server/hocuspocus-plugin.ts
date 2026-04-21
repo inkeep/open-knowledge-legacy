@@ -10,6 +10,8 @@ import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
+  AgentFocusBroadcaster,
+  AgentPresenceBroadcaster,
   AgentSessionManager,
   acquireServerLock,
   BacklinkIndex,
@@ -216,6 +218,13 @@ try {
 
   sessionManager = new AgentSessionManager(hocuspocus);
   cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  // Agent focus + presence broadcasters — both must be wired in dev-mode too,
+  // otherwise the browser receives no agentFocus (identity-attribution spec)
+  // or agentPresence (multi-agent-presence SPEC FR-2/FR-3) updates when agents
+  // POST /api/agent-write-md. Both primitives coexist on __system__ awareness
+  // (different map slots).
+  const agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
+  const agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
   const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
     backlinkIndex,
     signalChannel,
@@ -236,6 +245,8 @@ try {
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
       signalChannel,
+      agentFocusBroadcaster,
+      agentPresenceBroadcaster,
       projectDir: PROJECT_ROOT,
       getPrincipal: () => loadedPrincipal,
     }),

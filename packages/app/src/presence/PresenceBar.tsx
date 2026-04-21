@@ -22,7 +22,8 @@ import { CursorIcon } from '@/components/icons/cursor';
 import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { useDocumentContext } from '@/editor/DocumentContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import type { AwarenessUser } from './identity.ts';
 import {
   type AgentParticipant,
@@ -30,6 +31,22 @@ import {
   type Participant,
   usePresence,
 } from './use-presence';
+
+/**
+ * Navigate to a doc from a user-initiated click (e.g. the cross-doc tooltip
+ * wiki-link). Uses the hash-based nav pattern — matches other user-initiated
+ * nav sites (FileTree, FolderOverview, EditorHeader). NavigationHandler
+ * picks up the hashchange and calls `openTargetTransition`, which drives
+ * the Activity/Suspense render path.
+ *
+ * Distinct from `openDocumentTransition` which only updates the provider
+ * pool; hash-setting is the canonical flow when we want the URL to reflect
+ * the new location.
+ */
+function navigateToDoc(docName: string): void {
+  window.location.hash = hashFromDocName(docName);
+}
+
 import { useSyncStatus } from './use-sync-status';
 import { useSyncToasts } from './use-sync-toasts';
 
@@ -129,7 +146,7 @@ function AgentAvatar({
 }: {
   participant: AgentParticipant;
   crossDoc: boolean;
-  onNavigate: (docName: string) => void;
+  onNavigate: (docName: string) => void; // injected for testability; defaults to hash-set
 }) {
   const { presence } = participant;
   const tooltipName = agentTooltipName(presence);
@@ -189,7 +206,7 @@ function OverflowChip({
   count: number;
   remainder: Participant[];
   crossDoc: boolean;
-  onNavigate: (docName: string) => void;
+  onNavigate: (docName: string) => void; // injected for testability; defaults to hash-set
 }) {
   return (
     <Popover>
@@ -240,7 +257,6 @@ function renderParticipant(
 
 export function PresenceBar() {
   const { activeProvider, activeDocName, systemProvider } = useDocumentContext();
-  const { openDocumentTransition } = useDocumentTransition();
   const { current, crossDoc } = usePresence(activeProvider, systemProvider, activeDocName);
   const syncStatus = useSyncStatus(activeProvider);
   useSyncToasts(syncStatus, activeDocName);
@@ -253,13 +269,13 @@ export function PresenceBar() {
   return (
     <div data-slot="presence-bar" className="flex items-center px-1 py-1.5">
       <div className="flex items-center gap-1.5" data-presence-section="current">
-        {currentPrimary.map((p) => renderParticipant(p, openDocumentTransition, false))}
+        {currentPrimary.map((p) => renderParticipant(p, navigateToDoc, false))}
         {currentRemainder.length > 0 ? (
           <OverflowChip
             count={currentRemainder.length}
             remainder={currentRemainder}
             crossDoc={false}
-            onNavigate={openDocumentTransition}
+            onNavigate={navigateToDoc}
           />
         ) : null}
       </div>
@@ -271,13 +287,13 @@ export function PresenceBar() {
             className="flex items-center gap-1.5 opacity-60 grayscale"
             data-presence-section="crossdoc"
           >
-            {crossDocPrimary.map((p) => renderParticipant(p, openDocumentTransition, true))}
+            {crossDocPrimary.map((p) => renderParticipant(p, navigateToDoc, true))}
             {crossDocRemainder.length > 0 ? (
               <OverflowChip
                 count={crossDocRemainder.length}
                 remainder={crossDocRemainder}
                 crossDoc={true}
-                onNavigate={openDocumentTransition}
+                onNavigate={navigateToDoc}
               />
             ) : null}
           </div>
