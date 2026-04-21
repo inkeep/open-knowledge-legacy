@@ -1,6 +1,6 @@
 ---
 title: "Open-With-Agent Deep-Link & CLI Capability Matrix"
-description: "Capability matrix for an `openWithAgent(agentName, dir, prompt)` wrapper across Cursor, Claude Desktop, Claude Code CLI, and OpenAI Codex CLI. Covers URL schemes, CLI flags, platform support, security surface, and cross-platform launch mechanics from an Electron host. Informs the forthcoming /spec for an Open With ⌄ dropdown."
+description: "Capability matrix for an `openWithAgent(agentName, dir, prompt)` wrapper across 10 agents (Cursor, Claude Desktop, Claude Code CLI, OpenAI Codex CLI, Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands) plus the web-URL Open-in-Claude pattern (claude.ai/new?q=, Mintlify contextual menu). Covers URL schemes, CLI flags, platform support, security surface, and cross-platform launch mechanics from an Electron host. Informs the forthcoming /spec for an Open With ⌄ dropdown."
 createdAt: 2026-04-21
 updatedAt: 2026-04-21
 subjects:
@@ -8,6 +8,14 @@ subjects:
   - Claude Desktop
   - Claude Code
   - OpenAI Codex
+  - Windsurf
+  - Aider
+  - GitHub Copilot CLI
+  - Cline
+  - Continue
+  - OpenHands
+  - Mintlify
+  - Inkeep
   - Electron
   - shell.openExternal
 topics:
@@ -15,6 +23,8 @@ topics:
   - CLI launch
   - cross-platform shell-out
   - deeplink security
+  - web URL prompt-pass
+  - docs-site contextual menu
   - agent integration
 ---
 
@@ -23,6 +33,8 @@ topics:
 **Purpose.** Inform the forthcoming `/spec` for an "Open with ⌄" dropdown in the Open Knowledge editor. The wrapper shape is `openWithAgent(agentName: string, dir: URL, prompt: string)`. This report maps what each target agent can actually honor — and what the graceful-degradation contract looks like when prompt or dir can't be delivered atomically.
 
 ---
+
+> **UPDATE 2026-04-21 (same day, user-requested follow-up):** Second pass added (a) a **new dimension** for the `claude.ai/new?q=` **web-URL prompt-pass pattern** used by Inkeep/Mintlify docs sites — missed in initial pass and arguably the simplest universal launch vector; (b) empirical verification of 6 UNCERTAIN items including a **material behavior change** in Codex's stdin handling (PR #15917, v0.122.0); (c) broader capability matrix across Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands. See [§ Follow-up Findings (2026-04-21)](#follow-up-findings-2026-04-21) for the delta. The sections below are the original pass; corrigendum breadcrumbs flag points that the follow-up revised.
 
 ## Executive Summary
 
@@ -177,7 +189,7 @@ No `--prompt` / `-p` / `--message` flag — prompt is positional or stdin. `exec
 - If `/spec` wants a rich "Electron renders Codex output" UX: `codex exec --json` parser + stream display.
 
 **Remaining uncertainty.**
-- Stdin-vs-positional interaction when both are supplied — community observation (stdin ignored) contradicts docs. Test before shipping combined flows.
+- Stdin-vs-positional interaction when both are supplied — community observation (stdin ignored) contradicts docs. Test before shipping combined flows.<br>_[Corrected 2026-04-21 same-day follow-up: behavior changed in [openai/codex#15917](https://github.com/openai/codex/pull/15917/files) (merged 2026-03-28, shipped v0.122.0 on 2026-04-20). Stdin IS now appended as a `<stdin>` block after a positional prompt. Authoritative fix in [F1 evidence U3](evidence/f1-empirical.md#u3-codex-exec--stdin--positional-prompt-major-update) + § Follow-up Findings.]_
 
 ---
 
@@ -298,6 +310,175 @@ The `degradedFeatures` array is how the UI communicates "Opened Claude Desktop, 
 
 ---
 
+## Follow-up Findings (2026-04-21)
+
+Same-day additive research pass, triggered by user feedback. Three new dimensions: **F1** empirical verification of UNCERTAIN items from the initial pass; **F2** broader agent landscape; **F3** the web-URL prompt-pass pattern. Plus light touches on **F4** Claude Desktop watch + auth UX.
+
+### F1. Empirical verification — what changed, what's resolved
+
+Six UNCERTAIN items from the initial pass were re-researched against community empirical reports and local probes on a macOS 25.3 machine.
+
+| # | Item | Resolution |
+|---|---|---|
+| U1 | Does `cursor://file/<dir-path>` open a folder? | **STILL UNCERTAIN**, weakly leaning NO. All documented Cursor forum examples use file paths; a separate forum request exists for "open folder from URL" — implies current handler is file-only. Plan for file-only; use `cursor <dir>` CLI for dirs. |
+| U2 | `claude://resume?cwd=<path>` without `session=`? | **STILL UNCERTAIN.** Docs state "sessions can only be resumed from the same directory where they were launched"; Issue #36937 requests a `--cwd` resume flag, implying today's behavior doesn't honor cwd-only. Don't rely on it. |
+| **U3** | **Codex exec — stdin + positional prompt?** | **BEHAVIOR CHANGED.** Initial pass cited an alexfazio gist (v0.114.0) reporting stdin ignored when positional prompt present. **PR [openai/codex#15917](https://github.com/openai/codex/pull/15917/files)** merged 2026-03-28, shipped in **v0.122.0 (2026-04-20)**, now appends stdin as `<stdin>` block after the positional prompt. Gist is stale; docs are correct post-PR. See corrigendum breadcrumb on D4. |
+| U4 | `vscode://anthropic.claude-code/open` cold-launch? | **CONFIRMED works cold.** Claude Code Release notes: "triggerable from a shell alias, a browser bookmarklet, or any script that can open a URL." Cold-launch-from-shell is the intended UX. Caveat: extension must have been installed + activated at least once. |
+| U5 | Windows Terminal `wt.exe` availability | **~90% on currently-supported Windows.** Bundled on Windows 11 (default since 22H2); Windows 10 22H2 after KB5026435 (May 2023). Always fall back to `cmd /c start powershell` or `conhost.exe` when absent. |
+| U6 | Linux terminal-picker fallback chain | **CONFIRMED exact VS Code chain:** Debian/`x-terminal-emulator` → GNOME/`gnome-terminal` → KDE/`konsole` → `$COLORTERM` → `$TERM` → `xterm`. Recommendation: prepend `$TERMINAL` env var check as step 0. |
+
+**Local probe on dev machine (macOS 25.3):** `/Applications/` contains `Cursor.app` (bundle `com.todesktop.230313mzl4w4u92`), `Claude.app`, `ChatGPT.app`, **and a separate `Claude Code URL Handler.app`** (helper bundle shipped by the CLI installer to register `claude://` — confirms the "separate binary" architecture flagged in Issue #41015). CLIs on PATH: `cursor`, `claude`, `codex`, `code`.
+
+**Evidence.** [evidence/f1-empirical.md](evidence/f1-empirical.md)
+
+---
+
+### F2. Broader agent landscape — 6 more agents, same framework
+
+Extended the capability matrix to Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, and OpenHands. **The dominant shape holds:** `spawn(bin, [promptFlag, prompt], { cwd: dir })` is the universal primitive; URL schemes are the exception (zero of the six have a useful prompt-bearing URL scheme).
+
+| Agent | URL scheme | CLI prompt flag | CLI dir flag | Single-call? | Shortest openWithAgent |
+|---|---|---|---|---|---|
+| **Windsurf** | `windsurf://` (auth-only) | NOT FOUND | positional `<dir>` | **No** — prompt lost | `spawn("windsurf", [dir])` — degraded |
+| **Aider** | NOT FOUND | `-m` / `--message` | cwd | ✅ | `spawn("aider", ["-m", prompt], { cwd: dir })` |
+| **Copilot CLI** (new `@github/copilot`) | NOT FOUND | `-p` | cwd only ([#457](https://github.com/github/copilot-cli/issues/457)) | ✅ | `spawn("copilot", ["-p", prompt], { cwd: dir })` |
+| **Cline** | NOT FOUND | positional task | `--workspace <dir>` | ✅ (CLI path) | `spawn("cline", [prompt, "--workspace", dir])` |
+| **Continue** (`@continuedev/cli`) | NOT FOUND | `-p` | cwd | ✅ | `spawn("cn", ["-p", prompt], { cwd: dir })` |
+| **OpenHands** | NOT FOUND | `-t` / `--task` (with `--headless`) | cwd (Docker required) | ✅ | `spawn("openhands", ["--headless", "-t", prompt], { cwd: dir })` |
+
+Note: **legacy `gh copilot` was deprecated 2025-10-25** in favor of the new agentic `@github/copilot` CLI. Migrate any legacy references.
+
+**Evidence.** [evidence/f2-broader-agents.md](evidence/f2-broader-agents.md)
+
+---
+
+### F3. Web-URL "Open in Claude" pattern — NEW DIMENSION
+
+**The initial pass missed this class entirely.** `https://claude.ai/new?q=<encoded>` is a plain HTTPS URL that pre-fills a prompt into Claude.ai. It is a **universal** launch vector — works on mobile, desktop, any browser, no SDK, no scheme, no allowlist. It is the simplest and most portable prompt-pass mechanism we found across all research.
+
+**What we learned.**
+
+| LLM surface | URL shape | Auto-submit? | Status |
+|---|---|---|---|
+| **Claude** | `https://claude.ai/new?q=<encoded>` | Historically yes; post-Oasis-vuln fix likely pre-fill only | **Undocumented by Anthropic**, but live and widely used |
+| **ChatGPT** | `https://chatgpt.com/?q=<encoded>` or `?prompt=<encoded>` | No — textarea pre-fills, user presses Enter | Community-discovered, undocumented |
+| **Perplexity** | `https://perplexity.ai/search?q=<encoded>` | Yes (search) | Widely used |
+| **Grok** | `https://x.com/i/grok?text=<encoded>` | Unknown | Community-discovered |
+| **Gemini** | NO native support | — | Feature-requested, not shipped. Extension workaround only. |
+| **Mistral** | NO native support | — | NOT FOUND. |
+
+**Security.** [Oasis Security disclosed a prompt-injection vuln in `claude.ai/new?q=`](https://www.oasis.security/blog/claude-ai-prompt-injection-data-exfiltration-vulnerability) (Mar 2026) — HTML tags inside `q=` were invisible in the textarea but processed on submit. Anthropic fixed per their Responsible Disclosure Program. Claude Code Issue [#19023](https://github.com/anthropics/claude-code/issues/19023) explicitly argues future URL-param support should pre-fill only, never auto-execute — matching Cursor's posture.
+
+**Does the URL deep-link into Claude Desktop?** **UNCERTAIN, leaning NO.** No `apple-app-site-association` evidence; Claude Desktop's Info.plist is not documented to claim `https://claude.ai/*` as a Universal Link. Assume it opens in the browser — which may be the desired UX anyway (no native-app modal).
+
+**Docs-site adoption — two convergent patterns:**
+
+**Mintlify ships this as a first-class feature** ([contextual menu docs](https://www.mintlify.com/docs/ai/contextual-menu)). Configuration via `docs.json`:
+
+```json
+{
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity",
+                "grok", "aistudio", "assistant", "devin",
+                "windsurf", "cursor", "vscode", "mcp"]
+  }
+}
+```
+
+Thirteen options cover file actions, LLM chat surfaces, agent launchers (Devin), IDE launch (Windsurf/Cursor/VS Code via their respective URL handlers), and MCP server registration. This is prior-art for the Open Knowledge dropdown.
+
+Two payload strategies:
+
+- **URL-reference (Inkeep):** `q=\"Discuss https://docs.inkeep.com/overview.md\"` — short; Claude fetches the doc via its own web tool. Requires serving `.md` / `llms.txt` per [llmstxt.org](https://llmstxt.org/) convention. Good for long docs.
+- **Inline content (Mintlify):** `q=${encodeURIComponent(fullMarkdown)}` — zero fetch dependency; URL-length-bound. Bad for long docs.
+
+**Implications for Open Knowledge `openWithAgent`.**
+
+1. **The web-URL path is a third launch mode**, alongside `scheme` (native app) and `cli-*` (spawn). Add a fourth discriminator:
+
+    ```ts
+    type LaunchPlan =
+      | { kind: 'scheme'; url: string; preludeCli?: string[] }
+      | { kind: 'weburl'; url: string }                         // NEW
+      | { kind: 'cli-tui'; cmd: string; args: string[]; cwd: string; spawnInTerminal: true }
+      | { kind: 'cli-headless'; cmd: string; args: string[]; cwd: string };
+    ```
+
+2. **It's the easiest path to ship first.** A web-URL mode requires only `shell.openExternal("https://...")` — `https:` is already in the allowlist. No allowlist additions, no CLI detection, no terminal spawn. Ships immediately; doesn't carry a `dir` natively but can embed a URL reference to the doc.
+
+3. **The docs-site pattern is different from the editor pattern.** On docs sites, "Ask Claude" is per-page context. In Open Knowledge's editor, "Open with Claude" can be per-document OR per-folder. The latter opens interesting options: "Open /my-project/ with Cursor" (launches IDE) vs "Ask Claude about /my-project/" (URL to claude.ai with a repo-describing prompt).
+
+4. **Prior-art alignment.** Open Knowledge is markdown-native and already serves `.md` extension via the CRDT server. Inkeep's URL-reference pattern is a natural fit — we can expose a doc URL (e.g. `https://open-knowledge.example/overview.md`) and put it in `q=` for long docs without hitting URL caps.
+
+**Evidence.** [evidence/f3-web-url-pattern.md](evidence/f3-web-url-pattern.md)
+
+---
+
+### F4. Claude Desktop watch + auth UX (light)
+
+**Claude Desktop deep-link surface (re-probed 2026-04-21):** No expansion since initial pass. `claude://` still a narrow handoff surface; `https://claude.ai/*` still not a documented Universal Link target. 2026-04-15 redesign is UI-only per MacRumors/TNS coverage; no new URL routes. Re-probe again before v1 ship.
+
+**Auth UX (light survey per user's direction):** Each agent has a distinct first-run. Summary only — no separate evidence file.
+
+| Agent | First-run cost | Where auth persists |
+|---|---|---|
+| Cursor (IDE) | Sign-in in app | Cursor account (cloud) |
+| Cursor (`agent` CLI) | `agent login` OR `CURSOR_API_KEY` env | Local config |
+| Claude Desktop | Browser OAuth to claude.ai | App state |
+| Claude Code CLI | Browser OAuth OR `claude setup-token` for headless | macOS Keychain / `~/.claude/.credentials.json` |
+| Codex CLI | Browser OAuth OR piped API key OR `OPENAI_API_KEY` | `~/.codex/` |
+| Aider / Continue / OpenHands | BYOK via env vars | User's env |
+| Copilot CLI | `/login` slash command in session | GitHub credentials |
+| Cline | `cline auth` OR BYOK | Local |
+
+**Implication.** First-click UX is different per agent. A uniform "here's what happens" dialog in Open Knowledge would be nice-to-have but not blocking. **Policy punt to `/spec`.**
+
+---
+
+### Extended capability matrix (all 10 agents + web-URL layer)
+
+Complete roll-up. Legend: ✅ ✓ native / ⚠ conditional / ❌ not supported.
+
+| Agent | Scheme (desktop) | Web URL | CLI prompt | CLI dir | Single-call? | Best `openWithAgent` |
+|---|---|---|---|---|---|---|
+| **Cursor** (IDE + scheme) | `cursor://...prompt?text=` (8K, user-confirm) | ❌ | ❌ (editor CLI no prompt flag) | ✅ `cursor <dir>` | ⚠ 2-step | prelude `cursor <dir>` + scheme |
+| **Cursor** (`agent` headless) | ❌ | ❌ | ✅ `-p` | ✅ `--workspace` | ✅ | `spawn("agent", ["--workspace", dir, "-p", prompt])` (paid) |
+| **Claude Desktop** | `claude://resume` only (no fresh prompt) | ⚠ `claude.ai/new?q=` (opens browser, not native) | ❌ (macOS); Windows PATH-shim | ❌ | ❌ for prompt | `open -a Claude` / `start Claude.exe` + web-URL fallback |
+| **Claude Code CLI** (TUI) | ❌ | ❌ | ✅ positional | ✅ via `cwd` | ✅ (terminal) | terminal spawn `cd <dir> && claude "<prompt>"` |
+| **Claude Code CLI** (`-p` headless) | ❌ | ❌ | ✅ `-p` | ✅ via `cwd` | ✅ | `spawn("claude", ["-p", prompt], { cwd: dir })` |
+| **Claude Code** (VS Code ext) | `vscode://anthropic.claude-code/open?prompt=` | ❌ | — | via VS Code workspace | ✅ | `openExternal("vscode://anthropic.claude-code/open?prompt=...&session=...")` |
+| **Codex CLI** (TUI) | ❌ | ❌ | ✅ positional | ✅ `-C/--cd` | ✅ (terminal) | terminal spawn `codex -C <dir> "<prompt>"` |
+| **Codex CLI** (`exec`) | ❌ | ❌ | ✅ pos + stdin (post-v0.122) | ✅ `-C/--cd` | ✅ | `spawn("codex", ["exec", "-C", dir, "--json", prompt])` |
+| **Windsurf** (IDE) | `windsurf://` auth-only | ❌ | ❌ | ✅ `windsurf <dir>` | ❌ for prompt | `spawn("windsurf", [dir])` — degraded |
+| **Aider** | ❌ | ❌ | ✅ `-m` | cwd | ✅ | `spawn("aider", ["-m", prompt], { cwd: dir })` |
+| **Copilot CLI** (new) | ❌ | ❌ | ✅ `-p` | cwd ([#457](https://github.com/github/copilot-cli/issues/457)) | ✅ | `spawn("copilot", ["-p", prompt], { cwd: dir })` |
+| **Cline** | ❌ | ❌ | ✅ positional | ✅ `--workspace` | ✅ | `spawn("cline", [prompt, "--workspace", dir])` |
+| **Continue** (`cn`) | ❌ | ❌ | ✅ `-p` | cwd | ✅ | `spawn("cn", ["-p", prompt], { cwd: dir })` |
+| **OpenHands** | ❌ | ❌ | ✅ `-t` (headless) | cwd (Docker) | ✅ | `spawn("openhands", ["--headless", "-t", prompt], { cwd: dir })` |
+| **— (web-URL only) —** | | | | | | |
+| Claude.ai web | — | ✅ `claude.ai/new?q=<p>` | — | embed dir URL in `q=` | ⚠ prompt only | `openExternal("https://claude.ai/new?q=" + enc(prompt))` |
+| ChatGPT.com web | — | ✅ `chatgpt.com/?q=<p>` | — | embed | ⚠ prompt only | `openExternal("https://chatgpt.com/?q=" + enc(prompt))` |
+| Perplexity web | — | ✅ `perplexity.ai/search?q=<p>` | — | embed | ⚠ prompt only | analogous |
+| Grok web | — | ✅ `x.com/i/grok?text=<p>` | — | embed | ⚠ prompt only | analogous |
+
+**Revised wrapper signature with web-URL mode:**
+
+```ts
+type LaunchPlan =
+  | { kind: 'scheme'; url: string; preludeCli?: string[] }       // desktop URL handler
+  | { kind: 'weburl'; url: string }                              // NEW — https:// prompt-pass
+  | { kind: 'cli-tui'; cmd: string; args: string[]; cwd: string; spawnInTerminal: true }
+  | { kind: 'cli-headless'; cmd: string; args: string[]; cwd: string };
+```
+
+**Recommended v1 shipping tiers (for `/spec` to confirm):**
+
+- **Tier 1 — ship now, zero friction.** `claude.ai/new?q=`, `chatgpt.com/?q=`, `perplexity.ai/search?q=`. `https:` already in allowlist; no CLI detection; works everywhere. Ship the whole Mintlify-style contextual dropdown.
+- **Tier 2 — ship with allowlist additions.** Cursor (scheme + CLI), Claude Code CLI (`-p` or TUI), Codex CLI (`exec`). Requires adding `cursor:`, `vscode:` to `shell-allowlist.ts` + terminal spawn plumbing.
+- **Tier 3 — follow-on.** Claude Desktop (open-app-only, degraded), VS Code → Claude Code extension URI, Windsurf (dir-only), Aider/Copilot/Cline/Continue/OpenHands (CLI with presence detection).
+
+---
+
 ## Limitations & Open Questions
 
 ### Dimensions not fully covered
@@ -327,6 +508,9 @@ The `degradedFeatures` array is how the UI communicates "Opened Claude Desktop, 
 - [evidence/d5-electron-outbound.md](evidence/d5-electron-outbound.md) — `shell.openExternal`, outbound vs inbound scope
 - [evidence/d6-cross-platform-launch.md](evidence/d6-cross-platform-launch.md) — macOS / Windows / Linux primitives + terminal spawn
 - [evidence/d7-security-encoding.md](evidence/d7-security-encoding.md) — URL limits, argv injection, CursorJack CVEs
+- [evidence/f1-empirical.md](evidence/f1-empirical.md) — **Follow-up 2026-04-21:** empirical resolutions (incl. Codex stdin behavior change); local `/Applications/` + PATH probe
+- [evidence/f2-broader-agents.md](evidence/f2-broader-agents.md) — **Follow-up 2026-04-21:** Windsurf, Aider, Copilot CLI, Cline, Continue, OpenHands
+- [evidence/f3-web-url-pattern.md](evidence/f3-web-url-pattern.md) — **Follow-up 2026-04-21:** `claude.ai/new?q=` web URL + Mintlify contextual menu + Inkeep URL-reference pattern
 
 ### External sources (selected; full list in evidence files)
 
@@ -342,6 +526,12 @@ The `degradedFeatures` array is how the UI communicates "Opened Claude Desktop, 
 - [CursorJack — Proofpoint](https://www.proofpoint.com/us/blog/threat-insight/cursorjack-weaponizing-deeplinks-exploit-cursor-ide)
 - [Claude Desktop / CLI `claude://resume` bug](https://github.com/anthropics/claude-code/issues/26197)
 - [Windows Terminal CLI — MS Learn](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments)
+- [Mintlify — Contextual menu docs](https://www.mintlify.com/docs/ai/contextual-menu) *(F3 follow-up)*
+- [Oasis Security — Claude AI Prompt Injection Data Exfiltration](https://www.oasis.security/blog/claude-ai-prompt-injection-data-exfiltration-vulnerability) *(F3 follow-up)*
+- [llmstxt.org — /llms.txt proposal](https://llmstxt.org/) *(F3 follow-up)*
+- [openai/codex#15917 — stdin piping PR](https://github.com/openai/codex/pull/15917/files) *(F1 follow-up)*
+- [microsoft/vscode — externalTerminalService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/externalTerminal/node/externalTerminalService.ts) *(F1 follow-up)*
+- [github/copilot-cli — new `@github/copilot` CLI](https://github.com/features/copilot/cli/) *(F2 follow-up)*
 
 ### Related research (navigation aids, not evidence)
 
