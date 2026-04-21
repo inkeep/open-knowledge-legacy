@@ -635,3 +635,89 @@ describe('bootStartServer (integration)', () => {
     }
   });
 });
+
+describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
+  let tmpDir: string;
+  let booted: BootedStartServer | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-git-'));
+    booted = null;
+  });
+
+  afterEach(async () => {
+    if (booted) {
+      try {
+        await booted.destroy();
+      } catch {
+        // idempotent
+      }
+      booted = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('fresh tmpdir (no .git/) → booted.didGitInit is true + .git/HEAD exists', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: false,
+      skipUiAutoSpawn: true,
+    });
+
+    expect(booted.didGitInit).toBe(true);
+    expect(existsSync(join(tmpDir, '.git/HEAD'))).toBe(true);
+    const head = readFileSync(join(tmpDir, '.git/HEAD'), 'utf-8');
+    expect(head).toBe('ref: refs/heads/main\n');
+  });
+
+  test('pre-existing .git/ → booted.didGitInit is false (no re-init)', async () => {
+    // Seed .git/ as a plain directory so existsSync short-circuits — matches
+    // the production existsSync semantics (D6: match any .git form).
+    mkdirSync(join(tmpDir, '.git'));
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: false,
+      skipUiAutoSpawn: true,
+    });
+
+    expect(booted.didGitInit).toBe(false);
+  });
+
+  test('skipAutoInit:true suppresses ensureProjectGit (no project .git/HEAD created)', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+    });
+
+    expect(booted.didGitInit).toBe(false);
+    // `.git/` may exist as a side effect of initShadowRepo's recursive mkdir
+    // (creating `.git/open-knowledge/` implicitly creates the `.git/` parent).
+    // The discriminator is `.git/HEAD` — ensureProjectGit's responsibility.
+    expect(existsSync(join(tmpDir, '.git/HEAD'))).toBe(false);
+  });
+
+  test('ProjectGitInitError propagates when git binary is missing', async () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = '/nonexistent-path';
+    try {
+      await expect(
+        bootStartServer({
+          config: makeTestConfig(),
+          cwd: tmpDir,
+          skipAutoInit: false,
+          skipUiAutoSpawn: true,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    // Error fired BEFORE listen() bound a port — no dangling server
+    expect(existsSync(join(tmpDir, '.git'))).toBe(false);
+  });
+});
