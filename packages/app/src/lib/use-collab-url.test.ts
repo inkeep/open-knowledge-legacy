@@ -354,3 +354,87 @@ describe('runCollabUrlPoll', () => {
     expect(callCount).toBe(2);
   });
 });
+
+describe('Electron host short-circuit (US-010)', () => {
+  test('tryElectronBridge returns null when window is undefined', async () => {
+    const { tryElectronBridge } = await import('./use-collab-url');
+    expect(tryElectronBridge(undefined)).toBeNull();
+  });
+
+  test('tryElectronBridge returns null when window.okDesktop is undefined (web/CLI)', async () => {
+    const { tryElectronBridge } = await import('./use-collab-url');
+    expect(tryElectronBridge({})).toBeNull();
+  });
+
+  test('tryElectronBridge returns null when collabUrl is empty (Navigator-mode window)', async () => {
+    const { tryElectronBridge } = await import('./use-collab-url');
+    const fakeBridge = {
+      config: {
+        collabUrl: '',
+        apiOrigin: '',
+        projectPath: '',
+        projectName: 'Navigator',
+        mode: 'navigator' as const,
+      },
+      onProjectSwitched: () => () => {},
+      onMenuAction: () => () => {},
+      dialog: {
+        openFolder: async () => null,
+        createFolder: async () => null,
+      },
+      shell: {
+        openExternal: async () => {},
+      },
+      clipboard: {
+        writeText: async () => {},
+      },
+      platform: 'darwin' as const,
+      appVersion: '0.0.0',
+    };
+    expect(tryElectronBridge({ okDesktop: fakeBridge })).toBeNull();
+  });
+
+  test('tryElectronBridge returns the bridge when collabUrl is populated', async () => {
+    const { tryElectronBridge } = await import('./use-collab-url');
+    const fakeBridge = {
+      config: {
+        collabUrl: 'ws://localhost:51234/collab',
+        apiOrigin: 'http://localhost:51234',
+        projectPath: '/tmp/p',
+        projectName: 'p',
+        mode: 'editor' as const,
+      },
+      onProjectSwitched: () => () => {},
+      onMenuAction: () => () => {},
+      dialog: {
+        openFolder: async () => null,
+        createFolder: async () => null,
+      },
+      shell: {
+        openExternal: async () => {},
+      },
+      clipboard: {
+        writeText: async () => {},
+      },
+      platform: 'darwin' as const,
+      appVersion: '0.1.0',
+    };
+    const result = tryElectronBridge({ okDesktop: fakeBridge });
+    expect(result).toBe(fakeBridge);
+  });
+
+  test('electronStateFromConfig produces the expected state shape', async () => {
+    const { electronStateFromConfig } = await import('./use-collab-url');
+    const state = electronStateFromConfig({
+      collabUrl: 'ws://localhost:9999/collab',
+      apiOrigin: 'http://localhost:9999',
+      projectPath: '/tmp/q',
+      projectName: 'q',
+      mode: 'editor',
+    });
+    expect(state.collabUrl).toBe('ws://localhost:9999/collab');
+    expect(state.attempts).toBe(0);
+    expect(state.terminal).toBe(false);
+    expect(state.lastError).toBeNull();
+  });
+});

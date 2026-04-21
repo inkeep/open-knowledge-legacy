@@ -12,7 +12,7 @@
  * signal. This is the only correct way to idle-shutdown under a live
  * server whose CC1 DirectConnection is permanent.
  *
- * The scheduler is injectable per CLAUDE.md precedent #13b (implicit time
+ * The scheduler is injectable per PRECEDENTS.md precedent #13b (implicit time
  * coupling is a test smell). Production defaults to `setTimeout`/`clearTimeout`
  * passthrough; tests inject a `ManualScheduler` for deterministic advance.
  */

@@ -828,7 +828,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
    * Collapse a folder and all its descendant folders. The global derivation
    * is `expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
    * ancestors unconditionally expanded (see the `expandedPaths` loop below
-   * and AGENTS.md precedent #21). So adding subtree paths to `userCollapsed`
+   * and PRECEDENTS.md precedent #21). So adding subtree paths to `userCollapsed`
    * collapses every non-ancestor folder in the subtree; ancestors of the
    * active doc stay visible (matches VS Code / Finder semantics) — their
    * chevron is a visual no-op. See US-011 in
@@ -877,7 +877,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       // Under the ancestor-priority derivation
       // (`expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
       // ancestors exempt from userCollapsed — see the `expandedPaths` loop
-      // below and AGENTS.md precedent #21), ancestors of the active doc
+      // below and PRECEDENTS.md precedent #21), ancestors of the active doc
       // stay expanded regardless of what we put in `userCollapsed`. So
       // "collapse all" collapses every non-ancestor folder and leaves the
       // active file's chain open — which matches VS Code / Finder UX and is

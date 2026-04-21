@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
@@ -95,6 +96,13 @@ function NewItemShortcutHandler() {
 }
 
 export function App() {
+  // Electron-only Cmd+K palette for project-level commands (open folder,
+  // start fresh, switch to a recent project). Gated on `window.okDesktop`
+  // so the web/CLI distribution never mounts the handler — zero footprint
+  // outside Electron. Mounted at the App root so Cmd+K works regardless of
+  // which surface has focus (editor, sidebar, timeline, etc.).
+  const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
+
   return (
     <DocumentProvider>
       <ConnectingBanner />
@@ -102,6 +110,7 @@ export function App() {
         <SystemDocSubscriber />
         <NavigationHandler />
         <NewItemShortcutHandler />
+        {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
         <SidebarProvider className="h-screen overflow-hidden">
           <FileSidebar />
           <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">

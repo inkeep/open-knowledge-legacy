@@ -14,6 +14,7 @@ export {
 } from './constants/activity.ts';
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
+export { OK_DIR } from './constants/ok-dir.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
 
 // Extensions
@@ -58,6 +59,18 @@ export {
   resetParseHealth,
 } from './metrics/parse-health.ts';
 
+// Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
+// defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`
+// for the desktop preload, and a future `packages/app/src/lib/desktop-bridge-
+// types.ts` for the app renderer's optional `window.okDesktop` access. Keeping
+// the contract co-located instead of re-exporting from this barrel avoids
+// dragging the full markdown / CRDT-bridge surface into desktop's compilation
+// context (TypeScript follows barrel re-exports through workspace symlinks
+// and complains about transitive deps that desktop doesn't declare directly).
+// `packages/core/src/desktop-bridge.ts` is the canonical reference shape;
+// drift between the per-package copies is caught by a contract-equality test
+// added in US-010.
+
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
@@ -100,6 +113,7 @@ export type {
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
+export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,

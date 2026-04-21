@@ -87,8 +87,8 @@ export function iconFromClientName(name?: string): string {
  * Called within a transact() block whose origin is the caller's responsibility
  * (typically AGENT_WRITE_ORIGIN).
  *
- * @see AGENTS.md precedent #9 (minimize CRDT mutation in sync bridges)
- * @see AGENTS.md precedent #10 (XmlFragment-authoritative, Y.Text mirrors)
+ * @see PRECEDENTS.md precedent #9 (minimize CRDT mutation in sync bridges)
+ * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative, Y.Text mirrors)
  */
 export function applyAgentMarkdownWrite(
   document: Document,
