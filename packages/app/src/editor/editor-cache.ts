@@ -297,6 +297,16 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
       // Editor may be mid-transition or destroyed; focus is best-effort.
     }
     mark('ok/cache/hit', { docName, kind: 'tiptap' });
+    // FR13 telemetry: cache-hit mount emits stats with cacheHit=true.
+    if (sizeStats) {
+      mark('ok/cold/editor-mount-stats', {
+        docName,
+        viewCount: sizeStats.viewCount,
+        bytes: sizeStats.bytes,
+        cacheHit: true,
+        kind: 'tiptap',
+      });
+    }
     return existing;
   }
 
@@ -326,6 +336,15 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     reason: 'cold',
     kind: 'tiptap',
   });
+  if (sizeStats) {
+    mark('ok/cold/editor-mount-stats', {
+      docName,
+      viewCount: sizeStats.viewCount,
+      bytes: sizeStats.bytes,
+      cacheHit: false,
+      kind: 'tiptap',
+    });
+  }
   return entry;
 }
 
@@ -449,6 +468,15 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
       // best-effort focus
     }
     mark('ok/cache/hit', { docName, kind: 'cm' });
+    if (sizeStats) {
+      mark('ok/cold/editor-mount-stats', {
+        docName,
+        viewCount: sizeStats.viewCount,
+        bytes: sizeStats.bytes,
+        cacheHit: true,
+        kind: 'cm',
+      });
+    }
     return existing;
   }
 
@@ -476,6 +504,15 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     reason: 'cold',
     kind: 'cm',
   });
+  if (sizeStats) {
+    mark('ok/cold/editor-mount-stats', {
+      docName,
+      viewCount: sizeStats.viewCount,
+      bytes: sizeStats.bytes,
+      cacheHit: false,
+      kind: 'cm',
+    });
+  }
   return entry;
 }
 

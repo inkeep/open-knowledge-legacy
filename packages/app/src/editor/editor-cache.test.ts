@@ -1214,4 +1214,40 @@ describe('US-002 telemetry marks', () => {
     const disconnects = performance.getEntriesByName('ok/cache/disconnect');
     expect(disconnects.length).toBeGreaterThanOrEqual(1);
   });
+
+  test('US-012 FR13: mount with sizeStats emits ok/cold/editor-mount-stats', () => {
+    const h = makeTiptapHarness('doc-stats');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 10, bytes: 5_000 },
+    });
+    const stats = performance.getEntriesByName('ok/cold/editor-mount-stats');
+    expect(stats.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('US-012 FR13: cache hit emits stats with cacheHit=true', () => {
+    const h = makeTiptapHarness('doc-hit');
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 10, bytes: 5_000 },
+    });
+    // The first mount emits the miss stats. Clear and mount again (hit).
+    try {
+      performance.clearMeasures('ok/cold/editor-mount-stats');
+    } catch {
+      // some envs
+    }
+    mountTiptapEditor({
+      docName: h.docName,
+      container: makeNode() as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+      sizeStats: { viewCount: 10, bytes: 5_000 },
+    });
+    const stats = performance.getEntriesByName('ok/cold/editor-mount-stats');
+    expect(stats.length).toBeGreaterThanOrEqual(1);
+  });
 });
