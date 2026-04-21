@@ -1243,6 +1243,90 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * GET /api/document-disk?docName=X — V2 spec FR11 (Option E backend).
+   *
+   * Returns the raw markdown bytes currently on disk for `docName`, WITHOUT
+   * creating a Y.Doc session, WITHOUT admitting via ContentFilter, and
+   * WITHOUT mutating file-watcher state. Used by the Suspense fallback
+   * (FallbackDocumentRender) to render a static fumadocs tree while the
+   * editor mounts in the background — see `specs/2026-04-20-perf-v2-editor-
+   * cache-and-cold-load-ux/SPEC.md` §9.3 + Audit §B1.
+   *
+   * STOP rule (SPEC §16): this endpoint MUST NOT call `sessionManager.getSession`,
+   * MUST NOT touch the file index, MUST NOT register the doc anywhere.
+   * `/api/document` already returns live Y.Text via a session; this endpoint
+   * exists because that behavior defeats the fallback's purpose (we WANT
+   * what's on disk, pre-sync, so the fallback doesn't wait for Y.js).
+   *
+   * Symlink-safe: reuses the existing `assertNoSymlinkEscape` helper so a
+   * symlinked doc whose target points outside `contentDir` returns 403.
+   * Broken symlinks / missing files return 404.
+   */
+  async function handleDocumentDiskRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const rawDocName = url.searchParams.get('docName');
+      if (!rawDocName || !isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid or missing docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+      // Look up the canonical path via the existing file index — the watcher
+      // already tracks which files are in scope. We DO NOT mutate the index.
+      const index = getFileIndex();
+      const entry = index.get(docName);
+      if (!entry) {
+        json(res, 404, { ok: false, error: `Document '${docName}' not found` });
+        return;
+      }
+      // Symlink-safety check — reject paths whose canonical resolution
+      // escapes contentDir. The file-watcher's canonicalPath is already
+      // realpath-resolved, but we defensively re-verify here to guard
+      // against stale index entries after a symlink retarget.
+      const resolvedContentDir = resolve(contentDir);
+      try {
+        assertNoSymlinkEscape(entry.canonicalPath, resolvedContentDir);
+      } catch {
+        json(res, 403, { ok: false, error: 'Path resolves outside content directory' });
+        return;
+      }
+      // Read disk bytes — no Y.Doc session created.
+      let markdown: string;
+      let stat: ReturnType<typeof statSync>;
+      try {
+        markdown = readFileSync(entry.canonicalPath, 'utf-8');
+        stat = statSync(entry.canonicalPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          json(res, 404, { ok: false, error: `File missing: ${docName}` });
+          return;
+        }
+        throw err;
+      }
+      json(res, 200, {
+        ok: true,
+        docName,
+        markdown,
+        mtime: stat.mtimeMs,
+        bytes: stat.size,
+      });
+    } catch (e) {
+      console.error('[document-disk]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
   async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -4184,6 +4268,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
+    '/api/document-disk': handleDocumentDiskRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
     '/api/backlink-counts': handleBacklinkCounts,

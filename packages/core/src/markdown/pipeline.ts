@@ -212,6 +212,22 @@ export function parseMd(source: string, processor: Processor): PmNode {
 }
 
 /**
+ * Parse markdown to mdast only (stopping BEFORE the remark-prosemirror
+ * stringifier). Used by V2's Option E walker (`to-react.ts`) which
+ * converts mdast directly to a React-element tree, bypassing ProseMirror
+ * entirely. Shares the same parser + plugin pipeline as `parseMd` so the
+ * fallback render uses exactly the same parse behavior as the editor —
+ * identical Phase A restoreFromMdx + Phase B merged walker output.
+ */
+export function parseMdToMdast(source: string, processor: Processor): MdastRoot {
+  const protected_ = protectFromMdx(source);
+  const file = new VFile(protected_);
+  const tree = processor.parse(file);
+  file.value = source;
+  return processor.runSync(tree, file) as MdastRoot;
+}
+
+/**
  * Serialize a ProseMirror document node to a markdown string.
  *
  * Stateless with respect to the processor. The PM→mdast pre-pass uses the
