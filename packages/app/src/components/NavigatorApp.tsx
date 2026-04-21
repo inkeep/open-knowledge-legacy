@@ -24,14 +24,20 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const result = await bridge.project.listRecent();
+    // Promise-chain instead of try/catch/finally — React Compiler (BuildHIR)
+    // does not yet support `finally` clauses; `.finally(...)` on the Promise
+    // is equivalent and compiler-safe.
+    bridge.project
+      .listRecent()
+      .then((result) => {
         if (!cancelled) setRecents(result);
-      } finally {
+      })
+      .catch((err) => {
+        console.error('[NavigatorApp] listRecent failed:', err);
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };

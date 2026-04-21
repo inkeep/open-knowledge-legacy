@@ -67,6 +67,9 @@ export interface WindowManagerDeps {
   utilityEntryPath: string;
   /** Path to the bundled renderer index.html (extraResources `app/index.html` or dev shell). */
   rendererEntryPath: string;
+  /** electron-vite dev-server URL (`process.env.ELECTRON_RENDERER_URL`). When present,
+   *  main uses `loadURL` for HMR; otherwise falls back to `loadFile(rendererEntryPath)`. */
+  rendererDevUrl?: string | null;
   /** Schedule a one-shot timer (test injection for the post-exit liveness probe). */
   setTimeout(cb: () => void, ms: number): unknown;
   /** `process.kill(pid, signal)` — used in the post-exit liveness probe. */
@@ -195,7 +198,11 @@ export class WindowManager {
       ],
     });
 
-    await window.loadFile(this.deps.rendererEntryPath);
+    if (this.deps.rendererDevUrl) {
+      await window.loadURL(this.deps.rendererDevUrl);
+    } else {
+      await window.loadFile(this.deps.rendererEntryPath);
+    }
 
     window.on('closed', () => {
       // Guard against detached IPC port — the utility may have already exited

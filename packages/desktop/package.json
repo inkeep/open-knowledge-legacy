@@ -18,7 +18,10 @@
     "@inkeep/open-knowledge-server": "workspace:*"
   },
   "devDependencies": {
+    "@rolldown/plugin-babel": "^0.2.2",
     "@types/node": "^22.16.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "electron": "^41.0.2",
     "electron-builder": "^26.9.0",
     "electron-vite": "^5.0.0",

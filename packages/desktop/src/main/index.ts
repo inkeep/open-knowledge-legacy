@@ -79,12 +79,21 @@ let appState: AppState = emptyState();
 let navigatorWindow: BrowserWindowLike | null = null;
 let wm: WindowManager;
 
+/**
+ * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
+ * When present, `loadURL(rendererDevUrl)` → live HMR via the Vite dev server
+ * (configured in `electron.vite.config.ts` to serve `packages/app/`). When
+ * absent (packaged / prod), fall back to `loadFile(rendererEntryPath)`.
+ */
+const rendererDevUrl = process.env.ELECTRON_RENDERER_URL ?? null;
+
 function ensureWindowManager() {
   if (wm) return;
-  // Renderer entry: in production, electron-builder copies packages/cli/dist/public/ to
-  // <Resources>/app/, so the renderer is at process.resourcesPath/app/index.html. In dev,
-  // we use the local renderer/index.html shell — replaced by app's bundle once the
-  // build produces it.
+  // Renderer entry (prod path): electron-builder copies packages/cli/dist/public/ to
+  // <Resources>/app/, so the renderer is at process.resourcesPath/app/index.html.
+  // Dev path: we prefer rendererDevUrl (electron-vite's Vite dev server serving
+  // packages/app/), falling back to the local shell only when dev-server URL is
+  // unset (e.g., running out/main/index.js directly without `electron-vite dev`).
   const rendererEntryPath = app.isPackaged
     ? join(process.resourcesPath, 'app', 'index.html')
     : join(__dirname, '../renderer/index.html');
@@ -111,6 +120,7 @@ function ensureWindowManager() {
     },
     utilityEntryPath,
     rendererEntryPath,
+    rendererDevUrl,
     setTimeout: (cb, ms) => setTimeout(cb, ms),
     killProbe: (pid, signal) => {
       process.kill(pid, signal as NodeJS.Signals | 0);
@@ -143,6 +153,7 @@ function openNavigator() {
     rendererEntryPath: app.isPackaged
       ? join(process.resourcesPath, 'app', 'index.html')
       : join(__dirname, '../renderer/index.html'),
+    rendererDevUrl,
     appVersion: app.getVersion(),
   });
 }

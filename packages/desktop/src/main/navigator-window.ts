@@ -18,7 +18,11 @@ import type { BrowserWindowLike, WindowManagerDeps } from './window-manager.ts';
 
 export interface NavigatorDeps {
   createWindow: WindowManagerDeps['createWindow'];
+  /** Path to the built renderer HTML (used in packaged/prod mode). */
   rendererEntryPath: string;
+  /** Dev-server URL injected by electron-vite (`process.env.ELECTRON_RENDERER_URL`).
+   *  When set, main uses `loadURL` for HMR; otherwise falls back to `loadFile`. */
+  rendererDevUrl?: string | null;
   /** App version, passed to the preload via additionalArguments. */
   appVersion: string;
 }
@@ -37,6 +41,10 @@ export function createNavigatorWindow(deps: NavigatorDeps): BrowserWindowLike {
       '--ok-project-name=Project Navigator',
     ],
   });
-  void window.loadFile(deps.rendererEntryPath);
+  if (deps.rendererDevUrl) {
+    void window.loadURL(deps.rendererDevUrl);
+  } else {
+    void window.loadFile(deps.rendererEntryPath);
+  }
   return window;
 }
