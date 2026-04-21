@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 const writer: WriterIdentity = {
-  id: 'human-nick',
+  id: 'principal-nick',
   name: 'Nick',
   email: 'nick@test.com',
 };

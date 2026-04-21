@@ -238,13 +238,32 @@ export async function commitWip(
   }
 }
 
+// ─── D34 classified writer-identity constants ─────────────────────────────────
+
+/** Non-attributable file-system writes (disk changes, reconciliation). */
+export const FILE_SYSTEM_WRITER: WriterIdentity = {
+  id: 'file-system',
+  name: 'File System',
+  email: 'file-system@openknowledge.local',
+};
+
+/** Non-attributable upstream git-pull imports. */
+export const GIT_UPSTREAM_WRITER: WriterIdentity = {
+  id: 'git-upstream',
+  name: 'Git (upstream)',
+  email: 'git@openknowledge.local',
+};
+
+/** Non-attributable internal service bookkeeping. */
+export const SERVICE_WRITER: WriterIdentity = {
+  id: 'openknowledge-service',
+  name: 'Open Knowledge (service)',
+  email: 'service@openknowledge.local',
+};
+
 // ─── Upstream import ─────────────────────────────────────────────────────────
 
-const UPSTREAM_WRITER: WriterIdentity = {
-  id: 'upstream',
-  name: 'upstream',
-  email: 'noreply@openknowledge.local',
-};
+const UPSTREAM_WRITER: WriterIdentity = GIT_UPSTREAM_WRITER;
 
 /**
  * Record an upstream-import commit in the shadow.
@@ -287,11 +306,7 @@ export interface SafetyCheckpointParams {
   context: Record<string, unknown>;
 }
 
-const SAFETY_WRITER: WriterIdentity = {
-  id: 'openknowledge-server',
-  name: 'openknowledge-server',
-  email: 'noreply@openknowledge.local',
-};
+const SAFETY_WRITER: WriterIdentity = SERVICE_WRITER;
 
 export async function safetyCheckpoint(
   shadow: HistoryHandle,
@@ -909,7 +924,7 @@ export async function saveVersion(
     // Collect ALL writer WIP refs + upstream ref as checkpoint parents
     // (preserves all per-writer chains across the checkpoint boundary)
     const shadowParentShas: string[] = [];
-    for (const w of [...writers, { id: 'upstream' }]) {
+    for (const w of [...writers, GIT_UPSTREAM_WRITER]) {
       try {
         const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
         shadowParentShas.push(sha);

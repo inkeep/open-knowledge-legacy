@@ -17,18 +17,82 @@ import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import {
   formatContributorsFrom,
+  recordContributor,
   restoreContributors,
   swapContributors,
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import type { HistoryRef, WriterIdentity } from './history-repo.ts';
-import { commitWip, historyGit } from './history-repo.ts';
+import {
+  commitWip,
+  FILE_SYSTEM_WRITER,
+  GIT_UPSTREAM_WRITER,
+  historyGit,
+  SERVICE_WRITER,
+} from './history-repo.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
 
 const log = getLogger('persistence');
+
+/**
+ * Derive a WriterIdentity from a Hocuspocus transaction origin (D31, D32, FR-16).
+ *
+ * Called from onStoreDocument to determine which writer triggered the store.
+ * Handles the three origin shapes Hocuspocus surfaces:
+ *   - local  + context.session_id  → per-session agent writer
+ *   - local  + context.origin      → classified service writer
+ *   - connection + principalId     → human-browser principal writer (US-024)
+ *
+ * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
+ * Exported for unit-testing the dispatch table without spinning up a server.
+ */
+export function resolveWriterFromOrigin(origin: unknown): WriterIdentity | null {
+  if (!origin || typeof origin !== 'object') return null;
+  const o = origin as Record<string, unknown>;
+
+  if (o.source === 'local') {
+    const ctx = o.context as Record<string, unknown> | undefined;
+    if (!ctx) return null;
+
+    // Per-session origin (agent write, agent undo) — session_id is the connectionId
+    if (typeof ctx.session_id === 'string') {
+      const sessionId = ctx.session_id;
+      return {
+        id: `agent-${sessionId}`,
+        name: `Agent (${sessionId.slice(0, 8)})`,
+        email: `agent-${sessionId}@openknowledge.local`,
+      };
+    }
+
+    // Classified local origins by context.origin value
+    if (ctx.origin === 'file-watcher') return FILE_SYSTEM_WRITER;
+    if (ctx.origin === 'upstream-import' || ctx.origin === 'git-upstream') {
+      return GIT_UPSTREAM_WRITER;
+    }
+    // park-snapshot, rollback-apply, managed-rename → service fallback
+    return SERVICE_WRITER;
+  }
+
+  if (o.source === 'connection') {
+    // Human browser write — principalId set via onAuthenticate (D50, US-024)
+    const conn = o.connection as Record<string, unknown> | undefined;
+    const ctx = conn?.context as Record<string, unknown> | undefined;
+    if (typeof ctx?.principalId === 'string') {
+      const principalId = ctx.principalId as string;
+      return {
+        id: principalId,
+        name: 'Local User',
+        email: `${principalId}@openknowledge.local`,
+      };
+    }
+    return SERVICE_WRITER;
+  }
+
+  return null;
+}
 
 export interface PersistenceOptions {
   contentDir: string;
@@ -148,12 +212,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const wipRef = options?.wipRef ?? 'refs/wip/main';
   const getCurrentBranch = options?.getCurrentBranch;
 
-  // Default writer identity for L2 commits
-  const defaultWriter: WriterIdentity = {
-    id: 'server',
-    name: 'openknowledge-server',
-    email: 'noreply@openknowledge.local',
-  };
+  // No longer hardcoded — resolved from contributor snapshot (D32, FR-16)
 
   // Debounce git commits
   let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -168,15 +227,26 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // L2 commits go to shadow repo
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
       const contributors = formatContributorsFrom(snapshot);
-      const message = `WIP auto-save ${new Date().toISOString()}${contributors}`;
+      const message = `wip: auto-save ${new Date().toISOString()}${contributors}`;
       const branch = getCurrentBranch?.() ?? 'main';
+      // Dispatch writer from contributor snapshot (D32, FR-16) — replaces 'server' hardcode.
+      // US-014 will loop all distinct writers for per-session fan-out; for now use first.
+      const snapshotValues = [...snapshot.values()];
+      const activeWriter: WriterIdentity =
+        snapshotValues.length > 0
+          ? {
+              id: snapshotValues[0].agentId,
+              name: snapshotValues[0].displayName,
+              email: `${snapshotValues[0].agentId}@openknowledge.local`,
+            }
+          : SERVICE_WRITER;
       try {
-        const sha = await commitWip(shadow, defaultWriter, contentRoot, message, branch);
+        const sha = await commitWip(shadow, activeWriter, contentRoot, message, branch);
         // snapshot discarded on success — new map already accumulating
         consecutiveGitFailures = 0;
         log.info(
-          { sha: sha.slice(0, 8), writer: defaultWriter.id },
-          `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${defaultWriter.id}`,
+          { sha: sha.slice(0, 8), writer: activeWriter.id },
+          `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${activeWriter.id}`,
         );
       } catch (e) {
         restoreContributors(snapshot); // merge snapshot back — don't lose attribution (D16)
@@ -385,9 +455,25 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
     },
 
-    async onStoreDocument({ document, documentName }) {
+    async onStoreDocument({
+      document,
+      documentName,
+      lastTransactionOrigin,
+      lastContext: _lastContext,
+    }) {
       if (isSystemDoc(documentName)) return;
       if (isBatchInProgress()) return;
+
+      // Thread origin → contributor tracker (D31, D32, FR-16).
+      // This is a safety-net for writes that bypass api-extension.ts handlers.
+      // Agent write handlers already call recordContributor explicitly; this
+      // handles human-browser connection writes (US-024) and any other origin
+      // that doesn't go through a handler. The call is idempotent: if the
+      // handler already recorded the session, only the docs Set is updated.
+      const writer = resolveWriterFromOrigin(lastTransactionOrigin);
+      if (writer && writer.id !== SERVICE_WRITER.id) {
+        recordContributor(documentName, writer.id, writer.name, writer.id);
+      }
 
       const xmlFragment = document.getXmlFragment('default');
       const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
