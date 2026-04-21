@@ -18,9 +18,19 @@
  */
 
 import { isSystemDoc } from '@/editor/is-system-doc';
+import { mark } from '@/lib/perf';
 
 const HOVER_INTENT_MS = 80;
 const MAX_CONCURRENT_PREWARMS = 3;
+/**
+ * Upper bound on `alreadyPrewarmed` (review Pass-2 Minor #5). Over a long
+ * session, unbounded growth would accumulate strings for every doc ever
+ * hovered; cap at 2× MAX_POOL so a pool eviction naturally follows a
+ * prewarm eviction and the next hover can re-prewarm if needed. LRU-
+ * drop on overflow is acceptable — the worst case is a rare extra
+ * prewarm call for a doc that was evicted a long time ago.
+ */
+const MAX_ALREADY_PREWARMED = 20;
 
 type PrewarmFn = (docName: string) => void;
 
@@ -32,7 +42,21 @@ interface PendingEntry {
 const pendingTimers = new Map<string, PendingEntry>();
 const inflight = new Set<string>();
 const queued: Array<{ docName: string; prewarm: PrewarmFn }> = [];
-const alreadyPrewarmed = new Set<string>();
+// LRU-bounded via insertion-order iteration over a Map — we use a Map
+// (not Set) so we can efficiently trim the oldest entry on overflow.
+// Value is unused; the Map's insertion-order iteration gives us LRU.
+const alreadyPrewarmed = new Map<string, true>();
+
+function markAlreadyPrewarmed(docName: string): void {
+  // Re-insert to move to end of insertion order (Map LRU pattern).
+  alreadyPrewarmed.delete(docName);
+  alreadyPrewarmed.set(docName, true);
+  while (alreadyPrewarmed.size > MAX_ALREADY_PREWARMED) {
+    const oldest = alreadyPrewarmed.keys().next().value;
+    if (oldest === undefined) break;
+    alreadyPrewarmed.delete(oldest);
+  }
+}
 
 function finishInflight(docName: string): void {
   inflight.delete(docName);
@@ -45,9 +69,20 @@ function drainQueue(): void {
     if (!next) break;
     if (alreadyPrewarmed.has(next.docName)) continue;
     inflight.add(next.docName);
-    alreadyPrewarmed.add(next.docName);
+    markAlreadyPrewarmed(next.docName);
     try {
       next.prewarm(next.docName);
+    } catch (err) {
+      // A synchronous throw from the prewarm path (transitive failure in
+      // HocuspocusProvider ctor, WebSocket creation, etc.) would escape
+      // into `window.onerror` without this catch — no React boundary
+      // catches setTimeout/drainQueue exceptions (review Pass-2 Major
+      // #9). Emit telemetry + swallow so a sidebar hover never takes
+      // down the page.
+      mark('ok/sidebar/prewarm-failed', {
+        docName: next.docName,
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       // Synchronous completion model — ProviderPool.prewarm returns the
       // entry synchronously. The "inflight" concept is a soft-budget to
@@ -78,10 +113,16 @@ export function scheduleHoverPrewarm(docName: string, prewarm: PrewarmFn): void 
       queued.push({ docName, prewarm });
       return;
     }
-    alreadyPrewarmed.add(docName);
+    markAlreadyPrewarmed(docName);
     inflight.add(docName);
     try {
       prewarm(docName);
+    } catch (err) {
+      // review Pass-2 Major #9 — same rationale as `drainQueue`.
+      mark('ok/sidebar/prewarm-failed', {
+        docName,
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       finishInflight(docName);
     }

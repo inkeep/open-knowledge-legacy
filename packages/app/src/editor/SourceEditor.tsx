@@ -98,9 +98,16 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
     const mark = () => markUserTyping();
 
     try {
+      // FR3 size-aware cache gate driven at the consumer call site (review
+      // Pass-2 Major #4). CM6 has no per-view expensive NodeView concept
+      // so viewCount=0 is accurate (not an approximation); the bytes gate
+      // is the sole protection for multi-MB docs.
+      const bytes = ytext.length;
+      const sizeStats = { viewCount: 0, bytes };
       entry = mountCmEditor({
         docName,
         container,
+        sizeStats,
         factory: (el) => {
           // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
           // markdown AND text/html canonical rendered HTML via the shared
@@ -148,7 +155,6 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
             provider,
           };
         },
-        // sizeStats omitted — defer to EditorActivityPool's measurement.
       });
       cmEntryRef.current = entry;
       viewRef.current = entry.view;
@@ -171,7 +177,12 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
       cmEntryRef.current = null;
       viewRef.current = null;
     };
-  }, [ytext, provider, placeholder]);
+    // `placeholder` is intentionally NOT in the deps array (review Pass-2
+    // Major #7). The separate effect below uses `placeholderCompartment.
+    // reconfigure` to hot-swap the placeholder text without tearing down
+    // the view — including `placeholder` here would defeat that by
+    // triggering a full park+remount on every placeholder change.
+  }, [ytext, provider]);
 
   useEffect(() => {
     if (!viewRef.current) return;

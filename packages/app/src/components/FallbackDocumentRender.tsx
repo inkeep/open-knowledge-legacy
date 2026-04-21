@@ -40,6 +40,18 @@ export interface FallbackDocumentRenderProps {
   docName?: string;
 }
 
+/**
+ * Above this threshold the fallback skips the mdast parse + walk and
+ * falls through to `EditorSkeleton`. Symmetric with
+ * `EditorActivityPool.LARGE_DOC_CHAR_THRESHOLD` (500,000 chars) — docs
+ * the pool defer-mounts to amortize cold-load cost are also docs whose
+ * static walk would dominate the perceived first-paint budget the
+ * fallback exists to hit (review Pass-2 Major #5). The fallback's job
+ * is to cover the Y.Doc-sync gap visibly; for a 2 MB doc the walk
+ * itself would take longer than the sync round-trip.
+ */
+const FALLBACK_RENDER_MAX_BYTES = 500_000;
+
 export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdown, docName }) => {
   // The parse + walk is the dominant cost of this component. We memoize
   // per-instance keyed on the `markdown` identity so (a) ancestor re-
@@ -55,12 +67,13 @@ export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdo
   // documented in React docs as compiler-safe: React discards the
   // current render and re-renders with the updated state immediately,
   // so callers never see the intermediate stale state.
+  const oversize = markdown.length > FALLBACK_RENDER_MAX_BYTES;
   const [startTime] = useState(() => performance.now());
   const [cachedMarkdown, setCachedMarkdown] = useState(markdown);
-  const [tree, setTree] = useState(() => markdownToReact(markdown));
+  const [tree, setTree] = useState(() => (oversize ? null : markdownToReact(markdown)));
   if (markdown !== cachedMarkdown) {
     setCachedMarkdown(markdown);
-    setTree(markdownToReact(markdown));
+    setTree(markdown.length > FALLBACK_RENDER_MAX_BYTES ? null : markdownToReact(markdown));
   }
 
   useEffect(() => {
@@ -70,10 +83,19 @@ export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdo
       {
         bytes: markdown.length,
         docName: docName ?? 'unknown',
+        oversize,
       },
       { startTime, duration },
     );
-  }, [markdown, docName, startTime]);
+  }, [markdown, docName, startTime, oversize]);
+
+  // Oversize doc — cold-load path shows the skeleton while the editor
+  // mounts in the background (review Pass-2 Major #5). Spending hundreds
+  // of ms on a mdast parse + walk that's about to be replaced by the
+  // editor anyway would defeat the perceived-first-paint budget.
+  if (oversize) {
+    return <EditorSkeleton />;
+  }
 
   return (
     <div className="ok-fallback-document-render" data-docname={docName}>

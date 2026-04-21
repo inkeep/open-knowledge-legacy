@@ -227,7 +227,7 @@ These are patterns that ALL work in the repo should follow. Established during t
 
     **Cross-references.** Precedent #18 (hybrid Activity + Suspense + `use(promise)`) — S2/S3 are direct consequences of its pre-mount-both pattern; the defer-mount STOP rule above is the per-doc-size exception. Precedent #11 (minimize CRDT mutation) — informs S4's debounced invalidation design (TYPING_DEFER_MS = 300 ms matches `OUTLINE_INVALIDATE_DEBOUNCE_MS`). Research: `reports/perf-profiling-landscape-2026/` (10-dimension 3P survey). Spec: `specs/2026-04-19-perf-diagnostic-toolkit/`.
 
-25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20).** Seven coordinated primitives make cold-load + warm-switch + per-instance React portal cost bounded for large documents. Sub-rules (a)-(c) are the load-bearing primitives; (d)-(g) are the supporting mechanisms that wire the primitives to the existing chip / mode-toggle / pre-warm surfaces:
+25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20).** Eight coordinated primitives make cold-load + warm-switch + per-instance React portal cost bounded for large documents. Sub-rules (a)-(c) are the load-bearing primitives; (d)-(h) are the supporting mechanisms that wire the primitives to the existing chip / mode-toggle / pre-warm surfaces. Sub-rule (h) is the most normative MUST-rule — every future chip-style mark extension follows its plugin contract verbatim:
 
     (a) **Module-level editor cache via raw `view.dom` reparent.** `packages/app/src/editor/editor-cache.ts` exports symmetric `mount{Tiptap,Cm}Editor({docName, container, factory})` / `park{Tiptap,Cm}Editor(entry)` / `evict{Tiptap,Cm}Editor(docName)` over a `Map<docName, Entry>`. `park` detaches `view.dom` into a lazy parking node WITHOUT destroying; `evict` is the ONLY path that calls `editor.destroy()`. Path verified by Phase 1.0 probe (`specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/evidence/tiptap-reparent-probe.md` §3) — TipTap's `Editor.mount/unmount` API is BLOCKED by `@tiptap/extension-drag-handle@4.x`'s closure-captured `editor` ref hitting TipTap's throwing proxy during re-create. Cross-refs: precedents #18(g) (CM6 reparent contract), #18(h) (TipTap fallback via raw reparent), #18(i) (provider connect/disconnect cap on cached-hidden editors).
 
@@ -243,29 +243,32 @@ These are patterns that ALL work in the repo should follow. Established during t
 
     (g) **Provider prewarm on sidebar hover (Option G).** `ProviderPool.prewarm(docName)` admits a cold HocuspocusProvider without LRU promotion — places at LRU-oldest so user-initiated opens evict prewarms first. Idempotent + system-doc reject. Caller-side intent-debounce (80 ms) + concurrency cap (3 concurrent) live at the sidebar hover handler.
 
-    (h) **Chip orchestration — the 5-plugin contract for plain-DOM mark chips.** Simple marks (InternalLink, WikiLink) that collapse from per-instance React MarkViews to InteractionLayer plain-DOM chips compose five plugins in a fixed wire-up. Every future chip-style mark extension MUST follow the same pattern:
+    (h) **Chip orchestration — the 3-plugin wire-up for plain-DOM mark chips.** Simple marks (InternalLink, WikiLink) that collapse from per-instance React MarkViews to InteractionLayer plain-DOM chips compose three plugin calls over a five-module stack. Every future chip-style mark extension MUST follow this pattern verbatim:
 
     ```
     addProseMirrorPlugins() {
       return [
-        markIdentityPlugin({                              // (d) PluginState byId map
-          markTypes: ['link'],
-          onRegister, onDeregister,
-        }),
-        markIdentityDecorationPlugin(),                   // materialize IDs as data-mark-id
-        linkResolutionDecorationPlugin({                  // (*) page-list-cache-driven attrs
-          markTypes: ['link'],
-          computeAttrs: makeLinkResolutionAttrsComputer(docName),
-        }),
-        createMarkInteractionBridgePlugin({               // wire → InteractionLayer
+        // 1. InteractionLayer wiring. The bridge INTERNALLY installs
+        //    markIdentityPlugin (module (d)) — do NOT add a second
+        //    markIdentityPlugin call, or IDs will be double-assigned.
+        createMarkInteractionBridgePlugin({
           editor: this.editor,
           markTypes: ['link'],
           renderPropPanel: ({editor, nodeId, deactivate}) =>
             <InternalLinkPropPanel editor={editor} nodeId={nodeId} onClose={deactivate} />,
         }),
+        // 2. Materialize IDs as data-mark-id (event delegation reads this).
+        markIdentityDecorationPlugin(),
+        // 3. Page-list-cache-driven data-resolution-state decoration.
+        linkResolutionDecorationPlugin({
+          markTypes: ['link'],
+          computeAttrs: makeLinkResolutionAttrsComputer(docName),
+        }),
       ];
     }
     ```
+
+    **STOP:** The plugin count is 3, not 5. The five-module stack is `mark-identity.ts` + `mark-identity-decoration.ts` + `link-resolution.ts` + `link-resolution-decoration.ts` + `mark-interaction-bridge.ts`, but only 3 of those ship a `Plugin` instance from the extension's `addProseMirrorPlugins()`. `mark-interaction-bridge` wraps `markIdentityPlugin` internally; adding another `markIdentityPlugin` call in the same extension double-installs the identity plugin → IDs collide.
 
     Component files (each with a distinct correctness concern):
     - `mark-identity.ts` (d) — assigns + carries stable IDs.
@@ -403,7 +406,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | Method | Path                          | Purpose                                                                   |
 | ------ | ----------------------------- | ------------------------------------------------------------------------- |
 | GET    | `/api/document`               | Read live Y.Text state (bypasses persistence debounce; `?docName=` param) |
-| GET    | `/api/document-disk`          | Read raw disk bytes for `?docName=` WITHOUT a Y.Doc session side-effect — powers the V2 Option E Suspense fallback (FallbackDocumentRender). Returns `{markdown, mtime, bytes}`. Symlink-safe (rejects escape). System docs + unknown docs return 4xx. |
+| GET    | `/api/document-disk`          | Read raw disk bytes for `?docName=` WITHOUT a Y.Doc session side-effect — powers the V2 Option E Suspense fallback (FallbackDocumentRender). Returns `{ok: true, docName, content, sizeBytes, mtime}`. Symlink-safe (rejects escape). System docs + unknown docs return 4xx. Oversize docs (> 2 MB) return 413. |
 | POST   | `/api/agent-write`            | Agent write via Y.Text                                                    |
 | POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                  |
 | POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated          |
@@ -596,7 +599,7 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
-- `src/editor/extensions/internal-link.ts` — InternalLink mark extension ported to InteractionLayer chip pattern (precedent #25(c); US-005). `renderHTML` emits `<span class="ok-chip">` with `contenteditable="false"` + `touch-action: manipulation`; hover/click routed via event delegation on `data-mark-id`. Wires `markIdentityPlugin`, `markIdentityDecorationPlugin`, `linkResolutionDecorationPlugin`, and `createMarkInteractionBridgePlugin` together. `InternalLinkPropPanel.tsx` renders at the singleton InteractionLayer plane (was per-mark `InternalLinkView` React portal before V2).
+- `src/editor/extensions/internal-link.ts` — InternalLink mark extension ported to InteractionLayer chip pattern (precedent #25(c); US-005). `renderHTML` emits `<span data-link role="link" tabindex="0" aria-label="Link: <href>">` with inline `touch-action: manipulation` style; `data-mark-id` + `data-resolution-state` are added via decoration plugins at PM render time. Hover/click/keyboard activation is routed via event delegation on the editor root (`editor.view.dom`). Plugin wire-up is the 3-call pattern at the top of precedent #25(h): `createMarkInteractionBridgePlugin` (wraps `markIdentityPlugin`) + `markIdentityDecorationPlugin` + `linkResolutionDecorationPlugin`. `InternalLinkPropPanel.tsx` renders at the singleton InteractionLayer plane (was per-mark `InternalLinkView` React portal before V2).
 - `src/editor/extensions/wiki-link.ts` — WikiLink mark/node extension, symmetric port to InternalLink. `WikiLinkPropPanel.tsx` handles broken-link → create-page flow at the layer. `renderHTML` emits plain-DOM chips; resolution state from `page-list-cache` via `linkResolutionDecorationPlugin`.
 - `src/editor/extensions/raw-mdx-fallback.tsx` — App-specific RawMdxFallback NodeView (plain-DOM `contentDOM` preserving `content: 'text*'` Y.XmlElement identity per precedent #10) + PropPanel renderer that mounts an embedded CM6 editor via `RawMdxFallbackPropPanel.tsx` (US-006). Emits `data-raw-mdx-fallback` + `data-node-id` for event delegation + existing e2e selectors.
 - `src/editor/extensions/raw-mdx-nav-event.ts` — `RAW_MDX_NAV_EVENT` CustomEvent name + `RawMdxNavDetail` type. Dispatched from the fallback NodeView/PropPanel; listened to by `EditorPane` + `SourceEditor` for "navigate to broken MDX in source mode" coordination.

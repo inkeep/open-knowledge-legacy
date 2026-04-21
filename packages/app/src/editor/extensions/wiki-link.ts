@@ -109,6 +109,18 @@ export const WikiLink = BaseWikiLink.extend({
       const anchor = node.attrs.anchor != null ? String(node.attrs.anchor) : null;
       const { dom } = buildWikiLinkChipDom({ nodeId, target, alias, anchor });
 
+      // Reassigned on every `update(newNode)` call — PM's NodeView contract
+      // passes a fresh node object to `update`, but the factory-closure
+      // `node` argument is NOT rebound. `handlePrimary` reads
+      // `currentNode.attrs` so PropPanel edits flow through to the
+      // Cmd/Ctrl+click destination without a full NodeView recreate
+      // (review Pass-2 Major #6). Pre-fix, editing a wiki-link's target
+      // via the PropPanel Save button correctly updated the visible chip
+      // DOM (via the `update` hook below) but left the closure's `node`
+      // variable pointing at the ORIGINAL attrs — Cmd+click then opened
+      // the pre-edit target.
+      let currentNode = node;
+
       const safeGetPos = (): number | undefined => {
         const pos = getPos();
         return typeof pos === 'number' ? pos : undefined;
@@ -129,11 +141,11 @@ export const WikiLink = BaseWikiLink.extend({
         },
         // review Major #4: Cmd/Ctrl/middle-click opens the wiki target in
         // a new tab. Bare click falls through to the PropPanel (return
-        // false). Uses current node.attrs (which the NodeView's `update`
-        // hook keeps synced when PropPanel edits fire).
+        // false). Reads `currentNode.attrs` (reassigned by the `update`
+        // hook below on PropPanel edits) — review Pass-2 Major #6.
         handlePrimary: ({ newTab }) => {
           if (!newTab) return false;
-          const live = node.attrs;
+          const live = currentNode.attrs;
           const liveTarget = typeof live.target === 'string' ? live.target : '';
           if (!liveTarget) return false;
           const liveAnchor = typeof live.anchor === 'string' ? live.anchor : null;
@@ -161,6 +173,10 @@ export const WikiLink = BaseWikiLink.extend({
           // DOM so external attr changes (e.g. PropPanel's setNodeMarkup)
           // refresh the visible label without re-creating the NodeView.
           if (updatedNode.type.name !== 'wikiLink') return false;
+          // Reassign currentNode BEFORE the DOM writes so any synchronous
+          // observer that reads it (unlikely in current code, but cheap
+          // safety) sees consistent state (review Pass-2 Major #6).
+          currentNode = updatedNode;
           const newTarget = String(updatedNode.attrs.target ?? '');
           const newAlias = updatedNode.attrs.alias != null ? String(updatedNode.attrs.alias) : null;
           const newAnchor =

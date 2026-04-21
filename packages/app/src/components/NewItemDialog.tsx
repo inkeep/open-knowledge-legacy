@@ -202,7 +202,14 @@ export function NewItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      {/* data-ok-layer-spawned — consumed by InteractionLayer's outside-click
+        dismiss logic (review Pass-2 Major #12). When this dialog is opened
+        from a PropPanel (InternalLinkPropPanel's Create-Page affordance),
+        clicking inside it should NOT dismiss the PropPanel. Tagging the
+        shared NewItemDialog is safe because it's always modal — interacting
+        with it is exclusive, so there's no PropPanel-dismiss scenario to
+        preserve when the dialog is open from elsewhere. */}
+      <DialogContent className="sm:max-w-md" data-ok-layer-spawned="">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

@@ -21,6 +21,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { readFile as readFileAsync } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
@@ -1269,6 +1270,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * symlinked doc whose target points outside `contentDir` returns 403.
    * Broken symlinks / missing files return 404.
    */
+  /**
+   * Upper bound on disk bytes served by `/api/document-disk` (review
+   * Pass-2 Major #2 + Major #5). Above this, the server returns 413 and
+   * the client's `FallbackDocumentRender` falls through to `EditorSkeleton`
+   * while the editor mounts in the background. Mirrors the client's
+   * LARGE_DOC_CHAR_THRESHOLD × 4 to allow headroom for multi-MB prose
+   * docs that don't trip the client's defer-mount gate; oversize docs
+   * still get a proper editor mount — the fallback just stops being
+   * worth the parse+walk cost. Keep at 2 MB: larger than any doc we've
+   * measured in the wild + below the point where the sync-over-the-
+   * network transfer dominates the budget.
+   */
+  const DOCUMENT_DISK_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
   async function handleDocumentDiskRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -1306,12 +1321,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 403, { ok: false, error: 'Path resolves outside content directory' });
         return;
       }
-      // Read disk bytes — no Y.Doc session created.
-      let markdown: string;
+      // Stat first — short-circuit on oversize before spending any I/O on
+      // the read itself (review Pass-2 Major #2 + Major #5).
       let stat: ReturnType<typeof statSync>;
       try {
-        markdown = readFileSync(entry.canonicalPath, 'utf-8');
         stat = statSync(entry.canonicalPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          json(res, 404, { ok: false, error: `File missing: ${docName}` });
+          return;
+        }
+        throw err;
+      }
+      if (stat.size > DOCUMENT_DISK_MAX_BYTES) {
+        json(res, 413, {
+          ok: false,
+          error: 'Document exceeds disk-fetch size cap',
+          sizeBytes: stat.size,
+          maxBytes: DOCUMENT_DISK_MAX_BYTES,
+        });
+        return;
+      }
+      // Async read so parallel disk-reads don't serialize on the single
+      // event loop thread (review Pass-2 Major #2). Under burst load
+      // (10+ concurrent cold-loads on app startup) sync reads would block
+      // every concurrent WebSocket/CRDT frame for the full read duration.
+      let markdown: string;
+      try {
+        markdown = await readFileAsync(entry.canonicalPath, 'utf-8');
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
@@ -1342,7 +1380,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         { 'Cache-Control': 'no-store' },
       );
     } catch (e) {
-      console.error('[document-disk]', e);
+      // Structured log shape matches AGENTS.md §Logging conventions — the
+      // event is counted in aggregate by ops tooling, so the JSON form is
+      // load-bearing (review Pass-2 Major #2). `console.error` is used
+      // because this is a server-side error path; the pipeline forwards
+      // stderr to the log aggregator.
+      console.error(
+        JSON.stringify({
+          event: 'document-disk-read-failed',
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }

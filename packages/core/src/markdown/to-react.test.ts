@@ -222,7 +222,12 @@ describe('mdastToReact — MDX JSX elements', () => {
     expect(child.p).toMatchObject({ type: 'warning' });
   });
 
-  test('<UnknownComp /> falls back to component name when not in map', () => {
+  test('<UnknownComp /> NOT in componentMap renders as inert placeholder (review Pass-2 Critical #1)', () => {
+    // Pre-review: the walker blindly passed `node.name` to createElement
+    // for any uppercase component not in the map — opening an XSS path via
+    // e.g. `<Iframe srcdoc="<script>…</script>"/>` (browser treats the
+    // uppercase tag case-insensitively). The gate now requires either a
+    // mapped component OR a tag in the safe-HTML allowlist.
     const el = mdastToReact(
       {
         type: 'root',
@@ -239,10 +244,17 @@ describe('mdastToReact — MDX JSX elements', () => {
       { createElement: testFactory, componentMap: {} },
     ) as TestElement;
     const child = el.c[0] as TestElement;
-    expect(child.t).toBe('UnknownComp');
+    expect(child.t).toBe('span');
+    expect(child.p).toMatchObject({ 'data-ok-unknown-tag': 'UnknownComp' });
+    // Rendered as literal source text — string child is auto-escaped by the
+    // factory, so the placeholder cannot itself inject.
+    expect(child.c[0]).toBe('<UnknownComp />');
   });
 
   test('expression attribute resolves via JSON.parse (array literal)', () => {
+    // Component must be admitted via componentMap for attributes to
+    // surface (unmapped uppercase → placeholder per Pass-2 Critical #1).
+    const Tabs = { __component: 'Tabs' };
     const el = mdastToReact(
       {
         type: 'root',
@@ -265,7 +277,7 @@ describe('mdastToReact — MDX JSX elements', () => {
           } as never,
         ],
       },
-      { createElement: testFactory },
+      { createElement: testFactory, componentMap: { Tabs } },
     ) as TestElement;
     const child = el.c[0] as TestElement;
     expect(child.p?.items).toEqual(['TS', 'JS']);
@@ -276,6 +288,7 @@ describe('mdastToReact — MDX JSX elements', () => {
     // side-effecting code in an attribute expression must NOT execute —
     // we hand the raw source to the component as a string prop and let
     // the component decide what to do with it.
+    const Callout = { __component: 'Callout' };
     const el = mdastToReact(
       {
         type: 'root',
@@ -298,7 +311,7 @@ describe('mdastToReact — MDX JSX elements', () => {
           } as never,
         ],
       },
-      { createElement: testFactory },
+      { createElement: testFactory, componentMap: { Callout } },
     ) as TestElement;
     const child = el.c[0] as TestElement;
     // Raw source string, NOT the 'warning' result of executing it.
@@ -309,6 +322,7 @@ describe('mdastToReact — MDX JSX elements', () => {
   });
 
   test('spread attribute that is not a JSON literal is discarded (no eval)', () => {
+    const Callout = { __component: 'Callout' };
     const el = mdastToReact(
       {
         type: 'root',
@@ -327,7 +341,7 @@ describe('mdastToReact — MDX JSX elements', () => {
           } as never,
         ],
       },
-      { createElement: testFactory },
+      { createElement: testFactory, componentMap: { Callout } },
     ) as TestElement;
     const child = el.c[0] as TestElement;
     // No props assigned — the non-JSON expression path returns the raw
@@ -339,6 +353,7 @@ describe('mdastToReact — MDX JSX elements', () => {
   });
 
   test('bare attribute (no value) → true prop', () => {
+    const Note = { __component: 'Note' };
     const el = mdastToReact(
       {
         type: 'root',
@@ -352,7 +367,7 @@ describe('mdastToReact — MDX JSX elements', () => {
           } as never,
         ],
       },
-      { createElement: testFactory },
+      { createElement: testFactory, componentMap: { Note } },
     ) as TestElement;
     const child = el.c[0] as TestElement;
     expect(child.p?.open).toBe(true);
@@ -377,6 +392,255 @@ describe('mdastToReact — MDX JSX elements', () => {
     const child = el.c[0] as TestElement;
     expect(child.t).toBe('div');
     expect(child.p).toMatchObject({ 'data-ok-fragment': '' });
+  });
+});
+
+describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
+  test('<Iframe srcdoc="<script>…</script>"/> is neutralized to placeholder', () => {
+    // Primary attack vector: uppercase-initial `<Iframe>` reaches the
+    // walker as an mdxJsxFlowElement (lowercase `<iframe>` is absorbed
+    // into text by R23's autolink-void-html-guard, but the uppercase
+    // variant survives). Browser renders `<Iframe>` case-insensitively
+    // as `<iframe>` and executes the srcdoc payload. Gate MUST reject
+    // this with an inert placeholder.
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Iframe',
+            attributes: [
+              {
+                type: 'mdxJsxAttribute',
+                name: 'srcdoc',
+                value: '<script>document.title="pwn"</script>',
+              },
+            ],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory, componentMap: {} },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    // NOT rendered as `Iframe` — must be the safe placeholder span.
+    expect(child.t).toBe('span');
+    expect(child.p).toMatchObject({ 'data-ok-unknown-tag': 'Iframe' });
+    // No element in the tree should have tag `Iframe` or carry `srcdoc`.
+    const walk = (node: TestElement | string): boolean => {
+      if (typeof node === 'string') return false;
+      if (node.t === 'Iframe' || node.t === 'iframe') return true;
+      if (node.p?.srcdoc || node.p?.srcDoc) return true;
+      return (node.c as (TestElement | string)[]).some(walk);
+    };
+    expect(walk(el)).toBe(false);
+  });
+
+  test('<Script>alert(1)</Script> renders as placeholder, not as <script>', () => {
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Script',
+            attributes: [],
+            children: [{ type: 'text', value: 'alert(1)' }],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+          } as any,
+        ],
+      },
+      { createElement: testFactory, componentMap: {} },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    expect(child.t).toBe('span');
+    expect(child.p).toMatchObject({ 'data-ok-unknown-tag': 'Script' });
+    // The alert(1) text is NOT rendered inside a Script element — only as
+    // escaped text inside the placeholder.
+  });
+
+  test('<Form action="javascript:…"> rejected even with action sanitized by React', () => {
+    // React 19 sanitizes `action`/`formAction` URLs — but we reject the
+    // uppercase `<Form>` before it ever reaches the DOM, so the defense
+    // is two-layer.
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Form',
+            attributes: [
+              {
+                type: 'mdxJsxAttribute',
+                name: 'action',
+                value: 'javascript:alert(1)',
+              },
+            ],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory, componentMap: {} },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    expect(child.t).toBe('span');
+    expect(child.p).toMatchObject({ 'data-ok-unknown-tag': 'Form' });
+  });
+
+  test('lowercase <iframe> outside the safe-HTML allowlist also rejected (defense-in-depth)', () => {
+    // R23 absorbs most lowercase HTML into text, but if a lowercase
+    // `<iframe>` ever reaches the walker as mdxJsxFlowElement (e.g. a
+    // future pipeline change, or a rare nested-inline edge case), the
+    // allowlist still catches it.
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'iframe',
+            attributes: [{ type: 'mdxJsxAttribute', name: 'srcdoc', value: '<script>x</script>' }],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory, componentMap: {} },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    expect(child.t).toBe('span');
+    expect(child.p).toMatchObject({ 'data-ok-unknown-tag': 'iframe' });
+  });
+
+  test('mapped components in the componentMap still render normally', () => {
+    // Admission path 1: name in componentMap — no rejection regardless of
+    // what the name is. Keeps the fumadocs bindings working.
+    const Callout = { __component: 'Callout' };
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Callout',
+            attributes: [{ type: 'mdxJsxAttribute', name: 'type', value: 'info' }],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory, componentMap: { Callout } },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    expect(child.t).toBe(Callout);
+  });
+
+  test('safe HTML tags in the allowlist still render as raw tags', () => {
+    // Admission path 2: lowercase tag in SAFE_HTML_TAGS allowlist. `<p>`
+    // is on the list — the walker renders it verbatim. This keeps
+    // inline HTML like `<div>wrapper</div>` working.
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'div',
+            attributes: [{ type: 'mdxJsxAttribute', name: 'className', value: 'box' }],
+            children: [{ type: 'text', value: 'hi' }],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast
+          } as any,
+        ],
+      },
+      { createElement: testFactory, componentMap: {} },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    expect(child.t).toBe('div');
+    expect(child.p).toMatchObject({ className: 'box' });
+  });
+
+  test('link with javascript: href sanitized to # fallback', () => {
+    const el = convert('[click me](javascript:alert(1))') as TestElement;
+    const para = el.c[0] as TestElement;
+    const a = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    expect(a).toBeDefined();
+    expect(a?.p?.href).toBe('#');
+  });
+
+  test('link with data:text/html href sanitized to # fallback', () => {
+    const el = convert('[malicious](data:text/html,<script>alert(1)</script>)') as TestElement;
+    const para = el.c[0] as TestElement;
+    const a = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    expect(a?.p?.href).toBe('#');
+  });
+
+  test('image with javascript: src sanitized to # fallback', () => {
+    const el = convert('![alt](javascript:alert(1))') as TestElement;
+    const para = el.c[0] as TestElement;
+    const img = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'img',
+    );
+    expect(img?.p?.src).toBe('#');
+  });
+
+  test('image with data:image/png src allowed through', () => {
+    const pngData =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACklEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const el = convert(`![pixel](${pngData})`) as TestElement;
+    const para = el.c[0] as TestElement;
+    const img = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'img',
+    );
+    expect(img?.p?.src).toBe(pngData);
+  });
+
+  test('image with data:text/html src sanitized to # fallback', () => {
+    const el = convert('![img](data:text/html,<script>alert(1)</script>)') as TestElement;
+    const para = el.c[0] as TestElement;
+    const img = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'img',
+    );
+    expect(img?.p?.src).toBe('#');
+  });
+
+  test('link with safe https URL passes through unchanged', () => {
+    const el = convert('[ok](https://example.com/path?q=1)') as TestElement;
+    const para = el.c[0] as TestElement;
+    const a = (para.c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    expect(a?.p?.href).toBe('https://example.com/path?q=1');
+  });
+
+  test('link with relative/hash URL passes through unchanged', () => {
+    const el = convert('[a](./page) and [b](#section)') as TestElement;
+    const para = el.c[0] as TestElement;
+    const anchors = (para.c as TestElement[]).filter(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    expect(anchors[0]?.p?.href).toBe('./page');
+    expect(anchors[1]?.p?.href).toBe('#section');
+  });
+
+  test('mailto: and tel: schemes pass through (OS handlers, no viewer-origin JS)', () => {
+    const mailEl = convert('[mail](mailto:a@b.c)') as TestElement;
+    const telEl = convert('[tel](tel:+1-555-0100)') as TestElement;
+    const mailA = ((mailEl.c[0] as TestElement).c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    const telA = ((telEl.c[0] as TestElement).c as TestElement[]).find(
+      (c): c is TestElement => typeof c === 'object' && c.t === 'a',
+    );
+    expect(mailA?.p?.href).toBe('mailto:a@b.c');
+    expect(telA?.p?.href).toBe('tel:+1-555-0100');
   });
 });
 

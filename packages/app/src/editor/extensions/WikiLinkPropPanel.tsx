@@ -113,6 +113,7 @@ function EditWikiLinkDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
         <Dialog.Content
           data-slot="dialog-content"
+          data-ok-layer-spawned=""
           className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
         >
           <Dialog.Title className="mb-1 text-base font-semibold">Edit wiki link</Dialog.Title>

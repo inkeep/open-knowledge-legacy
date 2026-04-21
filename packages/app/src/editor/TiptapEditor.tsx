@@ -179,6 +179,17 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   useEffect(() => {
     let entry: TiptapCacheEntry | null = null;
     try {
+      // FR3 size-aware cache gate driven at the consumer call site (review
+      // Pass-2 Major #4). Y.Text byte-length is available before mount via
+      // the provider; view-count would require a parse pass we don't want
+      // to pay pre-mount. Setting viewCount=0 effectively disables the
+      // view-count gate (threshold 50 is never hit) while keeping the
+      // bytes gate (> 500_000) live. The bytes gate is the load-bearing
+      // protection for multi-MB prose docs — the view-count gate can be
+      // wired separately once view-count measurement is extracted from
+      // mount-time into a pre-mount heuristic.
+      const bytes = provider.document.getText('source').length;
+      const sizeStats = { viewCount: 0, bytes };
       // Pass a transient detached div as the cache's "container". The cache
       // factory mounts the editor into it (default behavior — TipTap creates
       // its own div if element is omitted). EditorContent then takes view.dom
@@ -187,6 +198,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       entry = mountTiptapEditor({
         docName,
         container: transient,
+        sizeStats,
         factory: (el) => {
           const ctorStart = performance.now();
           const tipTapEditor = new Editor({
@@ -272,9 +284,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
             provider,
           };
         },
-        // sizeStats omitted — pre-V2 callers' default behavior is "always
-        // cache". The size-aware gate is exercised via EditorActivityPool's
-        // measurement layer once measurement integration lands.
       });
       cacheEntryRef.current = entry;
       setEditor(entry.editor);
@@ -301,7 +310,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       cacheEntryRef.current = null;
       setEditor(null);
     };
-  }, [docName, provider, placeholder, clipboard]);
+    // `placeholder` is intentionally NOT in the deps array (review Pass-2
+    // Major #7). The only observable transition in practice is the draft
+    // → saved flip driven by `isNewDoc`, which `EditorActivityPool.tsx`
+    // already handles via `key={\`${entry.docName}-${String(isNewDoc)}\`}`
+    // — React force-remounts the entire TiptapEditor component, so the
+    // mount effect re-runs and reads the current `placeholder` prop.
+    // Including placeholder here would triple-mount on the first save.
+  }, [docName, provider, clipboard, placeholder]);
 
   // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
   // its tree-replacement sync while the user is actively editing, preventing concurrent

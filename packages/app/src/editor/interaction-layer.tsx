@@ -289,8 +289,9 @@ export function resolveClickTargetNodeId(
 
 // ---------------------------------------------------------------------------
 // React root — singleton subtree that renders the active PropPanel + extension
-// slots. Uses useSyncExternalStore so React re-renders only when activeNodeId
-// (or the active registration) actually changes.
+// slots. Uses the `useState + subscribe` pattern (NOT useSyncExternalStore —
+// see component body + review Pass-2 Minor #6). React re-renders only when
+// activeNodeId (or the active registration) transitions.
 // ---------------------------------------------------------------------------
 
 interface InteractionLayerRootProps {
@@ -342,6 +343,26 @@ function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
 }
 
 /**
+ * Match an element to a node id the way event delegation does — via the
+ * `data-mark-id` / `data-node-id` chain. Used by focus-restoration to
+ * decide whether the element owning focus at activation time IS the chip
+ * that triggered activation (worth restoring) vs some unrelated focusable
+ * (likely sidebar keyboard nav; don't hijack).
+ *
+ * Walk upward to allow focus on a descendant of the chip (e.g. a nested
+ * `<span role="link">` if we ever introduce one).
+ */
+function isPotentialChipElement(el: HTMLElement | null, nodeId: string): boolean {
+  let cur: Element | null = el;
+  while (cur) {
+    if (cur.getAttribute?.('data-mark-id') === nodeId) return true;
+    if (cur.getAttribute?.('data-node-id') === nodeId) return true;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+/**
  * Create a layer handle bound to the editor. Call `destroy()` on editor
  * teardown — `InteractionLayerHandle` owns the event listener, React root,
  * and registry, and releases all three on destroy.
@@ -359,6 +380,61 @@ export function createInteractionLayer(
   // Lazily bound pieces (may be null in test environments with no DOM).
   let editorDom: HTMLElement | null = getEditorDom(editor);
   let clickListenerAttached = false;
+
+  // Focus restoration (review Pass-2 Major #11 — WCAG 2.4.3 Focus Order).
+  // When `setActiveNode(id)` fires, we capture the element that OWNED focus
+  // at dispatch time if it matches the chip whose node id we're activating.
+  // On `setActiveNode(null)` we restore focus to that element. Falls back
+  // to `editor.view.dom` if the captured element is gone (doc edit, etc.)
+  // so keyboard users don't lose their editing context entirely.
+  //
+  // Pre-fix: Escape / outside-click / close-button left focus on `<body>`,
+  // forcing keyboard users in docs with hundreds of chips to re-Tab from
+  // the start. Assistive-tech users couldn't resume editing from the chip
+  // they were working with.
+  let lastActivator: HTMLElement | null = null;
+  // Subscribe to store changes so we can save/restore focus.
+  const unsubscribeFocus = store.subscribe(() => {
+    const activeId = store.getActiveNode();
+    if (activeId !== null) {
+      // ACTIVATION — capture whatever owned focus at this tick. Only
+      // capture elements that look like our own chip (bears `data-mark-id`
+      // / `data-node-id`) so we don't inadvertently hijack focus from
+      // some other subsystem.
+      if (typeof document !== 'undefined') {
+        const active = document.activeElement as HTMLElement | null;
+        if (active && isPotentialChipElement(active, activeId)) {
+          lastActivator = active;
+        } else {
+          lastActivator = null;
+        }
+      }
+      return;
+    }
+    // DEACTIVATION — restore focus to the chip that opened the PropPanel
+    // if it's still in the document. Otherwise fall back to the editor
+    // DOM so at least keyboard focus stays inside the editing surface.
+    if (typeof document === 'undefined') return;
+    const target = lastActivator;
+    lastActivator = null;
+    if (target && document.contains(target) && typeof target.focus === 'function') {
+      try {
+        target.focus({ preventScroll: true });
+      } catch {
+        // focus() can throw in odd edge cases (e.g. detached iframes);
+        // fall through to the editor-DOM fallback.
+      }
+      return;
+    }
+    const dom = editorDom ?? getEditorDom(editor);
+    if (dom && typeof (dom as HTMLElement).focus === 'function') {
+      try {
+        (dom as HTMLElement).focus({ preventScroll: true });
+      } catch {
+        // Ignore — focus restoration is best-effort.
+      }
+    }
+  });
 
   // Event delegation handlers (same-target class so add/remove matches).
   //
@@ -481,33 +557,23 @@ export function createInteractionLayer(
       if (target.closest('[data-ok-prop-panel]')) return;
       // Radix Dialog portals content outside the DOM subtree of the
       // trigger, so `closest('[data-ok-prop-panel]')` won't catch dialogs
-      // spawned from inside a PropPanel. For those, accept any dialog
-      // whose role="dialog" + data-slot matches Radix conventions AND
-      // whose triggering flow is likely layer-spawned.
+      // spawned from inside a PropPanel. The original attempt to
+      // special-case those via `[role="dialog"][data-slot]` (shadcn
+      // convention) was too broad (review Pass-2 Major #12): ANY shadcn
+      // dialog — NewItemDialog, DeleteConfirmationDialog, command palette —
+      // also carries `data-slot`, so an unrelated dialog opening while a
+      // PropPanel was active would suppress PropPanel dismissal AND could
+      // be used as a click-jacking primitive by a hostile MDX author.
       //
-      // Narrowing: the original broad `[role="dialog"]` match (review
-      // Minor #25) was correct to tighten — but `aria-modal="true"` as a
-      // second axis is unreliable in practice. Radix Dialog.Content does
-      // NOT surface `aria-modal` as a DOM attribute readable via
-      // `getAttribute('aria-modal')` at pointerdown-time — it's applied
-      // via FocusScope's imperative API and the attribute settles on a
-      // different element (or via the `aria-*` prop flow that React
-      // sometimes doesn't reflect to the DOM in strict cases). Relying
-      // on it caused the link-edit-dialog Save to deactivate the layer
-      // mid-click (see qa-fix for QA-005 + ux-interactions.e2e.ts:317).
-      //
-      // The `data-slot` check is the load-bearing signal: a third-party
-      // dialog would NOT carry a `data-slot` attribute unless its author
-      // opted in to the shadcn convention, so `role="dialog"` +
-      // `data-slot` is specific enough to distinguish our dialogs from
-      // random library dialogs. All four V2 PropPanels (Internal link,
-      // Wiki link, Raw MDX fallback, JsxComponent) + their spawn-dialogs
-      // (EditMarkdownLinkDialog, EditWikiLinkDialog, etc.) emit
-      // `data-slot="dialog-content"` (shadcn convention for Radix
-      // Dialog.Content) or `data-ok-prop-panel="<kind>"` (the
-      // InteractionPropPanel primitive).
-      const dialog = target.closest('[role="dialog"]');
-      if (dialog?.hasAttribute('data-slot')) {
+      // Tightened: the layer-spawned dialogs (EditMarkdownLinkDialog,
+      // EditWikiLinkDialog, etc.) MUST carry `data-ok-layer-spawned=""`
+      // on the Dialog.Content. Dialogs without that marker — whether
+      // shadcn-convention ones in other subsystems or user-authored MDX
+      // dialogs — dismiss the PropPanel when clicked. The result: the
+      // PropPanel stays open for its own edit dialogs, dismisses for any
+      // other dialog.
+      const spawnedDialog = target.closest('[data-ok-layer-spawned]');
+      if (spawnedDialog) {
         return;
       }
     }
@@ -576,6 +642,7 @@ export function createInteractionLayer(
     },
     destroy() {
       detachListeners();
+      unsubscribeFocus();
       store.clear();
     },
     store,

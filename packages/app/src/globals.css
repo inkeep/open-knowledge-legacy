@@ -569,12 +569,97 @@
   @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
 }
 
-/* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
-   so the chip's own color/decoration styling isn't overridden by .ProseMirror a */
-.ProseMirror [data-resolution-state] a {
-  color: inherit;
-  text-decoration: none;
-  @apply dark:text-inherit dark:hover:text-inherit;
+/* -------------------------------------------------------------------------
+ * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #25(h))
+ *
+ * Pre-V2: per-instance React MarkViews rendered styled chrome around each
+ * link mark. V2 moves to plain-DOM `<span data-link>` / `<span data-wiki-link>`
+ * with `data-mark-id` / `data-node-id` for event delegation AND a
+ * `data-resolution-state` decoration attribute ('resolved' | 'folder' |
+ * 'unresolved' | 'loading' | 'external' | 'anchor') written by the
+ * `linkResolutionDecorationPlugin`. The styling below is the user-visible
+ * half of that contract (review Pass-2 Major #8).
+ * --------------------------------------------------------------------- */
+
+.ProseMirror [data-link],
+.ProseMirror [data-wiki-link] {
+  display: inline;
+  cursor: pointer;
+  color: var(--color-azure-blue);
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-underline-offset: 2px;
+  border-radius: 2px;
+  @apply font-medium dark:text-sky-blue;
+}
+
+.ProseMirror [data-link]:hover,
+.ProseMirror [data-wiki-link]:hover {
+  text-decoration-thickness: 2px;
+  @apply dark:text-azure-300;
+}
+
+.ProseMirror [data-link]:focus-visible,
+.ProseMirror [data-wiki-link]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Resolution states — the decoration plugin writes `data-resolution-state`
+   at PM render time. Selectors are specific enough to override the base
+   chip color when present. */
+
+.ProseMirror [data-resolution-state="resolved"] {
+  color: var(--color-azure-blue);
+  @apply dark:text-sky-blue;
+}
+
+/* Folder chip — doc-reference to a directory rather than a page. Italicize
+   to differentiate from a resolved page link. */
+.ProseMirror [data-resolution-state="folder"] {
+  font-style: italic;
+}
+
+/* Unresolved / broken — squiggly underline + muted color to make the
+   broken state visible in WYSIWYG (source mode has its own squiggly via
+   `source-polish`). */
+.ProseMirror [data-resolution-state="unresolved"] {
+  color: var(--color-red-600, #dc2626);
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-red-600, #dc2626);
+}
+
+.dark .ProseMirror [data-resolution-state="unresolved"] {
+  color: #f87171; /* red-400 */
+  text-decoration-color: #f87171;
+}
+
+/* Loading — awaiting page-list-cache population. Dotted underline
+   communicates "indeterminate" without alarming. */
+.ProseMirror [data-resolution-state="loading"] {
+  opacity: 0.7;
+  text-decoration-style: dotted;
+}
+
+/* External — leaves-the-workspace visual (↗ cue via ::after would require
+   layout room on inline; we take a subtler color-differentiation route). */
+.ProseMirror [data-resolution-state="external"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="external"]::after {
+  content: " ↗";
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+/* In-doc anchor — no external navigation. Keep base link color; just drop
+   the ↗ glyph. Selector intentionally LAST so it overrides `external`'s
+   ::after if both flags ever coexist. */
+.ProseMirror [data-resolution-state="anchor"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="anchor"]::after {
+  content: none;
 }
 
 /* Horizontal rule */

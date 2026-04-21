@@ -19,7 +19,7 @@
  *   table, tableRow, tableCell, html, yaml/toml (skip), mdxJsxFlowElement,
  *   mdxJsxTextElement, wikiLink (OK-specific), rawMdxFallback (OK-specific)
  *
- * Security (V2 SPEC FR11 AC):
+ * Security (V2 SPEC FR11 AC + review Pass-2 Critical #1):
  *   - html nodes pass through as TEXT (auto-escaped by the factory) — we
  *     never emit a factory("html", { dangerouslySetInnerHTML }) element.
  *   - JSX expression attributes (mdxJsxAttributeValueExpression) are parsed
@@ -31,6 +31,20 @@
  *     RCE path. Components that need rich prop types compile expressions
  *     server-side via acorn (the real MDX toolchain) or accept string props
  *     and parse them themselves.
+ *   - JSX TAG NAMES are gated by an allowlist (`SAFE_HTML_TAGS`). Uppercase-
+ *     initial tag names that are NOT present in the caller's `componentMap`
+ *     and lowercase tag names that are NOT in the safe-HTML allowlist fall
+ *     through to a visible escaped placeholder — the raw tag is rendered as
+ *     TEXT (factory-escaped, same path as the `html` node case). This
+ *     defeats `<Iframe srcdoc="<script>…</script>" />` which otherwise
+ *     would reach `createElement('Iframe', {srcdoc: '…'})` → browser
+ *     treats `<Iframe>` case-insensitively as `<iframe>` → script executes
+ *     in the iframe's own browsing context (React's built-in sanitizeURL
+ *     covers `href`/`src`/`data`/`action`/`formAction` but NOT `srcdoc`).
+ *     Same guard blocks `<Script>`, `<Form action=…>` variants, and the
+ *     rare lowercase `<math>` / `<svg>` paths that survive R23's guard for
+ *     HTML-ish text (R23 protects lowercase HTML in block context, but
+ *     inline/nested cases can still surface an mdxJsx node).
  */
 
 import type { Nodes, Root, RootContentMap } from 'mdast';
@@ -200,14 +214,23 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       );
     }
     case 'link': {
+      // Defense-in-depth URL sanitization (review Pass-2 Critical #1).
+      // React 19 already rewrites `javascript:` to an inert throw-URL for
+      // href/src/data/action/formAction. We additionally reject `data:`
+      // with HTML-ish media types (could navigate to attacker-controlled
+      // HTML), `vbscript:`, `file:`, `blob:`, and any other unknown scheme
+      // — the allowlist is positive (http(s), mailto, tel, plus relative/
+      // hash-URLs) rather than a denylist.
       const l = node as RootContentMap['link'];
-      const props: Record<string, unknown> = { href: l.url };
+      const safeHref = sanitizeHref(l.url);
+      const props: Record<string, unknown> = { href: safeHref };
       if (l.title) props.title = l.title;
       return opts.createElement('a', props, ...children(l.children, opts));
     }
     case 'image': {
       const img = node as RootContentMap['image'];
-      const props: Record<string, unknown> = { src: img.url, alt: img.alt ?? '' };
+      const safeSrc = sanitizeImageSrc(img.url);
+      const props: Record<string, unknown> = { src: safeSrc, alt: img.alt ?? '' };
       if (img.title) props.title = img.title;
       return opts.createElement('img', props);
     }
@@ -317,8 +340,23 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       return opts.createElement('img', { src: `#${ir.identifier}`, alt: ir.alt ?? '' });
     }
     default: {
-      // Unknown mdast type — skip with a DEV hint.
-      return null;
+      // Unknown mdast type — render a DEV placeholder + emit a structured
+      // hint so a contributor adding a new node type sees something rather
+      // than silent truncation (review Pass-2 Major #10). Structured-JSON
+      // shape matches AGENTS.md §Logging conventions for counted events.
+      // In production, the hint still fires once via `console.warn` —
+      // logging infrastructure aggregates these into a "walker-unknown-
+      // node" counter, surfacing new mdast types that land in production
+      // before we've added a handler.
+      const unknownType = String(type);
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn(JSON.stringify({ event: 'mdast-to-react-unknown-node', type: unknownType }));
+      }
+      return opts.createElement(
+        'span',
+        { 'data-ok-unknown-node': unknownType, style: { opacity: 0.6 } },
+        `<${unknownType}/>`,
+      );
     }
   }
 }
@@ -377,6 +415,86 @@ interface MdxJsxAttributeValueExpression {
   value: string;
 }
 
+/**
+ * Allowlist of lowercase HTML tags that survive `walkMdxJsx` as raw DOM
+ * elements. Everything outside this list falls through to a visible escaped
+ * placeholder (review Pass-2 Critical #1).
+ *
+ * Deliberately omitted: `iframe`, `object`, `embed`, `script`, `style`,
+ * `base`, `meta`, `link`, `form`, `input`, `button`, `textarea`, `select`,
+ * `option`, `math`, `svg`, `video`, `audio`, `source`, `track`, `portal`,
+ * `frame`, `frameset`, `applet`. Any of these with hostile attributes
+ * (`srcdoc`, event handlers as strings, `formaction`, sandboxed-script
+ * content) would bypass React's built-in sanitizeURL (which covers only
+ * `href`/`src`/`data`/`action`/`formAction`) and execute in the viewer's
+ * origin. Lock the list down to prose-markup elements only.
+ */
+const SAFE_HTML_TAGS: ReadonlySet<string> = new Set([
+  'p',
+  'div',
+  'span',
+  'a',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'blockquote',
+  'pre',
+  'code',
+  'em',
+  'strong',
+  'del',
+  'b',
+  'i',
+  's',
+  'u',
+  'small',
+  'mark',
+  'sub',
+  'sup',
+  'br',
+  'hr',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'td',
+  'th',
+  'caption',
+  'colgroup',
+  'col',
+  'img',
+  'figure',
+  'figcaption',
+  'details',
+  'summary',
+  'dl',
+  'dt',
+  'dd',
+  'abbr',
+  'cite',
+  'q',
+  'kbd',
+  'samp',
+  'var',
+  'time',
+  'ruby',
+  'rt',
+  'rp',
+]);
+
+/** Uppercase first character marks a JSX component (vs HTML element). */
+function isUppercaseComponent(name: string): boolean {
+  const c = name.charCodeAt(0);
+  return c >= 0x41 /* A */ && c <= 0x5a /* Z */;
+}
+
 function walkMdxJsx<E>(node: MdxJsxElement, opts: WalkerOptions<E>): E | string | null {
   // Resolve the component from the map. Fragment (null name) → plain
   // children array (caller factory must accept).
@@ -385,10 +503,60 @@ function walkMdxJsx<E>(node: MdxJsxElement, opts: WalkerOptions<E>): E | string 
     return opts.createElement('div', { 'data-ok-fragment': '' }, ...children(node.children, opts));
   }
   const mapped = opts.componentMap?.[node.name];
+
+  // Security gate (review Pass-2 Critical #1). Without the gate, any
+  // authored / agent-written / disk-sourced MDX can emit
+  // `<Iframe srcdoc="<script>…</script>" />`; the walker blindly passes
+  // 'Iframe' as the element type, React renders `<Iframe srcdoc>`, and the
+  // browser treats it case-insensitively as `<iframe>` — the srcdoc's
+  // script executes in the iframe's own browsing context. Same threat
+  // class for `<Script>`, `<Form action="javascript:…">` (React sanitizes
+  // action but not srcdoc), etc.
+  //
+  // Admit paths:
+  //   1. The name is present in `componentMap` — trusted component binding.
+  //   2. The name is a lowercase HTML tag on the SAFE_HTML_TAGS allowlist.
+  //
+  // Everything else (including uppercase components not in the map, and
+  // lowercase HTML tags outside the allowlist) is rendered as an inert
+  // escaped placeholder — the factory's string-children path auto-escapes
+  // <, >, &, etc. so the placeholder cannot itself be an injection vector.
+  const isUppercase = isUppercaseComponent(node.name);
+  const admitted = mapped !== undefined || (!isUppercase && SAFE_HTML_TAGS.has(node.name));
+  if (!admitted) {
+    const source = serializeMdxJsxForPlaceholder(node);
+    return opts.createElement(
+      'span',
+      { 'data-ok-unknown-tag': node.name, style: { opacity: 0.6 } },
+      source,
+    );
+  }
+
   const type = mapped ?? node.name;
   const props = mdxAttributesToProps(node.attributes);
   const kids = children(node.children, opts);
   return opts.createElement(type, Object.keys(props).length ? props : null, ...kids);
+}
+
+/**
+ * Render a rejected MDX JSX element as its literal source text so the
+ * reader sees *something* rather than a silent hole. Factory string-children
+ * path auto-escapes, so the placeholder cannot itself be an injection
+ * vector. Keeps the output compact — an unpopulated `<Iframe ...>` renders
+ * as the literal `<Iframe ... />` text.
+ */
+function serializeMdxJsxForPlaceholder(node: MdxJsxElement): string {
+  const attrs = (node.attributes ?? [])
+    .map((a) => {
+      if (a.type === 'mdxJsxExpressionAttribute') return `{${a.value}}`;
+      const val = a.value;
+      if (val === null) return a.name;
+      if (typeof val === 'string') return `${a.name}="${val}"`;
+      return `${a.name}={${val.value}}`;
+    })
+    .join(' ');
+  const head = attrs ? `${node.name} ${attrs}` : (node.name ?? '');
+  return `<${head} />`;
 }
 
 function mdxAttributesToProps(
@@ -405,8 +573,11 @@ function mdxAttributesToProps(
       continue;
     }
     const name = attr.name;
-    // Convert HTML attr names to React-idiomatic camelCase for common cases.
-    // fumadocs components accept both, so we keep the attr name verbatim.
+    // Attr names pass through verbatim — fumadocs + standard HTML components
+    // accept both `className` and `class`, `htmlFor` and `for`. Handing over
+    // the original author form preserves fidelity for components that read
+    // custom attrs (review Pass-2 Minor #6 — the previous comment claimed
+    // "convert to camelCase" but no conversion actually happened).
     const propName = name;
     const value = attr.value;
     if (value === null) {
@@ -443,4 +614,106 @@ function tryParseExpression(expr: string): unknown {
   } catch {
     return trimmed;
   }
+}
+
+// ---------------------------------------------------------------------------
+// URL sanitization (review Pass-2 Critical #1 defense-in-depth)
+//
+// React 19's sanitizeURL rewrites `javascript:` in href/src/data/action/
+// formAction. That's insufficient on its own — `data:` URLs with HTML-ish
+// media types ARE still navigable (`<a href="data:text/html,<script>…">`
+// executes on click), `vbscript:` pre-Edge legacy, `file:` + `blob:`.
+// Mirror `packages/app/src/editor/safe-navigation-url.ts` as a pure
+// walker-local helper so the core module stays React-free.
+// ---------------------------------------------------------------------------
+
+/**
+ * Schemes we will navigate to. Same allowlist as the app's
+ * `isSafeNavigationUrl`. `http(s)` for the web, `mailto`/`tel` for OS
+ * handlers (no JS execution in viewer origin). Everything else (javascript,
+ * data, vbscript, file, blob, ws, etc.) is rejected.
+ */
+const SAFE_NAVIGATION_SCHEMES: ReadonlySet<string> = new Set([
+  'http:',
+  'https:',
+  'mailto:',
+  'tel:',
+]);
+
+/**
+ * Images may additionally use `data:` with image media types (common for
+ * inline icons, diagrams, small GIFs). Block `data:text/html`, `data:
+ * application/...javascript`, and ambiguous cases.
+ */
+const SAFE_IMAGE_DATA_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+  'image/bmp',
+  'image/avif',
+  'image/x-icon',
+]);
+
+/** Inert fallback returned when a URL is rejected. `#` is a no-op anchor. */
+const UNSAFE_URL_FALLBACK = '#';
+
+/**
+ * Sanitize a URL for use in `<a href>`. Allows relative URLs (no scheme) +
+ * hash fragments; rejects any absolute URL whose scheme is outside the
+ * navigation allowlist.
+ */
+function sanitizeHref(url: string | undefined | null): string {
+  if (!url) return UNSAFE_URL_FALLBACK;
+  const s = String(url).trim();
+  if (s === '') return UNSAFE_URL_FALLBACK;
+  // Relative paths + hash fragments are safe — no scheme.
+  if (s.startsWith('#') || s.startsWith('/') || s.startsWith('./') || s.startsWith('../')) return s;
+  // Strings that don't parse as a URL with a dummy base fall through to
+  // "treat as relative" — common for wiki-link hrefs like `SomePage#anchor`.
+  // The presence of `:` before a `/` indicates a scheme.
+  const colonIdx = s.indexOf(':');
+  const slashIdx = s.indexOf('/');
+  const hasScheme = colonIdx !== -1 && (slashIdx === -1 || colonIdx < slashIdx);
+  if (!hasScheme) return s;
+  try {
+    const parsed = new URL(s);
+    if (SAFE_NAVIGATION_SCHEMES.has(parsed.protocol)) return s;
+  } catch {
+    // Parse failure on something that looked like it had a scheme — reject.
+  }
+  return UNSAFE_URL_FALLBACK;
+}
+
+/**
+ * Sanitize a URL for use in `<img src>`. Same allowlist as `sanitizeHref`
+ * plus `data:` URLs with image media types.
+ */
+function sanitizeImageSrc(url: string | undefined | null): string {
+  if (!url) return UNSAFE_URL_FALLBACK;
+  const s = String(url).trim();
+  if (s === '') return UNSAFE_URL_FALLBACK;
+  if (s.startsWith('#') || s.startsWith('/') || s.startsWith('./') || s.startsWith('../')) return s;
+  const colonIdx = s.indexOf(':');
+  const slashIdx = s.indexOf('/');
+  const hasScheme = colonIdx !== -1 && (slashIdx === -1 || colonIdx < slashIdx);
+  if (!hasScheme) return s;
+  try {
+    const parsed = new URL(s);
+    if (SAFE_NAVIGATION_SCHEMES.has(parsed.protocol)) return s;
+    if (parsed.protocol === 'data:') {
+      // Extract media-type from the data: URL. `data:image/png;base64,…` →
+      // `image/png`. Reject `data:text/html,…`, `data:application/…`, etc.
+      const body = s.slice('data:'.length);
+      const commaIdx = body.indexOf(',');
+      if (commaIdx === -1) return UNSAFE_URL_FALLBACK;
+      const header = body.slice(0, commaIdx).toLowerCase();
+      const mediaType = header.split(';')[0]?.trim() ?? '';
+      if (SAFE_IMAGE_DATA_MEDIA_TYPES.has(mediaType)) return s;
+    }
+  } catch {
+    // Parse failure — reject.
+  }
+  return UNSAFE_URL_FALLBACK;
 }
