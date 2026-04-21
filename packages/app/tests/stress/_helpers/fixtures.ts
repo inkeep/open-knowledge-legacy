@@ -180,8 +180,7 @@ async function killGracefully(proc: ChildProcess, timeoutMs = 5000): Promise<voi
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   workerServer: [
-    // biome-ignore lint/correctness/noEmptyPattern: Playwright requires an object-destructuring pattern for the fixtures arg; this fixture has no dependencies so the destructure is empty by design.
-    async ({}, use, workerInfo) => {
+    async (_, use, workerInfo) => {
       const port = await getFreePort();
       const contentDir = mkdtempSync(join(tmpdir(), `ok-w${workerInfo.workerIndex}-`));
       seedRequiredFixtureFiles(contentDir);
