@@ -170,7 +170,15 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       handlePaste: (view, event) => clipboard.paste(view, event),
     },
     extensions: [
-      ...sharedExtensions,
+      // Configure docName-aware extensions before construction so InternalLink's
+      // link-resolution decoration plugin (US-005) can compute resolved/folder/
+      // unresolved states for the active doc's link marks.
+      ...sharedExtensions.map((ext) => {
+        if (ext.name === 'link') {
+          return ext.configure({ docName: provider.configuration.name ?? '' });
+        }
+        return ext;
+      }),
       Placeholder.configure({
         placeholder: placeholder ?? "Type '/' for commands",
         showOnlyCurrent: true,
