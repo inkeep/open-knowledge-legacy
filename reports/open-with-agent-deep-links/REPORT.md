@@ -30,6 +30,8 @@ topics:
 
 # Open-With-Agent Deep-Link & CLI Capability Matrix
 
+> **AUTHORITATIVE POINTER (added 2026-04-21 post-rebase):** PR #255 merged [`reports/deep-linking-ai-desktop-apps-2026/`](../deep-linking-ai-desktop-apps-2026/REPORT.md) to `main` with deeper, live-tested 2026-04-21 findings that **supersede several claims in this report**. Most notably: **Claude Desktop DOES have atomic single-URL prompt+folder+file handoff** via sibling host routes `claude://cowork/new?q=&folder=&file=` and `claude://code/new?q=&folder=&file=` — this report's pass-1 claim that "Claude Desktop has no public prompt-pass path" was wrong; the `/cowork/*` + `/code/*` routes are peers to `/claude.ai/*` and were missed by the initial bundle probe. Also: Cursor's `text=` param decodes TWICE with error recovery (implying double-encoding on the emitter side); Codex has `codex://new?prompt=&path=&originUrl=` with git-origin resolution against known local clones; `open -a Claude.app /path` routes to the Cowork tab via the `CjA` IPC handler. When in doubt, trust the PR #255 report. This report's value is its agent breadth (includes Aider/Windsurf/Copilot/Cline/Continue/OpenHands) and its `claude-cli://` CLI-scheme coverage (F5), which PR #255 intentionally scoped out. The downstream spec (`stories/open-in-agent-desktop/STORY.md`) threads from PR #255's report.
+
 **Purpose.** Inform the forthcoming `/spec` for an "Open with ⌄" dropdown in the Open Knowledge editor. The wrapper shape is `openWithAgent(agentName: string, dir: URL, prompt: string)`. This report maps what each target agent can actually honor — and what the graceful-degradation contract looks like when prompt or dir can't be delivered atomically.
 
 ---
