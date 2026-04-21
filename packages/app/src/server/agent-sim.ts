@@ -115,16 +115,6 @@ async function readDocument(): Promise<{ ok: boolean; content?: string; error?: 
   return (await res.json()) as { ok: boolean; content?: string; error?: string };
 }
 
-async function checkUndoStatus(): Promise<{ canUndo: boolean; canRedo: boolean } | null> {
-  try {
-    const res = await fetch(`${BASE_URL}/api/agent-undo-status`);
-    if (res.ok) return (await res.json()) as { canUndo: boolean; canRedo: boolean };
-  } catch {
-    // Server not running or endpoint not available
-  }
-  return null;
-}
-
 // --- Write helper (existing modes) ---
 
 async function doWrite(index: number) {
@@ -351,12 +341,6 @@ if (usePatch) {
     }
   } else {
     await doWrite(1);
-  }
-
-  // Check undo status after writes
-  const undoStatus = await checkUndoStatus();
-  if (undoStatus) {
-    console.log(`\nUndo status: canUndo=${undoStatus.canUndo}, canRedo=${undoStatus.canRedo}`);
   }
 
   console.log('\nDone. Check the browser for:');

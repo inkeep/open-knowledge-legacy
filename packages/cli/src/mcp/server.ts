@@ -151,7 +151,7 @@ ${Object.entries(TOOL_DESCRIPTIONS)
 async function detectHocuspocus(serverUrl: string): Promise<boolean> {
   try {
     const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-    const res = await fetch(`${httpUrl}/api/agent-undo-status`, {
+    const res = await fetch(`${httpUrl}/api/document`, {
       signal: AbortSignal.timeout(2000),
     });
     return res.ok;
