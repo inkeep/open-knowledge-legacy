@@ -13,6 +13,9 @@
   "scripts": {
     "knip": "knip --files --dependencies --fix-type exports --fix-type types --include exports,types",
     "build": "turbo run build",
+    "build:desktop": "turbo run build:desktop",
+    "build:desktop:dir": "turbo run build:desktop:dir",
+    "check:desktop": "turbo run lint typecheck test --filter=@inkeep/open-knowledge-desktop",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "biome check packages docs *.json *.jsonc *.ts --error-on-warnings",
@@ -42,11 +45,11 @@
     ]
   },
   "devDependencies": {
-    "knip": "^6.5.0",
     "@biomejs/biome": "^2.4.10",
     "@changesets/cli": "^2.29.7",
     "bun-types": "^1.3.12",
     "husky": "^9.1.7",
+    "knip": "^6.5.0",
     "lint-staged": "^16.4.0",
     "turbo": "^2.7.0"
   },
