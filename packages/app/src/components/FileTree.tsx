@@ -287,7 +287,6 @@ const FileTreeNode: FC<{
   treeActionsLocked: boolean;
   /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
   workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
-  onNavigate: (targetPath: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
   onCommitRename: (target: FileTreeTarget) => void;
@@ -312,7 +311,6 @@ const FileTreeNode: FC<{
   busyPath,
   treeActionsLocked,
   workspace,
-  onNavigate,
   onStartRename,
   onEditingValueChange,
   onCommitRename,
@@ -339,14 +337,13 @@ const FileTreeNode: FC<{
 
   useEffect(() => {
     if (!isEditing) return;
-    const id = setTimeout(() => {
+    requestAnimationFrame(() => {
       const el = renameInputRef.current;
       if (el) {
         el.focus();
         el.select();
       }
-    }, 0);
-    return () => clearTimeout(id);
+    });
   }, [isEditing]);
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
@@ -458,12 +455,16 @@ const FileTreeNode: FC<{
     </div>
   );
 
+  function handleClick() {
+    navigateTo(node.path);
+  }
+
   const triggerContent = isEditing ? (
     editingContent
   ) : isFile ? (
     <ButtonToUse
       isActive={isActive}
-      onClick={() => onNavigate(node.path)}
+      onClick={handleClick}
       className="cursor-pointer"
       aria-current={isActive ? 'page' : undefined}
     >
@@ -475,7 +476,7 @@ const FileTreeNode: FC<{
         isActive={isActive}
         className="w-full cursor-pointer pr-8"
         aria-current={isActive ? 'page' : undefined}
-        onClick={() => onNavigate(node.path)}
+        onClick={handleClick}
       >
         {displayContent}
       </ButtonToUse>
@@ -484,9 +485,12 @@ const FileTreeNode: FC<{
         className={cn('top-1', expanded && 'rotate-90')}
         aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
         aria-expanded={expanded}
-        onClick={(event) => {
-          event.preventDefault();
+        onPointerDown={(event) => {
+          // The row wrapper is the draggable source. Stop the chevron's
+          // pointer-down here so expand/collapse never arms a drag gesture.
           event.stopPropagation();
+        }}
+        onClick={() => {
           onToggle(node.path);
         }}
       >
@@ -507,6 +511,8 @@ const FileTreeNode: FC<{
           )}
           {...(!isEditing && listeners)}
           {...(!isEditing && attributes)}
+          // Disable double tab
+          tabIndex={undefined}
         >
           {triggerContent}
         </ContextMenuTrigger>
@@ -523,10 +529,8 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) {
-                    preventFocusReturnRef.current = true;
-                    onStartCreating('file', node.path);
-                  }
+                  preventFocusReturnRef.current = true;
+                  onStartCreating('file', node.path);
                 }}
               >
                 <SquarePen aria-hidden="true" />
@@ -535,10 +539,8 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) {
-                    preventFocusReturnRef.current = true;
-                    onStartCreating('folder', node.path);
-                  }
+                  preventFocusReturnRef.current = true;
+                  onStartCreating('folder', node.path);
                 }}
               >
                 <FolderPlus aria-hidden="true" />
@@ -565,10 +567,8 @@ const FileTreeNode: FC<{
           <ContextMenuItem
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) {
-                preventFocusReturnRef.current = true;
-                onStartRename(target);
-              }
+              preventFocusReturnRef.current = true;
+              onStartRename(target);
             }}
           >
             <Pencil aria-hidden="true" />
@@ -583,7 +583,6 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={!workspace}
                 onSelect={() => {
-                  if (!workspace) return;
                   const full = joinWorkspacePath(
                     workspace.contentDir,
                     relativePathForNode(node),
@@ -608,7 +607,7 @@ const FileTreeNode: FC<{
             variant="destructive"
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) onDelete(target);
+              onDelete(target);
             }}
           >
             <Trash2 aria-hidden="true" />
@@ -637,7 +636,6 @@ const FileTreeNode: FC<{
               busyPath={busyPath}
               treeActionsLocked={treeActionsLocked}
               workspace={workspace}
-              onNavigate={onNavigate}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
               onCommitRename={onCommitRename}
@@ -1289,9 +1287,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               busyPath={busyPath}
               treeActionsLocked={treeActionsLocked}
               workspace={workspace}
-              onNavigate={(targetPath) => {
-                navigateTo(targetPath);
-              }}
               onStartRename={(target) => {
                 setEditingPath(target.path);
                 setEditingValue(target.name);
