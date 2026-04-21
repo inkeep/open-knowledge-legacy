@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import simpleGit from 'simple-git';
-import { gcShadowBranches } from './shadow-branch-gc';
-import { commitWip, initShadowRepo, shadowGit, type WriterIdentity } from './shadow-repo';
+import { gcHistoryBranches } from './history-branch-gc';
+import { commitWip, historyGit, initHistoryRepo, type WriterIdentity } from './history-repo';
 
 let tmpDir: string;
 
@@ -23,7 +23,7 @@ const writer: WriterIdentity = {
   email: 'nick@test.com',
 };
 
-describe('gcShadowBranches', () => {
+describe('gcHistoryBranches', () => {
   test('retains shadow branches that match project branches', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(resolve(projectRoot, 'content'), { recursive: true });
@@ -37,10 +37,10 @@ describe('gcShadowBranches', () => {
     await git.add('.');
     await git.commit('Initial');
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
     await commitWip(shadow, writer, 'content', 'WIP on main', 'main');
 
-    const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
+    const result = await gcHistoryBranches(shadow, resolve(projectRoot, '.git'));
 
     expect(result.retainedBranches).toContain('main');
     expect(result.deletedBranches).toHaveLength(0);
@@ -59,11 +59,11 @@ describe('gcShadowBranches', () => {
     await git.add('.');
     await git.commit('Initial');
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
 
     // Create WIP ref for a branch that doesn't exist in project
     // Use a backdated commit to exceed grace period
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     writeFileSync(resolve(projectRoot, 'content/intro.md'), '# Feature content\n');
     const tmpIndex = resolve(shadow.gitDir, 'index-test-gc');
     await sg
@@ -90,7 +90,7 @@ describe('gcShadowBranches', () => {
     ).trim();
     await sg.raw('update-ref', `refs/wip/deleted-feature/${writer.id}`, commitSha);
 
-    const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
+    const result = await gcHistoryBranches(shadow, resolve(projectRoot, '.git'));
 
     expect(result.deletedBranches).toContain('deleted-feature');
   });
@@ -108,8 +108,8 @@ describe('gcShadowBranches', () => {
     await git.add('.');
     await git.commit('Initial');
 
-    const shadow = await initShadowRepo(projectRoot);
-    const sg = shadowGit(shadow);
+    const shadow = await initHistoryRepo(projectRoot);
+    const sg = historyGit(shadow);
 
     // Create checkpoint ref for a branch that no longer exists
     writeFileSync(resolve(projectRoot, 'content/intro.md'), '# Checkpoint\n');
@@ -126,7 +126,7 @@ describe('gcShadowBranches', () => {
     await sg.raw('update-ref', 'refs/checkpoints/deleted-branch/abc123', cpSha);
 
     // Run GC — checkpoint should survive
-    await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
+    await gcHistoryBranches(shadow, resolve(projectRoot, '.git'));
 
     const cpRef = (await sg.raw('rev-parse', 'refs/checkpoints/deleted-branch/abc123')).trim();
     expect(cpRef).toBe(cpSha);
@@ -145,7 +145,7 @@ describe('gcShadowBranches', () => {
     await git.add('.');
     await git.commit('Initial');
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
 
     // Create WIP on 'old-name' branch
     const _wipSha = await commitWip(shadow, writer, 'content', 'WIP on old-name', 'old-name');
@@ -157,7 +157,7 @@ describe('gcShadowBranches', () => {
     // Make old-name's WIP ref point to a commit whose SHA we can match
     // The project's new-name points at HEAD commit
 
-    const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
+    const result = await gcHistoryBranches(shadow, resolve(projectRoot, '.git'));
 
     // old-name has no project branch → should be detected as orphan
     // new-name exists in project but not in shadow → candidate for rename
@@ -177,9 +177,9 @@ describe('gcShadowBranches', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
 
-    const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
+    const result = await gcHistoryBranches(shadow, resolve(projectRoot, '.git'));
 
     expect(result.deletedBranches).toHaveLength(0);
     expect(result.renamedBranches).toHaveLength(0);

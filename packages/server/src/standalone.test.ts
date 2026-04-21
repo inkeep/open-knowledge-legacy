@@ -4,13 +4,13 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as Y from 'yjs';
+import { historyGit, initHistoryRepo } from './history-repo.ts';
 import { loggerFactory, type PinoLogger } from './logger.ts';
 import {
   createManagedRenameRecoveryJournal,
   managedRenameJournalPath,
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
-import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer, type ServerInstance } from './standalone.ts';
 
 // ─── CaptureLogger infrastructure ───────────────────────────────────────────
@@ -168,7 +168,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const shadowHandle = await initShadowRepo(projectDir);
+    const historyHandle = await initHistoryRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -176,7 +176,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      shadowRepo: shadowHandle,
+      historyRepo: historyHandle,
     });
     await server.ready;
 
@@ -195,8 +195,8 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     await server.destroy();
 
-    // Verify L2 git commit landed in shadow repo
-    const sg = shadowGit(shadowHandle);
+    // Verify L2 git commit landed in history repo
+    const sg = historyGit(historyHandle);
     const refSha = (await sg.raw('rev-parse', 'refs/wip/main/server')).trim();
     expect(refSha).toBeTruthy();
   });
@@ -208,7 +208,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const shadowHandle = await initShadowRepo(projectDir);
+    const historyHandle = await initHistoryRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -216,7 +216,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       contentRoot: 'content',
       quiet: true,
       destroyTimeoutMs: 500, // D11: fast timeout for CI — not the 10s default
-      shadowRepo: shadowHandle,
+      historyRepo: historyHandle,
     });
     await server.ready;
 
@@ -265,9 +265,9 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     );
 
     // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. The in-memory Y.Doc
-    // state was preserved to <shadow-gitDir>/rescue/<docName>.md so the user
+    // state was preserved to <history-gitDir>/rescue/<docName>.md so the user
     // can recover via the existing /api/rescue endpoints.
-    const rescuePath = join(shadowHandle.gitDir, 'rescue', 'pathological-doc.md');
+    const rescuePath = join(historyHandle.gitDir, 'rescue', 'pathological-doc.md');
     expect(existsSync(rescuePath)).toBe(true);
     expect(readFileSync(rescuePath, 'utf-8')).toContain('will not be flushed');
 

@@ -1,8 +1,8 @@
 /**
- * Shadow-repo layout helpers — shared between CLI (read path) and server
+ * History-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The shadow repo at `.git/openknowledge/` (integrated mode, when the project
+ * The history repo at `.git/openknowledge/` (integrated mode, when the project
  * has its own `.git/`) or `.openknowledge/` (standalone mode) is OK's
  * attribution journal. Its on-disk layout is a documented invariant:
  *
@@ -51,25 +51,25 @@ export interface ParsedWriter {
 const WRITER_ID_RE = /^(human-[^/]+|agent-[^/]+|upstream|server)$/;
 
 /** Mode of the shadow-repo location; determined by whether the project has its own `.git/`. */
-export type ShadowRepoMode = 'integrated' | 'standalone';
+export type HistoryRepoMode = 'integrated' | 'standalone';
 
-export interface ResolvedShadowDir {
-  /** Absolute path where the shadow repo lives (or would live, if not yet initialized). */
+export interface ResolvedHistoryDir {
+  /** Absolute path where the history repo lives (or would live, if not yet initialized). */
   path: string;
-  mode: ShadowRepoMode;
+  mode: HistoryRepoMode;
 }
 
 /**
  * Resolve the shadow-repo bare git dir's target path for a project — WITHOUT
- * checking whether it exists yet. Used by init (`packages/server/src/shadow-repo.ts`)
- * to pick where to create the repo, and internally by `getShadowRepoPath`.
+ * checking whether it exists yet. Used by init (`packages/server/src/history-repo.ts`)
+ * to pick where to create the repo, and internally by `getHistoryRepoPath`.
  *
- * Rule matches server's historical `initShadowRepo` logic:
+ * Rule matches server's historical `initHistoryRepo` logic:
  *   - Integrated mode (`<projectRoot>/.git/openknowledge/`) when the project
  *     has its own `.git/` directory
  *   - Standalone mode (`<projectRoot>/.openknowledge/`) otherwise
  */
-export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
+export function resolveHistoryDir(projectRoot: string): ResolvedHistoryDir {
   const abs = resolve(projectRoot);
   const projectGit = resolve(abs, '.git');
   try {
@@ -83,14 +83,14 @@ export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
 }
 
 /**
- * Return the shadow-repo bare git dir's path, or `null` when the shadow repo
+ * Return the shadow-repo bare git dir's path, or `null` when the history repo
  * has not been initialized yet (HEAD file absent).
  *
  * Consumers that need the path regardless of existence should use
- * `resolveShadowDir` directly.
+ * `resolveHistoryDir` directly.
  */
-export function getShadowRepoPath(projectRoot: string): string | null {
-  const { path } = resolveShadowDir(projectRoot);
+export function getHistoryRepoPath(projectRoot: string): string | null {
+  const { path } = resolveHistoryDir(projectRoot);
   return existsSync(resolve(path, 'HEAD')) ? path : null;
 }
 
@@ -108,7 +108,7 @@ export function getWipRefPattern(branch: string): string {
  * Matches the shape written by contributor-tracker.ts's formatContributorsFrom().
  * v is optional for backward compatibility with pre-versioned commit messages.
  */
-export interface ShadowContributor {
+export interface HistoryContributor {
   v?: number;
   id: string;
   name: string;
@@ -124,9 +124,9 @@ const OK_CONTRIBUTORS_PREFIX = 'ok-contributors: ';
  * raw message text via `%B`). Skips blank lines and malformed JSON silently.
  * Returns an empty array when the body is empty or contains no contributor lines.
  */
-export function parseContributors(body: string): ShadowContributor[] {
+export function parseContributors(body: string): HistoryContributor[] {
   if (!body) return [];
-  const contributors: ShadowContributor[] = [];
+  const contributors: HistoryContributor[] = [];
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith(OK_CONTRIBUTORS_PREFIX)) continue;
@@ -147,7 +147,7 @@ export function parseContributors(body: string): ShadowContributor[] {
         (!('colorSeed' in parsed) ||
           typeof (parsed as Record<string, unknown>).colorSeed === 'string')
       ) {
-        contributors.push(parsed as ShadowContributor);
+        contributors.push(parsed as HistoryContributor);
       }
     } catch {
       // skip malformed lines

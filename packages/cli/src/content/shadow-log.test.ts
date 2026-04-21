@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import {
   commitUpstreamImport,
   commitWip,
-  initShadowRepo,
+  initHistoryRepo,
   type WriterIdentity,
 } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
@@ -39,7 +39,7 @@ describe('readShadowLog — absent shadow repo', () => {
   test('returns source="shadow-repo-absent" and empty commits', async () => {
     const project = await bootstrapProject();
     const result = await readShadowLog(project, 'articles/auth.md');
-    expect(result.source).toBe('shadow-repo-absent');
+    expect(result.source).toBe('history-repo-absent');
     expect(result.commits).toEqual([]);
   });
 
@@ -47,14 +47,14 @@ describe('readShadowLog — absent shadow repo', () => {
     const project = resolve(tmpDir, 'not-git');
     mkdirSync(project, { recursive: true });
     const result = await readShadowLog(project, 'articles/auth.md');
-    expect(result.source).toBe('shadow-repo-absent');
+    expect(result.source).toBe('history-repo-absent');
   });
 });
 
 describe('readShadowLog — single writer ref', () => {
   test('single commit on an agent ref surfaces with classification=agent', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'auth.md'), '# auth v1\n');
@@ -63,7 +63,7 @@ describe('readShadowLog — single writer ref', () => {
     await commitWip(shadow, writer, contentDir, 'add auth doc', branch);
 
     const { commits, source } = await readShadowLog(project, 'content/auth.md', 5);
-    expect(source).toBe('shadow-repo');
+    expect(source).toBe('history-repo');
     expect(commits.length).toBe(1);
     expect(commits[0].writerId).toBe('agent-x');
     expect(commits[0].writerName).toBe('Agent X');
@@ -77,7 +77,7 @@ describe('readShadowLog — single writer ref', () => {
 
   test('human-prefixed writer id → classification=human', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'auth.md'), '# v1\n');
@@ -94,7 +94,7 @@ describe('readShadowLog — single writer ref', () => {
 describe('readShadowLog — multi-writer merge', () => {
   test('commits from multiple writer refs merge by committer date descending', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     const authPath = resolve(contentDir, 'auth.md');
@@ -125,7 +125,7 @@ describe('readShadowLog — multi-writer merge', () => {
 
   test('limit caps the merged result globally', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     const authPath = resolve(contentDir, 'auth.md');
@@ -148,7 +148,7 @@ describe('readShadowLog — multi-writer merge', () => {
 describe('readShadowLog — upstream and empty cases', () => {
   test('upstream-imported commit → classification=upstream, isAgent=null', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'auth.md'), '# upstream version\n');
@@ -167,7 +167,7 @@ describe('readShadowLog — upstream and empty cases', () => {
 
   test('shadow repo present but no edits on path → source="shadow-repo", commits=[]', async () => {
     const project = await bootstrapProject();
-    const shadow = await initShadowRepo(project);
+    const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'other.md'), 'other\n');
@@ -176,7 +176,7 @@ describe('readShadowLog — upstream and empty cases', () => {
     await commitWip(shadow, writer, contentDir, 'edit other', branch);
 
     const { commits, source } = await readShadowLog(project, 'content/auth.md', 5);
-    expect(source).toBe('shadow-repo');
+    expect(source).toBe('history-repo');
     expect(commits).toEqual([]);
   });
 });

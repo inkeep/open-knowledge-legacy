@@ -73,7 +73,7 @@ export {
 
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
-// subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
+// subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/history-repo-layout'`.
 // (D22/FR20 — CLI read path and server write path are the only consumers.)
 
 // Bridge — observer/CRDT-bridge shared utilities (precedent #14)
@@ -106,7 +106,7 @@ export type {
   DiffLine,
   DiffLineType,
   EntryType,
-  ShadowContributor,
+  HistoryContributor,
   TimelineEntry,
 } from './types/timeline.ts';
 

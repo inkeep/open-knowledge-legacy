@@ -1,5 +1,5 @@
 /**
- * Shadow-root writer lock — exclusive access to a shadow repo.
+ * Shadow-root writer lock — exclusive access to a history repo.
  *
  * Only one active writer instance may mutate a given shadow root at a time.
  * The lock file at `<shadowDir>/lock` contains JSON metadata for stale
@@ -19,7 +19,7 @@ export interface LockMetadata {
 }
 
 /**
- * Acquire an exclusive writer lock on a shadow repo directory.
+ * Acquire an exclusive writer lock on a history repo directory.
  *
  * - If no lock exists, creates one and returns the lock path.
  * - If a lock exists with a dead owner, replaces it with a warning log.
@@ -34,7 +34,7 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
       existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as LockMetadata;
     } catch {
       // Corrupt lock file — treat as stale
-      console.warn(`[shadow-lock] Corrupt lock file at ${lockPath} — replacing`);
+      console.warn(`[history-lock] Corrupt lock file at ${lockPath} — replacing`);
     }
 
     if (existing) {
@@ -43,14 +43,14 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
         // Same process re-acquiring — idempotent, fall through to rewrite
       } else if (sameHost && isProcessAlive(existing.pid)) {
         throw new Error(
-          `Shadow repo at ${shadowDir} is locked by another writer ` +
+          `History repo at ${shadowDir} is locked by another writer ` +
             `(pid=${existing.pid}, worktree=${existing.worktreeRoot}, ` +
             `started=${existing.startedAt}). ` +
             `Only one active writer instance may mutate a given shadow root at a time.`,
         );
       } else {
         console.warn(
-          `[shadow-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
+          `[history-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
         );
       }
     }
@@ -68,7 +68,7 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
 }
 
 /**
- * Release the shadow-root writer lock.
+ * Release the history-root writer lock.
  *
  * Safe to call multiple times — silently no-ops if lock doesn't exist.
  */

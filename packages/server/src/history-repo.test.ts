@@ -3,22 +3,22 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { parseCheckpoint } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint } from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
   commitWip,
+  type HistoryHandle,
+  historyGit,
   type InMemoryCheckpointParams,
-  initShadowRepo,
+  initHistoryRepo,
   type ParkableDoc,
   parkBranch,
   readParkedState,
-  type ShadowHandle,
   saveInMemoryCheckpoint,
   saveVersion,
-  shadowGit,
   type WriterIdentity,
-} from './shadow-repo';
+} from './history-repo';
 
 let tmpDir: string;
 
@@ -30,7 +30,7 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
-describe('initShadowRepo', () => {
+describe('initHistoryRepo', () => {
   test('creates shadow at .git/openknowledge/ when project .git/ exists', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
@@ -41,7 +41,7 @@ describe('initShadowRepo', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
 
     expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/openknowledge'));
     expect(shadow.workTree).toBe(projectRoot);
@@ -65,7 +65,7 @@ describe('initShadowRepo', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    await initShadowRepo(projectRoot);
+    await initHistoryRepo(projectRoot);
 
     expect(existsSync(resolve(projectRoot, '.gitignore'))).toBe(false);
   });
@@ -74,7 +74,7 @@ describe('initShadowRepo', () => {
     const projectRoot = resolve(tmpDir, 'standalone');
     mkdirSync(projectRoot, { recursive: true });
 
-    const shadow = await initShadowRepo(projectRoot);
+    const shadow = await initHistoryRepo(projectRoot);
 
     expect(shadow.gitDir).toBe(resolve(projectRoot, '.openknowledge'));
     expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
@@ -93,8 +93,8 @@ describe('initShadowRepo', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    const shadow1 = await initShadowRepo(projectRoot);
-    const shadow2 = await initShadowRepo(projectRoot);
+    const shadow1 = await initHistoryRepo(projectRoot);
+    const shadow2 = await initHistoryRepo(projectRoot);
 
     expect(shadow1.gitDir).toBe(shadow2.gitDir);
     expect(existsSync(resolve(shadow2.gitDir, 'HEAD'))).toBe(true);
@@ -103,7 +103,7 @@ describe('initShadowRepo', () => {
 
 describe('commitWip', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
   let contentDir: string;
 
   const writer: WriterIdentity = {
@@ -123,7 +123,7 @@ describe('commitWip', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('creates commit on refs/wip/<branch>/<writer-id>', async () => {
@@ -134,7 +134,7 @@ describe('commitWip', () => {
     expect(sha).toHaveLength(40);
 
     // Verify ref exists (default branch = 'main')
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const refSha = (await sg.raw('rev-parse', `refs/wip/main/${writer.id}`)).trim();
     expect(refSha).toBe(sha);
 
@@ -148,7 +148,7 @@ describe('commitWip', () => {
 
     const sha = await commitWip(shadow, writer, 'content/docs', 'WIP: check author');
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
     const authorEmail = (await sg.raw('log', '-1', '--format=%ae', sha)).trim();
     expect(authorName).toBe(writer.name);
@@ -168,7 +168,7 @@ describe('commitWip', () => {
 
     expect(sha2).not.toBe(sha1);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const parent = (await sg.raw('log', '-1', '--format=%P', sha2)).trim();
     expect(parent).toBe(sha1);
   });
@@ -186,7 +186,7 @@ describe('commitWip', () => {
     writeFileSync(resolve(contentDir, 'guide.md'), '# Agent guide\n');
     const agentSha = await commitWip(shadow, agent, 'content/docs', 'WIP: agent edit');
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const humanRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
     const agentRef = (await sg.raw('rev-parse', 'refs/wip/main/agent-cursor')).trim();
 
@@ -207,7 +207,7 @@ describe('commitWip', () => {
       'feature/xyz',
     );
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const mainRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
     const featureRef = (await sg.raw('rev-parse', 'refs/wip/feature/xyz/human-nick')).trim();
 
@@ -219,7 +219,7 @@ describe('commitWip', () => {
 
 describe('commitUpstreamImport', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
   let contentDir: string;
 
   beforeEach(async () => {
@@ -233,7 +233,7 @@ describe('commitUpstreamImport', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('creates commit on refs/wip/<branch>/upstream', async () => {
@@ -244,7 +244,7 @@ describe('commitUpstreamImport', () => {
     expect(sha).toHaveLength(40);
 
     // Default branch = 'main'
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const refSha = (await sg.raw('rev-parse', 'refs/wip/main/upstream')).trim();
     expect(refSha).toBe(sha);
   });
@@ -259,7 +259,7 @@ describe('commitUpstreamImport', () => {
       '1122334455667788',
     );
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
     expect(msg).toBe('upstream: import from aabbccdd..11223344');
   });
@@ -269,7 +269,7 @@ describe('commitUpstreamImport', () => {
 
     const sha = await commitUpstreamImport(shadow, 'content/docs', null, '1122334455667788');
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
     expect(msg).toBe('upstream: initial import at 11223344');
   });
@@ -279,7 +279,7 @@ describe('commitUpstreamImport', () => {
 
     const sha = await commitUpstreamImport(shadow, 'content/docs', null, 'deadbeef');
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
     expect(authorName).toBe('upstream');
   });
@@ -287,7 +287,7 @@ describe('commitUpstreamImport', () => {
 
 describe('parkBranch', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
 
   beforeEach(async () => {
     projectRoot = resolve(tmpDir, 'project');
@@ -298,7 +298,7 @@ describe('parkBranch', () => {
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
 
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('creates park commit with Y.Doc state and disk snapshot', async () => {
@@ -315,7 +315,7 @@ describe('parkBranch', () => {
     if (!sha) throw new Error('parkBranch returned null');
 
     // Verify commit message starts with park:
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
     expect(msg.startsWith('park:')).toBe(true);
 
@@ -363,7 +363,7 @@ describe('parkBranch', () => {
     const sha = await parkBranch(shadow, 'main', 'sess1', docs);
     expect(sha).toHaveLength(40);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const introContent = (await sg.raw('show', `${sha}:intro`)).trim();
     const guideContent = (await sg.raw('show', `${sha}:guide`)).trim();
     expect(introContent).toBe('# Intro');
@@ -373,7 +373,7 @@ describe('parkBranch', () => {
 
 describe('saveVersion', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
   let contentDir: string;
 
   const human: WriterIdentity = {
@@ -404,14 +404,14 @@ describe('saveVersion', () => {
     await git.add('.');
     await git.commit('Initial commit');
 
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('creates checkpoint ref in shadow', async () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
     const result = await saveVersion(shadow, 'content/docs', [human]);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
     expect(checkpointSha).toHaveLength(40);
     expect(result.checkpointRef).toBe(`refs/checkpoints/main/${checkpointSha}`);
@@ -426,7 +426,7 @@ describe('saveVersion', () => {
     await commitWip(shadow, human, 'content/docs', 'WIP: edit');
 
     // Verify WIP ref exists
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const wipBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
     expect(wipBefore).toHaveLength(40);
 
@@ -452,7 +452,7 @@ describe('saveVersion', () => {
 
     const result = await saveVersion(shadow, 'content/docs', [human, agent]);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
 
     // Checkpoint commit should list both WIP SHAs as parents
     const parentLine = (await sg.raw('log', '-1', '--format=%P', result.checkpointRef)).trim();
@@ -485,7 +485,7 @@ describe('saveVersion', () => {
     await commitWip(shadow, human, 'content/docs', 'WIP: v1');
     const result1 = await saveVersion(shadow, 'content/docs', [human]);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const checkpoint1Sha = (await sg.raw('rev-parse', result1.checkpointRef)).trim();
 
     // Second save version with NO WIP activity since last checkpoint
@@ -501,7 +501,7 @@ describe('saveVersion', () => {
 
 describe('saveVersion — standalone mode', () => {
   let standaloneRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
   let contentDir: string;
 
   const human: WriterIdentity = {
@@ -516,7 +516,7 @@ describe('saveVersion — standalone mode', () => {
     contentDir = resolve(standaloneRoot, 'content/docs');
     mkdirSync(contentDir, { recursive: true });
 
-    shadow = await initShadowRepo(standaloneRoot);
+    shadow = await initHistoryRepo(standaloneRoot);
   });
 
   test('creates shadow checkpoint', async () => {
@@ -526,7 +526,7 @@ describe('saveVersion — standalone mode', () => {
     const result = await saveVersion(shadow, 'content/docs', [human]);
 
     // Shadow checkpoint ref exists and is valid
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
     expect(checkpointSha).toHaveLength(40);
 
@@ -544,7 +544,7 @@ describe('saveVersion — standalone mode', () => {
 
     await saveVersion(shadow, 'content/docs', [human]);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     let wipExists = true;
     try {
       await sg.raw('rev-parse', 'refs/wip/main/human-nick');
@@ -560,7 +560,7 @@ describe('saveVersion — standalone mode', () => {
 
     const result = await saveVersion(shadow, 'content/docs', [human]);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const actualSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
 
     // The ref name must end with the shadow commit's own SHA
@@ -570,7 +570,7 @@ describe('saveVersion — standalone mode', () => {
 
 describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
 
   beforeEach(async () => {
     projectRoot = resolve(tmpDir, 'project');
@@ -580,7 +580,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     await git.init();
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('round-trips a bridge-merge-loss checkpoint — ref exists, parseCheckpoint recovers metadata', async () => {
@@ -596,7 +596,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
 
     // Ref was created and points at the returned sha
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
     expect(refSha).toBe(sha);
 
@@ -629,7 +629,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     };
 
     const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
     const parsed = parseCheckpoint(body);
     expect(parsed).not.toBeNull();
@@ -650,7 +650,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# hello\n');
     await commitWip(shadow, writer, 'content/docs', 'WIP: setup');
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const wipShaBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
 
     await saveInMemoryCheckpoint(shadow, 'content/docs', {
@@ -680,7 +680,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     const unique = new Set(results);
     expect(unique.size).toBe(5);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     for (const sha of results) {
       const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
       expect(refSha).toBe(sha);
@@ -697,7 +697,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
     ].join('\n');
 
     // parseContributors must still pick up Alice
-    const { parseContributors } = await import('@inkeep/open-knowledge-core/shadow-repo-layout');
+    const { parseContributors } = await import('@inkeep/open-knowledge-core/history-repo-layout');
     const contributors = parseContributors(body);
     expect(contributors).toHaveLength(1);
     expect(contributors[0]?.id).toBe('human-a');
@@ -710,7 +710,7 @@ describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
 
 describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)', () => {
   let projectRoot: string;
-  let shadow: ShadowHandle;
+  let shadow: HistoryHandle;
 
   beforeEach(async () => {
     projectRoot = resolve(tmpDir, 'gc-project');
@@ -720,11 +720,11 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
     await git.init();
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
-    shadow = await initShadowRepo(projectRoot);
+    shadow = await initHistoryRepo(projectRoot);
   });
 
   test('keeps only the most-recent N bridge-merge-loss refs per branch', async () => {
-    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
+    const { gcCheckpointRefs } = await import('./history-repo.ts');
     for (let i = 0; i < 7; i++) {
       await saveInMemoryCheckpoint(shadow, 'content/docs', {
         kind: 'bridge-merge-loss',
@@ -745,7 +745,7 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
     expect(result.deletedBridgeMergeLoss).toBe(4); // 7 - 3 kept
     expect(result.deletedExternalChangeRescue).toBe(0);
 
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
     const remaining = (
       await sg.raw('for-each-ref', '--format=%(refname)', 'refs/checkpoints/main/')
     )
@@ -769,7 +769,7 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
     // Sleep 5ms so the TTL check actually triggers.
     await new Promise((r) => setTimeout(r, 5));
 
-    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
+    const { gcCheckpointRefs } = await import('./history-repo.ts');
     const result = await gcCheckpointRefs(shadow, 'main', {
       maxBridgeMergeLoss: 50,
       maxExternalChangeRescue: 50,
@@ -780,8 +780,8 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
   });
 
   test('does NOT delete untyped Save-Version-style checkpoints', async () => {
-    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
-    const sg = shadowGit(shadow);
+    const { gcCheckpointRefs } = await import('./history-repo.ts');
+    const sg = historyGit(shadow);
 
     // Create an untyped Save-Version-style checkpoint: a commit under
     // `refs/checkpoints/main/<sha>` whose body has NO `ok-checkpoint-v1:`

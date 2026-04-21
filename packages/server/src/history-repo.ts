@@ -17,21 +17,21 @@ import {
   formatCheckpointBodyLine,
   type ParsedCheckpoint,
   parseCheckpoint,
-  resolveShadowDir,
-} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+  resolveHistoryDir,
+} from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit from 'simple-git';
-import { acquireLock, releaseLock } from './shadow-lock.ts';
+import { acquireLock, releaseLock } from './history-lock.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface ShadowHandle {
+export interface HistoryHandle {
   gitDir: string;
   workTree: string;
 }
 
-/** Mutable ref to a ShadowHandle — allows deferred initialization after construction. */
-export interface ShadowRef {
-  current: ShadowHandle | undefined;
+/** Mutable ref to a HistoryHandle — allows deferred initialization after construction. */
+export interface HistoryRef {
+  current: HistoryHandle | undefined;
 }
 
 export interface WriterIdentity {
@@ -45,7 +45,7 @@ export interface WriterIdentity {
 const GIT_TIMEOUT_MS = 30_000;
 
 /** Create a simple-git instance pointed at the shadow bare repo. */
-export function shadowGit(shadow: ShadowHandle) {
+export function historyGit(shadow: HistoryHandle) {
   return simpleGit({
     baseDir: shadow.workTree,
     timeout: { block: GIT_TIMEOUT_MS },
@@ -63,10 +63,10 @@ export function shadowGit(shadow: ShadowHandle) {
  * - Integrated mode (.git/ exists): creates .git/openknowledge/
  * - Standalone mode (no .git/):     creates .openknowledge/ and adds to .gitignore
  */
-export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
+export async function initHistoryRepo(projectRoot: string): Promise<HistoryHandle> {
   // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
   // read path and this server write path use exactly the same rule (D22).
-  const { path: shadowDir, mode } = resolveShadowDir(projectRoot);
+  const { path: shadowDir, mode } = resolveHistoryDir(projectRoot);
 
   // Skip init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
@@ -109,7 +109,7 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
  * Release the exclusive writer lock on a shadow repo.
  * Called during graceful shutdown.
  */
-export function destroyShadowRepo(shadow: ShadowHandle): void {
+export function destroyHistoryRepo(shadow: HistoryHandle): void {
   releaseLock(shadow.gitDir);
 }
 
@@ -124,7 +124,7 @@ export function destroyShadowRepo(shadow: ShadowHandle): void {
  * @param branch - Project branch name (e.g. 'main', 'feature/xyz'). When omitted, defaults to 'main'.
  */
 export async function commitWip(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   writer: WriterIdentity,
   contentRoot: string,
   message: string,
@@ -132,7 +132,7 @@ export async function commitWip(
 ): Promise<string> {
   const tmpIndex = resolve(shadow.gitDir, `index-wip-${writer.id}`);
   const ref = `refs/wip/${branch}/${writer.id}`;
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   const gitPathspec = contentRoot || '.';
 
   try {
@@ -145,7 +145,7 @@ export async function commitWip(
       if (msg.includes('unknown revision') || msg.includes('bad revision')) {
         // Expected: first commit on this ref — start fresh
       } else {
-        console.error(`[shadow-repo] Unexpected error seeding index for ${ref}:`, e);
+        console.error(`[history-repo] Unexpected error seeding index for ${ref}:`, e);
         throw e;
       }
     }
@@ -169,7 +169,7 @@ export async function commitWip(
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
-        console.error(`[shadow-repo] Unexpected error resolving ${ref}:`, e);
+        console.error(`[history-repo] Unexpected error resolving ${ref}:`, e);
         throw e;
       }
       // Expected: no parent — first commit on this ref
@@ -219,7 +219,7 @@ const UPSTREAM_WRITER: WriterIdentity = {
  * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function commitUpstreamImport(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   contentRoot: string,
   oldHead: string | null,
   newHead: string,
@@ -258,7 +258,7 @@ const SAFETY_WRITER: WriterIdentity = {
 };
 
 export async function safetyCheckpoint(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   contentRoot: string,
   params: SafetyCheckpointParams,
   branch = 'main',
@@ -272,7 +272,7 @@ export async function safetyCheckpoint(
 /**
  * Kind-discriminated parameters for {@link saveInMemoryCheckpoint}. Each
  * kind carries typed metadata that `parseCheckpoint` in
- * `@inkeep/open-knowledge-core/shadow-repo-layout` can round-trip.
+ * `@inkeep/open-knowledge-core/history-repo-layout` can round-trip.
  *
  * - `bridge-merge-loss` — Observer A Path B fired `mergeThreeWay`, the
  *   content-preservation post-condition flagged the result, and we want a
@@ -319,12 +319,12 @@ export type InMemoryCheckpointParams =
  * @returns the commit sha (which also appears in the ref name).
  */
 export async function saveInMemoryCheckpoint(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   contentRoot: string,
   params: InMemoryCheckpointParams,
 ): Promise<string> {
   const branch = params.branch ?? 'main';
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   const token = randomUUID();
   const tmpIndex = resolve(shadow.gitDir, `index-checkpoint-${token}`);
   const tmpBlobFile = resolve(shadow.gitDir, `tmp-checkpoint-blob-${token}`);
@@ -431,10 +431,10 @@ export interface TimelineRescueEntry {
  * on worktrees carrying earlier-iteration artifacts).
  */
 export async function listRescueCheckpoints(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   branch = 'main',
 ): Promise<TimelineRescueEntry[]> {
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   let refOutput: string;
   try {
     refOutput = await sg.raw(
@@ -560,7 +560,7 @@ export interface CheckpointGcResult {
  * ref count. Deletion is one `update-ref -d` per eligible ref.
  */
 export async function gcCheckpointRefs(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   branch = 'main',
   policy: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
 ): Promise<CheckpointGcResult> {
@@ -570,7 +570,7 @@ export async function gcCheckpointRefs(
     deletedExternalChangeRescue: 0,
     retained: 0,
   };
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   let refOutput: string;
   try {
     refOutput = await sg.raw(
@@ -710,14 +710,14 @@ export interface ParkableDoc {
  * Park commits use message prefix "park:" for identification.
  */
 export async function parkBranch(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   branch: string,
   sessionId: string,
   documents: ParkableDoc[],
 ): Promise<string | null> {
   if (documents.length === 0) return null;
 
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
   const ref = `refs/wip/${branch}/human-${sessionId}`;
 
@@ -801,12 +801,12 @@ export async function parkBranch(
  * Returns null if the ref doesn't exist or the latest commit isn't a park.
  */
 export async function readParkedState(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   branch: string,
   sessionId: string,
   docName: string,
 ): Promise<{ markdown: string; diskSnapshot: string } | null> {
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   const ref = `refs/wip/${branch}/human-${sessionId}`;
 
   // Check if ref exists — expected to be missing on first visit to a branch
@@ -826,7 +826,7 @@ export async function readParkedState(
     const diskSnapshot = (await sg.raw('show', `${refSha}:.park-base/${docName}`)).trim();
     return { markdown, diskSnapshot };
   } catch (e) {
-    console.error(`[shadow] Failed to read parked state for ${docName} from ${ref}:`, e);
+    console.error(`[history] Failed to read parked state for ${docName} from ${ref}:`, e);
     throw e;
   }
 }
@@ -845,12 +845,12 @@ export interface SaveVersionResult {
  * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function saveVersion(
-  shadow: ShadowHandle,
+  shadow: HistoryHandle,
   contentRoot: string,
   writers: WriterIdentity[],
   branch = 'main',
 ): Promise<SaveVersionResult> {
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
   // git rejects an empty string pathspec — use '.' (repo root) when
   // contentRoot is '' (content dir === project root).
   const gitPathspec = contentRoot || '.';

@@ -74,6 +74,15 @@ import {
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import {
+  type HistoryRef,
+  historyGit,
+  listRescueCheckpoints,
+  safetyCheckpoint,
+  saveVersion,
+  type TimelineRescueEntry,
+  type WriterIdentity,
+} from './history-repo.ts';
+import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
   expandTilde,
@@ -100,15 +109,6 @@ import {
   setReconciledBase,
 } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
-import {
-  listRescueCheckpoints,
-  type ShadowRef,
-  safetyCheckpoint,
-  saveVersion,
-  shadowGit,
-  type TimelineRescueEntry,
-  type WriterIdentity,
-} from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
 import { getDocumentHistory } from './timeline-query.ts';
@@ -436,7 +436,7 @@ export interface ApiExtensionOptions {
    * local dev mode.
    */
   enableTestRoutes?: boolean;
-  shadowRef?: ShadowRef;
+  historyRef?: HistoryRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
   /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
@@ -546,7 +546,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getFileIndex,
     getAliasMap,
     enableTestRoutes = false,
-    shadowRef,
+    historyRef,
     flushGitCommit,
     getCurrentBranch,
     contentRoot,
@@ -1816,7 +1816,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -1871,7 +1871,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const resolvedContentRoot = contentRoot ?? 'content';
       const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
-      console.log(`[shadow] checkpoint ${result.checkpointRef}`);
+      console.log(`[history] checkpoint ${result.checkpointRef}`);
 
       // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
@@ -1916,7 +1916,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -1985,7 +1985,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2001,7 +2001,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
 
     // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
@@ -2039,7 +2039,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2062,7 +2062,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
 
     try {
       // Get "to" content
@@ -2132,7 +2132,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2184,7 +2184,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
+    const sg = historyGit(shadow);
 
     const t0 = Date.now();
     try {
@@ -2383,7 +2383,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!shadowRef?.current) {
+    if (!historyRef?.current) {
       json(res, 200, []);
       return;
     }
@@ -2404,7 +2404,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
 
-    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
+    const rescueDir = resolve(historyRef.current.gitDir, 'rescue');
     if (existsSync(rescueDir)) {
       try {
         const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
@@ -2438,7 +2438,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
       const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      const timelineEntries = await listRescueCheckpoints(historyRef.current, branch);
       for (const t of timelineEntries) {
         entries.push({ ...t, source: 'timeline' });
       }
@@ -2459,7 +2459,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!shadowRef?.current) {
+    if (!historyRef?.current) {
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -2468,7 +2468,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
     // this first — the flat-file path is how shutdown-flush delivers the
     // most recent unflushed state, which is the most relevant artifact.
-    const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
+    const rescueBase = resolve(historyRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
       res.writeHead(400);
@@ -2500,13 +2500,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // docs stream directly from git object storage.
     try {
       const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      const timelineEntries = await listRescueCheckpoints(historyRef.current, branch);
       // Most recent for this doc
       const match = timelineEntries
         .filter((e) => e.docName === docName)
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
       if (match) {
-        const sg = shadowGit(shadowRef.current);
+        const sg = historyGit(historyRef.current);
         const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
         // The blob is the single entry; extract its object SHA.
         const firstLine = tree.split('\n')[0] ?? '';

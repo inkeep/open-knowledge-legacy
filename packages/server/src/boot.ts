@@ -48,7 +48,7 @@ export interface BootServerOptions
     | 'destroyTimeoutMs'
     | 'localOpCliArgs'
     | 'onAgentWrite'
-    | 'shadowRepo'
+    | 'historyRepo'
     | 'enableTestRoutes'
   > {
   /**
@@ -157,7 +157,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     commitDebounceMs: opts.commitDebounceMs,
     wipRef: opts.wipRef,
     enableTestRoutes: opts.enableTestRoutes,
-    shadowRepo: opts.shadowRepo,
+    historyRepo: opts.historyRepo,
     includePatterns: opts.includePatterns,
     excludePatterns: opts.excludePatterns,
     destroyTimeoutMs: opts.destroyTimeoutMs,

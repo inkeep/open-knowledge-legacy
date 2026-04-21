@@ -1,6 +1,6 @@
 /**
  * End-to-end probe: buildReadResult flowing through the shared enrichPath
- * → readShadowLog → shadow-repo bare git reads. Confirms agent/human
+ * → readShadowLog → history-repo bare git reads. Confirms agent/human
  * attribution lands in the rendered output (FR15/D12/D13/R3).
  *
  * Run via: `bun run packages/cli/scripts/probe-read-document.ts`
@@ -12,7 +12,7 @@ import { resolve } from 'node:path';
 import {
   commitUpstreamImport,
   commitWip,
-  initShadowRepo,
+  initHistoryRepo,
   type WriterIdentity,
 } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
@@ -50,7 +50,7 @@ OAuth is a protocol that...
   );
 
   // 2. Initialize the shadow repo and record some activity
-  const shadow = await initShadowRepo(root);
+  const shadow = await initHistoryRepo(root);
   const branch = (await simpleGit(root).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
   const agent: WriterIdentity = {
@@ -97,7 +97,7 @@ OAuth is a protocol that...
   );
 
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('  end-to-end probe: buildReadResult via shadow-repo');
+  console.log('  end-to-end probe: buildReadResult via history-repo');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(output);
   console.log('═══════════════════════════════════════════════════════════');

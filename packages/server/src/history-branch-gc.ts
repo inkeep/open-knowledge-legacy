@@ -1,7 +1,7 @@
 /**
  * Shadow branch garbage collection.
  *
- * Cleans up orphaned shadow branch refs when their corresponding project
+ * Cleans up orphaned history branch refs when their corresponding project
  * branches are deleted. Also handles branch rename detection.
  *
  * - WIP refs (refs/wip/<branch>/*) are deleted after 24h grace period
@@ -14,15 +14,15 @@
  *     + TTL (bridge-correctness review iteration 5).
  *   - `external-change-rescue` (reconcile-delete / branch-switch auto-
  *     rescue): same policy.
- *   See `gcCheckpointRefs` in `shadow-repo.ts` for the retention numbers
+ *   See `gcCheckpointRefs` in `history-repo.ts` for the retention numbers
  *   and SPEC §6 R7 for the motivation.
  * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
  */
 
-import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseWriterId } from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit from 'simple-git';
-import type { CheckpointRetentionPolicy, ShadowHandle } from './shadow-repo.ts';
-import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './shadow-repo.ts';
+import type { CheckpointRetentionPolicy, HistoryHandle } from './history-repo.ts';
+import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, historyGit } from './history-repo.ts';
 
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
@@ -48,7 +48,7 @@ interface GcResult {
 }
 
 /**
- * Extract unique branch names from shadow WIP refs.
+ * Extract unique branch names from history WIP refs.
  *
  * Refs are shaped: refs/wip/<branch>/<writer-id>
  * Branch names can contain slashes (e.g., feature/xyz).
@@ -106,17 +106,17 @@ async function listProjectBranches(projectGitDir: string): Promise<Set<string>> 
 }
 
 /**
- * Run garbage collection on shadow branch refs.
+ * Run garbage collection on history branch refs.
  *
- * Compares shadow WIP branch prefixes against project repo branches.
+ * Compares history WIP branch prefixes against project repo branches.
  * Orphaned branches (no corresponding project branch) have their WIP refs
  * deleted. Checkpoint refs are always retained.
  *
- * Branch rename detection: if an orphaned shadow branch has the same HEAD SHA
+ * Branch rename detection: if an orphaned history branch has the same HEAD SHA
  * as a new project branch (not in shadow), treat it as a rename and migrate refs.
  */
-export async function gcShadowBranches(
-  shadow: ShadowHandle,
+export async function gcHistoryBranches(
+  shadow: HistoryHandle,
   projectGitDir: string,
   checkpointRetention: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
 ): Promise<GcResult> {
@@ -127,9 +127,9 @@ export async function gcShadowBranches(
     checkpointGc: {},
   };
 
-  const sg = shadowGit(shadow);
+  const sg = historyGit(shadow);
 
-  // List all shadow WIP refs
+  // List all history WIP refs
   let wipRefsRaw: string;
   try {
     wipRefsRaw = (await sg.raw('for-each-ref', 'refs/wip/', '--format=%(refname)')).trim();
@@ -144,7 +144,7 @@ export async function gcShadowBranches(
   // Get project branches
   const projectBranches = await listProjectBranches(projectGitDir);
 
-  // Find orphaned shadow branches (not in project, not detached-*)
+  // Find orphaned history branches (not in project, not detached-*)
   const orphaned: string[] = [];
   for (const branch of shadowBranches) {
     if (branch.startsWith('detached-')) continue; // Handled separately
@@ -195,7 +195,7 @@ export async function gcShadowBranches(
                 await sg.raw('update-ref', newRef, sha);
                 await sg.raw('update-ref', '-d', oldRef);
               } catch (e) {
-                console.error(`[shadow-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
+                console.error(`[history-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
               }
             }
             result.renamedBranches.push({ from: orphanedBranch, to: newBranch });
@@ -235,7 +235,7 @@ export async function gcShadowBranches(
   }
 
   // Kind-aware checkpoint GC on every live project branch + every retained
-  // shadow branch (covers detached HEADs that accrued bridge-merge-loss
+  // history branch (covers detached HEADs that accrued bridge-merge-loss
   // checkpoints during their lifetime). `Save Version` untyped checkpoints
   // are never eligible — see `gcCheckpointRefs` JSDoc.
   const gcBranches = new Set<string>([...projectBranches, ...result.retainedBranches]);
@@ -255,7 +255,7 @@ export async function gcShadowBranches(
         };
       }
     } catch (err) {
-      console.warn(`[shadow-gc] checkpoint GC failed for branch ${branch}:`, err);
+      console.warn(`[history-gc] checkpoint GC failed for branch ${branch}:`, err);
     }
   }
 

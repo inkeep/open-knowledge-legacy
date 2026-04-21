@@ -22,11 +22,11 @@ import {
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
+import type { HistoryRef, WriterIdentity } from './history-repo.ts';
+import { commitWip, historyGit } from './history-repo.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
-import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
-import { commitWip, shadowGit } from './shadow-repo.ts';
 
 const log = getLogger('persistence');
 
@@ -37,7 +37,7 @@ export interface PersistenceOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /** Shadow repo ref — read at commit time so deferred init propagates. */
-  shadowRef?: ShadowRef;
+  historyRef?: HistoryRef;
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
@@ -131,7 +131,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     contentDir = contentDirRaw;
   }
   const projectDir = options?.projectDir ?? process.cwd();
-  const shadowRef = options?.shadowRef;
+  const historyRef = options?.historyRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
   const backlinkIndex = options?.backlinkIndex;
 
@@ -163,7 +163,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   async function commitToWipRef(): Promise<void> {
     // Read shadow ref at commit time (not construction time) so deferred init propagates
-    const shadow = shadowRef?.current;
+    const shadow = historyRef?.current;
     if (shadow) {
       // L2 commits go to shadow repo
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
@@ -197,7 +197,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }
 
     // Legacy path: commit to project repo (used when no shadow repo is configured)
-    const sg = shadowGit({
+    const sg = historyGit({
       gitDir: resolve(projectDir, '.git'),
       workTree: projectDir,
     });

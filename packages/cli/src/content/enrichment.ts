@@ -427,7 +427,7 @@ export async function enrichPath(
     fetchForwardLinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
     readShadowLog(deps.projectDir, relPath, historyDepth).catch(() => ({
       commits: [] as ShadowCommit[],
-      source: 'shadow-repo' as HistorySource,
+      source: 'history-repo' as HistorySource,
     })),
     readProjectGitLog(deps.projectDir, relPath, historyDepth).catch(() => ({
       commits: [] as GitCommit[],

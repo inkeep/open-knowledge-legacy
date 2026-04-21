@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
-  getShadowRepoPath,
+  getHistoryRepoPath,
   getWipRefPattern,
   parseCheckpoint,
   parseContributors,
   parseWriterId,
-} from './shadow-repo-layout.ts';
+} from './history-repo-layout.ts';
 
 let tmp: string;
 
@@ -172,23 +172,23 @@ describe('getWipRefPattern', () => {
   });
 });
 
-describe('getShadowRepoPath', () => {
+describe('getHistoryRepoPath', () => {
   test('returns null when no shadow repo exists', () => {
-    expect(getShadowRepoPath(tmp)).toBe(null);
+    expect(getHistoryRepoPath(tmp)).toBe(null);
   });
 
   test('prefers integrated mode when project has its own .git/', () => {
     const project = resolve(tmp, 'project');
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
+    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
   });
 
   test('falls back to standalone mode when no project .git/ exists', () => {
     const project = resolve(tmp, 'project');
     mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.openknowledge'));
+    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.openknowledge'));
   });
 
   test('prefers integrated over standalone when both exist', () => {
@@ -197,13 +197,13 @@ describe('getShadowRepoPath', () => {
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
     mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
+    expect(getHistoryRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
   });
 
   test('returns null when .git/openknowledge exists but HEAD is missing', () => {
     const project = resolve(tmp, 'project');
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    expect(getShadowRepoPath(project)).toBe(null);
+    expect(getHistoryRepoPath(project)).toBe(null);
   });
 
   test('returns null when the shadow dir is a file (not a directory)', () => {
@@ -211,7 +211,7 @@ describe('getShadowRepoPath', () => {
     mkdirSync(project, { recursive: true });
     writeFileSync(resolve(project, '.git'), 'not a dir');
     // Neither integrated nor standalone exists
-    expect(getShadowRepoPath(project)).toBe(null);
+    expect(getHistoryRepoPath(project)).toBe(null);
   });
 });
 

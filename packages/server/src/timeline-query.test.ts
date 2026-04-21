@@ -7,10 +7,10 @@ import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
   commitWip,
-  initShadowRepo,
+  initHistoryRepo,
   saveVersion,
   type WriterIdentity,
-} from './shadow-repo';
+} from './history-repo';
 import { getDocumentHistory } from './timeline-query';
 
 let tmpDir: string;
@@ -39,7 +39,7 @@ async function setup() {
   await git.add('.');
   await git.commit('Initial commit');
 
-  const shadow = await initShadowRepo(projectRoot);
+  const shadow = await initHistoryRepo(projectRoot);
   return { projectRoot, contentDir, shadow };
 }
 

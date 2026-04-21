@@ -40,13 +40,13 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { type HistoryHandle, saveInMemoryCheckpoint } from './history-repo.ts';
 import {
   incrementBridgeMergeCheckpointCreated,
   incrementBridgeMergeContentLoss,
   incrementServerObserverError,
   incrementServerObserverFire,
 } from './metrics.ts';
-import { type ShadowHandle, saveInMemoryCheckpoint } from './shadow-repo.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Origin constant
@@ -158,12 +158,12 @@ export function shouldRethrowBridgeMergeLoss(env: NodeJS.ProcessEnv = process.en
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Accessor for a `ShadowHandle` that may be lazy-initialized in the server
+ * Accessor for a `HistoryHandle` that may be lazy-initialized in the server
  * lifecycle. Observer A Path B's silent-checkpoint writer reads this
  * indirectly so a not-yet-ready shadow simply skips the checkpoint
  * (logging continues regardless — telemetry still records the violation).
  */
-export type ShadowAccessor = () => ShadowHandle | undefined;
+export type ShadowAccessor = () => HistoryHandle | undefined;
 
 /**
  * Accessor for the current project branch name; used in the

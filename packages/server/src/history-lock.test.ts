@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { acquireLock, type LockMetadata, releaseLock } from './shadow-lock';
+import { acquireLock, type LockMetadata, releaseLock } from './history-lock';
 
 let tmpDir: string;
 

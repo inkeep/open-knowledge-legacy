@@ -11,14 +11,14 @@
  * Spec: SPEC.md FR15 + FR17 + D18.
  */
 import { resolve } from 'node:path';
-import type { ShadowContributor } from '@inkeep/open-knowledge-core';
+import type { HistoryContributor } from '@inkeep/open-knowledge-core';
 import {
-  getShadowRepoPath,
+  getHistoryRepoPath,
   getWipRefPattern,
   parseContributors,
   parseWriterId,
   type WriterClassification,
-} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+} from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit, { type SimpleGit } from 'simple-git';
 
 export interface ShadowCommit {
@@ -45,13 +45,13 @@ export interface ShadowCommit {
   /** Project branch this commit was recorded against. */
   branch: string;
   /** Agent contributors parsed from the commit message body. Empty for pre-attribution commits. */
-  contributors: ShadowContributor[];
+  contributors: HistoryContributor[];
 }
 
 const GIT_TIMEOUT_MS = 5000;
 
 /** The three distinct historySource states per FR15. */
-export type HistorySource = 'shadow-repo' | 'shadow-repo-absent';
+export type HistorySource = 'history-repo' | 'history-repo-absent';
 
 interface ReadShadowLogResult {
   commits: ShadowCommit[];
@@ -133,7 +133,7 @@ async function logOnRef(
  * per-writer refs on the project's current branch, sorted by committer
  * date descending.
  *
- * Returns `{ commits: [], source: 'shadow-repo-absent' }` when the shadow
+ * Returns `{ commits: [], source: 'history-repo-absent' }` when the shadow
  * repo doesn't exist (project never initialized with OK) so agents can
  * distinguish "no repo" from "no edits on this path."
  */
@@ -142,11 +142,11 @@ export async function readShadowLog(
   relPath: string,
   limit = 5,
 ): Promise<ReadShadowLogResult> {
-  const shadowDir = getShadowRepoPath(projectDir);
-  if (!shadowDir) return { commits: [], source: 'shadow-repo-absent' };
+  const shadowDir = getHistoryRepoPath(projectDir);
+  if (!shadowDir) return { commits: [], source: 'history-repo-absent' };
 
   const branch = await currentProjectBranch(projectDir);
-  if (!branch) return { commits: [], source: 'shadow-repo' };
+  if (!branch) return { commits: [], source: 'history-repo' };
 
   const sg = openShadowGit(shadowDir, resolve(projectDir));
 
@@ -154,13 +154,13 @@ export async function readShadowLog(
   try {
     refsRaw = await sg.raw('for-each-ref', getWipRefPattern(branch), '--format=%(refname)');
   } catch {
-    return { commits: [], source: 'shadow-repo' };
+    return { commits: [], source: 'history-repo' };
   }
   const refs = refsRaw
     .split('\n')
     .map((r) => r.trim())
     .filter(Boolean);
-  if (refs.length === 0) return { commits: [], source: 'shadow-repo' };
+  if (refs.length === 0) return { commits: [], source: 'history-repo' };
 
   const perRef = await Promise.all(refs.map((ref) => logOnRef(sg, ref, relPath, branch, limit)));
   const commits = perRef
@@ -168,5 +168,5 @@ export async function readShadowLog(
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, limit);
 
-  return { commits, source: 'shadow-repo' };
+  return { commits, source: 'history-repo' };
 }

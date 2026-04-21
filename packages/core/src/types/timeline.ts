@@ -1,6 +1,6 @@
-import type { ParsedCheckpoint, ShadowContributor } from '../shadow-repo-layout.ts';
+import type { HistoryContributor, ParsedCheckpoint } from '../history-repo-layout.ts';
 
-export type { ParsedCheckpoint, ShadowContributor };
+export type { HistoryContributor, ParsedCheckpoint };
 
 /** Entry type classification — derived from shadow repo commit message prefix. */
 export type EntryType = 'checkpoint' | 'wip' | 'upstream';
@@ -14,7 +14,7 @@ export interface TimelineEntry {
   type: EntryType;
   message: string;
   /** Agent contributors parsed from the WIP commit message body. Empty for pre-attribution commits. */
-  contributors: ShadowContributor[];
+  contributors: HistoryContributor[];
   /**
    * Structured checkpoint metadata parsed from the `ok-checkpoint-v1:` body line.
    * Present only for `type === 'checkpoint'` rows produced by `saveInMemoryCheckpoint`

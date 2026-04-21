@@ -67,6 +67,27 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
+  commitUpstreamImport,
+  commitWip,
+  DEFAULT_CHECKPOINT_RETENTION,
+  gcCheckpointRefs,
+  type HistoryHandle,
+  type HistoryRef,
+  historyGit,
+  type InMemoryCheckpointParams,
+  initHistoryRepo,
+  listRescueCheckpoints,
+  type SafetyCheckpointParams,
+  type SaveVersionResult,
+  safetyCheckpoint,
+  saveInMemoryCheckpoint,
+  saveVersion,
+  type TimelineRescueEntry,
+  type WriterIdentity,
+} from './history-repo.ts';
+export {
   type AttachIdleShutdownOptions,
   attachIdleShutdown,
   type IdleShutdownHandle,
@@ -138,27 +159,6 @@ export {
   type ServerObserverExtensionOptions,
 } from './server-observer-extension.ts';
 export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
-export {
-  type CheckpointGcResult,
-  type CheckpointRetentionPolicy,
-  commitUpstreamImport,
-  commitWip,
-  DEFAULT_CHECKPOINT_RETENTION,
-  gcCheckpointRefs,
-  type InMemoryCheckpointParams,
-  initShadowRepo,
-  listRescueCheckpoints,
-  type SafetyCheckpointParams,
-  type SaveVersionResult,
-  type ShadowHandle,
-  type ShadowRef,
-  safetyCheckpoint,
-  saveInMemoryCheckpoint,
-  saveVersion,
-  shadowGit,
-  type TimelineRescueEntry,
-  type WriterIdentity,
-} from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   acquireUiLock,

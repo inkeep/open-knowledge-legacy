@@ -20,11 +20,11 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
+  type HistoryRef,
   handleCollabSocketError,
-  initShadowRepo,
+  initHistoryRepo,
   readBranchFromHead,
   releaseServerLock,
-  type ShadowRef,
   SYSTEM_DOC_NAME,
   startWatcher,
   updateServerLockPort,
@@ -139,11 +139,11 @@ console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
 // Shadow repo — initialized lazily. Deferred ref pattern matches standalone.ts.
-const shadowRef: ShadowRef = { current: undefined };
+const historyRef: HistoryRef = { current: undefined };
 if (!isTestIsolated) {
-  initShadowRepo(PROJECT_ROOT)
+  initHistoryRepo(PROJECT_ROOT)
     .then((shadow) => {
-      shadowRef.current = shadow;
+      historyRef.current = shadow;
       console.log(`[dev] Shadow repo initialized at ${shadow.gitDir}`);
     })
     .catch((e) => {
@@ -186,7 +186,7 @@ try {
     projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
     contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
     gitEnabled: !isTestIsolated,
-    shadowRef,
+    historyRef,
     backlinkIndex,
     getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
   });
@@ -215,7 +215,7 @@ try {
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
       enableTestRoutes: true,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-      shadowRef,
+      historyRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
@@ -229,7 +229,7 @@ try {
     createServerObserverExtension({
       mdManager: pluginMdManager,
       schema: pluginSchema,
-      shadowRef,
+      historyRef,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
     }),
