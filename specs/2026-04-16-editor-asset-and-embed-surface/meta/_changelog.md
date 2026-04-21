@@ -209,3 +209,52 @@ Updated from "Draft (All 11 decisions LOCKED — ready for §Audit)" to "Draft (
 
 Content-stable for audit re-run. Auditor + challenger will spawn in parallel; prior `meta/audit-findings.md` resolved items preserved above for audit-trail continuity. Re-run expected ~8min, ~$10-15.
 
+---
+
+## 2026-04-21 — Session 2 cycle-2: Step 7 assess-findings, apply corrections
+
+### Audit re-run results
+
+Parallel nested auditor (`_nest:finalize-auditor` — 18 min, 60 turns, $9.40) and challenger (`_nest:finalize-challenger` — 10 min, 14 turns, $4.42) produced:
+
+- **Auditor:** 14 findings (5 HIGH, 5 MEDIUM, 4 LOW) in `meta/audit-findings.md`. Concentrated theme: baseline drift `432a834b` → `2ad0177a` moved file:line citations in §8 and `evidence/current-shipped-state.md` + `evidence/inv3-file-type-mime-coverage.md`. Plus several F8/F9-absorption purge leftovers that contradict the in-scope status.
+- **Challenger:** 10 new findings + 3 STRONG revisits in `meta/design-challenge.md`. Revisits: STRONG-1 weakens to LOW (F8 absorption made `emitFormat: 'markdown-image'` opt-out reliable), STRONG-2 resolved (D-K 12-month + GC commitment already LOCKED), STRONG-3 still holds (scope split remains on the table post-absorption).
+
+### Auto-applied factual/coherence corrections (assess-findings → Act)
+
+14 corrections — all verified against baseline `2ad0177a` with `grep -n` / `ls`:
+
+1. **H1 §16 EXCLUDE purge:** deleted the two F8/F9 "handle separately" bullets that contradicted §13 In Scope + status line.
+2. **H2 §8 "micro-PR" leftovers:** rewrote lines 203-204 to reference absorbed-scope (NFR-3 / FR-1a + §13) instead of "handles separately."
+3. **H3 §8 upload-handler citation drift:** updated `api-extension.ts:2779-2894` → `:3014-3129`, constants `:132/:133/:135` → `:167/:168/:170`, `readUploadBody:176` → `:211`, `sanitizeFilename:137-144` → `:172-179`.
+4. **H4 handlers.ts path:** corrected `packages/core/src/markdown/handlers.ts` (file does NOT exist) → `packages/core/src/markdown/index.ts` with anchor line numbers `:591-594` (mdast→PM) and `:876-884` (PM→mdast). Applied in §13 and §16.
+5. **H5 F9 breadcrumb fix:** §13 F9 line said "drifted from 176" — at `432a834b`, line 176 was `readUploadBody`, not `sanitizeFilename` (which was at :137). Corrected to "was at lines 137-144 at baseline `432a834b`."
+6. **M1 §16 STOP_IF SVG range:** `api-extension.ts:2853-2858` → `:3088-3093` with symbolic anchor ("the `<svg` text-sniff block inside `handleUploadImage`").
+7. **M2 evidence/current-shipped-state.md re-verify at `2ad0177a`:** updated header date + baseline declaration; 12 individual citation updates (handler range, constants, sniff site, SVG block, sanitize range, destDir, path-escape guards, response line, writeUploadAtomic). F9/F8 "micro-PR fixes separately" language purged. Config section updated to note post-baseline ConfigSchema additions (github/sync/preview/folders — disjoint from FR-5's upload.*).
+8. **M3 signalChannel → signal:** replaced in 3 locations (FR-6 acceptance, §13 In Scope, §16 SCOPE). Actual CC1Broadcaster method is `signal(channel)` at `cc1-broadcast.ts:36`, not `signalChannel`.
+9. **M4 Q-INV4 repoint:** §11 Q-INV4 row no longer cites the non-existent `evidence/inv4-outline-drop-pattern.md`; repointed to `reports/editor-asset-embed-patterns-across-universe/REPORT.md` Outline entry (which covers the 16-editor cross-survey).
+10. **M5 evidence/inv3 citations:** updated import line 38 → 40, use site 2535 → 3084, gate check 2546 → 3095, constant 123 → 168, SVG fallback 2539-2543 → 3088-3093. Added `2ad0177a` baseline breadcrumb noting the historical numbers.
+11. **L1-auditor §15 Phase 2 line:** rewrote from pre-D-I "replaces `[name](path)` emit" to correctly describe D-F read-time promotion with storage shape unchanged.
+12. **L2-auditor line 9 phrasing:** tightened "8 items not shipped" to "7 prior-spec items became FR-1..FR-7 here (FR-8 is net-new)"; clarified that `reports/editor-input-surface-worldmodel/REPORT.md` is the findings-inventory input (triage outcomes in _changelog + §9).
+13. **L1-challenger F8 framing:** "one-line fix" replaced with "algorithmic rewrite, ~8-15 LOC" in §13 + changelog. F8 converts `shortestImageRef` from binary (same-dir → basename; else → absolute `/path`) to 4-case relative using `path.posix.relative()` + normalization.
+14. **L2-challenger FR-7 absolute-path clause:** added to §13 FR-7 bullet: "Absolute-path refs (`![alt](/docs/photo.png)`) from pre-F8 emit MUST be detected and left unchanged; only relative-path refs are recomputed." Plus unit-test fixture requirement.
+
+### Declined (2)
+
+- **L4-auditor (CODE_BANG parenthetical):** Technically a stylistic leak of implementation detail into acceptance criteria, but consistent with how the spec pins other low-level expectations (precedent #15 identity-dedup, precedent #9 add-only schema). Retaining it gives the implementer a useful hint about which extension slot to register. The auditor flagged this as optional.
+- **L3-challenger (STRONG-1 D-I auto-emit weakens):** Challenger's own recommendation is "no action required if the product call is locked." No action required on its own; L5-challenger's Future Work entry (external-tool compatibility guide, #12 above) implicitly carries the GitHub-readability communication debt.
+
+### Escalations surfaced to user (7)
+
+All Challenger MODERATE findings (M1-M5) plus L4 and a cross-cutting meta-observation are design judgment calls. Not auto-applied. Presented to user for decision before proceeding to Step 8 finalize:
+
+1. M1-challenger: D-L admin-narrowed rejection dead-end — accept or add Message C?
+2. M2-challenger: E2E top-10 omits P1.3 oversized-file rejection — promote, restore, or explicit cut?
+3. M3-challenger: warnBytes config field has no behavior contract — specify or delete?
+4. M4-challenger: D-E markdown-image race has no eventual-consistency guard — add P5.3 or accept gap?
+5. M5-challenger: scope split (STRONG-3 revisit) still holds — bundle as single PR or split into Bucket A upload-widening + Bucket B wiki-embed+vault?
+6. L4-challenger: Phase 2 coordination coupling — current protocol, permanent fallback markers, or agnostic conditional?
+7. Cross-cutting: articulate "no deferred tech debt on greenfield" principle in SPEC, or leave in changelog/memory?
+
+Step 7 complete pending user resolution of the above. Step 8 (verify + finalize) blocked on those resolutions.
+

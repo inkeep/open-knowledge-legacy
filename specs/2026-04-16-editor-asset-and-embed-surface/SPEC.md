@@ -6,7 +6,7 @@
 **Owner:** Nick Gomez
 **Baseline commit:** 2ad0177a
 **Worktree:** `.claude/worktrees/finalize-asset-embed-surface` on branch `finalize/asset-embed-surface`
-**Builds on:** `reports/editor-input-surface-worldmodel/REPORT.md` — triage of an earlier 30-decision draft SPEC that was developed in a sibling worktree but never committed to main. 8 items not shipped; others superseded, refuted, or fixed in this spec. See §9 for per-row disposition.
+**Builds on:** `reports/editor-input-surface-worldmodel/REPORT.md` — findings inventory from an earlier 30-decision draft SPEC that was developed in a sibling worktree but never committed to main. 7 prior-spec items became FR-1..FR-7 here (FR-8 endpoint-rename is net-new in this spec); others superseded, refuted, or fixed. See §9 for per-row disposition; triage outcomes are durable in `meta/_changelog.md`.
 **Related:**
 - `specs/2026-04-16-clipboard-mdast-canonical/` — text/HTML clipboard pipeline (shipped); this spec is file-upload paste/drop only
 - `specs/2026-04-08-typed-component-nodes/` — Phase 2 Video/Audio/PDFViewer render dispatch triggered by wiki-embed extension (D-F read-time promotion)
@@ -163,7 +163,7 @@ Two cases depending on what the ref looks like:
 | FR-3d | Must | Embed write on drop insertion | Client-side insertion emits `![[basename.ext]]` at drop position when extension in `wikiEmbedExtensions` allowlist (per FR-1a). Tests: drop each renderable extension → assert `![[...]]` in Y.Text; drop opaque extension → assert `[...](...)` markdown link. |
 | FR-4 | Must | Obsidian vault detection | Server startup reads `.obsidian/app.json` if present; pre-populates `upload.attachmentFolderPath` + `upload.emitFormat` per D-J free-form string schema. Non-destructive (never writes to `.obsidian/`). Missing-file → use defaults. Malformed JSON → log warning + use defaults. |
 | FR-5 | Must | Upload config schema | `ConfigSchema.upload` exposes: `attachmentFolderPath` (free-form string, default `"./"` — matches Obsidian's literal schema per D-J); `emitFormat` (`'wikiembed' | 'markdown-image'`, default `'wikiembed'`); `maxBytes` (default 25MB); `warnBytes` (default 5MB); `dedup` (`'off' | 'same-dir'`, default `'same-dir'`); `dedup.ui` (`'silent' | 'toast' | 'confirm'`, default `'toast'` per D-B); `allowedMimeTypes` (string[], default image + PDF + common media + ZIP + fonts); `wikiEmbedExtensions` (string[], default `['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'pdf', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a']`). |
-| FR-6 | Must | CC1 reuse for index invalidation + widened DiskEvents | Extend `file-watcher.ts` to emit DiskEvents for asset CREATE/DELETE/RENAME (per D-H Option A). `signalChannel('files')` fires on asset events too. Basename index subscribes to CC1 `ch:'files'`; rebuilds at fs-event. No new channel. |
+| FR-6 | Must | CC1 reuse for index invalidation + widened DiskEvents | Extend `file-watcher.ts` to emit DiskEvents for asset CREATE/DELETE/RENAME (per D-H Option A). `cc1Broadcaster.signal('files')` fires on asset events too. Basename index subscribes to CC1 `ch:'files'`; rebuilds at fs-event. No new channel. |
 | FR-7 | Must | Image-ref rewrite on doc rename | `managed-rename-rewrite.ts` extended to handle `![alt](src)` markdown image refs when containing doc moves (remove `line[idx - 1] !== '!'` exclusion at line 243). Recompute relative path from new doc dirname. Tests: (a) cross-dir move with same-dir image, (b) depth change, (c) `![[...]]` wiki-embed refs untouched (index resolves dynamically — D-K separate). |
 | FR-8 | Must | Endpoint rename `/api/upload-image` → `/api/upload` | Per D-G. New `/api/upload` endpoint handler; `/api/upload-image` registered as forwarder (one-release deprecation shim). Client (`image-upload/index.ts:132`) updated to POST to `/api/upload`. Tests: both endpoints return identical response shape during shim window. |
 
@@ -200,8 +200,8 @@ The `emitFormat` toggle scopes to **any extension in `wikiEmbedExtensions`**: `w
 
 See `evidence/current-shipped-state.md` for file:line citations. TL;DR:
 
-- `POST /api/upload-image` at `api-extension.ts:2779-2894` (handler) with constants at `:132` (`MAX_UPLOAD_BYTES = 10MB`), `:133` (`ALLOWED_MIME_TYPES`), `:135` (`GENERIC_PASTE_NAMES`). Multipart + busboy (via `readUploadBody` starting at line 176). 10MB cap. Image-only MIME allowlist. Co-located storage (`dirname(parentDocName)`). No dedup. ASCII-only filename sanitization at lines 137-144 (F9 micro-PR fixes separately). Returns `{ src: basename }`.
-- `@tiptap/extension-file-handler` at `shared.ts:32-44` pinned to image MIMEs. Widget decoration at `image-upload/index.ts:27-79`. `shortestImageRef()` at `image-upload/index.ts:91-96` (needs fix, see §9 separate F8 micro-PR).
+- `POST /api/upload-image` at `api-extension.ts:3014-3129` (handler `handleUploadImage`) with top-of-file constants at `:167` (`MAX_UPLOAD_BYTES = 10MB`), `:168` (`ALLOWED_MIME_TYPES`), `:170` (`GENERIC_PASTE_NAMES`). Multipart + busboy (via `readUploadBody` starting at line 211). 10MB cap. Image-only MIME allowlist. Co-located storage (`dirname(parentDocName)`). No dedup. ASCII-only filename sanitization at lines 172-179 (F9 absorbed — see NFR-3 + §13). Returns `{ src: basename }`.
+- `@tiptap/extension-file-handler` at `shared.ts:32-44` pinned to image MIMEs. Widget decoration at `image-upload/index.ts:27-79`. `shortestImageRef()` at `image-upload/index.ts:91-96` (binary same-dir/absolute logic; F8 absorbed as algorithmic rewrite to 4-case relative — see FR-1a + §13).
 - `wiki-link-micromark.ts` tokenizes `[[...]]` only — `start` state at line 42 checks `CODE_LBRACKET` (91), zero `!` prefix branch. Module-level singleton `MICROMARK_EXT = wikiLinkSyntax()` at line 238 with identity-dedup at 259/265/270 enforces precedent #15 (idempotent attacher).
 - `managed-rename-rewrite.ts:243` explicitly excludes image refs via `line[idx - 1] !== '!'`. `readMarkdownLink` at line 77 with regex at line 88: `/^\[([^\]\n]*)\]\(.../` starts with `\[`, not `!\[`.
 - `packages/cli/src/config/schema.ts` has no `upload.*` section.
@@ -275,7 +275,7 @@ Investigation threads (all RESOLVED):
 | Q-INV1 | Literal schema of `.obsidian/app.json` field names + types | Technical | RESOLVED — `evidence/inv1-obsidian-app-json-schema.md`. 3 target fields confirmed; `"./subdir"` 4th pattern handled by D-J free-form string. |
 | Q-INV2 | Foam's TrieMap + `getShortestIdentifier()` algorithm | Technical | RESOLVED — `evidence/inv2-foam-shortest-path-algorithm.md`. Plain `Map<basename, string[]>` sufficient at our scale. |
 | Q-INV3 | `file-type@Nx` detection coverage for non-image MIMEs | Technical | RESOLVED — `evidence/inv3-file-type-mime-coverage.md`. We're on v22.0.1 (not 8.x). All MUST-haves (PDF/MP4/MP3/WAV/OGG/WebM/ZIP/fonts) sniffable. Text formats NOT. D-A locked strict. |
-| Q-INV4 | Outline's non-image drop pattern for convergence | Technical | RESOLVED — `evidence/inv4-outline-drop-pattern.md`. Outline uses typed nodes (image/video/attachment) with `[title size](url)` metadata encoding. Contributed to D-I analysis. |
+| Q-INV4 | Outline's non-image drop pattern for convergence | Technical | RESOLVED via external cross-survey — `reports/editor-asset-embed-patterns-across-universe/REPORT.md` (Outline entry in the 16-editor table). Outline uses typed nodes (image/video/attachment) with `[title size](url)` metadata encoding. Contributed to D-I analysis. (Originally authored to an `evidence/inv4-outline-drop-pattern.md` that was never committed; knowledge persists in the external cross-survey report.) |
 | Q-INV5 | clipboard-mdast-canonical boundary with file drop/paste | Cross-cutting | RESOLVED — `evidence/inv5-clipboard-mdast-boundary.md`. Clean NG4 carveout. Zero touchpoint. |
 | Q-INV6 | CC1 broadcaster semantics: asset-event fire path | Technical | RESOLVED — `evidence/inv6-cc1-asset-event-semantics.md`. Asset events not reaching CC1 today. D-H locked widen file-watcher. |
 
@@ -300,16 +300,16 @@ Investigation threads (all RESOLVED):
 - Dedup response shape update (FR-2) — `{deduped: boolean}` in response body
 - `wiki-link-micromark.ts` embed tokenizer branch (FR-3a) — `packages/core/src/markdown/wiki-link-micromark.ts`: add `CODE_BANG` (33) → `CODE_LBRACKET` sequence → emit distinct `wikiLinkEmbed` token; reuse existing `[[...]]` tokenizer state machine for body
 - File-basename index module (FR-3b) — NEW `packages/core/src/utils/path-resolve.ts`: `Map<basename, string[]>` + `resolveEmbed(basename, sourcePath)` with Foam-style shortest-path elimination
-- Embed mdast → PM handler (FR-3c) — `packages/core/src/markdown/handlers.ts`: extension-dispatch (image-ext → PM image node; other `wikiEmbedExtensions` → plain-link fallback in P0, Phase 2 promotes)
-- Embed PM → mdast handler (FR-3c reverse) — same file: image/plain-link PM nodes that originated from a `wikiLinkEmbed` serialize back to `![[basename.ext]]`
+- Embed mdast → PM handler (FR-3c) — `packages/core/src/markdown/index.ts` (add near the existing `handlers.wikiLink` at `index.ts:591-594`): extension-dispatch (image-ext → PM image node; other `wikiEmbedExtensions` → plain-link fallback in P0, Phase 2 promotes)
+- Embed PM → mdast handler (FR-3c reverse) — same file: add near `nodeHandlers.wikiLink` at `index.ts:876-884`; image/plain-link PM nodes that originated from a `wikiLinkEmbed` serialize back to `![[basename.ext]]`
 - Embed write on drop (FR-3d) — bundled into FR-1a insertion logic
 - Obsidian vault detection module (FR-4) — NEW `packages/server/src/obsidian-vault-detect.ts`: read-only `.obsidian/app.json` parser with defaults-on-missing/malformed
 - Config schema extension (FR-5) — `packages/cli/src/config/schema.ts`: `upload.*` section with `attachmentFolderPath`, `emitFormat`, `maxBytes`, `warnBytes`, `dedup`, `allowedMimeTypes`, `wikiEmbedExtensions`
-- File-watcher asset-event widening + CC1 subscriber wiring (FR-6) — `packages/server/src/file-watcher.ts` (emit DiskEvents for asset ext lifecycle) + `packages/server/src/standalone.ts` (`handleDiskEvent` asset-create/delete/rename → `signalChannel('files')`) + `path-resolve.ts` subscribes
-- Image-ref rewrite handler (FR-7) — `packages/server/src/managed-rename-rewrite.ts`: remove `line[idx - 1] !== '!'` exclusion; add `readImageRef` branch with relative-path recompute
+- File-watcher asset-event widening + CC1 subscriber wiring (FR-6) — `packages/server/src/file-watcher.ts` (emit DiskEvents for asset ext lifecycle) + `packages/server/src/standalone.ts` (`handleDiskEvent` asset-create/delete/rename → `cc1Broadcaster.signal('files')`) + `path-resolve.ts` subscribes
+- Image-ref rewrite handler (FR-7) — `packages/server/src/managed-rename-rewrite.ts`: remove `line[idx - 1] !== '!'` exclusion; add `readImageRef` branch with relative-path recompute. **Absolute-path refs (`![alt](/docs/photo.png)`) from pre-F8 emit MUST be detected and left unchanged** — only relative-path refs (`./...`, `../...`, bare-name) are recomputed. Unit-test fixtures must include a pre-existing absolute-path ref that survives rename unchanged.
 - Endpoint rename (FR-8) — `packages/server/src/api-extension.ts` register `/api/upload` as primary + `/api/upload-image` as alias-shim; update client POST target at `packages/app/src/editor/image-upload/index.ts:132`
-- **F8 absorbed fix (FR-1a):** one-line `shortestImageRef` correction at `packages/app/src/editor/image-upload/index.ts:91` + dirname-matrix test (same-dir / parent / deeper / cross-tree permutations).
-- **F9 absorbed fix (NFR-3):** one-line `sanitizeFilename` regex at `packages/server/src/api-extension.ts` (line has drifted from 176 at baseline `432a834b` to 172-179 at baseline `2ad0177a`) + unicode-preservation + path-escape-safety tests.
+- **F8 absorbed fix (FR-1a):** algorithmic rewrite of `shortestImageRef` at `packages/app/src/editor/image-upload/index.ts:91` from binary (same-dir → basename; else → absolute `/path`) to 4-case relative (same-dir → basename; parent → `../<path>`; deeper → `./<subpath>/<basename>`; cross-tree → `../.../<basename>`). ~8-15 LOC using `path.posix.relative()` + normalization. Dirname-matrix test per permutation.
+- **F9 absorbed fix (NFR-3):** one-line regex swap on `sanitizeFilename` at `packages/server/src/api-extension.ts` (currently lines 172-179 at baseline `2ad0177a`; was at lines 137-144 at baseline `432a834b`) + unicode-preservation + path-escape-safety tests.
 - **Rejection copy constants (D-L):** client-side `TEXT_EXTENSIONS_REJECTED` set + message A/B constants at `packages/app/src/editor/image-upload/` (message-dispatch branch); unit test for branch selection + E2E assertion on both message strings.
 - Tests: unit + integration + fidelity PBT for embed round-trip + rename-rewrite + emit-dispatch matrix (image/video/pdf/audio/zip/docx).
 - **E2E acceptance scenarios (cross-FR):** see `evidence/e2e-acceptance-scenarios.md` — 10 primary product-experience scenarios (P1.1 drop PDF, P1.2 drop CSV, P2.1 Obsidian vault open + ambiguous resolution, P3.1 same-dir dedup + cross-dir no-dedup, P4.1 operator config without rebuild, P5.1 rename with markdown-image ref, P5.1a rename with wiki-embed ref, P5.2 wiki-embed immunity under concurrent burst, P6.1 multi-user CRDT propagation, P6.2 multi-user basename-index invalidation via CC1) with setup / action / invariants / perturbation check / edge-siblings per scenario. The evidence file is the contract implementation-time test authoring consumes.
@@ -338,7 +338,7 @@ Investigation threads (all RESOLVED):
 |---|---|---|
 | Whole-vault sha256 dedup | Persistent hash index + rebuild on basename-index signal | User reports storage pressure |
 | Wiki-link emit (`emitFormat: 'wikilink'`) | Config flag exists; emit-path implementation ~50 LOC | Hardcore Obsidian user requests |
-| Typed-component-nodes Phase 2 rich previews | Video/Audio/PDFViewer replace `[name](path)` emit from FR-1 | Phase 2 lands |
+| Typed-component-nodes Phase 2 rich previews | Video/Audio/PDFViewer swap in for the P0 plain-link fallback at read-time (D-F read-time promotion); storage shape `![[file.ext]]` unchanged | Phase 2 lands |
 | MCP `upload_asset` for agents | Secure bytes upload with origin attribution | Agent-generated diagrams become a feature |
 | GC of orphaned assets | `npx openknowledge gc` (scan refs, diff against disk, list+confirm) | Users report storage bloat |
 | Embed size modifiers `![[image.png\|640x480]]` | Extend wiki-link-micromark tokenizer with `|modifiers` branch post-anchor; preserve round-trip | User asks |
@@ -349,6 +349,7 @@ Investigation threads (all RESOLVED):
 - Guard 5 (`validate:` specs across custom nodes) — CVE-2024-40626 class security hardening
 - Bucket 7: note-to-note `[[Page Name]]` resolution + backlinks + `[[` autocomplete
 - **`openknowledge gc` CLI command** (paired with D-K 12-month revisit trigger): scan all markdown refs via basename index + `![alt](src)` regex, diff against actual files under content dir, list orphan assets with per-file size + last-reference timestamp; `--dry-run` default, `--apply` deletes after confirm. Scope: self-contained CLI; reuses existing file-watcher walk logic. Trigger to ship: after D-K 12-month drift audit surfaces non-trivial orphan density in any dogfood vault.
+- **External-tool compatibility guide** (docs page + one-line `open-knowledge init` tip): explain the `![[...]]` vs `![alt](...)` trade-off for users reading their vault on GitHub, VS Code markdown preview, Cursor, Claude Code, or other general-purpose viewers; point at `upload.emitFormat: 'markdown-image'` as the whole-vault escape hatch. Trigger to ship: first support inquiry or PR from a user who hit the broken-external-render issue (per R9 acknowledged tradeoff).
 
 ### Noted (surfaced, not examined)
 
@@ -361,12 +362,12 @@ Investigation threads (all RESOLVED):
 **SCOPE:**
 - `packages/core/src/markdown/wiki-link-micromark.ts` — extend tokenizer with `!` prefix → `wikiLinkEmbed` token
 - NEW `packages/core/src/utils/path-resolve.ts` — file-basename index (`Map<basename, string[]>`) + Foam-style shortest-path resolver + CC1 `ch:'files'` subscriber
-- `packages/core/src/markdown/handlers.ts` — add `wikiLinkEmbed` → PM handler (extension dispatch) + PM → mdast reverse
+- `packages/core/src/markdown/index.ts` — add `wikiLinkEmbed` → PM handler near existing `handlers.wikiLink` at `index.ts:591-594` (extension dispatch) + PM → mdast reverse near `nodeHandlers.wikiLink` at `index.ts:876-884`
 - `packages/core/src/constants/upload.ts` — widen default MIME allowlist (image + PDF + video + audio + ZIP + fonts)
 - `packages/cli/src/config/schema.ts` — add `upload.*` Zod section (7 fields per FR-5)
 - `packages/server/src/api-extension.ts` — dedup logic in upload handler + register `/api/upload` primary + `/api/upload-image` shim
 - `packages/server/src/file-watcher.ts` — widen DiskEvent emission to asset extensions (per D-H)
-- `packages/server/src/standalone.ts` — extend `handleDiskEvent` asset cases → `signalChannel('files')`; wire Obsidian vault detection on startup
+- `packages/server/src/standalone.ts` — extend `handleDiskEvent` asset cases → `cc1Broadcaster.signal('files')`; wire Obsidian vault detection on startup
 - NEW `packages/server/src/obsidian-vault-detect.ts` — `.obsidian/app.json` reader with defaults
 - `packages/server/src/managed-rename-rewrite.ts` — add `readImageRef` branch (remove `line[idx - 1] !== '!'` exclusion at line 243)
 - `packages/app/src/editor/extensions/shared.ts` — FileHandler `allowedMimeTypes` widening
@@ -378,8 +379,6 @@ Investigation threads (all RESOLVED):
 - Do not modify the shipped image-upload happy path (multipart parsing, widget decoration, server write path, filter-aware sirv)
 - Do not modify observer bridges (`observers.ts`, `server-observers.ts`)
 - Do not modify the existing wiki-link tokenizer `[[...]]` path — the embed branch is additive
-- Do not touch `shortestImageRef()` behavior change (F8 micro-PR handles separately)
-- Do not touch filename sanitization regex (F9 micro-PR handles separately)
 - Do not add `validate:` specs to custom nodes (A3 separate hardening spec)
 
 **STOP_IF:**
@@ -387,7 +386,7 @@ Investigation threads (all RESOLVED):
 - `wikiLinkEmbed` node definition or tokenizer changes narrow the existing `wikiLink` shape → schema changes must be add-only per precedent #9
 - Basename index rebuild time exceeds NFR-1 bound (2s startup for 1000-file vault) → D-D revisit disk persistence
 - `file-type@22.0.1` fails to sniff any extension in the shipped `wikiEmbedExtensions` default (PDF/MP4/MP3/WAV/OGG/WebM) → reopen D-A scope; do NOT silently fall back to extension-only
-- SVG extension-fallback at `api-extension.ts:2853-2858` is removed without compensating guard → the shipped one-off SVG exception is LOAD-BEARING; D-A strict-magic-byte retains this specific fallback
+- SVG extension-fallback at `api-extension.ts:3088-3093` (the `<svg` text-sniff block inside `handleUploadImage`) is removed without compensating guard → the shipped one-off SVG exception is LOAD-BEARING; D-A strict-magic-byte retains this specific fallback
 - Obsidian `.obsidian/app.json` parsing fails on real-world vault (beyond INV1's 7 samples) → extend parser tolerance + document schema deviation; do NOT throw
 - Asset DiskEvent widening (D-H) breaks existing markdown DiskEvent tests → revert widening, reconsider Option B (new `ch:'asset-index'` channel)
 
