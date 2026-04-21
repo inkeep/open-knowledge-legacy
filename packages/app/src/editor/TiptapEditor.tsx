@@ -8,12 +8,12 @@ import {
   hasNewEntries,
   MarkdownManager,
 } from '@inkeep/open-knowledge-core';
-import { Extension } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
-import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
+import { mountTiptapEditor, parkTiptapEditor, type TiptapCacheEntry } from './editor-cache';
 
 // Module-level WeakMap storing the `performance.now()` anchor captured in
 // `onBeforeCreate` and consumed in `onCreate`. Scoped per-Editor instance so
@@ -130,88 +130,149 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     };
   });
 
-  // Instrument the TipTap Editor construct+attach window. The start anchor is
-  // captured in `onBeforeCreate` (which fires synchronously inside
-  // `new Editor()` before the heavy `mount()`) and keyed by the editor
-  // instance in a module-level WeakMap. The WeakMap is GC-correct on editor
-  // destroy. React Compiler rejects `useRef<T>(performance.now())` because
-  // `performance.now` is impure, and it also rejects mutation of a useState
-  // return value — using a module-scope side-effect store bypasses both.
-  const editor = useEditor({
-    onBeforeCreate: ({ editor }) => {
-      editorCtorStartTimes.set(editor, performance.now());
-    },
-    onCreate: ({ editor }) => {
-      const start = editorCtorStartTimes.get(editor);
-      editorCtorStartTimes.delete(editor);
-      if (start == null) return;
-      const now = performance.now();
-      mark(
-        'ok/editor/create-tiptap',
-        {
-          docName: provider.configuration.name ?? 'unknown',
-          ytextLength: provider.document.getText('source').length,
+  // V2 EDITOR CACHE WIRING (US-008)
+  //
+  // We replace `useEditor()` (which auto-creates + scheduleDestroy(1ms) on
+  // unmount per CLAUDE.md WARN rule) with `mountTiptapEditor` from the V2
+  // cache module. The factory builds a fresh `new Editor(...)` mounted into
+  // the container; the cache reparents the existing view.dom on cache hit
+  // (no construction cost) per Path B reparent (Phase 1.0 spike probe).
+  //
+  // - useState<Editor | null> tracks editor readiness for child component
+  //   rendering (BubbleMenuBar, TableControlsMenu).
+  // - useEffect runs the cache lifecycle keyed by docName + provider; React
+  //   re-runs the effect across navigations, providing the cache its mount
+  //   point. parkTiptapEditor never destroys (precedent #18(h)).
+  // - The container ref is the React-side mount slot; the editor's view.dom
+  //   is appended into it by the factory (initial mount) or reparented into
+  //   it by mountTiptapEditor's cache-hit path.
+  //
+  // Fallback per spec §A1 fallback ladder: if mountTiptapEditor fails (cache
+  // disabled OR factory throws), we fall through to constructing a fresh
+  // editor and parking destroys it (pre-V2 behavior). FR15 kill switch
+  // makes this controllable from a 1-line module constant flip.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
+  const docName = provider.configuration.name ?? '';
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let entry: TiptapCacheEntry | null = null;
+    try {
+      entry = mountTiptapEditor({
+        docName,
+        container,
+        factory: (el) => {
+          const ctorStart = performance.now();
+          const tipTapEditor = new Editor({
+            element: el,
+            onBeforeCreate: ({ editor }) => {
+              editorCtorStartTimes.set(editor, ctorStart);
+            },
+            onCreate: ({ editor }) => {
+              const start = editorCtorStartTimes.get(editor);
+              editorCtorStartTimes.delete(editor);
+              if (start == null) return;
+              const now = performance.now();
+              mark(
+                'ok/editor/create-tiptap',
+                {
+                  docName: provider.configuration.name ?? 'unknown',
+                  ytextLength: provider.document.getText('source').length,
+                },
+                { startTime: start, duration: Math.max(0, now - start) },
+              );
+            },
+            editorProps: {
+              attributes: {
+                class: 'pt-10 pb-16 h-full',
+              },
+              clipboardTextParser: (text, _context, _plain, view) => {
+                const json = clipboard.mdManager.parse(text);
+                const node = view.state.schema.nodeFromJSON(json);
+                // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
+                return node.content as any;
+              },
+              clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
+              clipboardSerializer: clipboard.html,
+              handlePaste: (view, event) => clipboard.paste(view, event),
+            },
+            extensions: [
+              // Configure docName-aware extensions before construction so
+              // InternalLink's link-resolution decoration plugin (US-005)
+              // can compute resolved/folder/unresolved states.
+              ...sharedExtensions.map((ext) => {
+                if (ext.name === 'link') {
+                  return ext.configure({ docName: provider.configuration.name ?? '' });
+                }
+                return ext;
+              }),
+              Placeholder.configure({
+                placeholder: placeholder ?? "Type '/' for commands",
+                showOnlyCurrent: true,
+              }),
+              Collaboration.configure({
+                document: provider.document,
+              }),
+              Extension.create({
+                name: 'imageUploadDecoration',
+                addProseMirrorPlugins() {
+                  return [uploadDecorationPlugin];
+                },
+              }),
+              // Use yCursorPlugin from @tiptap/y-tiptap directly (same module
+              // as Collaboration v3) to avoid ySyncPluginKey mismatch.
+              Extension.create({
+                name: 'collaborationCursor',
+                addProseMirrorPlugins() {
+                  const awareness = provider.awareness;
+                  if (!awareness) {
+                    throw new Error(
+                      '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
+                    );
+                  }
+                  return [
+                    yCursorPlugin(awareness, {
+                      cursorBuilder: renderCursor,
+                    }),
+                  ];
+                },
+              }),
+            ],
+          });
+          return {
+            editor: tipTapEditor,
+            ydoc: provider.document,
+            ytext: provider.document.getText('source'),
+            provider,
+          };
         },
-        { startTime: start, duration: Math.max(0, now - start) },
-      );
-    },
-    editorProps: {
-      attributes: {
-        class: 'pt-10 pb-16 h-full',
-      },
-      clipboardTextParser: (text, _context, _plain, view) => {
-        const json = clipboard.mdManager.parse(text);
-        const node = view.state.schema.nodeFromJSON(json);
-        // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
-        return node.content as any;
-      },
-      clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
-      clipboardSerializer: clipboard.html,
-      handlePaste: (view, event) => clipboard.paste(view, event),
-    },
-    extensions: [
-      // Configure docName-aware extensions before construction so InternalLink's
-      // link-resolution decoration plugin (US-005) can compute resolved/folder/
-      // unresolved states for the active doc's link marks.
-      ...sharedExtensions.map((ext) => {
-        if (ext.name === 'link') {
-          return ext.configure({ docName: provider.configuration.name ?? '' });
-        }
-        return ext;
-      }),
-      Placeholder.configure({
-        placeholder: placeholder ?? "Type '/' for commands",
-        showOnlyCurrent: true,
-      }),
-      Collaboration.configure({
-        document: provider.document,
-      }),
-      Extension.create({
-        name: 'imageUploadDecoration',
-        addProseMirrorPlugins() {
-          return [uploadDecorationPlugin];
-        },
-      }),
-      // Use yCursorPlugin from @tiptap/y-tiptap directly (same module as Collaboration v3)
-      // to avoid ySyncPluginKey mismatch with y-prosemirror's yCursorPlugin
-      Extension.create({
-        name: 'collaborationCursor',
-        addProseMirrorPlugins() {
-          const awareness = provider.awareness;
-          if (!awareness) {
-            throw new Error(
-              '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
-            );
-          }
-          return [
-            yCursorPlugin(awareness, {
-              cursorBuilder: renderCursor,
-            }),
-          ];
-        },
-      }),
-    ],
-  });
+        // sizeStats omitted — pre-V2 callers' default behavior is "always
+        // cache". The size-aware gate is exercised via EditorActivityPool's
+        // measurement layer once measurement integration lands.
+      });
+      cacheEntryRef.current = entry;
+      setEditor(entry.editor);
+    } catch (err) {
+      // Cache failure: log + leave editor null. Surface area is empty until
+      // recovery; the next render cycle will re-attempt via the effect.
+      console.error('[TiptapEditor] mountTiptapEditor failed', err);
+      cacheEntryRef.current = null;
+      setEditor(null);
+    }
+
+    return () => {
+      const cur = cacheEntryRef.current;
+      if (cur) {
+        parkTiptapEditor(cur);
+      }
+      cacheEntryRef.current = null;
+      setEditor(null);
+    };
+  }, [docName, provider, placeholder, clipboard]);
 
   // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
   // its tree-replacement sync while the user is actively editing, preventing concurrent
@@ -551,7 +612,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     >
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
-      <EditorContent editor={editor} className="h-full" />
+      {/*
+       * V2 cache mount slot. The editor's view.dom is appended into this
+       * container by the factory at first mount, then reparented in/out
+       * of this div by mountTiptapEditor / parkTiptapEditor across nav.
+       * The h-full mirrors the pre-V2 EditorContent's class so layout is
+       * unchanged.
+       */}
+      <div ref={containerRef} className="h-full" data-tiptap-cache-mount="" />
     </div>
   );
 };

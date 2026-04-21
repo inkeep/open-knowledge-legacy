@@ -46,6 +46,7 @@ import {
   useState,
 } from 'react';
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
+import { setActivityMountList } from '@/editor/editor-cache';
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
@@ -274,6 +275,12 @@ function EditorActivityPoolInner({
       evicted,
     });
     priorMountKeyRef.current = mountKey;
+    // FR3b — single-writer push of the activity mount list to the V2 editor
+    // cache. The cache uses this list to drive provider connect/disconnect
+    // for cached-but-not-Activity-mounted editors (precedent #18(i)). Bounds
+    // remote-peer CRDT load to the top ACTIVITY_MOUNT_LIMIT editors
+    // regardless of how many docs are pool-resident.
+    setActivityMountList(mounted);
   }, [mountKey, activeDocName]);
 
   return (
