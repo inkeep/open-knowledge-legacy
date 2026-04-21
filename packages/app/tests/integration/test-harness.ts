@@ -33,6 +33,7 @@ import {
 import {
   AGENT_WRITE_ORIGIN,
   createServer,
+  ensureProjectGit,
   FILE_WATCHER_ORIGIN,
   MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
@@ -107,6 +108,13 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   if (options.contentDir === undefined) {
     writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   }
+
+  // Mirror the production auto-git-init path (SPEC R2 / Q3 resolution): every
+  // fresh tmpDir gets a real .git/ so the single-mode shadow-repo layout in
+  // US-003 can locate the shadow at <contentDir>/.git/open-knowledge/ without
+  // a standalone-mode fallback. On contentDir reuse (restart tests) the second
+  // call is a cheap no-op because .git/ already exists.
+  await ensureProjectGit(contentDir);
 
   const port = await getFreePort();
   const srv = createServer({
