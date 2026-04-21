@@ -1,7 +1,8 @@
 /**
- * Contributor accumulator — tracks which agents wrote which docs between L2 commits.
+ * Contributor accumulator — tracks which writers wrote which docs between L2 commits.
  *
- * Write-time concern: api-extension.ts calls recordContributor() after each agent write.
+ * Write-time concern: api-extension.ts calls recordContributor() after each agent write;
+ * applyExternalChange calls it for file-system writes (D41).
  * Drain-time concern: persistence.ts calls formatContributors() + clearContributors()
  * in commitToWipRef() after a successful commit.
  *
@@ -10,7 +11,8 @@
  */
 
 export interface ContributorEntry {
-  agentId: string;
+  /** Writer ID — any taxonomy value: agent-<uuid>, principal-<uuid>, file-system, etc. */
+  writerId: string;
   displayName: string;
   colorSeed: string;
   docs: Set<string>;
@@ -27,7 +29,8 @@ let pendingContributors = new Map<string, ContributorEntry>();
 
 /**
  * Record that a writer contributed to a document.
- * Accumulates into the module-level Map keyed by agentId (writer ID).
+ * Accumulates into the module-level Map keyed by writerId.
+ * Accepts any writer taxonomy value: agent-<uuid>, principal-<uuid>, file-system, etc. (D41).
  *
  * @param subjectOverride - Optional commit subject to use instead of the default
  *   formatWipSubject(docs) in the L2 drain. Use for action-specific subjects:
@@ -35,21 +38,21 @@ let pendingContributors = new Map<string, ContributorEntry>();
  */
 export function recordContributor(
   docName: string,
-  agentId: string,
+  writerId: string,
   displayName: string,
   colorSeed?: string,
   subjectOverride?: string,
 ): void {
-  let entry = pendingContributors.get(agentId);
+  let entry = pendingContributors.get(writerId);
   if (!entry) {
     entry = {
-      agentId,
+      writerId,
       displayName,
       colorSeed: colorSeed ?? displayName,
       docs: new Set(),
       subjectOverride,
     };
-    pendingContributors.set(agentId, entry);
+    pendingContributors.set(writerId, entry);
   }
   entry.docs.add(docName);
   // Last non-undefined subjectOverride wins (most specific action in the drain window).
@@ -76,16 +79,16 @@ export function swapContributors(): Map<string, ContributorEntry> {
  * attribution data accumulated between formatContributorsFrom() and commit failure.
  */
 export function restoreContributors(snapshot: Map<string, ContributorEntry>): void {
-  for (const [agentId, entry] of snapshot) {
-    let live = pendingContributors.get(agentId);
+  for (const [writerId, entry] of snapshot) {
+    let live = pendingContributors.get(writerId);
     if (!live) {
       live = {
-        agentId,
+        writerId,
         displayName: entry.displayName,
         colorSeed: entry.colorSeed,
         docs: new Set(),
       };
-      pendingContributors.set(agentId, live);
+      pendingContributors.set(writerId, live);
     }
     for (const doc of entry.docs) live.docs.add(doc);
   }
@@ -104,7 +107,7 @@ export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>):
     lines.push(
       `ok-contributors: ${JSON.stringify({
         v: 1,
-        id: entry.agentId,
+        id: entry.writerId,
         name: entry.displayName,
         colorSeed: entry.colorSeed,
         docs: [...entry.docs],
@@ -127,16 +130,16 @@ export function formatContributors(): string {
  * Called by persistence.ts when commitWipFromTree fails for a specific writer
  * so that writer's attribution is not lost (D38 per-writer partition).
  */
-export function restoreContributorEntry(agentId: string, entry: ContributorEntry): void {
-  let live = pendingContributors.get(agentId);
+export function restoreContributorEntry(writerId: string, entry: ContributorEntry): void {
+  let live = pendingContributors.get(writerId);
   if (!live) {
     live = {
-      agentId,
+      writerId,
       displayName: entry.displayName,
       colorSeed: entry.colorSeed,
       docs: new Set(),
     };
-    pendingContributors.set(agentId, live);
+    pendingContributors.set(writerId, live);
   }
   for (const doc of entry.docs) live.docs.add(doc);
 }

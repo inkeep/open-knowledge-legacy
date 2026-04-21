@@ -22,6 +22,7 @@ import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
+  contributorCount,
   recordContributor,
   restoreContributorEntry,
   restoreContributors,
@@ -584,7 +585,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // tables, added backslash-escapes, etc.), polluting the user's git
       // working tree on mere file open.
       const currentBase = getReconciledBase(documentName);
-      if (currentBase !== undefined && markdown === currentBase) return;
+      if (currentBase !== undefined && markdown === currentBase) {
+        // Content unchanged since last reconcile — skip the disk write. But
+        // applyExternalChange uses skipStoreHooks:true so onStoreDocument never
+        // fires for file-watcher transactions; the contributor is recorded
+        // directly yet scheduleGitCommit() is never called. Schedule it here
+        // so the L2 drain fires at graceful shutdown (D41, US-016, FR-6).
+        if (contributorCount() > 0) scheduleGitCommit();
+        return;
+      }
 
       // Debug: detect duplication before writing
       if (currentBase && markdown.length > currentBase.length * 1.5) {
