@@ -96,7 +96,7 @@ export {
 } from './bridge/index.ts';
 // Types
 export type {
-  ActivityEntry,
+  AgentFlashEntry,
   AgentFocusEntry,
   AwarenessState,
   AwarenessUser,

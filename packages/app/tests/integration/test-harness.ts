@@ -632,7 +632,7 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
   const ytext = document.getText('source');
   const fragment = document.getXmlFragment('default');
   const metaMap = document.getMap('metadata');
-  const activityMap = document.getMap('activity');
+  const activityMap = document.getMap('agent-flash');
   const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
   const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
   const fullMd = prependFrontmatter(frontmatter, md);

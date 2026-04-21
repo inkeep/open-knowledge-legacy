@@ -1087,7 +1087,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.transact(() => {
           applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
@@ -1172,7 +1172,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.transact(() => {
           applyAgentMarkdownWrite(dc.document, markdown, position);
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
@@ -1705,7 +1705,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           }
           applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),

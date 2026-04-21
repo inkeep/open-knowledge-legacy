@@ -40,8 +40,8 @@ export interface AgentFocusEntry {
   ts: number;
 }
 
-/** Entry in Y.Map('activity') side-channel for agent write attribution. */
-export interface ActivityEntry {
+/** Entry in Y.Map('agent-flash') side-channel for agent write attribution. */
+export interface AgentFlashEntry {
   agentId: string;
   timestamp: number;
   type: 'insert' | 'replace' | 'delete';

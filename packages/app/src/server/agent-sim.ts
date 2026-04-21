@@ -3,7 +3,7 @@
  *
  * The agent write endpoints (/api/agent-write, /api/agent-write-md) now:
  * - Set agent awareness (name: Claude, color: #D97757, type: agent)
- * - Write Y.Map('activity') entry alongside content for flash plugins
+ * - Write Y.Map('agent-flash') entry alongside content for flash plugins
  * - Use 'agent-write' origin for per-origin undo tracking
  *
  * Usage:
@@ -339,7 +339,7 @@ if (usePatch) {
   console.log(`Mode: ${useMarkdown ? 'markdown' : 'raw'}`);
   console.log(`Writes: ${count}${count > 1 ? ' (rapid, 100ms apart)' : ''}`);
   console.log(`Presence: Agent connects with awareness (Claude, #D97757, type: agent)`);
-  console.log(`Activity: Y.Map('activity') updated per write for flash plugins`);
+  console.log(`Activity: Y.Map('agent-flash') updated per write for flash plugins`);
   console.log(`Undo: writes tracked with 'agent-write' origin\n`);
 
   if (count > 1) {
