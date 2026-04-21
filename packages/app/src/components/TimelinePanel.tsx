@@ -14,10 +14,8 @@ import {
   Diamond,
   FileArchive,
   RotateCcw,
-  Save,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -267,7 +265,6 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -338,54 +335,21 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
-  async function handleSaveVersion() {
-    setSaving(true);
-    try {
-      const res = await fetch('/api/save-version', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (res.ok) {
-        toast.success('Checkpoint saved');
-      } else {
-        console.error('[save-version] failed:', await res.text());
-        toast.error('Checkpoint failed — try again');
-      }
-    } catch (e) {
-      console.error('[save-version] failed:', e);
-      toast.error('Checkpoint failed — try again');
-    }
-    setSaving(false);
-  }
-
   return (
     <div className="flex h-full flex-col">
-      {/* Header with Now button + Save Version */}
-      <div className="flex items-center justify-between border-b px-3 py-2 shrink-0">
-        <div className="flex items-center gap-1">
-          {selectedSha && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onEntrySelect?.(EMPTY_ENTRY)}
-              className="text-xs text-muted-foreground"
-            >
-              Now
-            </Button>
-          )}
+      {/* Header with Now button when viewing a historical version */}
+      {selectedSha && (
+        <div className="flex items-center border-b px-3 py-2 shrink-0">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => onEntrySelect?.(EMPTY_ENTRY)}
+            className="text-xs text-muted-foreground"
+          >
+            Now
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={handleSaveVersion}
-          disabled={saving}
-          className="text-xs text-muted-foreground"
-        >
-          <Save className="size-3" />
-          {saving ? 'Saving…' : 'Save Version'}
-        </Button>
-      </div>
+      )}
 
       {/* Scrollable entry list */}
       <div className="flex-1 overflow-y-auto">

@@ -25,9 +25,6 @@ interface EditorAreaProps {
   onNoDiff?: () => void;
   onEntrySelect?: (entry: TimelineEntry) => void;
   selectedSha?: string;
-  /** When true, EditorArea switches to the timeline tab and expands the panel. Reset via onTimelineTabHandled. */
-  requestTimelineTab?: boolean;
-  onTimelineTabHandled?: () => void;
 }
 
 export function EditorArea({
@@ -37,8 +34,6 @@ export function EditorArea({
   onNoDiff,
   onEntrySelect,
   selectedSha,
-  requestTimelineTab,
-  onTimelineTabHandled,
 }: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
@@ -58,20 +53,6 @@ export function EditorArea({
 
   // Lifted activeTab state — DocPanel is controlled (spec D2).
   const [activeTab, setActiveTab] = useState<PanelTab>('outline');
-
-  // History button in EditorHeader requests the timeline tab via a one-shot flag.
-  // Auto-expand the panel if collapsed (spec D5 / FR-5).
-  useEffect(() => {
-    if (!requestTimelineTab) return;
-    setActiveTab('timeline');
-    if (isSheetMode) {
-      setSheetOpen(true);
-    } else if (isCollapsed) {
-      userCollapsedRef.current = false;
-      panelRef.current?.expand();
-    }
-    onTimelineTabHandled?.();
-  }, [requestTimelineTab, isSheetMode, isCollapsed, panelRef, onTimelineTabHandled]);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {

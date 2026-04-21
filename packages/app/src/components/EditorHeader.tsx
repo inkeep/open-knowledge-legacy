@@ -3,7 +3,6 @@ import {
   Columns2,
   FolderOpen,
   GitFork,
-  History,
   Pin,
   PinOff,
   RotateCcw,
@@ -74,7 +73,6 @@ function isRenameResponse(v: unknown): v is RenameResponse {
 interface EditorHeaderProps {
   editorMode: EditorMode;
   onModeChange: (mode: 'wysiwyg' | 'source') => void;
-  onTimelineToggle: () => void;
   onSaveVersion: () => void;
   saving: boolean;
   previewEntry: TimelineEntry | null;
@@ -93,7 +91,6 @@ interface EditorHeaderProps {
 export function EditorHeader({
   editorMode,
   onModeChange,
-  onTimelineToggle,
   onSaveVersion,
   saving,
   previewEntry,
@@ -634,21 +631,6 @@ export function EditorHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
-          </Tooltip>
-        )}
-        {activeDocName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Document timeline"
-                onClick={onTimelineToggle}
-              >
-                <History className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
         <SyncStatusBadge

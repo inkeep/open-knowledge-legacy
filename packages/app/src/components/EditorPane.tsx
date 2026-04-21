@@ -34,8 +34,6 @@ export function EditorPane() {
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  /** One-shot flag: when true, EditorArea switches to the timeline tab and expands if needed. */
-  const [requestTimelineTab, setRequestTimelineTab] = useState(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
@@ -186,7 +184,6 @@ export function EditorPane() {
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
-        onTimelineToggle={() => setRequestTimelineTab(true)}
         onSaveVersion={handleSaveVersion}
         saving={saving}
         previewEntry={previewEntry}
@@ -222,8 +219,6 @@ export function EditorPane() {
         onNoDiff={handleNoDiff}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
-        requestTimelineTab={requestTimelineTab}
-        onTimelineTabHandled={() => setRequestTimelineTab(false)}
       />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal
