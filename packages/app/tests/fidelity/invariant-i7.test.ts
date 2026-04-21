@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 import { block, heading, paragraph, paragraphWithFidelityChars } from './arbitraries';
@@ -32,7 +32,7 @@ function pathYDoc(md: string): string {
   const pmNode = schema.nodeFromJSON(json);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, fragment, pmNode, meta);
-  const resultJson = yXmlFragmentToProsemirrorJSON(fragment);
+  const resultJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
   const result = mdManager.serialize(resultJson);
   doc.destroy();
   return result;

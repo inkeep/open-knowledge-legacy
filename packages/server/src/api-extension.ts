@@ -34,7 +34,7 @@ import {
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
@@ -1674,7 +1674,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const xmlFragment = dc.document.getXmlFragment('default');
           const metaMap = dc.document.getMap('metadata');
           const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
-          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+          const currentBody = mdManager.serialize(
+            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+          );
           const currentFull = prependFrontmatter(currentFm, currentBody);
 
           const pos =

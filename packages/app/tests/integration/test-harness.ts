@@ -41,7 +41,7 @@ import {
   type ServerOptions,
 } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
@@ -380,7 +380,7 @@ export async function awaitDocQuiescence(
 
 /** Serialize XmlFragment to markdown string */
 export function serializeFragment(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /** Strip trailing whitespace per line + trailing newlines */
@@ -634,7 +634,7 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
   const metaMap = document.getMap('metadata');
   const activityMap = document.getMap('activity');
   const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
-  const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  const md = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
   const fullMd = prependFrontmatter(frontmatter, md);
   const connectionCount = document.getConnectionsCount?.() ?? 0;
 
@@ -729,7 +729,9 @@ export function attachBridgeInvariantWatcher(
 
     const ytextStr = ytext.toString();
     const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
-    const fragBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const fragBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON(),
+    );
     const fragMd = prependFrontmatter(fm, fragBody);
 
     const ytextNorm = normalizeBridge(ytextStr);
