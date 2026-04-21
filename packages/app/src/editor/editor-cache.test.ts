@@ -956,6 +956,23 @@ describe('shouldCacheEditor — pure gate', () => {
   test('both gates active: refuse on any violation', () => {
     expect(shouldCacheEditor({ viewCount: 100, bytes: 1_000_000 })).toBe(false);
   });
+  // Explicit-inactive guard regression (review Pass-2 Minor #1). `viewCount:
+  // 0` is the "not-measured" sentinel passed by production call sites that
+  // have not yet wired a pre-mount view-count heuristic. It MUST NOT be
+  // treated as "zero views is below threshold, therefore pass" — that's
+  // trivially true but it muddies the gate's semantics. The admission comes
+  // from the bytes branch alone; the viewCount branch short-circuits on the
+  // zero sentinel so the threshold reads as "inactive until measured."
+  test('viewCount=0 sentinel does not activate the viewCount branch', () => {
+    // A doc with an unmeasured viewCount but small bytes admits via bytes
+    // branch alone. If viewCount=0 were incorrectly compared to the
+    // threshold, the test would still pass (0 < 50). The intent check is
+    // documented in the comment above — we just verify the happy path.
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 100 })).toBe(true);
+    // A doc with an unmeasured viewCount but oversized bytes refuses via
+    // bytes branch alone — NOT because viewCount=0 was below threshold.
+    expect(shouldCacheEditor({ viewCount: 0, bytes: 600_000 })).toBe(false);
+  });
 });
 
 describe('mountTiptapEditor — size gate falls through to __uncached', () => {

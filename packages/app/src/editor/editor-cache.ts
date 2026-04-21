@@ -105,9 +105,18 @@ export interface SizeStats {
  * Post-mount size changes (user edits push viewCount past 50) do NOT
  * evict an already-cached entry. Eviction is purely LRU-driven per
  * V2 SPEC §6 FR3 — "gate evaluated ONCE at mount time".
+ *
+ * Explicit-inactive guard on `viewCount` (review Pass-2 Minor #1): the
+ * viewCount branch fires only when `viewCount > 0`. Call sites that have
+ * NOT implemented the pre-mount view-count heuristic pass `viewCount: 0`
+ * to signal "not measured"; this encoding is preferable to flipping the
+ * comparison because it keeps `VIEW_COUNT_CACHE_THRESHOLD = 50` honest
+ * as the REAL threshold rather than a latent "0 passes" artifact. Once a
+ * caller wires a real heuristic, it passes its estimate unchanged and the
+ * gate activates without any threshold edit.
  */
 export function shouldCacheEditor(stats: SizeStats): boolean {
-  if (stats.viewCount >= VIEW_COUNT_CACHE_THRESHOLD) return false;
+  if (stats.viewCount > 0 && stats.viewCount >= VIEW_COUNT_CACHE_THRESHOLD) return false;
   if (stats.bytes > BYTES_CACHE_THRESHOLD) return false;
   return true;
 }

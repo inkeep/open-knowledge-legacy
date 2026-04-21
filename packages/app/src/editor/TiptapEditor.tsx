@@ -176,6 +176,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
   const docName = provider.configuration.name ?? '';
 
+  // Placeholder deliberately excluded from the deps array below. The only
+  // observable placeholder transition (the `isNewDoc` draft→saved flip) is
+  // handled by the `key=${docName}-${isNewDoc}` force-remount in
+  // `EditorActivityPool`; including `placeholder` here would park+remount
+  // on every prop-identity churn (localized copy swaps, focus-conditional
+  // prompts, agent-turn hints) and defeat the V2 cache on callers that
+  // feed a freshly-derived string.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: placeholder intentionally excluded — see comment above
   useEffect(() => {
     let entry: TiptapCacheEntry | null = null;
     try {
@@ -317,7 +325,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     // — React force-remounts the entire TiptapEditor component, so the
     // mount effect re-runs and reads the current `placeholder` prop.
     // Including placeholder here would triple-mount on the first save.
-  }, [docName, provider, clipboard, placeholder]);
+  }, [docName, provider, clipboard]);
 
   // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
   // its tree-replacement sync while the user is actively editing, preventing concurrent
