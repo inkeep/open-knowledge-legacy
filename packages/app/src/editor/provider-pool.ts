@@ -1,6 +1,7 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
+import { mark } from '../lib/perf/mark';
 import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
@@ -386,7 +387,7 @@ export class ProviderPool {
     // Find the LRU entry that is NOT the active doc
     for (const docName of this.lruOrder) {
       if (docName !== this.activeDocName) {
-        console.log(`[ProviderPool] Evicting LRU entry: ${docName}`);
+        mark('ok/pool/evict-lru', { docName });
         this.close(docName);
         return;
       }
@@ -433,7 +434,7 @@ export class ProviderPool {
     if (!entry || entry.tearingDown) return;
 
     const wasActive = this.activeDocName === docName;
-    console.log(`[ProviderPool] Recycling disconnected entry: ${docName}`);
+    mark('ok/pool/recycle-disconnected', { docName, wasActive });
 
     this.destroyEntry(entry);
     this.entries.delete(docName);
