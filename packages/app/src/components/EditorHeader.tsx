@@ -32,6 +32,7 @@ import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
+import { HelpPopover } from './HelpPopover';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -123,14 +124,13 @@ export function EditorHeader({
       ? `${activeDocName}.md`
       : '';
 
+  const index = activeDocName?.lastIndexOf('/') ?? -1;
+
   // Split doc path into prefix (truncatable) and filename (prioritized).
   // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
-  const pathPrefix = activeDocName?.includes('/')
-    ? `${activeDocName.substring(0, activeDocName.lastIndexOf('/') + 1)}`
-    : '';
-  const fileBaseName = activeDocName
-    ? activeDocName.substring(activeDocName.lastIndexOf('/') + 1)
-    : '';
+  const pathPrefix =
+    activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
+  const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -668,6 +668,7 @@ export function EditorHeader({
         />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
+        <HelpPopover />
         <ThemeToggle />
       </div>
     </header>

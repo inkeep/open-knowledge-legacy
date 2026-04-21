@@ -12,7 +12,7 @@ export interface AgentIdentity {
     name: string;
     version: string;
   };
-  /** User-provided via AGENT_LABEL env var in .mcp.json */
+  /** User-provided via AGENT_LABEL env var in the editor MCP config */
   label?: string;
   /** Derived: label || clientInfo.name || "Agent" */
   displayName: string;

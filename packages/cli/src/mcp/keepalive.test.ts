@@ -203,6 +203,47 @@ describe('startKeepalive', () => {
     handle.close();
   });
 
+  test('emits a debug breadcrumb on websocket error events', async () => {
+    const scheduler = createScheduler();
+    const opened: FakeWebSocket[] = [];
+    const debugEvents: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const logger = {
+      sessionId: 'keepalive-test',
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: (msg: string, ctx: Record<string, unknown> = {}) => {
+        debugEvents.push({ msg, ctx });
+      },
+      child: () => logger,
+      asCallback: () => () => {},
+    };
+    const handle = startKeepalive({
+      resolveWsUrl: async () => 'ws://localhost:12345',
+      scheduler,
+      logger,
+      createWebSocket: (url) => {
+        const fake = new FakeWebSocket(url);
+        opened.push(fake);
+        return fake;
+      },
+    });
+
+    await runMicrotasks();
+    opened[0].fire('error');
+
+    expect(debugEvents).toContainEqual({
+      msg: 'websocket error observed',
+      ctx: {
+        url: 'ws://localhost:12345',
+        readyState: 0,
+        reason: 'error-event',
+      },
+    });
+
+    handle.close();
+  });
+
   test('close() stops further reconnects and closes the WS', async () => {
     const scheduler = createScheduler();
     const opened: FakeWebSocket[] = [];

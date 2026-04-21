@@ -5,7 +5,7 @@
  * Layer A: `mdManager.serialize(mdManager.parse(md))` — direct markdown
  *          round-trip through the unified+remark pipeline.
  * Layer B: md → parse → PM JSON → schema.nodeFromJSON → Y.XmlFragment (via
- *          `updateYFragment`) → yXmlFragmentToProsemirrorJSON → serialize —
+ *          `updateYFragment`) → yXmlFragmentToProseMirrorRootNode → serialize —
  *          the full CRDT path used by server Observer B (precedent #14).
  *
  * The invariant asserts both paths produce byte-identical output (modulo
@@ -29,7 +29,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import {
   loadBuiltInFixtures,
@@ -53,7 +53,7 @@ function layerB(md: string): string {
   const pmNode = schema.nodeFromJSON(json);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, fragment, pmNode, meta);
-  const resultJson = yXmlFragmentToProsemirrorJSON(fragment);
+  const resultJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
   const result = mdManager.serialize(resultJson);
   doc.destroy();
   return result;

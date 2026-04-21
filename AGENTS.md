@@ -22,7 +22,7 @@ cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on po
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
 bun run --filter=@inkeep/open-knowledge-desktop dev   # Launch Electron app in dev mode (macOS)
 bun run build                        # Build all packages via turbo (cli, app, docs)
-bun run build:desktop                # Build desktop bundle via electron-vite (no DMG; M1 scope)
+bun run build:desktop                # Build desktop bundle via electron-vite (no DMG; see packages/desktop for build:mac / build:mac:unsigned)
 cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 ```
 
@@ -481,7 +481,7 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 
 ## Package: desktop
 
-Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 only** (dev loop, local, unsigned). Signing, notarization, DMG packaging, auto-update, URL scheme, keyring Device Flow, MCP first-launch wiring, CLI-on-PATH menu item are all deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 (M2–M7) for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
+Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 shipped; M2 signed-DMG scaffolding landed** (fuses flip, afterSign notarize+staple+verify, electron-builder hook wiring, `workflow_dispatch` CI). M2 end-state DOD (Universal DMG green end-to-end under real Apple creds) is blocked on the bun-workspace universal-merge SHA-parity gap — see [`specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md`](specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md) §6. Auto-update, URL scheme, keyring Device Flow, MCP first-launch wiring, CLI-on-PATH menu item remain deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 (M3–M7) for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
 
 ### Process model
 
@@ -510,7 +510,9 @@ Never call `ipcMain.handle` / `ipcRenderer.invoke` directly. Use `createHandler`
 ```bash
 bun install                                               # postinstall rebuilds native modules; skip with ELECTRON_SKIP_REBUILD=1
 bun run --filter=@inkeep/open-knowledge-desktop dev        # macOS, opens Navigator window
-bun run build:desktop                                     # electron-vite build (no DMG in M1)
+bun run build:desktop                                     # electron-vite build (no DMG)
+bun run --cwd packages/desktop build:mac:unsigned         # Local unsigned DMG smoke (see packages/desktop/README.md §M2)
+bun run --cwd packages/desktop build:mac                  # Signed + notarized DMG (requires CSC_LINK + APPLE_* creds)
 ```
 
 ## CRDT Bridge Architecture

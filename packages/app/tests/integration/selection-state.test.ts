@@ -23,7 +23,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { EditorState, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import {
   type BlockSelection,
   deriveBlockSelection,
@@ -69,8 +69,7 @@ function makeStubPlugin() {
 /** Convert a synced Y.XmlFragment into an EditorState with the selection
  *  plugin installed. Useful for imperative tests — no TipTap/React needed. */
 function fragmentToEditorState(fragment: import('yjs').XmlFragment): EditorState {
-  const json = yXmlFragmentToProsemirrorJSON(fragment);
-  const doc = schema.nodeFromJSON(json);
+  const doc = yXmlFragmentToProseMirrorRootNode(fragment, schema);
   return EditorState.create({ doc, plugins: [makeStubPlugin()] });
 }
 

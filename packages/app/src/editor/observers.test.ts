@@ -25,7 +25,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
 import {
@@ -128,7 +128,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
 
     await wait();
 
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('# Heading');
     expect(md).toContain('Paragraph text');
@@ -156,7 +156,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
 
     // XmlFragment is unchanged — Observer B no longer writes to it.
     // The test validates Observer B does not crash on parse errors.
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('Original content');
 
@@ -172,6 +172,13 @@ describe('Observer B: Y.Text → XmlFragment', () => {
   // coverage belongs in the integration test harness with a real server
   // (packages/app/tests/integration/); unit coverage belongs in
   // packages/server/src/server-observers.test.ts.
+  //
+  // Main's PR #250 (yXmlFragmentToProsemirrorJSON → yXmlFragmentToProseMirrorRootNode)
+  // renamed the old API at this call site, but the call site no longer exists
+  // on this branch — the test body was deleted when G9 coverage moved to the
+  // server per Precedent #14. The auto-merge applied PR #250's rename to the
+  // import statement and the 4 remaining call sites in this file; only the
+  // body-replacement conflict remains and takes our (HEAD) skip'd stub.
   test.skip('Observer B renders broken MDX as rawMdxFallback (G9 always-live) and recovers on next valid write', async () => {
     /* intentionally empty — see comment above */
   });
@@ -193,7 +200,7 @@ describe('WikiLink bridge regression', () => {
 
       expect(ytext.toString().trim()).toBe('Alpha [[Page#Heading|Alias]]');
 
-      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
       const md = mdManager.serialize(json);
       expect(md.trim()).toBe('Alpha [[Page#Heading|Alias]]');
     } finally {
@@ -273,7 +280,7 @@ describe('Frontmatter handling', () => {
     const metaMap = doc.getMap('metadata');
     expect(metaMap.get('frontmatter')).toBe('---\ntitle: New\n---\n');
 
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('# Body');
     cleanup();

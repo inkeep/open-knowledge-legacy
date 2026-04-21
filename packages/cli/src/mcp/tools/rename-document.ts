@@ -5,14 +5,14 @@
  * inbound wiki-links plus supported internal inline Markdown links.
  */
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { type PreviewUrlSource, resolvePreviewUrlForTool } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -81,7 +81,7 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
 
 export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
@@ -92,9 +92,17 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
     {
       docName: z.string().describe('Current document name'),
       newDocName: z.string().describe('New document name'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; newDocName: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: { docName: string; newDocName: string; cwd?: string }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalizedDoc = normalizeDocName(args.docName);
       if (!normalizedDoc.ok) return textResult(normalizedDoc.error, true);
@@ -126,8 +134,8 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       // previousPreviewUrl is supplementary for agents that want to close/refocus
       // the pre-rename tab.
       const previewDeps = { config: deps.config, resolveCwd: deps.resolveCwd };
-      const newPreview = await resolvePreviewUrlForTool(normalizedNewDoc.docName, previewDeps);
-      const oldPreview = await resolvePreviewUrlForTool(normalizedDoc.docName, previewDeps);
+      const newPreview = await resolvePreviewUrlForTool(normalizedNewDoc.docName, previewDeps, cwd);
+      const oldPreview = await resolvePreviewUrlForTool(normalizedDoc.docName, previewDeps, cwd);
 
       const structured: RenameDocumentSuccess = {
         ok: true,

@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -29,6 +30,7 @@ interface DeadLinksPayload {
 
 interface GetDeadLinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
@@ -40,9 +42,17 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
         .array(z.string())
         .optional()
         .describe('Referring source docs to narrow the audit with OR semantics'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { sourceDocNames?: string[] }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: { sourceDocNames?: string[]; cwd?: string }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const params = new URLSearchParams();
@@ -58,7 +68,7 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
 
       const { ok: _ok, ...rest } = result;
       const data = rest as DeadLinksPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       // Target previewUrls point at redlinks (the UI renders unresolved docs
       // as a "page doesn't exist yet" state); sources previewUrls point at
       // the live source doc that contains the broken link.
@@ -81,7 +91,7 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
           ...(resolvedTarget ? { previewUrlSource: resolvedTarget.source } : {}),
         };
       });
-      const structured = { ...data, deadLinks, ui };
+      const structured = { ...data, deadLinks, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

@@ -37,7 +37,7 @@ import {
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import {
   incrementBridgeMergeCheckpointCreated,
@@ -246,7 +246,7 @@ export interface SetupServerObserversOpts {
  * handler. The settlement handler holds no timers; cleanup is O(1).
  */
 export function setupServerObservers(opts: SetupServerObserversOpts): () => void {
-  const { doc, xmlFragment, ytext, mdManager } = opts;
+  const { doc, xmlFragment, ytext, mdManager, schema } = opts;
 
   /**
    * Structured-log + silent-checkpoint writer for mergeThreeWay post-condition
@@ -322,7 +322,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   /** Initialize Observer A baseline from current XmlFragment state. */
   try {
-    const initialJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const initialJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const initialBody = mdManager.serialize(initialJson);
     const initialFrontmatter = getFrontmatter(doc);
     lastSyncedXmlMd = prependFrontmatter(initialFrontmatter, initialBody);
@@ -341,7 +341,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
    */
   const runObserverASync = (): void => {
     try {
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
       const frontmatter = getFrontmatter(doc);
       const md = prependFrontmatter(frontmatter, body);
@@ -431,7 +431,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // See `isPairedWriteOrigin` JSDoc for the fuzz seed.
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
@@ -455,7 +455,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   // ─── Initial sync: populate Y.Text from XmlFragment if empty ──
   if (xmlFragment.length > 0 && ytext.length === 0) {
     try {
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
       const frontmatter = getFrontmatter(doc);
       const md = prependFrontmatter(frontmatter, body);
@@ -594,7 +594,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // a fresh delta instead of re-applying the stale diff that just failed.
       // Mirrors Observer A's baseline recovery pattern.
       try {
-        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const postBody = mdManager.serialize(postJson);
         const fm = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(fm, postBody);
@@ -621,7 +621,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // paired-write path.
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);

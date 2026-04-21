@@ -44,8 +44,7 @@ export default {
     'packages/cli': {
       entry: ['scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
-        'ws', // looks like dynamic import isn't checked
-        '@types/ws',
+        '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
       ],
       ignoreFiles: [
         'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts
