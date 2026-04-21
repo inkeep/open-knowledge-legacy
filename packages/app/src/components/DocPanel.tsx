@@ -30,7 +30,7 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
         type="single"
         variant="outline"
         value={activeTab}
-        onValueChange={(value) => {
+        onValueChange={(value: PanelTab) => {
           if (value) setActiveTab(value);
         }}
         className="mx-auto p-2"
