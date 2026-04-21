@@ -191,7 +191,14 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     onAgentWrite: opts.onAgentWrite,
   });
 
-  const { hocuspocus, destroy: destroyHocuspocus, ready, degraded, lockDir } = serverInstance;
+  const {
+    hocuspocus,
+    destroy: destroyHocuspocus,
+    ready,
+    degraded,
+    lockDir,
+    agentPresenceBroadcaster,
+  } = serverInstance;
 
   // HTTP server — /api/* routed through Hocuspocus onRequest extensions;
   // everything else 404s (static React assets are served separately by
@@ -252,14 +259,13 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        // D27: parse connectionId from URL query params.
-        let connectionId: string | undefined;
-        try {
-          const searchParams = new URL(req.url ?? '', 'http://localhost').searchParams;
-          connectionId = searchParams.get('connectionId') ?? undefined;
-        } catch {
-          // malformed URL — treat as no connectionId
-        }
+        // D27/D28: parse connectionId from URL query params. This id is used
+        // for both (a) identity-attribution session cleanup (`closeAllForAgent`
+        // + `clearFocus`) and (b) multi-agent-presence cleanup
+        // (`clearPresence`). Legacy MCP clients that don't send `connectionId`
+        // fall through to TTL-only cleanup (5s filter on the client, §FR-5).
+        // Malformed URLs → null → no-op. Never throws.
+        const connectionId = parseKeepaliveConnectionId(req.url);
 
         // D28: if reconnecting within grace period, cancel the timer.
         if (connectionId) {
@@ -282,25 +288,31 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         ws.on('close', () => {
           clearInterval(pingTimer);
           if (!connectionId) return;
-          // D28: start grace timer.
+          // D28: start grace timer. Reconnect within the window cancels above.
           const timer = setTimeout(() => {
-            keepaliveGraceTimers.delete(connectionId as string);
-            // If destroy() already ran, skip — the sessionManager and
-            // agentFocusBroadcaster may be mid-teardown and calling into them
-            // would race (TOCTOU: timer fires between destroy's clearTimeout
-            // loop and the Hocuspocus teardown awaiting completion).
+            keepaliveGraceTimers.delete(connectionId);
+            // If destroy() already ran, skip — the sessionManager,
+            // agentFocusBroadcaster, and agentPresenceBroadcaster may be
+            // mid-teardown and calling into them would race (TOCTOU: timer
+            // fires between destroy's clearTimeout loop and the Hocuspocus
+            // teardown awaiting completion).
             if (shuttingDown) return;
             const work = (async () => {
               log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
               try {
-                await serverInstance.sessionManager.closeAllForAgent(connectionId as string);
+                await serverInstance.sessionManager.closeAllForAgent(connectionId);
               } catch (err) {
                 log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
               }
               try {
-                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId as string);
+                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId);
               } catch (err) {
                 log.error({ err, connectionId }, '[keepalive] clearFocus failed');
+              }
+              try {
+                agentPresenceBroadcaster?.clearPresence(connectionId);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] clearPresence failed');
               }
             })();
             keepaliveGraceInflight.add(work);
@@ -434,4 +446,25 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     didGitInit,
     serverInstance,
   };
+}
+
+/**
+ * Extract the `connectionId` query param from a `/collab/keepalive` upgrade URL.
+ * Tolerant of: missing URL (`undefined`), unparseable URL, missing/empty
+ * `connectionId`, and percent-encoded values. Returns `null` on every failure
+ * mode — the caller falls through to TTL-only cleanup.
+ *
+ * Exported for unit testing. Never throws.
+ */
+export function parseKeepaliveConnectionId(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    // The second arg is a dummy base so `new URL` accepts path-only inputs.
+    const parsed = new URL(url, 'http://localhost');
+    const connectionId = parsed.searchParams.get('connectionId');
+    if (!connectionId || connectionId.length === 0) return null;
+    return connectionId;
+  } catch {
+    return null;
+  }
 }

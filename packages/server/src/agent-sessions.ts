@@ -514,10 +514,7 @@ export class AgentSessionManager {
         await session.dc.disconnect();
         this.sessions.delete(key);
       } catch (err) {
-        log.error(
-          { err, agentId },
-          `[agent-session] Failed to close session for agent ${agentId}`,
-        );
+        log.error({ err, agentId }, `[agent-session] Failed to close session for agent ${agentId}`);
       }
     }
   }

@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { bootServer } from './boot.ts';
+import { bootServer, parseKeepaliveConnectionId } from './boot.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -118,5 +118,59 @@ describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
     } finally {
       await booted.destroy();
     }
+  });
+});
+
+describe('parseKeepaliveConnectionId', () => {
+  test('returns null for undefined URL (defensive)', () => {
+    expect(parseKeepaliveConnectionId(undefined)).toBeNull();
+  });
+
+  test('returns null for empty URL', () => {
+    expect(parseKeepaliveConnectionId('')).toBeNull();
+  });
+
+  test('returns null when connectionId query param is absent', () => {
+    expect(parseKeepaliveConnectionId('/collab/keepalive?pid=1234')).toBeNull();
+  });
+
+  test('returns null when connectionId is present but empty', () => {
+    expect(parseKeepaliveConnectionId('/collab/keepalive?pid=1234&connectionId=')).toBeNull();
+  });
+
+  test('returns the connectionId when present (happy path)', () => {
+    expect(parseKeepaliveConnectionId('/collab/keepalive?pid=1234&connectionId=uuid-A')).toBe(
+      'uuid-A',
+    );
+  });
+
+  test('decodes percent-encoded connectionId values', () => {
+    expect(parseKeepaliveConnectionId('/collab/keepalive?connectionId=user%2Fagent%3D1%262')).toBe(
+      'user/agent=1&2',
+    );
+  });
+
+  test('tolerates query order', () => {
+    expect(parseKeepaliveConnectionId('/collab/keepalive?connectionId=foo&pid=1')).toBe('foo');
+  });
+
+  test('tolerates a UUID-shaped connectionId', () => {
+    expect(
+      parseKeepaliveConnectionId(
+        '/collab/keepalive?connectionId=abcdef12-3456-7890-abcd-ef1234567890',
+      ),
+    ).toBe('abcdef12-3456-7890-abcd-ef1234567890');
+  });
+
+  test('does not throw on a blatantly malformed URL', () => {
+    // Leading `?` with no path is still parseable; the method must not throw.
+    expect(() => parseKeepaliveConnectionId('?connectionId=foo')).not.toThrow();
+    expect(parseKeepaliveConnectionId('?connectionId=foo')).toBe('foo');
+  });
+
+  test('never throws on garbage input', () => {
+    expect(() => parseKeepaliveConnectionId('not a url at all')).not.toThrow();
+    // '/collab' path with no query → no connectionId
+    expect(parseKeepaliveConnectionId('/collab/keepalive')).toBeNull();
   });
 });
