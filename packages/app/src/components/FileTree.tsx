@@ -573,7 +573,7 @@ export interface FileTreeHandle {
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
-  const { addPage } = usePageList();
+  const { addPage, folderPaths: knownFolderPaths } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -761,7 +761,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   useImperativeHandle(ref, () => ({
     startCreating,
     expandAll() {
-      const paths = collectFolderPaths(buildTree(documents));
+      const paths = collectFolderPaths(buildTree(documents, knownFolderPaths));
       startTransition(() => {
         setUserExpanded(paths);
         setUserCollapsed(new Set());
@@ -776,7 +776,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       // "collapse all" collapses every non-ancestor folder and leaves the
       // active file's chain open — which matches VS Code / Finder UX and is
       // the intended contract for this button.
-      const paths = collectFolderPaths(buildTree(documents));
+      const paths = collectFolderPaths(buildTree(documents, knownFolderPaths));
       startTransition(() => {
         setUserCollapsed(paths);
         setUserExpanded(new Set());
@@ -976,7 +976,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     );
   }
 
-  if (documents.length === 0 && !creatingItem) {
+  const treeNodes = buildTree(documents, knownFolderPaths);
+
+  if (!treeNodes.length && !creatingItem) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
@@ -992,7 +994,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     );
   }
 
-  const treeNodes = documents.length > 0 ? buildTree(documents) : [];
   const folderPaths = collectFolderPaths(treeNodes);
   const ancestors = computeAncestors(activeNavigationPath);
 

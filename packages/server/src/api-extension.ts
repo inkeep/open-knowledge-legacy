@@ -8,6 +8,7 @@
 import { spawn } from 'node:child_process';
 import {
   closeSync,
+  type Dirent,
   existsSync,
   mkdirSync,
   openSync,
@@ -64,6 +65,7 @@ import {
 } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
+import type { ContentFilter } from './content-filter.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
@@ -427,6 +429,8 @@ export interface ApiExtensionOptions {
   contentDir: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+  /** Optional content filter used when enumerating folder-only paths from disk. */
+  contentFilter?: ContentFilter;
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
@@ -544,6 +548,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sessionManager,
     contentDir,
     getFileIndex,
+    contentFilter,
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
@@ -580,6 +585,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch {
       return docName;
     }
+  }
+
+  function collectFolderPathsFromDisk(): string[] {
+    const folders = new Set<string>();
+
+    function walk(absDirPath: string, relDirPath: string): void {
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(absDirPath, { withFileTypes: true });
+      } catch (err) {
+        console.warn(`[api] Failed to read directory ${absDirPath}:`, err);
+        return;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const childRelPath = relDirPath ? `${relDirPath}/${entry.name}` : entry.name;
+        const excludedByFilter = contentFilter?.isDirExcluded(childRelPath) ?? false;
+        const excludedByFallback = entry.name === '.git' || entry.name === 'node_modules';
+        if (excludedByFilter || excludedByFallback) continue;
+
+        folders.add(childRelPath);
+        walk(resolve(absDirPath, entry.name), childRelPath);
+      }
+    }
+
+    walk(contentDir, '');
+    return [...folders].sort((a, b) => a.localeCompare(b));
   }
 
   const EMPTY_METADATA: FrontmatterMetadata = {
@@ -2919,7 +2952,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         pages.push({ docName, title, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
-      json(res, 200, { ok: true, pages });
+      json(res, 200, { ok: true, pages, folders: collectFolderPathsFromDisk() });
     } catch (e) {
       console.error('[pages]', e);
       json(res, 500, { ok: false, error: 'Failed to list pages' });
