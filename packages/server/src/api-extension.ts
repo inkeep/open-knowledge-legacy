@@ -35,6 +35,7 @@ import {
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import {
+  formatCheckpointSubject,
   formatRenameSubject,
   formatRollbackSubject,
 } from '@inkeep/open-knowledge-core/history-repo-layout';
@@ -48,7 +49,7 @@ import {
   applyAgentMarkdownWrite,
   applyAgentUndo,
 } from './agent-sessions.ts';
-import { recordContributor } from './contributor-tracker.ts';
+import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -1925,11 +1926,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers + message from body
+      // Parse optional writers + message + principal from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       let userMessage: string | undefined;
       let saveVersionBody: Record<string, unknown> = {};
+      let principalName: string | undefined;
+      let principalEmail: string | undefined;
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1954,6 +1957,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
             };
           });
+        }
+        // Optional principal identity: { name: string, email: string } (US-020, D12)
+        const p = body.principal;
+        if (p && typeof p === 'object' && !Array.isArray(p)) {
+          const pr = p as Record<string, unknown>;
+          if (typeof pr.name === 'string' && pr.name.trim()) {
+            principalName = sanitizeGitIdentity(pr.name.trim());
+          }
+          if (typeof pr.email === 'string' && pr.email.trim()) {
+            principalEmail = sanitizeGitIdentity(pr.email.trim());
+          }
         }
       }
 
@@ -1980,6 +1994,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[history] checkpoint ${result.checkpointRef}`);
 
+      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
+      // swapContributors() atomically captures all agent writes since the last checkpoint.
+      const contributorSnapshot = swapContributors();
+
       // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
       if (projectDir) {
@@ -1990,11 +2008,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const existing = await pg.tags(['--list', 'ok/v*']);
             const n = existing.all.length + 1;
             const tag = `ok/v${n}`;
-            const autoMsg = userMessage ?? `Checkpoint v${n}`;
+
+            // Author identity: principal from body > git config > openknowledge fallback
+            let authorName = 'openknowledge';
+            let authorEmail = 'noreply@openknowledge.local';
+            if (principalName && principalEmail) {
+              authorName = principalName;
+              authorEmail = principalEmail;
+            } else {
+              try {
+                const gitId = await resolveGitIdentity(projectDir);
+                if (gitId) {
+                  authorName = gitId.name;
+                  authorEmail = gitId.email;
+                }
+              } catch {
+                // no-op — use defaults
+              }
+            }
+
+            // Co-Authored-By trailers for agent/principal session contributors (US-020)
+            const coAuthorLines: string[] = [];
+            for (const entry of contributorSnapshot.values()) {
+              if (entry.writerId.startsWith('agent-') || entry.writerId.startsWith('principal-')) {
+                const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+              }
+            }
+
+            // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+            const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+            const commitMsg =
+              coAuthorLines.length > 0
+                ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                : subjectLine;
+
             // Stage content changes and create commit (allow-empty so a tag always lands)
             const gitPathspec = resolvedContentRoot || '.';
             await pg.add(gitPathspec);
-            await pg.commit(autoMsg, { '--allow-empty': null });
+            await pg
+              .env({
+                GIT_AUTHOR_NAME: authorName,
+                GIT_AUTHOR_EMAIL: authorEmail,
+                GIT_COMMITTER_NAME: authorName,
+                GIT_COMMITTER_EMAIL: authorEmail,
+              })
+              .commit(commitMsg, ['--allow-empty']);
             await pg.addTag(tag);
             console.log(`[checkpoint] parent-git commit + tag ${tag}`);
             return tag;
