@@ -12,6 +12,7 @@
     "build:mac:unsigned": "bun run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac -c.mac.identity=null",
     "postinstall": "node scripts/postinstall.mjs",
     "rebuild:native": "electron-builder install-app-deps",
+    "smoke:mock-update": "OK_UPDATER_FORCE_DEV=1 node scripts/smoke-mock-update.mjs",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
