@@ -163,3 +163,49 @@ Auditor findings were all pure corrections (applied). Challenger surfaced 3 STRO
 - **MODERATE-4 (D-A rejection UX):** CSV/TXT dropped → no actionable path.
 
 These are surfaced to user in-chat — not auto-resolved.
+
+---
+
+## 2026-04-21 — Session 2: Finalize close-out (Step 5)
+
+### Context
+
+Re-entry after session 1's Audit/assess-findings pass. Spec was pushed to origin/main as artifact `2ad0177a` (spec document landed; implementation work NOT shipped). User's goal: close Step 5 iterative loop + re-run Step 6 Audit + Step 7 Assess + Step 8 Finalize so implementation can begin.
+
+Baseline commit updated from `432a834b` → `2ad0177a` to reflect the current spec-on-main state.
+
+### Scope changes (reopened under "no deferred tech debt on greenfield" principle)
+
+- **F8 (shortestImageRef relative emit) absorbed** from §15 Identified into FR-1a acceptance criteria. One-line fix at `packages/app/src/editor/image-upload/index.ts:91` + dirname-matrix test. §9 D3 reclassified from "FIX-SHIPPED MICRO-PR" to "FR-1a (absorbed)."
+- **F9 (unicode-safe sanitizeFilename) absorbed** from §15 Identified into NFR-3. One-line regex fix at `packages/server/src/api-extension.ts` + unicode-preservation + path-escape-safety test. §9 D7 reclassified. §15 Identified: F8 and F9 entries removed.
+- Rationale: both fixes are one-line; spec's correctness (FR-1a markdown-image branch + NFR-3 security posture) depends on them; carrying as separate specs is more paperwork than code; implementer shouldn't start with two known blockers they have to detour around.
+
+### New decision
+
+- **D-L Rejection copy: two-message rule** LOCKED. Message A (unchanged from prior FR-1) for text-ext drops (.txt/.csv/.json/.md/.yml/.yaml/.toml). Message B (new, pinned): `"This file type isn't supported. Try a different file, or reference it with a markdown link: [label](path/to/file)."` for all other non-sniffable or admin-narrowed rejects. Client-side extension check determines which message fires.
+  - Origin: user-driven staff-eng + staff-PM convergence exercise during session-2 /gtm:analyze pass on the "5 unsettled items" from the E2E criteria draft.
+  - Underlying principle (captured in decision rationale): *error messages serve the user who hit them; be specific when the user's situation is knowable, generic-with-escape-hatch when not; never lie to preserve message variety; never expose internal structure (MIME names, config keys, allowlists) to non-operator users*.
+  - Reversibility: reversible on copy wording; the two-message shape is LOCKED.
+
+### Prose corrections (direct edit — Draft-stage, not post-ship corrigendum)
+
+- Line 9 header: replaced "Supersedes (partial): `specs/2026-04-08-editor-input-surface/SPEC.md`" with "Builds on: `reports/editor-input-surface-worldmodel/REPORT.md`". The prior-spec path never resolved (drafted in a sibling worktree, never committed to main); the report at that path does resolve and contains the D1-D30 /assess-findings triage.
+- §9 renamed "Relationship to prior spec" → "Relationship to prior work" (opens directly on the REPORT.md pointer).
+- Note: earlier session attempt to apply CLAUDE.md post-ship corrigendum breadcrumb pattern (commits `e714f2d2` on spec/asset-embed-surface, `bf385495` on fix/asset-embed-f2-breadcrumb — both local-only, never pushed to origin) was the wrong pattern for a Draft-stage spec. Replaced with direct prose edit. Both local commits are disposable; they can be cleaned up post-finalize.
+
+### New artifact
+
+- `evidence/e2e-acceptance-scenarios.md` — cross-FR E2E acceptance scenarios (10 primary scenarios P1.1 through P7.1, edge-siblings enumerated, perturbation checks per scenario, "top 10 budget" statement, push-down list for lower-tier tests, Phase 2 coordination protocol). This file is the testable contract that implementation-time test authoring consumes. Derived from /tdd + /gtm:analyze analysis in session 2 conversation.
+
+### §13 In Scope expansion
+
+Added explicit callouts for: F8 fix site, F9 fix site (with note on line-number drift from baseline), rejection-copy constants, new evidence file reference, push-down list (tests that stay unit/narrow integration / fidelity PBT rather than E2E).
+
+### Status field
+
+Updated from "Draft (All 11 decisions LOCKED — ready for §Audit)" to "Draft (12 decisions LOCKED; F8 + F9 absorbed into scope 2026-04-21; ready for §Audit re-run)". Baseline commit field updated `432a834b` → `2ad0177a`.
+
+### Ready for Step 6 (Audit re-run)
+
+Content-stable for audit re-run. Auditor + challenger will spawn in parallel; prior `meta/audit-findings.md` resolved items preserved above for audit-trail continuity. Re-run expected ~8min, ~$10-15.
+

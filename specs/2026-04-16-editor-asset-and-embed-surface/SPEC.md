@@ -1,12 +1,12 @@
 # SPEC: Editor Asset + Embed Surface
 
-**Status:** Draft (All 11 decisions LOCKED — ready for §Audit)
+**Status:** Draft (12 decisions LOCKED; F8 + F9 absorbed into scope 2026-04-21; ready for §Audit re-run)
 **Created:** 2026-04-16
-**Last updated:** 2026-04-17
+**Last updated:** 2026-04-21
 **Owner:** Nick Gomez
-**Baseline commit:** 432a834b
-**Worktree:** `.claude/worktrees/spec-asset-embed-surface` on branch `spec/asset-embed-surface`
-**Supersedes (partial):** `specs/2026-04-08-editor-input-surface/SPEC.md` — 8 items not shipped in main; other items superseded, refuted, or fixed via micro-PR (see §9 Relationship to prior spec)
+**Baseline commit:** 2ad0177a
+**Worktree:** `.claude/worktrees/finalize-asset-embed-surface` on branch `finalize/asset-embed-surface`
+**Builds on:** `reports/editor-input-surface-worldmodel/REPORT.md` — triage of an earlier 30-decision draft SPEC that was developed in a sibling worktree but never committed to main. 8 items not shipped; others superseded, refuted, or fixed in this spec. See §9 for per-row disposition.
 **Related:**
 - `specs/2026-04-16-clipboard-mdast-canonical/` — text/HTML clipboard pipeline (shipped); this spec is file-upload paste/drop only
 - `specs/2026-04-08-typed-component-nodes/` — Phase 2 Video/Audio/PDFViewer render dispatch triggered by wiki-embed extension (D-F read-time promotion)
@@ -154,8 +154,8 @@ Two cases depending on what the ref looks like:
 
 | # | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
-| FR-1 | Must | Accept all magic-byte-sniffable types on drop | Drop `.pdf`/`.mp4`/`.mp3`/`.wav`/`.ogg`/`.webm`/`.zip`/fonts → passes FileHandler + server magic-byte check. Non-sniffable (`.txt`, `.csv`, `.json`, `.md`) rejected with actionable error per D-A: error message reads: "Text files (CSV, TXT, JSON, MD) aren't supported as binary drops. To include contents, paste into a code fence. To link to a text file in the repo, reference it with a regular markdown link." (Surfaced via toast on rejection.) Test vector per MIME + error-message assertion for rejected types. |
-| FR-1a | Must | Emit-shape dispatch by extension | After upload success, client dispatches insert by (extension × `emitFormat` × `wikiEmbedExtensions`). See emit-dispatch matrix below. Tests: image `emitFormat=wikiembed` → `![[foo.png]]`; image `emitFormat=markdown-image` → `![foo](foo.png)`; pdf `emitFormat=wikiembed` → `![[doc.pdf]]`; pdf `emitFormat=markdown-image` → `[doc.pdf](doc.pdf)` (markdown-link for non-image when in markdown-image mode); zip → `[archive.zip](archive.zip)` (opaque always uses markdown-link). |
+| FR-1 | Must | Accept all magic-byte-sniffable types on drop | Drop `.pdf`/`.mp4`/`.mp3`/`.wav`/`.ogg`/`.webm`/`.zip`/fonts → passes FileHandler + server magic-byte check. Non-sniffable or not-in-allowlist rejects surface an actionable toast per D-L two-message rule: text extensions (`.txt`/`.csv`/`.json`/`.md`/`.yml`/`.yaml`/`.toml`) get message A: `"Text files (CSV, TXT, JSON, MD) aren't supported as binary drops. To include contents, paste into a code fence. To link to a text file in the repo, reference it with a regular markdown link."` All other non-sniffable or admin-narrowed rejects get message B: `"This file type isn't supported. Try a different file, or reference it with a markdown link: [label](path/to/file)."` Test vectors: per-MIME accept + both error-message assertions (text-ext → A; unknown-ext → B). |
+| FR-1a | Must | Emit-shape dispatch by extension | After upload success, client dispatches insert by (extension × `emitFormat` × `wikiEmbedExtensions`). See emit-dispatch matrix below. Tests: image `emitFormat=wikiembed` → `![[foo.png]]`; image `emitFormat=markdown-image` → `![foo](foo.png)`; pdf `emitFormat=wikiembed` → `![[doc.pdf]]`; pdf `emitFormat=markdown-image` → `[doc.pdf](doc.pdf)` (markdown-link for non-image when in markdown-image mode); zip → `[archive.zip](archive.zip)` (opaque always uses markdown-link). **F8 fix absorbed (2026-04-21 scope review):** `shortestImageRef` at `packages/app/src/editor/image-upload/index.ts:91` emits minimal-correct relative paths across all dirname permutations: same-dir → basename; parent-dir → `../<path>`; deeper-dir → `./<subpath>/<basename>`; cross-tree → `../.../<basename>`. Dirname-matrix test per permutation. |
 | FR-2 | Must | Same-dir sha256 dedup | Drop `vacation.jpg` twice into same note → second drop returns existing path with `deduped: true`; toast shown per D-B resolution (pending). |
 | FR-3a | Must | `![[file.ext]]` embed tokenizer | Markdown `![[photo.png]]` parses to mdast `wikiLinkEmbed` node (distinct from `wikiLink`); serializes byte-identical. MUST preserve precedent #15 (use same `MICROMARK_EXT` singleton with identity-dedup) and precedent #9 (add-only — existing `wikiLink` tokenizer state machine and schema unchanged). Adding the `CODE_BANG` (33) entry to the syntax extension's text map at construct-registration time is the expected shape. Test: round-trip matrix across images/video/audio/PDF/opaque. |
 | FR-3b | Must | File-basename index | `packages/core/src/utils/path-resolve.ts` (core: browser+Node compatible, no server deps) exposes the data structure `Map<basename, string[]>` + `resolveEmbed(basename, sourcePath) → resolvedPath | null` with Foam-style shortest-path from sourcePath's dirname. Tiebreak rule (when multiple paths tie on suffix length): (1) prefer a path in sourcePath's own dirname subtree (depth-first), (2) else prefer shortest path, (3) else alphabetical (deterministic across rebuilds). Server-side CC1 subscription + rebuild-on-signal wiring lives in `packages/server/src/standalone.ts` (server: constructs the index and subscribes via `cc1Broadcaster.signal('files')` path). Map-based (no TrieMap dep per D-D). |
@@ -183,7 +183,7 @@ The `emitFormat` toggle scopes to **any extension in `wikiEmbedExtensions`**: `w
 
 - **NFR-1 Performance:** sha256 on 25MB completes <200ms (baseline validation). Basename index lookup O(1) with small constant. Vault-scan startup < 2s for 1000-file vaults.
 - **NFR-2 Reliability:** Non-sniffable files rejected with actionable error. Dedup match surfaced to user (no silent reuse).
-- **NFR-3 Security:** Filename sanitization preserves unicode (see F9 micro-PR; prerequisite). Path-escape guards unchanged. SVG `<img>`-only unchanged. New file types (PDF) render as link, never inline execution.
+- **NFR-3 Security:** **F9 fix absorbed (2026-04-21 scope review):** `sanitizeFilename` at `packages/server/src/api-extension.ts` preserves unicode code points (letters, digits, marks, punctuation) while stripping path separators and control bytes. Unicode-preservation + path-escape-safety test required. Path-escape guards unchanged. SVG `<img>`-only unchanged. New file types (PDF) render as link, never inline execution.
 - **NFR-4 Observability:** Upload events logged with `{ dedup, mime, size, destPath }`. CC1 broadcasts unchanged.
 - **NFR-5 Round-trip fidelity:** `![[file.ext]]` byte-identical through parse → PM → serialize. Preserves I1 (Identity), I4 (Idempotence), I5 (Layer A === Layer B: mdManager parse/serialize and Y.Doc → PM → Y.Text round-trip agree), and I7 (Cross-path consistency: FR-3d emit-on-drop and FR-3a parse of hand-authored `![[...]]` produce equivalent mdast + PM) invariants from CLAUDE.md Storage-layer fidelity contract.
 
@@ -209,19 +209,19 @@ See `evidence/current-shipped-state.md` for file:line citations. TL;DR:
 - `packages/content/` has zero asset files today (0 image refs).
 - `file-type` package pinned at `^22.0.1` (not 8.x as older evidence drafts claimed — see INV3 for corrected version).
 
-## 9) Relationship to prior spec
+## 9) Relationship to prior work
 
-The prior spec (`specs/2026-04-08-editor-input-surface/SPEC.md`, 30 decisions D1-D30) is superseded in part:
+An earlier 30-decision draft SPEC (dated 2026-04-08, developed in a sibling worktree, never committed to main) is partially superseded here. See `reports/editor-input-surface-worldmodel/REPORT.md` for the per-decision /assess-findings triage of D1-D30. Per-row disposition:
 
 | Prior decision | Status in this spec |
 |---|---|
 | D1 accept all file types | FR-1 (accepted, narrowed: magic-byte sniffable + explicit allowlist) |
 | D2 global `assets/` at project root | **REFUTED by shipped evidence (content has zero assets; 1-way door not traversed). Default is co-located; FR-5 exposes choice.** |
-| D3 relative refs | **FIX-SHIPPED MICRO-PR (F8) — not in this spec.** One-line fix to `shortestImageRef` (applies only to opaque-type `[name](path)` emit; wiki-embed refs resolve via basename index). |
+| D3 relative refs | **FR-1a (absorbed 2026-04-21 via scope review).** `shortestImageRef` dirname-matrix fix now in-scope; applies only to opaque-type `[name](path)` / markdown-image emit path (wiki-embed refs resolve via basename index, so F8 irrelevant there). |
 | D4 sha256 dedup | FR-2 (accepted, scope narrowed to same-dirname) |
 | D5 + D27 `![[file.ext]]` embed + file-basename index | FR-3 (accepted + WIDENED: also covers embed WRITE on drop per D-I wiki-embed storage). |
 | D6 standard markdown emit | **REFRAMED by D-I.** FR-5's `emitFormat` now toggles emit for renderable types (default `wikiembed`, optional `markdown-image`). Opaque types always emit markdown link. |
-| D7 unicode-preserving sanitization | **FIX-SHIPPED MICRO-PR (F9) — not in this spec.** One-line regex fix. |
+| D7 unicode-preserving sanitization | **NFR-3 (absorbed 2026-04-21 via scope review).** `sanitizeFilename` unicode-preserving regex now in-scope. |
 | D8 auto-update refs on rename | FR-7 (accepted, extended to image refs) |
 | D9 publishing out of scope | Maintained |
 | D10 raw-body POST | **REFUTED.** Shipped multipart+busboy works; D10 rationale unsupported. |
@@ -260,6 +260,7 @@ The prior spec (`specs/2026-04-08-editor-input-surface/SPEC.md`, 30 decisions D1
 | D-I | Non-image emit shape: **`![[file.ext]]` wiki-embed for renderable extensions (`upload.wikiEmbedExtensions` allowlist); `[name](path)` markdown link fallback for opaque types.** | Product | **LOCKED** | Yes (persistence shape) | 6-editor convergence (Obsidian + Logseq + Foam + Dendron + Fumadocs + SilverBullet) on `![[...]]`; reuses FR-3 parser; Obsidian refugee fidelity; Phase 2 is pure render dispatch. |
 | D-J | Obsidian `attachmentFolderPath`: **free-form string** matching Obsidian's literal schema (`"/"` = vault root, `"./"` = co-located, `"./subdir"` = co-located subdir, other = global path). | Technical | **LOCKED** | No | INV1-confirmed 4 patterns; free-form 1:1 passthrough is lossless. |
 | D-K | Rename-rewrite scope: **refs only (Foam/Dendron/Obsidian pattern).** Do NOT move co-located asset files when a doc moves. Basename index resolves from new doc location via shortest-path. | Technical | **LOCKED** | Asymmetric (easy to add relocation later; hard to remove it) | MEDIUM-HIGH confidence. D-I wiki-embed immunity means resolution works regardless of physical location — zero functional need for relocation. Obsidian refugee ecosystem expectation matches. SilverBullet's relocation pattern risks silent breakage of shared assets (e.g., `logo.png` referenced by 5 docs) without a backlink-graph (Bucket 7 dep). **Concrete revisit trigger** (per challenger STRONG-2): re-audit orphan-asset density after 12 months of dogfood use. **Paired commitment:** ship `openknowledge gc` (see Future Work → Identified for `gc` scope and triggers). Passive "revisit when complaint" is replaced by this explicit trigger + concrete forward path. |
+| D-L | Rejection copy: **two-message rule**. Message A (unchanged from prior FR-1) surfaces for text-extension drops (`.txt`/`.csv`/`.json`/`.md`/`.yml`/`.yaml`/`.toml`). Message B (new, pinned in FR-1) surfaces for all other non-sniffable or admin-narrowed rejects: `"This file type isn't supported. Try a different file, or reference it with a markdown link: [label](path/to/file)."` Client-side extension check determines which message fires. | Product | **LOCKED** | Reversible (copy iteration) | Staff-eng + staff-PM convergence 2026-04-21 on the principle: *error messages serve the user who hit them; be specific when the user's situation is knowable (text-ext drop), generic-with-escape-hatch when not; never lie to preserve message variety; never expose internal structure (MIME names, config keys, allowlists) to non-operator users*. Message A's specific guidance wins for the majority case (text drops dominate reject traffic); Message B's universal markdown-link escape hatch serves the tail without misleading. Message B wording is INFERRED (PMs iterate copy); pinned as P0 constant with regression test; revisit if dogfood surfaces complaints. |
 
 ## 11) Open questions
 
@@ -307,7 +308,12 @@ Investigation threads (all RESOLVED):
 - File-watcher asset-event widening + CC1 subscriber wiring (FR-6) — `packages/server/src/file-watcher.ts` (emit DiskEvents for asset ext lifecycle) + `packages/server/src/standalone.ts` (`handleDiskEvent` asset-create/delete/rename → `signalChannel('files')`) + `path-resolve.ts` subscribes
 - Image-ref rewrite handler (FR-7) — `packages/server/src/managed-rename-rewrite.ts`: remove `line[idx - 1] !== '!'` exclusion; add `readImageRef` branch with relative-path recompute
 - Endpoint rename (FR-8) — `packages/server/src/api-extension.ts` register `/api/upload` as primary + `/api/upload-image` as alias-shim; update client POST target at `packages/app/src/editor/image-upload/index.ts:132`
-- Tests: unit + integration + fidelity PBT for embed round-trip + rename-rewrite + emit-dispatch matrix (image/video/pdf/audio/zip/docx)
+- **F8 absorbed fix (FR-1a):** one-line `shortestImageRef` correction at `packages/app/src/editor/image-upload/index.ts:91` + dirname-matrix test (same-dir / parent / deeper / cross-tree permutations).
+- **F9 absorbed fix (NFR-3):** one-line `sanitizeFilename` regex at `packages/server/src/api-extension.ts` (line has drifted from 176 at baseline `432a834b` to 172-179 at baseline `2ad0177a`) + unicode-preservation + path-escape-safety tests.
+- **Rejection copy constants (D-L):** client-side `TEXT_EXTENSIONS_REJECTED` set + message A/B constants at `packages/app/src/editor/image-upload/` (message-dispatch branch); unit test for branch selection + E2E assertion on both message strings.
+- Tests: unit + integration + fidelity PBT for embed round-trip + rename-rewrite + emit-dispatch matrix (image/video/pdf/audio/zip/docx).
+- **E2E acceptance scenarios (cross-FR):** see `evidence/e2e-acceptance-scenarios.md` — 10 primary product-experience scenarios (P1.1 drop PDF, P1.2 drop CSV, P2.1 Obsidian vault open + ambiguous resolution, P3.1 same-dir dedup + cross-dir no-dedup, P4.1 operator config without rebuild, P5.1 rename with markdown-image ref, P5.1a rename with wiki-embed ref, P5.2 wiki-embed immunity under concurrent burst, P6.1 multi-user CRDT propagation, P6.2 multi-user basename-index invalidation via CC1) with setup / action / invariants / perturbation check / edge-siblings per scenario. The evidence file is the contract implementation-time test authoring consumes.
+- **Not-E2E (push-down — lower-tier tests):** MIME allowlist precision (narrow integration), `wikiLinkEmbed` tokenizer round-trip (fidelity PBT), path-resolver tiebreak determinism (unit PBT), Obsidian `app.json` parsing variants (unit), `sanitizeFilename` regex coverage (unit), `shortestImageRef` dirname matrix (unit), `managed-rename-rewrite` regex fixtures (narrow integration), Zod config validation (unit), sha256 perf <200ms on 25MB (standalone micro-benchmark), CC1 signal fan-out semantics (narrow integration). These are NOT E2E candidates — they're lower-tier where they give stronger signal per test-runtime dollar.
 
 ## 14) Risks & mitigations
 
@@ -341,8 +347,6 @@ Investigation threads (all RESOLVED):
 ### Identified (known to matter, needs its own spec)
 
 - Guard 5 (`validate:` specs across custom nodes) — CVE-2024-40626 class security hardening
-- F8 micro-PR: `shortestImageRef` relative emit (one-line + test)
-- F9 micro-PR: unicode-safe filename regex (one-line + test)
 - Bucket 7: note-to-note `[[Page Name]]` resolution + backlinks + `[[` autocomplete
 - **`openknowledge gc` CLI command** (paired with D-K 12-month revisit trigger): scan all markdown refs via basename index + `![alt](src)` regex, diff against actual files under content dir, list orphan assets with per-file size + last-reference timestamp; `--dry-run` default, `--apply` deletes after confirm. Scope: self-contained CLI; reuses existing file-watcher walk logic. Trigger to ship: after D-K 12-month drift audit surfaces non-trivial orphan density in any dogfood vault.
 
