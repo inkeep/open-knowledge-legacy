@@ -11,8 +11,18 @@
  *
  * D30: getSession uses an in-flight promise dedup map so concurrent first-calls
  * share one pending openDirectConnection call and produce exactly one session.
+ *
+ * US-008: each session creates a Y.UndoManager tracking [Y.Text, metaMap, flashMap]
+ * via session.origin. session.undoOrigin is the placeholder origin for the future
+ * V0-14 applyAgentUndo path; captureTransaction excludes it from the UM stack
+ * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
-import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
+import type {
+  DirectConnection,
+  Document,
+  Hocuspocus,
+  LocalTransactionOrigin,
+} from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
   applyFastDiff,
@@ -24,6 +34,7 @@ import {
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -176,16 +187,23 @@ export interface AgentSessionIdentity {
 }
 
 /**
- * Per-session state bundle — F1 (D2, precedent #1).
+ * Per-session state bundle — F1 (D2, precedent #1) + US-008 (D25/D24/D21).
  *
  * Every write path must use `session.dc.document.transact(fn, session.origin)`
  * (D32 STOP rule). Never call `session.dc.transact(fn)` or pass the shared
  * `AGENT_WRITE_ORIGIN` constant to per-session writes.
+ *
+ * `um` tracks [Y.Text, metaMap, flashMap] under `session.origin`; writes under
+ * `session.undoOrigin` (V0-14 undo path) are excluded via captureTransaction.
  */
 export interface SessionRecord {
   dc: AgentDirectConnection;
   /** Per-session frozen PairedWriteOrigin — unique per session (D2, D23). */
   origin: PairedWriteOrigin;
+  /** Per-session undo write origin — V0-14 placeholder. Excluded from um.captureTransaction. */
+  undoOrigin: LocalTransactionOrigin;
+  /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
+  um: Y.UndoManager;
   agentId: string;
   docName: string;
 }
@@ -211,6 +229,27 @@ function createSessionOrigin(
   if (principalId !== undefined) context.principal = principalId;
   Object.freeze(context);
   const origin: PairedWriteOrigin = {
+    source: 'local',
+    skipStoreHooks: false,
+    context,
+  };
+  Object.freeze(origin);
+  return origin;
+}
+
+/**
+ * Create a frozen per-session LocalTransactionOrigin for V0-14 undo writes (US-008).
+ * Object-identity-unique per call; deep-frozen (D23). Excluded from UM captureTransaction
+ * to prevent undo-of-undo cycles. Not a PairedWriteOrigin — V0-14 may upgrade if needed.
+ */
+function createUndoOrigin(sessionId: string, agentType?: string): LocalTransactionOrigin {
+  const context: Record<string, unknown> = {
+    origin: 'agent-undo',
+    session_id: sessionId,
+  };
+  if (agentType !== undefined) context.agent_type = agentType;
+  Object.freeze(context);
+  const origin: LocalTransactionOrigin = {
     source: 'local',
     skipStoreHooks: false,
     context,
@@ -278,6 +317,8 @@ export class AgentSessionManager {
     const agentType = identity?.clientName;
     // F1 (D2): per-session frozen origin — object-identity-unique
     const origin = createSessionOrigin(agentId, agentType, identity?.principalId);
+    // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
+    const undoOrigin = createUndoOrigin(agentId, agentType);
 
     // D32: thread session context to openDirectConnection so Hocuspocus
     // extensions (e.g. onAuthenticate) can resolve the session's identity.
@@ -306,9 +347,27 @@ export class AgentSessionManager {
       mode: 'idle',
     });
 
+    // US-008 (D25, D24, D21): per-session UndoManager across Y.Text + metaMap + flashMap.
+    // trackedOrigins uses object identity — only transactions under session.origin are stacked.
+    // captureTransaction excludes undoOrigin writes to prevent undo-of-undo cycles.
+    // ignoreRemoteMapChanges: true — remote agent map updates do not trigger undo eligibility.
+    const um = new Y.UndoManager(
+      [
+        dc.document.getText('source'),
+        dc.document.getMap('metadata'),
+        dc.document.getMap('agent-flash'),
+      ],
+      {
+        trackedOrigins: new Set([origin]),
+        captureTimeout: 500,
+        captureTransaction: (tr: { origin: unknown }) => tr.origin !== undoOrigin,
+        ignoreRemoteMapChanges: true,
+      },
+    );
+
     log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
 
-    return { dc, origin, agentId, docName };
+    return { dc, origin, undoOrigin, um, agentId, docName };
   }
 
   /** Check if a session exists without creating one. */
@@ -318,13 +377,16 @@ export class AgentSessionManager {
 
   /**
    * Disconnect and remove a specific agent session.
-   * Clears awareness before disconnect (D26: dc.disconnect() is the teardown primitive).
+   * Clears awareness + destroys UM before disconnect (D26: dc.disconnect() is the teardown
+   * primitive; explicit um.destroy() releases UM observers eagerly before Hocuspocus unloads
+   * the Y.Doc — UM also auto-destroys on doc.on('destroy') per Q47/Q48).
    */
   async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
     const session = this.sessions.get(key);
     if (session) {
       session.dc.document.awareness.setLocalState(null);
+      session.um.destroy();
       await session.dc.disconnect();
       this.sessions.delete(key);
       log.info({ docName, agentId }, `[agent-session] Closed session for: ${docName} / ${agentId}`);
@@ -338,6 +400,7 @@ export class AgentSessionManager {
       if (key.endsWith(suffix)) {
         try {
           session.dc.document.awareness.setLocalState(null);
+          session.um.destroy();
           await session.dc.disconnect();
           this.sessions.delete(key);
         } catch (err) {
@@ -357,6 +420,7 @@ export class AgentSessionManager {
       if (key.startsWith(prefix)) {
         try {
           session.dc.document.awareness.setLocalState(null);
+          session.um.destroy();
           await session.dc.disconnect();
           this.sessions.delete(key);
         } catch (err) {
@@ -378,6 +442,7 @@ export class AgentSessionManager {
       if (!session) continue;
       try {
         session.dc.document.awareness.setLocalState(null);
+        session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);
       } catch (err) {
