@@ -23,7 +23,7 @@ import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
 import { MANAGED_RENAME_ORIGIN, ROLLBACK_ORIGIN } from './api-extension.ts';
@@ -221,7 +221,7 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     expect(writeCount).toBe(3);
 
     // Verify coalesced state: XmlFragment contains all three pieces.
-    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
     expect(body).toContain('Title');
     expect(body).toContain('Paragraph');
@@ -271,7 +271,9 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     // After initial sync, Y.Text has the XmlFragment content.
-    const serializedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const serializedBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
 
     // Trigger Observer B with a no-op Y.Text mutation (insert + delete same char).
     doc.transact(() => {
@@ -280,7 +282,9 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     });
 
     // Observer B's normalize-gate early-exit keeps XmlFragment unchanged.
-    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toBe(serializedBody);
+    expect(
+      mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+    ).toBe(serializedBody);
 
     cleanup();
   });
@@ -701,7 +705,9 @@ describe('Server Observer B — error recovery paths', () => {
 
     // The XmlFragment keeps its last valid state (the seed content) because
     // updateYFragment never ran.
-    const postBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const postBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
     expect(postBody).toContain('Seed');
     expect(postBody).toContain('Body.');
     expect(postBody).not.toContain('<Note');
@@ -714,7 +720,9 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.insert(0, '# Seed\n\nBody.\n\n## Recovered\n');
     });
 
-    const finalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const finalBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
     expect(finalBody).toContain('Recovered');
 
     cleanup();
@@ -752,7 +760,9 @@ describe('Server Observer B — error recovery paths', () => {
     expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore + 1);
 
     // Prior XmlFragment content remains intact (rollback semantics).
-    const postBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const postBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
     expect(postBody).toContain('Seed');
 
     // A subsequent valid Y.Text edit converges (baseline recovered).
@@ -760,7 +770,9 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Seed\n\nBody.\n\n## Next\n');
     });
-    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Next');
+    expect(
+      mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+    ).toContain('Next');
 
     cleanup();
   });
@@ -821,7 +833,9 @@ describe('Server Observer B — error recovery paths', () => {
     expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore);
 
     // XmlFragment reflects the new content.
-    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('After');
+    expect(
+      mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+    ).toContain('After');
 
     // Observer A's baseline was set from the input body (fallback), not
     // the post-update serialize. Verify by making a further edit — if the
@@ -829,7 +843,9 @@ describe('Server Observer B — error recovery paths', () => {
     doc.transact(() => {
       ytext.insert(ytext.length, '\nExtra\n');
     });
-    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Extra');
+    expect(
+      mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+    ).toContain('Extra');
 
     cleanup();
   });

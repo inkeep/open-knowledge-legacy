@@ -12,7 +12,7 @@ import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import {
@@ -381,7 +381,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // false-positive on the first store after load. Raw file content may
       // differ from TipTap's output (blank lines, trailing newlines, list
       // formatting) without any actual content change.
-      const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+      const normalizedBody = mdManager.serialize(
+        yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+      );
       setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
     },
 
@@ -390,7 +392,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       if (isBatchInProgress()) return;
 
       const xmlFragment = document.getXmlFragment('default');
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
 
       const body = mdManager.serialize(json);
       const metaMap = document.getMap('metadata');
