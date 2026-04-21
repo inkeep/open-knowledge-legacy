@@ -54,9 +54,10 @@ const bridge: OkDesktopBridge = {
 
   onProjectSwitched(cb: (next: OkDesktopConfig) => void) {
     // Wrapper is what gets registered + later removed (electron/electron#33328).
+    // Channel name is the canonical form declared in shared/ipc-events.ts's EventChannels map.
     const listener = (_event: IpcRendererEvent, next: OkDesktopConfig) => cb(next);
-    ipcRenderer.on('ok:project-switched', listener);
-    return () => ipcRenderer.removeListener('ok:project-switched', listener);
+    ipcRenderer.on('ok:project:switched', listener);
+    return () => ipcRenderer.removeListener('ok:project:switched', listener);
   },
 
   onMenuAction(cb: (action: OkMenuAction) => void) {

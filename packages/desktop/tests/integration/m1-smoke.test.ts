@@ -120,23 +120,19 @@ describe('M1 smoke', () => {
     expect(existsSync(serverLockTestPath)).toBe(true);
   });
 
-  test('M1 invariant: bridge contract drift catcher (US-010 promise)', () => {
+  test('M1 invariant: bridge contract drift catcher (US-010 promise)', async () => {
     // Verify all three OkDesktopBridge contract copies (core canonical,
     // desktop preload-side, app renderer-side) declare the same surface
     // shape. Drift is a real risk — a future contributor adds a method to
     // one copy and forgets the other two; this test fires on the first
     // copy diverging.
     //
-    // We check by reading the source files + extracting the interface
-    // member names. Structural equality is enough — if a future change
-    // needs different signatures across the copies, the assertion will
-    // surface and the contributor either fixes drift or splits the
-    // contract intentionally with a comment update.
-
-    // For M1 we keep this as an existence + line-count parity check (tighter
-    // structural matching is over-engineering for 3 small files). The full
-    // member-by-member equivalence belongs to M2 once the bridge surface
-    // stabilizes.
+    // We check existence AND a lightweight member-name-set equality on the
+    // `OkDesktopBridge` interface text. This catches the category of drift
+    // that the Pass 0 review surfaced (core missing the `project` surface
+    // while desktop + app both had it). Full signature-level equivalence is
+    // beyond this test's scope; pick up the delta at `bun run typecheck`
+    // if the TS compiler notices it across the three import paths.
     const corePath = join(__dirname, '..', '..', '..', 'core', 'src', 'desktop-bridge.ts');
     const desktopPath = join(__dirname, '..', '..', 'src', 'shared', 'bridge-contract.ts');
     const appPath = join(
@@ -152,5 +148,79 @@ describe('M1 smoke', () => {
     expect(existsSync(corePath)).toBe(true);
     expect(existsSync(desktopPath)).toBe(true);
     expect(existsSync(appPath)).toBe(true);
+
+    const { readFileSync } = await import('node:fs');
+    /**
+     * Extract the TOP-LEVEL member names from an `OkDesktopBridge` interface
+     * declaration. Walks by brace depth so we don't conflate nested members
+     * (e.g., `dialog.openFolder`) with top-level ones (`dialog`, `project`).
+     */
+    const extractBridgeMembers = (src: string): Set<string> => {
+      const names = new Set<string>();
+      const lines = src.split('\n');
+      let inInterface = false;
+      let depth = 0;
+      for (const line of lines) {
+        if (!inInterface) {
+          if (/interface\s+OkDesktopBridge\s*\{/.test(line)) {
+            inInterface = true;
+            // Starting depth = `{`-count on this line so the interface's own
+            // opening brace pushes us to depth 1 before we examine members.
+            depth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+          }
+          continue;
+        }
+        const opens = (line.match(/\{/g) ?? []).length;
+        const closes = (line.match(/\}/g) ?? []).length;
+        // Only extract at exact top-level of the interface (depth === 1).
+        // Nested blocks (dialog, shell, clipboard, project) have depth >= 2.
+        if (depth === 1) {
+          const trimmed = line.trim();
+          const memberMatch = trimmed.match(/^(?:readonly\s+)?(\w+)\s*[:(?]/);
+          if (memberMatch?.[1]) names.add(memberMatch[1]);
+        }
+        depth += opens - closes;
+        if (depth === 0) break;
+      }
+      return names;
+    };
+
+    const coreMembers = extractBridgeMembers(readFileSync(corePath, 'utf-8'));
+    const desktopMembers = extractBridgeMembers(readFileSync(desktopPath, 'utf-8'));
+    const appMembers = extractBridgeMembers(readFileSync(appPath, 'utf-8'));
+
+    // All three extractions must actually find members — otherwise the regex
+    // is broken and subsequent equality checks are meaningless.
+    expect(coreMembers.size).toBeGreaterThan(0);
+    expect(desktopMembers.size).toBeGreaterThan(0);
+    expect(appMembers.size).toBeGreaterThan(0);
+
+    // Set equality pairwise. If any pair diverges, surface WHICH members
+    // are missing from which copy so the fix is clear.
+    const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
+    const coreMinusDesktop = diff(coreMembers, desktopMembers);
+    const desktopMinusCore = diff(desktopMembers, coreMembers);
+    const appMinusCore = diff(appMembers, coreMembers);
+    const coreMinusApp = diff(coreMembers, appMembers);
+
+    if (
+      coreMinusDesktop.length +
+        desktopMinusCore.length +
+        appMinusCore.length +
+        coreMinusApp.length >
+      0
+    ) {
+      throw new Error(
+        [
+          'OkDesktopBridge contract drift across the three copies:',
+          `  core has but desktop missing:  [${coreMinusDesktop.join(', ')}]`,
+          `  desktop has but core missing:  [${desktopMinusCore.join(', ')}]`,
+          `  app has but core missing:      [${appMinusCore.join(', ')}]`,
+          `  core has but app missing:      [${coreMinusApp.join(', ')}]`,
+          '',
+          'Fix: add the missing members so the three copies agree.',
+        ].join('\n'),
+      );
+    }
   });
 });

@@ -14,12 +14,20 @@
  * this entry wires it into Electron lifecycle + IPC handlers.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, utilityProcess } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { checkOutboundUrl } from './shell-allowlist.ts';
 import {
@@ -54,25 +62,62 @@ function loadAppState(): AppState {
   try {
     const raw = JSON.parse(readFileSync(statePath, 'utf-8'));
     return parseAppState(raw) ?? emptyState();
-  } catch {
-    // Corrupt state — rename + start fresh per OQ-G.
+  } catch (err) {
+    // Corrupt state — rename + start fresh per OQ-G. Log so operations teams
+    // can correlate "recents disappeared" reports to a corruption event
+    // instead of staring at a silent file swap.
+    console.warn('[main] state.json parse failed — quarantining and starting fresh', {
+      err: (err as Error).message,
+      statePath,
+    });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     try {
       const corruptPath = `${statePath}.corrupt-${stamp}`;
       const buf = readFileSync(statePath);
       writeFileSync(corruptPath, buf);
-    } catch {
-      // Best-effort.
+      console.warn('[main] corrupt state.json backed up', { corruptPath });
+    } catch (backupErr) {
+      console.warn('[main] corrupt state.json backup failed', {
+        err: (backupErr as Error).message,
+      });
     }
     return emptyState();
   }
 }
 
+/**
+ * Persist app state atomically. Writes to a `.tmp-<pid>-<ms>` sibling first,
+ * then renames — so a crash mid-write leaves either the prior file intact OR
+ * the fully-formed new file, never a half-written blob that `loadAppState`'s
+ * quarantine path would discard.
+ *
+ * A failure here logs but does NOT throw. The caller (IPC handler or
+ * `before-quit` flush) should not bring down the app because a recents-list
+ * save failed.
+ */
 function saveAppState(state: AppState) {
   const userDataDir = app.getPath('userData');
-  if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
-  const statePath = join(userDataDir, 'state.json');
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
+  try {
+    if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
+    const statePath = join(userDataDir, 'state.json');
+    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      writeFileSync(tmpPath, JSON.stringify(state, null, 2));
+      renameSync(tmpPath, statePath);
+    } catch (err) {
+      console.error('[main] saveAppState failed', { err: (err as Error).message, statePath });
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // tmp file may not exist — best-effort cleanup.
+      }
+    }
+  } catch (err) {
+    console.error('[main] saveAppState userData setup failed', {
+      err: (err as Error).message,
+      userDataDir,
+    });
+  }
 }
 
 let appState: AppState = emptyState();
@@ -163,6 +208,9 @@ async function openProject(projectPath: string) {
   const ctx = await wm.createProjectWindow({ projectPath });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
+  // Keep File → Open Recent current. Menu rebuild is cheap (<1ms) and
+  // Electron expects this pattern — there's no per-item mutation API.
+  refreshApplicationMenu();
 }
 
 async function openProjectOrFallbackToNavigator(projectPath: string) {
@@ -175,6 +223,23 @@ async function openProjectOrFallbackToNavigator(projectPath: string) {
     });
     openNavigator();
   }
+}
+
+/**
+ * Rebuild the application menu. Called on app boot AND whenever the recent-
+ * projects list changes, so File → Open Recent stays current.
+ */
+function refreshApplicationMenu() {
+  installApplicationMenu({
+    openNavigator,
+    openProject: openProjectOrFallbackToNavigator,
+    getRecentProjects: () => appState.recentProjects,
+    clearRecentProjects: () => {
+      appState = { ...appState, recentProjects: [] };
+      saveAppState(appState);
+      refreshApplicationMenu();
+    },
+  });
 }
 
 function registerIpcHandlers() {
@@ -243,6 +308,7 @@ function registerIpcHandlers() {
 app.whenReady().then(() => {
   appState = loadAppState();
   registerIpcHandlers();
+  refreshApplicationMenu();
 
   // D3 revised: every project open spawns a NEW editor window. App boot
   // restores the last-opened project (if any) into a fresh editor window OR

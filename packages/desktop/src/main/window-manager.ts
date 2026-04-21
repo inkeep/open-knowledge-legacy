@@ -76,6 +76,14 @@ export interface WindowManagerDeps {
   killProbe(pid: number, signal: number | NodeJS.Signals): void;
   /** Optional hook to run runClean before forking the utility (D44). */
   runClean?(opts: { lockDir: string }): Promise<void>;
+  /**
+   * Upper bound (ms) on waiting for the utility to post `ready` or `error`
+   * after `init`. Default 15s — enough margin for `bootServer` to run shadow-
+   * repo init + initial file-watcher walk on a large project, narrow enough
+   * that a silently-hung utility surfaces within a debuggable window. Test
+   * injections typically pass a much smaller value.
+   */
+  utilityInitTimeoutMs?: number;
   /** Logger. */
   log?: {
     info(obj: object, msg: string): void;
@@ -140,18 +148,45 @@ export class WindowManager {
       windowLifecycleBound: true,
     });
 
+    // Init timeout: if utility has not posted `ready` or `error` within this
+    // window, reject so `createProjectWindow` doesn't hang forever. A spawn-
+    // phase hang is observable in the wild (bootServer throws synchronously
+    // on a bad path, parent-death poll beats the `ready` handshake, utility
+    // crashes before posting, etc.) — the reviewer flagged the original
+    // implementation's lack of this guard as a Major issue.
+    const INIT_TIMEOUT_MS = this.deps.utilityInitTimeoutMs ?? 15_000;
+
     const ready = new Promise<{ port: number; apiOrigin: string }>((resolveReady, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        utility.removeListener?.('message', onMessage);
+        fn();
+      };
       const onMessage = (msg: unknown) => {
         const m = msg as { type?: string; port?: number; apiOrigin?: string; message?: string };
         if (m.type === 'ready' && typeof m.port === 'number' && typeof m.apiOrigin === 'string') {
-          utility.removeListener?.('message', onMessage);
-          resolveReady({ port: m.port, apiOrigin: m.apiOrigin });
+          const port = m.port;
+          const apiOrigin = m.apiOrigin;
+          settle(() => resolveReady({ port, apiOrigin }));
         } else if (m.type === 'error') {
-          utility.removeListener?.('message', onMessage);
-          reject(new Error(m.message ?? 'utility init failed'));
+          settle(() => reject(new Error(m.message ?? 'utility init failed')));
         }
       };
       utility.on('message', onMessage);
+
+      // Reject on early utility exit (utility died before posting ready/error).
+      utility.on('exit', (code) => {
+        settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
+      });
+
+      // Timeout guard — final defense against spawn-phase hangs. The scheduled
+      // callback calls `settle(...)` which no-ops if ready/error/exit already
+      // settled the promise, so late-firing timers are harmless.
+      this.deps.setTimeout(() => {
+        settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
+      }, INIT_TIMEOUT_MS);
     });
 
     utility.postMessage({
@@ -167,7 +202,10 @@ export class WindowManager {
     const { port, apiOrigin } = await ready;
 
     // D39 post-exit liveness probe — covers the case where utilityProcess.on('exit')
-    // fires but the pid is still alive (VS Code Issue #194477).
+    // fires but the pid is still alive (VS Code Issue #194477). This handler runs
+    // for the lifetime of the window; the init-phase exit handler above wired a
+    // separate listener that rejected `ready` if exit fired early. Both listeners
+    // can coexist on the same `exit` event — they observe independently.
     utility.on('exit', (code) => {
       this.deps.log?.info({ pid: utility.pid, code }, 'utility exited');
       this.windowsByPath.delete(projectPath);

@@ -155,6 +155,55 @@ describe('WindowManager', () => {
     await expect(promise).rejects.toThrow('boot failed');
   });
 
+  test('utility exits before ready → createProjectWindow rejects (no hang)', async () => {
+    const wm = new WindowManager(env.deps);
+    const promise = wm.createProjectWindow({ projectPath: '/tmp/early-exit' });
+    // Utility crashes before posting 'ready' or 'error'. The original
+    // implementation would hang here forever because the exit listener was
+    // only registered AFTER `await ready`. The fix registers the exit
+    // listener alongside the message listener inside the ready promise.
+    env.utilities[0]?.fireExit(1);
+    await expect(promise).rejects.toThrow(/utility exited before ready.*code=1/);
+  });
+
+  test('utility stays silent → init times out with actionable error', async () => {
+    // Install a setTimeout mock that fires synchronously so we don't need
+    // real timer waits. The default env.deps.setTimeout pushes to
+    // env.timers without firing — we override here just for this test.
+    const fireList: Array<() => void> = [];
+    env.deps.setTimeout = (cb, ms) => {
+      fireList.push(cb);
+      env.timers.push({ cb, ms });
+      return null;
+    };
+    // Tight budget so the test error message is predictable.
+    env.deps.utilityInitTimeoutMs = 500;
+
+    const wm = new WindowManager(env.deps);
+    const promise = wm.createProjectWindow({ projectPath: '/tmp/stuck' });
+    // Simulate the timer firing without any other message / exit arriving.
+    expect(fireList.length).toBeGreaterThan(0);
+    fireList[0]?.();
+    await expect(promise).rejects.toThrow(/utility init timed out after 500ms/);
+  });
+
+  test('timeout timer is harmless if ready landed first (no double-settle)', async () => {
+    const fireList: Array<() => void> = [];
+    env.deps.setTimeout = (cb, ms) => {
+      fireList.push(cb);
+      env.timers.push({ cb, ms });
+      return null;
+    };
+
+    const wm = new WindowManager(env.deps);
+    const promise = wm.createProjectWindow({ projectPath: '/tmp/fast-ready' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51010, apiOrigin: 'http://localhost:51010' });
+    await promise;
+
+    // Fire the timeout AFTER ready settled. Must not reject, must not throw.
+    expect(() => fireList[0]?.()).not.toThrow();
+  });
+
   test('window close → utility shutdown IPC', async () => {
     const wm = new WindowManager(env.deps);
     const p = wm.createProjectWindow({ projectPath: '/tmp/close-test' });
@@ -175,9 +224,11 @@ describe('WindowManager', () => {
     env.utilities[0]?.fireExit(0);
     expect(wm.windowCount()).toBe(0);
 
-    // Liveness probe scheduled at 1000ms
-    expect(env.timers.length).toBe(1);
-    expect(env.timers[0]?.ms).toBe(1000);
+    // env.timers now contains the init-timeout timer (15_000ms, registered during
+    // the ready promise and harmless after ready settled) AND the post-exit
+    // liveness probe (1000ms). Find the liveness probe by its cadence.
+    const livenessProbe = env.timers.find((t) => t.ms === 1000);
+    expect(livenessProbe).toBeDefined();
   });
 
   test('liveness probe sends SIGTERM if pid still alive 1s after exit', async () => {
@@ -188,10 +239,11 @@ describe('WindowManager', () => {
     const utilityPid = env.utilities[0]?.pid;
 
     env.utilities[0]?.fireExit(0);
-    expect(env.timers.length).toBe(1);
+    const livenessProbe = env.timers.find((t) => t.ms === 1000);
+    expect(livenessProbe).toBeDefined();
 
     // Simulate "pid still alive" — killProbe doesn't throw
-    env.timers[0]?.cb();
+    livenessProbe?.cb();
     expect(env.killProbe).toHaveBeenCalledWith(utilityPid, 0);
     expect(env.killProbe).toHaveBeenCalledWith(utilityPid, 'SIGTERM');
   });
@@ -207,8 +259,10 @@ describe('WindowManager', () => {
     await p;
 
     env.utilities[0]?.fireExit(0);
+    const livenessProbe = env.timers.find((t) => t.ms === 1000);
+    expect(livenessProbe).toBeDefined();
     // Should NOT throw — probe throws are caught
-    expect(() => env.timers[0]?.cb()).not.toThrow();
+    expect(() => livenessProbe?.cb()).not.toThrow();
     // Only the initial probe (pid, 0) was called; no SIGTERM follow-up
     expect(env.killProbe).toHaveBeenCalledTimes(1);
   });

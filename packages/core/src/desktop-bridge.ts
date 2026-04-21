@@ -60,6 +60,29 @@ export type OkMenuAction =
 export type OkUnsubscribe = () => void;
 
 /**
+ * Recent-projects row surfaced to the Project Navigator via
+ * `bridge.project.listRecent()`. `missing` is computed at read time by main
+ * (the folder was absent when the list was assembled) and rendered as a
+ * "Missing" badge in the Navigator UI.
+ */
+export interface RecentProjectEntry {
+  path: string;
+  name: string;
+  lastOpenedAt: string;
+  missing?: boolean;
+}
+
+/**
+ * Payload accepted by `bridge.project.open(...)`. `target` stays in the
+ * contract for forward-compat even though `'new-window'` is the only value
+ * in v0 (D3 revised — no switch-in-place).
+ */
+export interface OkProjectOpenRequest {
+  path: string;
+  target: 'new-window';
+}
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -99,6 +122,18 @@ export interface OkDesktopBridge {
   /** IPC-relayed clipboard writer (sandboxed renderer cannot call clipboard directly). */
   clipboard: {
     writeText(text: string): Promise<void>;
+  };
+
+  /**
+   * Project-management surface consumed by the Navigator component.
+   * `listRecent` reads the LRU-capped recent list from app state; `open`
+   * spawns a NEW editor window for `request.path` (D3 revised — no switch-
+   * in-place in v0); `close` tears down the window hosting the call site.
+   */
+  project: {
+    listRecent(): Promise<RecentProjectEntry[]>;
+    open(request: OkProjectOpenRequest): Promise<void>;
+    close(): Promise<void>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

@@ -124,7 +124,18 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         if (code === 'EPERM' || code === 'ESRCH') {
           // Parent is gone — self-exit cleanly.
           void shutdown('parent-died');
+          return;
         }
+        // Unknown errno (e.g. ENOSYS on an unusual sandbox, EACCES in some
+        // container configurations). Log and continue polling so an
+        // unexpected kernel signal doesn't silently erase this defense —
+        // D49 names this as the whole reason the poll exists. Log-only
+        // (not self-exit) because false-positive self-exits on a live
+        // parent would churn utility processes for no reason.
+        console.warn('[utility] parent-poll unexpected errno — continuing', {
+          code: code ?? '(missing)',
+          parentPid: deps.parentPid,
+        });
       }
     }, pollMs);
     parentPollHandle.unref?.();
@@ -139,10 +150,19 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     if (shuttingDown) return;
     shuttingDown = true;
     stopParentPoll();
+    let drainOk = true;
     if (booted) {
       try {
         await booted.destroy();
       } catch (err) {
+        // Report via IPC AND exit non-zero. The parent correlates the error
+        // IPC with the non-zero exit code; silently exiting 0 on a failed
+        // drain hides shutdown failures (stuck watcher, shadow-lock release
+        // failure, L2 flush mid-write) and lets them accumulate across
+        // restarts. CLAUDE.md CC8 shutdown-ordering explicitly wraps phase-6
+        // lock release in try/finally so a mid-shutdown throw still releases
+        // — the utility wrapper must not silently convert that throw to exit 0.
+        drainOk = false;
         deps.parentPort?.postMessage({
           type: 'error',
           message: `destroy failed during ${reason}: ${(err as Error).message}`,
@@ -150,7 +170,7 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         });
       }
     }
-    deps.exit(0);
+    deps.exit(drainOk ? 0 : 1);
   }
 
   async function handleInit(msg: UtilityInitMessage) {

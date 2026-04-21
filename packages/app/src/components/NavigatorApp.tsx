@@ -21,6 +21,7 @@ type RecentProject = RecentProjectEntry;
 export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +35,9 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
       })
       .catch((err) => {
         console.error('[NavigatorApp] listRecent failed:', err);
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load recent projects.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -43,27 +47,51 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     };
   }, [bridge]);
 
-  const onClone = async () => {
-    // M4/M5 wires the full Device-Flow CloneDialog; for M1 we just open the
-    // folder picker so the user can pick a clone target — actual `git clone`
-    // delegation lands in M4 alongside the Device-Flow auth surface.
-    const target = await bridge.dialog.openFolder();
-    if (!target) return;
-    // TODO M4: pipe target + git URL into clone-from-github CloneDialog
-    await openProject(bridge, target);
+  /**
+   * Wrap any bridge call in a visible error state. Without this the IPC
+   * rejection (utility failed to boot, bad folder, dialog rejected) lands as
+   * an unhandled promise rejection and the UI stays frozen in its pre-click
+   * state — no feedback, no retry path.
+   */
+  const runWithErrorState = async (fn: () => Promise<void>, fallback: string) => {
+    try {
+      setError(null);
+      await fn();
+    } catch (err) {
+      console.error('[NavigatorApp] action failed:', err);
+      setError(err instanceof Error && err.message ? err.message : fallback);
+    }
   };
 
-  const onOpenFolder = async () => {
-    const path = await bridge.dialog.openFolder();
-    if (!path) return;
-    await openProject(bridge, path);
-  };
+  const onClone = () =>
+    runWithErrorState(async () => {
+      // M4/M5 wires the full Device-Flow CloneDialog; for M1 we just open the
+      // folder picker so the user can pick a clone target — actual `git clone`
+      // delegation lands in M4 alongside the Device-Flow auth surface.
+      const target = await bridge.dialog.openFolder();
+      if (!target) return;
+      // TODO M4: pipe target + git URL into clone-from-github CloneDialog
+      await openProject(bridge, target);
+    }, 'Failed to clone from GitHub.');
 
-  const onStartFresh = async () => {
-    const path = await bridge.dialog.createFolder();
-    if (!path) return;
-    await openProject(bridge, path);
-  };
+  const onOpenFolder = () =>
+    runWithErrorState(async () => {
+      const path = await bridge.dialog.openFolder();
+      if (!path) return;
+      await openProject(bridge, path);
+    }, 'Failed to open folder.');
+
+  const onStartFresh = () =>
+    runWithErrorState(async () => {
+      const path = await bridge.dialog.createFolder();
+      if (!path) return;
+      await openProject(bridge, path);
+    }, 'Failed to create project folder.');
+
+  const onOpenRecent = (path: string) =>
+    runWithErrorState(async () => {
+      await openProject(bridge, path);
+    }, 'Failed to open project.');
 
   return (
     <div className="flex h-screen w-screen flex-col bg-background p-8 text-foreground">
@@ -93,6 +121,24 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         />
       </section>
 
+      {error !== null ? (
+        <div
+          className="mb-6 flex items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3"
+          data-testid="nav-error-banner"
+          role="alert"
+        >
+          <span className="text-red-700 text-sm dark:text-red-300">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-red-700 text-xs underline hover:no-underline dark:text-red-300"
+            data-testid="nav-error-dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
       <section className="flex-1">
         <h2 className="mb-4 font-medium text-sm uppercase tracking-wide text-muted-foreground">
           Recent
@@ -106,7 +152,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         ) : (
           <ul className="divide-y divide-border" data-testid="nav-recent-list">
             {recents.map((r) => (
-              <RecentRow key={r.path} project={r} onOpen={() => openProject(bridge, r.path)} />
+              <RecentRow key={r.path} project={r} onOpen={() => onOpenRecent(r.path)} />
             ))}
           </ul>
         )}
