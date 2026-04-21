@@ -79,7 +79,7 @@ function resolveIcon(iconName: string | undefined): LucideIcon {
  * Users expect "insert Callout → see a Callout" — without defaults,
  * newly-inserted components render empty or broken.
  */
-export function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unknown> {
+function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
   for (const prop of descriptor.props) {
     if (prop.type === 'reactnode') continue;
@@ -137,7 +137,7 @@ export function createChildNode(childName: string): Record<string, unknown> {
  */
 const pendingAutoOpen = new Set<number>();
 
-export function setPendingAutoOpen(pos: number): void {
+function setPendingAutoOpen(pos: number): void {
   pendingAutoOpen.add(pos);
 }
 

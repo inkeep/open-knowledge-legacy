@@ -29,7 +29,6 @@ export default {
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
-        'ws', // false positive
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],

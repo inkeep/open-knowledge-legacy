@@ -19,7 +19,7 @@
  * logic in one testable place.
  */
 
-export type Severity = 'info' | 'warn' | 'error';
+type Severity = 'info' | 'warn' | 'error';
 
 export function classifySeverity(reason: string | undefined): Severity {
   if (!reason) return 'error';
@@ -28,7 +28,7 @@ export function classifySeverity(reason: string | undefined): Severity {
   return 'error';
 }
 
-export interface SeverityStyle {
+interface SeverityStyle {
   /** Tailwind classes applied to the wrapper's border + background. */
   wrapperClass: string;
   /** Tailwind classes applied to the status badge. */

@@ -6,8 +6,6 @@ import { builtInComponents, wildcardMeta } from '@inkeep/open-knowledge-core';
 import { componentMap } from '../components/componentMap.tsx';
 import type { JsxComponentDescriptor } from './types.ts';
 
-export type { JsxComponentDescriptor } from './types.ts';
-
 const wildcardDescriptor: JsxComponentDescriptor = {
   ...wildcardMeta,
   Component: componentMap['*'],
@@ -29,13 +27,6 @@ for (const meta of builtInComponents) {
  */
 export function getDescriptor(name: string): JsxComponentDescriptor {
   return descriptorMap.get(name) ?? (descriptorMap.get('*') as JsxComponentDescriptor);
-}
-
-/**
- * Check if a name has a registered (non-wildcard) descriptor.
- */
-export function hasDescriptor(name: string): boolean {
-  return descriptorMap.has(name) && name !== '*';
 }
 
 /**

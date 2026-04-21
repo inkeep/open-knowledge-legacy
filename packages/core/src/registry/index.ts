@@ -6,7 +6,6 @@
  */
 
 export { builtInComponents } from './built-ins.ts';
-export type { JsxComponentMeta, PropDef } from './types.ts';
 
 import { builtInComponents } from './built-ins.ts';
 import type { JsxComponentMeta } from './types.ts';

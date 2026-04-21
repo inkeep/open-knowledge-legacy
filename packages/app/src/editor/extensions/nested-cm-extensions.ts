@@ -49,7 +49,7 @@ export const lightTheme = basicLightInit({
   },
 });
 
-export interface NestedCMOptions {
+interface NestedCMOptions {
   /** Per-instance theme compartment — caller MUST create their own */
   themeCompartment: Compartment;
   /** Current resolved theme */

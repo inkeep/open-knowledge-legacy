@@ -224,7 +224,7 @@ export interface TagEvent {
  * A region in the source identified as either a properly-paired tag span
  * or an unmatched open tag bounded by blank line / EOF.
  */
-export interface FallbackRegion {
+interface FallbackRegion {
   start: number;
   end: number;
   source: 'pair' | 'unmatched';
