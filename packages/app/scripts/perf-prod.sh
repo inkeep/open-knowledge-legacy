@@ -274,8 +274,12 @@ fi
 # Map scenario → jq path for the metric we care about most. When a
 # scenario doesn't have a canonical primary metric, the script reports
 # all result filenames and leaves median computation to the caller.
+# Names here must match exactly what the scenario emits via
+# ctx.recordMetric(...). Verified against packages/app/tests/perf/scenarios/
+# on 2026-04-21 — `warm-switch-cached` emits `warmSwitchCachedMs` (not
+# `warmSwitchMs` — that's the separate `warm-switch` scenario).
 case "$SCENARIO" in
-  warm-switch-cached)      METRIC=".metrics.warmSwitchMs" ;;
+  warm-switch-cached)      METRIC=".metrics.warmSwitchCachedMs" ;;
   cold-pool-warm)          METRIC=".metrics.coldPoolWarmMs" ;;
   cold-load-with-fallback) METRIC=".metrics.interactiveReadyMs" ;;
   cold-load-big-doc)       METRIC=".metrics.coldLoadMs" ;;
