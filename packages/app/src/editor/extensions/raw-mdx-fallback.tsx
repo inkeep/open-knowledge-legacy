@@ -1,17 +1,24 @@
 /**
  * App-specific RawMdxFallback extension — plain-DOM NodeView wired to the
- * shared InteractionLayer (US-006).
+ * shared InteractionLayer (US-006, T1-trimmed).
  *
  * Replaces the pre-US-006 ReactNodeViewRenderer(RawMdxFallbackView) pattern
  * with an imperative NodeView that:
  *   1. Emits data-raw-mdx-fallback + data-node-id attributes (the e2e test
  *      at `mid-type-recovery.e2e.ts` asserts `[data-raw-mdx-fallback]` so
  *      the attribute is load-bearing).
- *   2. Registers a propPanel renderer with InteractionLayer on construction
- *      and deregisters on destroy. The propPanel mounts an embedded CM6
- *      editor — see RawMdxFallbackPropPanel.tsx.
- *   3. Keeps `content: 'text*'` semantics via `contentDOM` so the Y.XmlElement
- *      identity guarantees covered by
+ *   2. Registers a `handlePrimary` hook with InteractionLayer so click +
+ *      keyboard activation dispatch `RAW_MDX_NAV_EVENT` and open source
+ *      mode at the broken block's offset. Preserves the pre-US-006
+ *      source-mode affordance.
+ *   3. Registers with an EMPTY `controls` bag — the PropPanel/CM6-editor
+ *      path (shipped originally at commit c2ee5544) was removed in the
+ *      T1 trim. In-place editing converges on CB-v2's inline-nested
+ *      RawMdxFallbackCMView per precedent #26 ("all user content visible
+ *      and editable in place"). See
+ *      `stories/unify-editor-interaction-primitives/evidence/t1-trim-plan.md`.
+ *   4. Keeps `content: 'text*'` semantics via `contentDOM` so the
+ *      Y.XmlElement identity guarantees covered by
  *      `packages/app/tests/integration/rawmdxfallback-multi-client.test.ts`
  *      remain in force.
  *
@@ -21,7 +28,7 @@
  */
 import { RawMdxFallback as BaseRawMdxFallback } from '@inkeep/open-knowledge-core';
 import { getInteractionLayer } from '../interaction-layer-host';
-import { RawMdxFallbackPropPanel } from './RawMdxFallbackPropPanel';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from './raw-mdx-nav-event';
 
 // Module-level monotonic counter — drives the stable `data-node-id` attribute
 // used by InteractionLayer's event delegation. Mirrors the JsxComponentView
@@ -104,22 +111,31 @@ export const RawMdxFallback = BaseRawMdxFallback.extend({
         return typeof pos === 'number' ? pos : undefined;
       };
 
-      // Register with the per-editor InteractionLayer so clicks on the chip
-      // surface the propPanel at editor root. Registration is idempotent per
-      // the InteractionLayer contract (same nodeId overwrites).
+      // Register with the per-editor InteractionLayer. Post-T1 trim: empty
+      // `controls` (forward-compat slot for CB-v2 to populate if needed);
+      // primary activation (click/Enter/Space) dispatches RAW_MDX_NAV_EVENT
+      // via `handlePrimary` to open source mode at the broken block's offset.
+      // Registration is idempotent per the InteractionLayer contract (same
+      // nodeId overwrites).
       const layer = getInteractionLayer(editor);
       layer.register({
         type: 'rawMdxFallback',
         nodeId,
         getPos: safeGetPos,
-        controls: {
-          propPanel: (ctx) => (
-            <RawMdxFallbackPropPanel
-              editor={editor}
-              getPos={safeGetPos}
-              onDismiss={ctx.deactivate}
-            />
-          ),
+        controls: {},
+        handlePrimary: () => {
+          const pos = safeGetPos();
+          if (typeof pos !== 'number') return false;
+          const currentNode = editor.state.doc.nodeAt(pos);
+          const span = (currentNode?.attrs.originalSpan as
+            | { start: number; end: number }
+            | undefined) ?? { start: 0, end: 0 };
+          window.dispatchEvent(
+            new CustomEvent<RawMdxNavDetail>(RAW_MDX_NAV_EVENT, {
+              detail: { offset: span.start },
+            }),
+          );
+          return true;
         },
       });
 

@@ -678,11 +678,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       {/*
        * <InteractionLayerView> renders the singleton PropPanel / Toolbar /
        * Breadcrumb subtree FOR THE ACTIVE chip — inside the main React tree
-       * so PropPanel renderers (InternalLinkPropPanel, WikiLinkPropPanel,
-       * RawMdxFallbackPropPanel) inherit context providers like
-       * <PageListProvider> + <ThemeProvider>. The layer host (per-editor
-       * WeakMap) provides the store; the View subscribes via useState +
-       * subscribe and renders the active registration's controls.
+       * so PropPanel renderers (InternalLinkPropPanel, WikiLinkPropPanel)
+       * inherit context providers like <PageListProvider> + <ThemeProvider>.
+       * The layer host (per-editor WeakMap) provides the store; the View
+       * subscribes via useState + subscribe and renders the active
+       * registration's controls. RawMdxFallback registers with empty controls
+       * + a handlePrimary hook (dispatches RAW_MDX_NAV_EVENT); in-place MDX
+       * editing is deferred to CB-v2's inline-nested RawMdxFallbackCMView
+       * per T1 trim.
        *
        * Rendered AFTER EditorContent so its absolute-positioned PropPanels
        * stack above editor content (z-index handled in CSS).

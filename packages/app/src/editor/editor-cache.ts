@@ -729,7 +729,17 @@ function findEvictable(lru: string[], mountingDocName: string): string | null {
     if (activityMountList.has(docName)) continue;
     return docName;
   }
-  // Degenerate fallback — pure LRU.
+  // Degenerate fallback — pure LRU. Should not occur under normal operation
+  // (MAX_CACHE=10 vs ACTIVITY_MOUNT_LIMIT=3 means at most 3 entries can be
+  // Activity-mounted, leaving 7 non-active candidates). If we reach here,
+  // something upstream is out of sync (setActivityMountList not called,
+  // mount/list drift, or a callsite bypassing the contract). Surface as
+  // telemetry so the anomaly is visible.
+  mark('ok/cache/evict-fallback-activity-saturated', {
+    mountingDocName,
+    lruLength: lru.length,
+    activityMountCount: activityMountList.size,
+  });
   for (const docName of lru) {
     if (docName === mountingDocName) continue;
     return docName;

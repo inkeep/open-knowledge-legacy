@@ -75,7 +75,18 @@ export type ComponentMap = Record<string, unknown>;
 export interface WalkerOptions<E = unknown> {
   createElement: CreateElement<E>;
   componentMap?: ComponentMap;
+  /**
+   * Maximum recursion depth. Pathologically nested mdast trees (e.g. thousands
+   * of nested blockquotes or lists) could blow V8's default stack. The guard
+   * returns a truncation placeholder when depth reaches this limit — the walker
+   * does not throw. Defaults to 1000 at the entry point. OWASP recursion-limit
+   * defensive pattern.
+   */
+  maxDepth?: number;
 }
+
+/** Default recursion limit. ~10× below V8's default stack frame budget. */
+const DEFAULT_MAX_DEPTH = 1000;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -95,7 +106,7 @@ export function mdastToElementTree<E = unknown>(
   node: Nodes | Root,
   opts: WalkerOptions<E>,
 ): E | string | null {
-  return walk(node as Nodes, opts);
+  return walk(node as Nodes, opts, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +115,18 @@ export function mdastToElementTree<E = unknown>(
 
 type AnyMdast = { type: string } & Record<string, unknown>;
 
-function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | null {
+function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>, depth: number): E | string | null {
+  const maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
+  if (depth >= maxDepth) {
+    return opts.createElement(
+      'span',
+      {
+        'data-ok-recursion-limit': '',
+        'aria-label': 'content truncated at recursion limit',
+      },
+      '[content truncated]',
+    );
+  }
   const type = node.type;
   switch (type) {
     case 'root': {
@@ -112,19 +134,19 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       return opts.createElement(
         'div',
         { 'data-ok-fallback-root': '' },
-        ...children(root.children, opts),
+        ...children(root.children, opts, depth),
       );
     }
     case 'paragraph': {
       return opts.createElement(
         'p',
         null,
-        ...children((node as RootContentMap['paragraph']).children, opts),
+        ...children((node as RootContentMap['paragraph']).children, opts, depth),
       );
     }
     case 'heading': {
       const h = node as RootContentMap['heading'];
-      return opts.createElement(`h${h.depth}`, null, ...children(h.children, opts));
+      return opts.createElement(`h${h.depth}`, null, ...children(h.children, opts, depth));
     }
     case 'text': {
       return (node as RootContentMap['text']).value;
@@ -133,21 +155,21 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       return opts.createElement(
         'strong',
         null,
-        ...children((node as RootContentMap['strong']).children, opts),
+        ...children((node as RootContentMap['strong']).children, opts, depth),
       );
     }
     case 'emphasis': {
       return opts.createElement(
         'em',
         null,
-        ...children((node as RootContentMap['emphasis']).children, opts),
+        ...children((node as RootContentMap['emphasis']).children, opts, depth),
       );
     }
     case 'delete': {
       return opts.createElement(
         'del',
         null,
-        ...children((node as RootContentMap['delete']).children, opts),
+        ...children((node as RootContentMap['delete']).children, opts, depth),
       );
     }
     case 'inlineCode': {
@@ -171,7 +193,7 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       return opts.createElement(
         tag,
         Object.keys(props).length ? props : null,
-        ...children(l.children, opts),
+        ...children(l.children, opts, depth),
       );
     }
     case 'listItem': {
@@ -189,20 +211,20 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
             readOnly: true,
           }),
           ' ',
-          ...children(li.children, opts),
+          ...children(li.children, opts, depth),
         );
       }
       return opts.createElement(
         'li',
         Object.keys(props).length ? props : null,
-        ...children(li.children, opts),
+        ...children(li.children, opts, depth),
       );
     }
     case 'blockquote': {
       return opts.createElement(
         'blockquote',
         null,
-        ...children((node as RootContentMap['blockquote']).children, opts),
+        ...children((node as RootContentMap['blockquote']).children, opts, depth),
       );
     }
     case 'link': {
@@ -217,7 +239,7 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       const safeHref = sanitizeHref(l.url);
       const props: Record<string, unknown> = { href: safeHref };
       if (l.title) props.title = l.title;
-      return opts.createElement('a', props, ...children(l.children, opts));
+      return opts.createElement('a', props, ...children(l.children, opts, depth));
     }
     case 'image': {
       const img = node as RootContentMap['image'];
@@ -236,27 +258,31 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
       const t = node as RootContentMap['table'];
       const [headerRow, ...bodyRows] = t.children ?? [];
       const headerEl = headerRow
-        ? opts.createElement('thead', null, walkTableRow(headerRow, t.align ?? [], 'th', opts))
+        ? opts.createElement(
+            'thead',
+            null,
+            walkTableRow(headerRow, t.align ?? [], 'th', opts, depth),
+          )
         : null;
       const bodyEl =
         bodyRows.length > 0
           ? opts.createElement(
               'tbody',
               null,
-              ...bodyRows.map((r) => walkTableRow(r, t.align ?? [], 'td', opts)),
+              ...bodyRows.map((r) => walkTableRow(r, t.align ?? [], 'td', opts, depth)),
             )
           : null;
       return opts.createElement('table', null, headerEl, bodyEl);
     }
     case 'tableRow': {
       // A loose row (should have been wrapped by `table`). Render as tr of tds.
-      return walkTableRow(node as RootContentMap['tableRow'], [], 'td', opts);
+      return walkTableRow(node as RootContentMap['tableRow'], [], 'td', opts, depth);
     }
     case 'tableCell': {
       return opts.createElement(
         'td',
         null,
-        ...children((node as RootContentMap['tableCell']).children, opts),
+        ...children((node as RootContentMap['tableCell']).children, opts, depth),
       );
     }
     case 'html': {
@@ -288,7 +314,7 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
     }
     case 'mdxJsxFlowElement':
     case 'mdxJsxTextElement': {
-      return walkMdxJsx(node as unknown as MdxJsxElement, opts);
+      return walkMdxJsx(node as unknown as MdxJsxElement, opts, depth);
     }
     case 'wikiLink': {
       // OK-specific. We don't have a 'wikiLink' component registered in the
@@ -325,7 +351,11 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
     }
     case 'linkReference': {
       const lr = node as RootContentMap['linkReference'];
-      return opts.createElement('a', { href: `#${lr.identifier}` }, ...children(lr.children, opts));
+      return opts.createElement(
+        'a',
+        { href: `#${lr.identifier}` },
+        ...children(lr.children, opts, depth),
+      );
     }
     case 'imageReference': {
       const ir = node as RootContentMap['imageReference'];
@@ -356,9 +386,10 @@ function walk<E>(node: Nodes | AnyMdast, opts: WalkerOptions<E>): E | string | n
 function children<E>(
   nodes: Array<Nodes> | undefined,
   opts: WalkerOptions<E>,
+  depth: number,
 ): Array<E | string | null | undefined> {
   if (!nodes) return [];
-  return nodes.map((n) => walk(n, opts));
+  return nodes.map((n) => walk(n, opts, depth + 1));
 }
 
 function walkTableRow<E>(
@@ -366,6 +397,7 @@ function walkTableRow<E>(
   align: Array<'left' | 'right' | 'center' | null>,
   cellTag: 'th' | 'td',
   opts: WalkerOptions<E>,
+  depth: number,
 ): E | null {
   if (!row?.children) return null;
   const cells = row.children.map((cell, i) => {
@@ -374,7 +406,7 @@ function walkTableRow<E>(
     return opts.createElement(
       cellTag,
       props,
-      ...children((cell as RootContentMap['tableCell']).children, opts),
+      ...children((cell as RootContentMap['tableCell']).children, opts, depth),
     );
   });
   return opts.createElement('tr', null, ...cells);
@@ -487,12 +519,20 @@ function isUppercaseComponent(name: string): boolean {
   return c >= 0x41 /* A */ && c <= 0x5a /* Z */;
 }
 
-function walkMdxJsx<E>(node: MdxJsxElement, opts: WalkerOptions<E>): E | string | null {
+function walkMdxJsx<E>(
+  node: MdxJsxElement,
+  opts: WalkerOptions<E>,
+  depth: number,
+): E | string | null {
   // Resolve the component from the map. Fragment (null name) → plain
   // children array (caller factory must accept).
   if (node.name === null) {
     // <>...</> fragment
-    return opts.createElement('div', { 'data-ok-fragment': '' }, ...children(node.children, opts));
+    return opts.createElement(
+      'div',
+      { 'data-ok-fragment': '' },
+      ...children(node.children, opts, depth),
+    );
   }
   const mapped = opts.componentMap?.[node.name];
 
@@ -526,7 +566,7 @@ function walkMdxJsx<E>(node: MdxJsxElement, opts: WalkerOptions<E>): E | string 
 
   const type = mapped ?? node.name;
   const props = mdxAttributesToProps(node.attributes);
-  const kids = children(node.children, opts);
+  const kids = children(node.children, opts, depth);
   return opts.createElement(type, Object.keys(props).length ? props : null, ...kids);
 }
 

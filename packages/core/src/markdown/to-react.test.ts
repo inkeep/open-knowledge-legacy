@@ -702,3 +702,59 @@ const x = 1;
     expect(tags).toEqual(['h1', 'p', 'ul', 'blockquote', 'pre']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Recursion-limit defensive guard (review fix-now #3).
+//
+// Guards against pathologically-nested mdast trees (thousands of nested
+// blockquotes, lists, emphasis spans) that would otherwise exhaust V8's
+// default call-stack. Reached via the disk-read Option E fallback path —
+// a user-authored file with aggressive nesting could previously crash the
+// fallback render. The guard returns a truncation placeholder element and
+// does NOT throw.
+// ---------------------------------------------------------------------------
+
+describe('maxDepth recursion guard', () => {
+  // Construct a pathologically-nested mdast tree: N levels of blockquotes
+  // wrapping a paragraph. Each blockquote is a child of the previous, so
+  // `walk()` recurses `N` deep.
+  function buildDeepBlockquote(depth: number): Record<string, unknown> {
+    let node: Record<string, unknown> = {
+      type: 'paragraph',
+      children: [{ type: 'text', value: 'deep' }],
+    };
+    for (let i = 0; i < depth; i++) {
+      node = { type: 'blockquote', children: [node] };
+    }
+    return { type: 'root', children: [node] };
+  }
+
+  test('truncates at explicit maxDepth without throwing', () => {
+    const deep = buildDeepBlockquote(200);
+    const el = mdastToElementTree(deep as never, {
+      createElement: testFactory,
+      maxDepth: 50,
+    }) as TestElement;
+    // The tree is truncated — somewhere below depth 50 there should be a
+    // `[content truncated]` span. The walker does not throw.
+    const json = JSON.stringify(el);
+    expect(json).toContain('[content truncated]');
+    expect(json).toContain('data-ok-recursion-limit');
+  });
+
+  test('default maxDepth (1000) handles non-pathological nesting', () => {
+    const deep = buildDeepBlockquote(50);
+    const el = mdastToElementTree(deep as never, {
+      createElement: testFactory,
+    }) as TestElement;
+    // 50 is well below default 1000 — no truncation marker expected.
+    const json = JSON.stringify(el);
+    expect(json).not.toContain('[content truncated]');
+  });
+
+  test('extreme nesting (2000 deep) does not blow stack at default maxDepth', () => {
+    const deep = buildDeepBlockquote(2000);
+    // Default maxDepth=1000 — guard fires before stack exhaustion.
+    expect(() => mdastToElementTree(deep as never, { createElement: testFactory })).not.toThrow();
+  });
+});
