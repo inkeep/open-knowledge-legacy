@@ -7,18 +7,23 @@
  * React reconciliation cost on cold-pool-warm (cold-mount-profile §Corrected
  * 5-component attribution).
  *
- * V2: `renderHTML` emits a plain `<span data-link>` containing a child
- * `<a>`. The mark-identity / mark-interaction-bridge / decoration plugin
- * stack (US-004 + iter-20/21/23/24/25 prep) attaches `data-mark-id` and
- * `data-resolution-state` decoration attrs at PM render time, and routes
- * clicks to the singleton `InternalLinkPropPanel` at editor root.
+ * V2: `renderHTML` emits a plain `<span data-link role="link" tabindex="0">`
+ * with an `aria-label`. The mark-identity / mark-interaction-bridge /
+ * decoration plugin stack (US-004 + iter-20/21/23/24/25 prep) attaches
+ * `data-mark-id` and `data-resolution-state` decoration attrs at PM render
+ * time. The InteractionLayer's event delegation routes pointer AND keyboard
+ * activation to the shared PropPanel at editor root.
  *
- * **Click semantics (greenfield, simplified):** click on chip activates
- * the InteractionLayer for this mark — the singleton PropPanel surfaces
- * Open / Edit / Remove (and Create-Page when unresolved). Cmd/Ctrl+Click
- * still opens in a new tab via the chip's child `<a href=...>` natural
- * navigation. This collapses the pre-V2 split-button (anchor-navigates +
- * ellipsis-opens-menu) into one consistent affordance.
+ * **Click / keyboard semantics (review-Critical #3 + Major #4):**
+ *   - bare click / Enter / Space on a focused chip opens the singleton
+ *     `InternalLinkPropPanel` (Open / Edit / Remove / Create-Page actions).
+ *   - Cmd/Ctrl+click (and middle-click button=1) routes through the
+ *     extension's `handlePrimary` hook to navigate immediately in a new
+ *     tab — preserving the universal web link convention without
+ *     reintroducing a child `<a href>` that would race the event
+ *     delegation. The hook is also the only place Cmd+Click semantics
+ *     live; the PropPanel's "Open" button remains the in-panel affordance.
+ *   - Escape dismisses the active PropPanel (handled at the layer).
  *
  * **docName threading:** consumers call `InternalLink.configure({docName})`
  * to bind the active doc name (used by the link-resolution decoration
@@ -28,14 +33,16 @@
  * Schema unchanged (precedent #9 add-only). All identity + resolution state
  * lives in PluginState / decoration attrs.
  */
-import { LinkFidelity } from '@inkeep/open-knowledge-core';
+import { classifyMarkdownHref, LinkFidelity } from '@inkeep/open-knowledge-core';
 import { mergeAttributes } from '@tiptap/core';
 import { createElement } from 'react';
+import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { InternalLinkPropPanel } from './InternalLinkPropPanel';
 import { makeLinkResolutionAttrsComputer } from './link-resolution';
-import { linkResolutionDecorationPlugin } from './link-resolution-decoration-plugin';
-import { markIdentityDecorationPlugin } from './mark-identity-decoration-plugin';
-import { createMarkInteractionBridgePlugin } from './mark-interaction-bridge';
+import { linkResolutionDecorationPlugin } from './link-resolution-decoration';
+import { markIdentityDecorationPlugin } from './mark-identity-decoration';
+import { createMarkInteractionBridgePlugin, getCurrentMarkInfo } from './mark-interaction-bridge';
 
 export interface InternalLinkOptions {
   /** Active document name — used by link-resolution decoration to compute resolved/folder/unresolved states. */
@@ -54,21 +61,31 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
     // Plain-DOM chip — a single <span> with link text inline. We deliberately
     // omit the `<a href>` child that the pre-V2 React MarkView wrapped its
     // text in: clicking an `<a>` navigates immediately, which races the
-    // InteractionLayer's pointerdown handler (the layer fires setActiveNode,
-    // but the browser navigation aborts the React render before the singleton
-    // PropPanel can mount). The V2 click semantics route through the
-    // PropPanel's "Open" button — same destination, deterministic flow.
+    // InteractionLayer's pointerdown handler. Cmd/Ctrl+Click semantics live
+    // in the extension's `handlePrimary` hook below — see file-header
+    // comment for the full rationale.
     //
-    // The decoration plugins add data-mark-id (mark-identity-decoration-plugin)
-    // and data-resolution-state (link-resolution-decoration-plugin) at render
+    // Accessibility (review Critical #3):
+    //   - `tabindex="0"` makes the chip keyboard-reachable.
+    //   - `role="link"` matches the semantic intent.
+    //   - `aria-label` surfaces the destination to assistive tech
+    //     (falls back to "Link" when href is missing).
+    //
+    // The decoration plugins add data-mark-id (mark-identity-decoration)
+    // and data-resolution-state (link-resolution-decoration) at render
     // time; CSS in globals.css styles the chip based on the latter. The
-    // original href stays in the link mark's attrs (read by PropPanel for
-    // navigate / edit) — it's just not rendered as a navigable element.
+    // original href stays in the link mark's attrs (read by PropPanel +
+    // handlePrimary for navigate/edit) — it's just not rendered as a
+    // navigable element.
+    const href = typeof HTMLAttributes.href === 'string' ? HTMLAttributes.href : '';
+    const ariaLabel = href ? `Link: ${href}` : 'Link';
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
         'data-link': '',
         role: 'link',
+        tabindex: '0',
+        'aria-label': ariaLabel,
         // touch-action: manipulation eliminates the iOS 300ms tap delay.
         style: 'touch-action: manipulation;',
       }),
@@ -79,7 +96,7 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
   addProseMirrorPlugins() {
     const docName = this.options.docName ?? '';
     return [
-      // 1. mark-identity (PluginState IDs) + InteractionLayer wiring
+      // 1. mark-identity (PluginState IDs) + InteractionLayer wiring + Cmd+Click new-tab
       createMarkInteractionBridgePlugin({
         editor: this.editor,
         markTypes: ['link'],
@@ -90,6 +107,33 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
             sourceDocName: docName,
             onClose: deactivate,
           }),
+        handlePrimary: ({ editor, nodeId, newTab }) => {
+          // Only handle Cmd/Ctrl/middle-click (newTab=true). Bare click
+          // opens the PropPanel (fall through by returning false).
+          if (!newTab) return false;
+          const info = getCurrentMarkInfo(editor.state, nodeId);
+          const href = info?.attrs?.href;
+          if (typeof href !== 'string' || !href) return false;
+          const target = classifyMarkdownHref(href, docName);
+          if (!target) return false;
+          if (target.kind === 'doc') {
+            openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
+            return true;
+          }
+          if (target.kind === 'anchor') {
+            // Anchor lives inside the current doc — "new tab" on an
+            // in-page anchor is an app-level concept, preserve it via the
+            // same hash-href helper.
+            openInternalHashHrefInNewTab({ docName, anchor: target.anchor });
+            return true;
+          }
+          // External — refuse javascript:/data:/etc via scheme allowlist
+          // (review Major #13). Fall through if unsafe so the PropPanel
+          // still opens and surfaces the unsafe URL for the author to edit.
+          if (!isSafeNavigationUrl(target.url)) return false;
+          openHashHrefInNewTab(target.url);
+          return true;
+        },
       }),
       // 2. data-mark-id decoration so the layer's event delegation can resolve
       //    chips → mark IDs without per-instance React.

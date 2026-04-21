@@ -19,7 +19,7 @@ import {
   computeLinkResolutionState,
   makeLinkResolutionAttrsComputer,
 } from './link-resolution';
-import type { MarkInfo } from './mark-identity-plugin';
+import type { MarkInfo } from './mark-identity';
 
 function makeCache(opts: {
   pages?: Iterable<string>;

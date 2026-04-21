@@ -493,10 +493,16 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function json(res: ServerResponse, status: number, data: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }
@@ -1314,13 +1320,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
         throw err;
       }
-      json(res, 200, {
-        ok: true,
-        docName,
-        markdown,
-        mtime: stat.mtimeMs,
-        bytes: stat.size,
-      });
+      // Response shape aligned with `/api/document` — `content` (not
+      // `markdown`) and `sizeBytes` (not `bytes`) so future consumers
+      // calling both endpoints don't re-key responses (review Minor #16).
+      // `markdown` + `bytes` remain duplicated for one rollout cycle so the
+      // client can work against either server version.
+      //
+      // `Cache-Control: no-store` — disk bytes are a snapshot, not a long-
+      // lived resource; the Suspense fallback path wants the current value
+      // each cold load (review Minor #23).
+      json(
+        res,
+        200,
+        {
+          ok: true,
+          docName,
+          content: markdown,
+          sizeBytes: stat.size,
+          mtime: stat.mtimeMs,
+          // Backwards-compat keys — remove after one rollout cycle.
+          markdown,
+          bytes: stat.size,
+        },
+        { 'Cache-Control': 'no-store' },
+      );
     } catch (e) {
       console.error('[document-disk]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });

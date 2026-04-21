@@ -11,7 +11,7 @@
  * No PM View mount required: the handler surface is validated by calling
  * `onRegister` / `onDeregister` directly and asserting the mock layer was
  * invoked with the expected params. PM plugin lifecycle (view().update firing
- * diffs) is already covered by mark-identity-plugin.test.ts.
+ * diffs) is already covered by mark-identity.test.ts.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -24,7 +24,7 @@ import {
   InteractionLayerStore,
   type RegisterParams,
 } from '../interaction-layer';
-import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-identity-plugin';
+import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-identity';
 import {
   buildMarkBridgeHandlers,
   buildMarkInteractionBridge,

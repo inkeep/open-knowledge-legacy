@@ -26,8 +26,8 @@ import {
   type LinkResolutionAttrsComputer,
   linkResolutionDecorationKey,
   linkResolutionDecorationPlugin,
-} from './link-resolution-decoration-plugin';
-import { type MarkInfo, markIdentityPlugin } from './mark-identity-plugin';
+} from './link-resolution-decoration';
+import { type MarkInfo, markIdentityPlugin } from './mark-identity';
 
 // ---------------------------------------------------------------------------
 // Test schema — minimal shape covering mark types used by the iter-20 suite

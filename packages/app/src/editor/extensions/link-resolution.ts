@@ -30,7 +30,7 @@
 import { classifyMarkdownHref } from '@inkeep/open-knowledge-core';
 import { resolveLinkTargetIntent } from '../../components/link-target-intent';
 import type { PageListCacheSnapshot } from '../page-list-cache';
-import type { MarkInfo } from './mark-identity-plugin';
+import type { MarkInfo } from './mark-identity';
 
 export type LinkResolutionState =
   | 'loading'

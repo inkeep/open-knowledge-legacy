@@ -1,6 +1,7 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
+import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
@@ -404,6 +405,19 @@ export class ProviderPool {
     // teardown. Natural (network-triggered) close events still reject as
     // expected because this path only runs inside pool destroy/recycle/evict.
     invalidateSyncPromise(entry.docName);
+    // Evict V2 editor cache entries BEFORE destroying the provider: the cache
+    // holds Editor/EditorView instances bound to `provider.document` via
+    // Collaboration.configure / y-codemirror.next. If the cache survived the
+    // pool's destroy, the next `mountTiptapEditor/mountCmEditor(docName)`
+    // would return a stale entry bound to an orphaned Y.Doc (Critical #2 from
+    // 2026-04-21 review). Coupling eviction here — the single point that
+    // destroys the provider — keeps the invariant at one site. Eviction is
+    // safe when the cache has no entry (no-op returns false). It also runs
+    // editor.destroy() itself, so the React subtree receives a destroyed
+    // editor on next mount and falls through to factory-construct a fresh
+    // one.
+    evictTiptapEditor(entry.docName);
+    evictCmEditor(entry.docName);
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;

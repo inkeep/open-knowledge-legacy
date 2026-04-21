@@ -22,10 +22,15 @@
  * Security (V2 SPEC FR11 AC):
  *   - html nodes pass through as TEXT (auto-escaped by the factory) — we
  *     never emit a factory("html", { dangerouslySetInnerHTML }) element.
- *   - JSX expression attributes (mdxJsxAttributeValueExpression) use a
- *     best-effort JSON.parse, falling back to the raw expression string.
- *     Matches MDX authoring trust level — the content is authored by the
- *     same human / agent that writes the MDX.
+ *   - JSX expression attributes (mdxJsxAttributeValueExpression) are parsed
+ *     via JSON.parse for literal values (numbers, strings, booleans, null,
+ *     arrays/objects of literals); anything else is handed to the component
+ *     as a raw string prop. We intentionally do NOT eval() / new Function()
+ *     expressions: the renderer runs inside the viewer's browser origin
+ *     against authored/collaborator/disk-sourced MDX, so eval is a browser
+ *     RCE path. Components that need rich prop types compile expressions
+ *     server-side via acorn (the real MDX toolchain) or accept string props
+ *     and parse them themselves.
  */
 
 import type { Nodes, Root, RootContentMap } from 'mdast';
@@ -67,13 +72,25 @@ export interface WalkerOptions<E = unknown> {
  * Root node this yields a single element representing the document.
  * Individual children are skipped silently when unrepresentable (yaml /
  * toml frontmatter, footnoteDefinition).
+ *
+ * Name: environment-agnostic (review Minor #21). `createElement` can be
+ * React's, Preact's `h`, a string factory for SSR/test — the walker just
+ * calls it. `mdastToReact` is retained as a deprecated alias for backward
+ * compatibility with existing consumers.
  */
-export function mdastToReact<E = unknown>(
+export function mdastToElementTree<E = unknown>(
   node: Nodes | Root,
   opts: WalkerOptions<E>,
 ): E | string | null {
   return walk(node as Nodes, opts);
 }
+
+/**
+ * @deprecated Renamed to `mdastToElementTree` — the walker is
+ * environment-agnostic; `React` in the original name was misleading
+ * (review Minor #21). Alias retained for backward compatibility.
+ */
+export const mdastToReact = mdastToElementTree;
 
 // ---------------------------------------------------------------------------
 // Core dispatch
@@ -405,26 +422,24 @@ function mdxAttributesToProps(
 }
 
 /**
- * Best-effort expression parse. Tries JSON.parse first (covers numbers,
- * booleans, null, string literals, arrays, objects, nested literals).
- * Falls back to `new Function()` for legitimate MDX expression attrs
- * (matches MDX authoring trust level per V2 SPEC FR11). Returns the raw
- * string if all else fails — the component may handle it as a string prop.
+ * Parse a JSX expression attribute to a prop value.
+ *
+ * JSON.parse covers every literal shape MDX attrs use in practice: numbers,
+ * booleans, null, string literals, arrays/objects of literals. If the
+ * expression is something JSON can't represent (identifiers, function
+ * calls, template strings), we hand the raw trimmed source to the component
+ * as a string prop — it can parse further if it needs to, but we never
+ * eval.
+ *
+ * `new Function()` is equivalent to `eval` under CSP (blocked by
+ * `unsafe-eval`) and would execute arbitrary authored/agent/disk-sourced
+ * JS in the viewer's origin — a browser RCE vector. Not used.
  */
 function tryParseExpression(expr: string): unknown {
   const trimmed = expr.trim();
   if (trimmed === '') return undefined;
-  // Fast-path JSON.parse for primitive + array/object literals.
   try {
     return JSON.parse(trimmed);
-  } catch {
-    // JSON.parse can't handle unquoted identifiers, function calls, template
-    // strings, etc. Fall back to `new Function()`.
-  }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const fn = new Function(`return (${trimmed});`);
-    return fn();
   } catch {
     return trimmed;
   }

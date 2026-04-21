@@ -24,10 +24,10 @@ import { EditorState, type Extension, Prec, type Transaction } from '@codemirror
 import { EditorView, keymap } from '@codemirror/view';
 import { GFM } from '@lezer/markdown';
 import type { Editor } from '@tiptap/core';
-import { ExternalLink, X } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { ExternalLink } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import { Button } from '../../components/ui/button';
-import { cn } from '../../lib/utils';
 import { codeLanguages } from '../markdown-code-languages';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from './raw-mdx-nav-event';
 
@@ -134,18 +134,42 @@ export function RawMdxFallbackPropPanel({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
-  // Snapshot position + attrs once for the lifetime of this panel instance.
-  // `getPos()` is stable enough for a single activation (PM transactions that
-  // move the node would deregister the chip and re-register under a new id).
+  // Stable refs for values that change across re-renders but MUST NOT
+  // tear down the embedded CM6 view when they change (review Major #10).
+  // Pre-fix the effect had `initialText` + `onDismiss` in its deps array;
+  // `initialText` was recomputed from live PM state on every render (every
+  // keystroke in the panel changes it), and `onDismiss` is reconstructed
+  // every layer-store render. Together they tore down and rebuilt the CM
+  // view on every keystroke — the "CM view tears down mid-type" bug.
+  //
+  // Fix: snapshot `initialText` into a ref at mount via
+  // `useMemo(() => initialText, [])` so it is frozen for the life of the
+  // component, and keep the latest `getPos` / `onDismiss` in refs updated
+  // in a separate effect.
   const initialPos = getPos();
   const initialNode = typeof initialPos === 'number' ? editor.state.doc.nodeAt(initialPos) : null;
-  const initialText = initialNode?.textContent ?? '';
   const reason = (initialNode?.attrs.reason as string | undefined) ?? 'Parse failed';
   const span = (initialNode?.attrs.originalSpan as RawMdxOriginalSpan | undefined) ?? {
     start: 0,
     end: 0,
   };
   const showSourceAffordance = hasMeaningfulSpan(span);
+
+  // Capture initialText ONCE per component instance via `useState` lazy
+  // initializer — the React Compiler-approved shape for per-instance
+  // mount-time snapshots (no manual `useMemo`, per repo convention).
+  const [initialText] = useState(() => initialNode?.textContent ?? '');
+
+  // Keep latest references in refs so the CM view's closures always see
+  // current values without re-instantiation.
+  const getPosRef = useRef(getPos);
+  const onDismissRef = useRef(onDismiss);
+  const editorRef = useRef(editor);
+  useEffect(() => {
+    getPosRef.current = getPos;
+    onDismissRef.current = onDismiss;
+    editorRef.current = editor;
+  }, [getPos, onDismiss, editor]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -161,10 +185,11 @@ export function RawMdxFallbackPropPanel({
       extensions: buildCmExtensions({
         onDocChange: (doc) => {
           if (doc === lastWrittenText) return;
-          const currentPos = getPos();
+          const currentPos = getPosRef.current();
           if (typeof currentPos !== 'number') return;
+          const activeEditor = editorRef.current;
           const plan = computePmReplaceTransaction({
-            editor,
+            editor: activeEditor,
             pos: currentPos,
             nextText: doc,
           });
@@ -172,15 +197,15 @@ export function RawMdxFallbackPropPanel({
           lastWrittenText = doc;
           // Keep the user's CM6 focus — do NOT call editor.commands.focus().
           // Using a direct transaction avoids chain().focus() side-effects.
-          editor.view.dispatch(
-            editor.state.tr.replaceWith(
+          activeEditor.view.dispatch(
+            activeEditor.state.tr.replaceWith(
               plan.from,
               plan.to,
-              plan.nextText.length > 0 ? editor.schema.text(plan.nextText) : [],
+              plan.nextText.length > 0 ? activeEditor.schema.text(plan.nextText) : [],
             ),
           );
         },
-        onEscape: () => onDismiss(),
+        onEscape: () => onDismissRef.current(),
       }),
     });
 
@@ -193,10 +218,10 @@ export function RawMdxFallbackPropPanel({
       view.destroy();
       viewRef.current = null;
     };
-    // We intentionally only wire once per activation; prop changes to
-    // `getPos`/`editor` represent stable refs (useEffect deps below capture
-    // them for exhaustive-deps correctness).
-  }, [editor, getPos, initialText, onDismiss]);
+    // Only `initialText` — which is itself stable per instance via useMemo
+    // above — participates in this effect's identity. The CM view is
+    // built ONCE per activation (review Major #10).
+  }, [initialText]);
 
   function handleOpenSource() {
     window.dispatchEvent(
@@ -208,36 +233,32 @@ export function RawMdxFallbackPropPanel({
   }
 
   return (
-    <div
-      className={cn(
-        'fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-border bg-background p-3 shadow-lg',
-        'flex flex-col gap-2 min-w-[480px] max-w-[720px]',
-      )}
-      data-ok-raw-mdx-fallback-prop-panel=""
-      role="dialog"
-      aria-label="Edit broken MDX block"
+    <InteractionPropPanel
+      kind="raw-mdx-fallback"
+      ariaLabel="Edit broken MDX block"
+      onDeactivate={onDismiss}
+      layout="wide"
     >
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-          raw
-        </span>
-        <span className="text-xs text-muted-foreground">{reason}</span>
-        <div className="flex-1" />
-        {showSourceAffordance ? (
-          <Button variant="outline" size="sm" onClick={handleOpenSource}>
-            <ExternalLink className="mr-1 size-3.5" />
-            Open in source
-          </Button>
-        ) : null}
-        <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Close">
-          <X className="size-4" />
-        </Button>
+      <div className="flex flex-col gap-2 pr-8">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            raw
+          </span>
+          <span className="text-xs text-muted-foreground">{reason}</span>
+          <div className="flex-1" />
+          {showSourceAffordance ? (
+            <Button variant="outline" size="sm" onClick={handleOpenSource}>
+              <ExternalLink className="mr-1 size-3.5" />
+              Open in source
+            </Button>
+          ) : null}
+        </div>
+        <div
+          ref={containerRef}
+          className="rounded border border-input bg-muted/50 overflow-auto max-h-[320px]"
+          data-ok-raw-mdx-fallback-cm=""
+        />
       </div>
-      <div
-        ref={containerRef}
-        className="rounded border border-input bg-muted/50 overflow-auto max-h-[320px]"
-        data-ok-raw-mdx-fallback-cm=""
-      />
-    </div>
+    </InteractionPropPanel>
   );
 }

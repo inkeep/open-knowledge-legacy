@@ -18,9 +18,11 @@
  * wikiLink suggestion popover is closed remain unchanged — they're orthogonal
  * to the chip rendering.
  */
-import { WikiLink as BaseWikiLink } from '@inkeep/open-knowledge-core';
+import { WikiLink as BaseWikiLink, classifyWikiLinkTarget } from '@inkeep/open-knowledge-core';
 import { createElement } from 'react';
 import { getInteractionLayer } from '../interaction-layer-host';
+import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { WikiLinkPropPanel } from './WikiLinkPropPanel';
 import { configureWikiLinkSuggestion, wikiLinkSuggestionKey } from './wiki-link-suggestion';
 
@@ -124,6 +126,30 @@ export const WikiLink = BaseWikiLink.extend({
               getPos: safeGetPos,
               onClose: ctx.deactivate,
             }),
+        },
+        // review Major #4: Cmd/Ctrl/middle-click opens the wiki target in
+        // a new tab. Bare click falls through to the PropPanel (return
+        // false). Uses current node.attrs (which the NodeView's `update`
+        // hook keeps synced when PropPanel edits fire).
+        handlePrimary: ({ newTab }) => {
+          if (!newTab) return false;
+          const live = node.attrs;
+          const liveTarget = typeof live.target === 'string' ? live.target : '';
+          if (!liveTarget) return false;
+          const liveAnchor = typeof live.anchor === 'string' ? live.anchor : null;
+          const classified = classifyWikiLinkTarget(liveTarget, liveAnchor);
+          if (!classified) return false;
+          if (classified.kind === 'doc') {
+            openInternalHashHrefInNewTab({
+              docName: classified.docName,
+              anchor: classified.anchor,
+            });
+            return true;
+          }
+          // external — refuse unsafe schemes (review Major #13).
+          if (!isSafeNavigationUrl(classified.url)) return false;
+          openHashHrefInNewTab(classified.url);
+          return true;
         },
       });
 

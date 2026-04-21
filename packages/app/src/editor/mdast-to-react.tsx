@@ -9,13 +9,20 @@
  * ready to mount anywhere a React subtree goes (Suspense fallback, dev
  * preview, CLI export, etc.).
  *
- * Parse path: uses the same `MarkdownManager.parseToMdast` as the editor
- * itself, so fallback render ≡ editor parse (Phase A restoreFromMdx +
- * Phase B merged walker). A stable module-level MarkdownManager instance
- * amortizes processor construction across fallback renders.
+ * Parse path: uses `parseToMdastWithFallback` — mirrors the editor's
+ * `parseWithFallback` contract at the mdast layer. Never throws; on parse
+ * failure, substitutes `rawMdxFallback` mdast nodes for broken blocks so
+ * the fallback render matches what the editor will show once it finishes
+ * mounting (review Major #5). A stable module-level MarkdownManager
+ * instance amortizes processor construction across fallback renders.
  */
 
-import { MarkdownManager, mdastToReact, sharedExtensions } from '@inkeep/open-knowledge-core';
+import {
+  MarkdownManager,
+  mdastToElementTree,
+  parseToMdastWithFallback,
+  sharedExtensions,
+} from '@inkeep/open-knowledge-core';
 import { createElement, type ReactElement } from 'react';
 import { getMDXComponents } from './componentMap';
 
@@ -41,15 +48,20 @@ function getMdManager(): MarkdownManager {
  * Render markdown to a React tree via the V2 Option E walker. Suitable
  * for Suspense fallback rendering — the returned element tree is pure
  * React and can be mounted directly.
+ *
+ * Contract: never throws. On parse failure, emits a tree that visibly
+ * shows the broken MDX source inline — matching the editor's own
+ * parseWithFallback behavior.
  */
 export function markdownToReact(markdown: string): ReactElement {
-  const mdast = getMdManager().parseToMdast(markdown);
-  const tree = mdastToReact(mdast, {
+  const mdMgr = getMdManager();
+  const mdast = parseToMdastWithFallback(markdown, {
+    parseToMdast: (md) => mdMgr.parseToMdast(md),
+  });
+  const tree = mdastToElementTree(mdast, {
     createElement,
     componentMap: getMDXComponents(),
   });
-  // The walker always returns an element at the root level (root → <div>).
-  // Defensive fallback in case of an empty doc.
   if (tree == null || typeof tree === 'string') {
     return createElement('div', { 'data-ok-fallback-root': '' }, tree ?? '');
   }

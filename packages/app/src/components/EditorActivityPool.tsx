@@ -53,7 +53,7 @@ import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
-import { EditorSkeleton } from './EditorSkeleton';
+import { SuspenseDocumentFallback } from './FallbackDocumentRender';
 import { usePageList } from './PageListContext';
 
 /**
@@ -264,7 +264,15 @@ function EditorActivityPoolInner({
   // at ACTIVITY_MOUNT_LIMIT (3), so the string + diff is trivial.
   const priorMountKeyRef = useRef<string>('');
   const mountKey = mountList.map((e) => e.docName).join(',');
-  useEffect(() => {
+  // FR3b — single-writer push of the activity mount list to the V2 editor
+  // cache. Uses `useLayoutEffect` (not `useEffect`) so the provider
+  // connect/disconnect fires BEFORE children's mount effects (review
+  // Major #15). Passive effects run bottom-up, which means
+  // `ActivityEntry`'s `mountTiptapEditor` would reparent + restore focus
+  // before the provider is reconnected — leaving a window where keystrokes
+  // commit locally but don't sync to peers. Layout effects run
+  // parent-first, closing the race.
+  useLayoutEffect(() => {
     if (priorMountKeyRef.current === mountKey) return;
     const prior = priorMountKeyRef.current ? priorMountKeyRef.current.split(',') : [];
     const mounted = mountKey ? mountKey.split(',') : [];
@@ -275,9 +283,8 @@ function EditorActivityPoolInner({
       evicted,
     });
     priorMountKeyRef.current = mountKey;
-    // FR3b — single-writer push of the activity mount list to the V2 editor
-    // cache. The cache uses this list to drive provider connect/disconnect
-    // for cached-but-not-Activity-mounted editors (precedent #18(i)). Bounds
+    // The cache uses this list to drive provider connect/disconnect for
+    // cached-but-not-Activity-mounted editors (precedent #18(i)). Bounds
     // remote-peer CRDT load to the top ACTIVITY_MOUNT_LIMIT editors
     // regardless of how many docs are pool-resident.
     setActivityMountList(mounted);
@@ -521,7 +528,14 @@ function ActivityEntry({
           onNavigateBack={onNavigateBack}
           onRecycle={onRecycle}
         >
-          <Suspense fallback={<EditorSkeleton />}>
+          {/*
+            V2 Option E fallback (review Major #7). `SuspenseDocumentFallback`
+            reads disk bytes from `disk-markdown-cache` synchronously and
+            renders the full fumadocs-style tree via `markdownToReact`. When
+            bytes haven't arrived yet, it falls back to `EditorSkeleton`.
+            Paint budget: <500ms prod P95 (G5).
+          */}
+          <Suspense fallback={<SuspenseDocumentFallback docName={entry.docName} />}>
             <DocumentBoundary docName={entry.docName} provider={entry.provider}>
               {/* Dual-editor mount with size-gated defer for large docs. Small
                   docs render both (pre-mount-both default — mode swap stays

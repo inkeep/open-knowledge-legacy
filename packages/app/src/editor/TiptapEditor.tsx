@@ -168,6 +168,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   // FR15 kill switch: when CACHE_ENABLED=false, mountTiptapEditor
   // returns __uncached entry; parkTiptapEditor destroys immediately.
   const [editor, setEditor] = useState<Editor | null>(null);
+  // Mount errors flow through a state slot re-thrown during render so
+  // DocumentErrorBoundary catches (review Minor #26). useEffect callbacks
+  // can't throw synchronously — they'd surface as unhandled rejections.
+  const [mountError, setMountError] = useState<Error | null>(null);
+  if (mountError) throw mountError;
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
   const docName = provider.configuration.name ?? '';
 
@@ -274,11 +279,18 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       cacheEntryRef.current = entry;
       setEditor(entry.editor);
     } catch (err) {
-      // Cache failure: log + leave editor null. Surface area is empty until
-      // recovery; the next render cycle will re-attempt via the effect.
+      // Mount failure surfaces to the user via `DocumentErrorBoundary`
+      // (review Minor #26). Pre-fix the effect silently caught + left
+      // `editor = null` with no visible signal, forcing the user to nav
+      // away + back to retry. By rethrowing we let the existing boundary's
+      // "Try again" affordance (which recycles the pool entry) drive
+      // recovery. `setMountError` pushes the error into a state slot
+      // that React re-throws during render — effects can't throw
+      // synchronously.
       console.error('[TiptapEditor] mountTiptapEditor failed', err);
       cacheEntryRef.current = null;
       setEditor(null);
+      setMountError(err instanceof Error ? err : new Error(String(err)));
     }
 
     return () => {

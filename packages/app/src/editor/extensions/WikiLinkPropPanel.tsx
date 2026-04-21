@@ -29,10 +29,10 @@ import {
   Loader2,
   Pencil,
   Trash2,
-  X,
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
   folderIndexCreateSeed,
   resolveLinkTargetIntent,
@@ -43,6 +43,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { cn } from '../../lib/utils';
 import { openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { useHeadings } from './use-headings';
 import { getWikiLinkResolutionCandidates, isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
@@ -263,7 +264,15 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
 
   function handleNavigate(opts: { newTab?: boolean }) {
     if (externalTarget) {
-      window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
+      // Gate via isSafeNavigationUrl (review Major #13). Refuses
+      // javascript:/data:/vbscript:/etc. authored URLs that would execute
+      // arbitrary JS in the viewer's origin.
+      if (isSafeNavigationUrl(externalTarget.url)) {
+        window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[safe-nav] blocked non-safe scheme:', externalTarget.url);
+      }
       return;
     }
     if (linkIntent.kind === 'create') {
@@ -357,13 +366,8 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
 
   return (
     <>
-      <div
-        role="dialog"
-        aria-label="Wiki link options"
-        className="ok-link-prop-panel pointer-events-auto absolute left-1/2 top-2 z-40 w-80 -translate-x-1/2 rounded-md border border-border bg-popover p-3 shadow-lg"
-        data-prop-panel="wiki-link"
-      >
-        <div className="mb-2 flex items-start gap-2">
+      <InteractionPropPanel kind="wiki-link" ariaLabel="Wiki link options" onDeactivate={onClose}>
+        <div className="mb-2 flex items-start gap-2 pr-8">
           <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
           <div className="flex-1 min-w-0">
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
@@ -376,14 +380,6 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
               {externalTarget ? externalTarget.url : `[[${target}${anchor ? `#${anchor}` : ''}]]`}
             </div>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close link options"
-            onClick={onClose}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </button>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -424,7 +420,7 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
             Remove
           </Button>
         </div>
-      </div>
+      </InteractionPropPanel>
 
       <NewItemDialog
         open={createDialogMode !== null}

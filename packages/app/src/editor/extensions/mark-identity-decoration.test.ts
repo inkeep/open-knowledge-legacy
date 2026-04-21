@@ -12,15 +12,15 @@ import { describe, expect, test } from 'bun:test';
 import { type Mark, Schema } from '@tiptap/pm/model';
 import { EditorState, type Plugin } from '@tiptap/pm/state';
 import type { DecorationSet } from '@tiptap/pm/view';
+import { markIdentityPlugin } from './mark-identity';
 import {
   MARK_ID_DATA_ATTR,
   markIdentityDecorationKey,
   markIdentityDecorationPlugin,
-} from './mark-identity-decoration-plugin';
-import { markIdentityPlugin } from './mark-identity-plugin';
+} from './mark-identity-decoration';
 
 // ---------------------------------------------------------------------------
-// Test schema — mirrors mark-identity-plugin.test.ts for shared conventions
+// Test schema — mirrors mark-identity.test.ts for shared conventions
 // ---------------------------------------------------------------------------
 
 const schema = new Schema({

@@ -124,6 +124,13 @@ export interface TiptapCacheEntry {
    */
   scrollTop: number;
   /**
+   * Whether the editor owned focus at park time (review Major #11).
+   * Restored at mount-time only when true — prevents focus hijacking for
+   * keyboard users Tab-navigating through the sidebar and for deep-link
+   * cold loads where focus was elsewhere (sidebar / header / etc.).
+   */
+  hadFocus: boolean;
+  /**
    * The docName whose mount is currently displaying this editor. Null when
    * parked. Consumers reading editor state from non-render contexts (async
    * callbacks, extension handlers) MUST guard on
@@ -146,6 +153,8 @@ export interface CmCacheEntry {
   ytext: Y.Text;
   provider: HocuspocusProvider;
   scrollTop: number;
+  /** See `TiptapCacheEntry.hadFocus` — review Major #11. */
+  hadFocus: boolean;
   activeMountKey: string | null;
   __uncached?: boolean;
 }
@@ -278,6 +287,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
       ytext: fresh.ytext,
       provider: fresh.provider,
       scrollTop: 0,
+      hadFocus: false,
       activeMountKey: docName,
       __uncached: true,
     };
@@ -291,10 +301,16 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     // Restore scroll AFTER DOM is re-attached (scrollTop on detached nodes
     // is a no-op in real browsers).
     container.scrollTop = existing.scrollTop;
-    try {
-      existing.editor.commands.focus();
-    } catch {
-      // Editor may be mid-transition or destroyed; focus is best-effort.
+    // Focus restore is gated on "had focus at park time" (review Major #11).
+    // Blindly calling .focus() on every mount hijacks focus from keyboard
+    // users Tab-navigating through the sidebar and from deep-link cold
+    // loads where focus was elsewhere.
+    if (existing.hadFocus) {
+      try {
+        existing.editor.commands.focus();
+      } catch {
+        // Editor may be mid-transition or destroyed; focus is best-effort.
+      }
     }
     mark('ok/cache/hit', { docName, kind: 'tiptap' });
     // FR13 telemetry: cache-hit mount emits stats with cacheHit=true.
@@ -325,6 +341,7 @@ export function mountTiptapEditor(params: MountTiptapParams): TiptapCacheEntry {
     ytext: fresh.ytext,
     provider: fresh.provider,
     scrollTop: 0,
+    hadFocus: false,
     activeMountKey: docName,
   };
   tiptapCache.set(docName, entry);
@@ -371,6 +388,9 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
 
   const view = getTiptapEditorView(entry.editor);
   if (view) {
+    // Capture hadFocus BEFORE detaching — once the DOM leaves its parent
+    // activeElement drops to <body> and we'd always record false.
+    entry.hadFocus = computeHadFocus(view.dom);
     const scrollSrc = view.scrollDOM ?? view.dom.parentElement ?? view.dom;
     entry.scrollTop = (scrollSrc as HTMLElement).scrollTop ?? 0;
     const parent = view.dom.parentElement;
@@ -393,6 +413,13 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
  * Evict the editor for `docName` — THE ONLY path that calls destroy()
  * on the editor / provider / ydoc. Safe no-op if docName is not cached.
  * Returns true if an entry was destroyed, false otherwise.
+ *
+ * Each sub-destroy is wrapped in try/catch because destroy can throw in
+ * known mid-teardown states (e.g. TipTap's throwing proxy). But a
+ * genuine memory / socket / Y.Doc leak would manifest as a silent cache
+ * bloat with no observable signal. Every catch emits
+ * `ok/cache/evict-failed` so a developer profiling V2 in Chrome DevTools
+ * Extensibility can see real eviction failures (review Major #12).
  */
 export function evictTiptapEditor(docName: string): boolean {
   const entry = tiptapCache.get(docName);
@@ -400,18 +427,33 @@ export function evictTiptapEditor(docName: string): boolean {
 
   try {
     entry.editor.destroy();
-  } catch {
-    // proxy-throwing state during mid-teardown is acceptable here
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'tiptap',
+      stage: 'editor',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   try {
     entry.provider.destroy();
-  } catch {
-    // provider may already be in tear-down
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'tiptap',
+      stage: 'provider',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   try {
     entry.ydoc.destroy();
-  } catch {
-    // ydoc.destroy is idempotent in practice but defensive try/catch is cheap
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'tiptap',
+      stage: 'ydoc',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
 
   tiptapCache.delete(docName);
@@ -451,6 +493,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
       ytext: fresh.ytext,
       provider: fresh.provider,
       scrollTop: 0,
+      hadFocus: false,
       activeMountKey: docName,
       __uncached: true,
     };
@@ -462,10 +505,12 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     existing.activeMountKey = docName;
     touchLru(cmLru, docName);
     container.scrollTop = existing.scrollTop;
-    try {
-      existing.view.focus();
-    } catch {
-      // best-effort focus
+    if (existing.hadFocus) {
+      try {
+        existing.view.focus();
+      } catch {
+        // best-effort focus
+      }
     }
     mark('ok/cache/hit', { docName, kind: 'cm' });
     if (sizeStats) {
@@ -493,6 +538,7 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
     ytext: fresh.ytext,
     provider: fresh.provider,
     scrollTop: 0,
+    hadFocus: false,
     activeMountKey: docName,
   };
   cmCache.set(docName, entry);
@@ -532,6 +578,8 @@ export function parkCmEditor(entry: CmCacheEntry): void {
   }
 
   const dom = entry.view.dom;
+  // Capture hadFocus BEFORE detaching (see TipTap path for rationale).
+  entry.hadFocus = computeHadFocus(dom as HTMLElement);
   const scrollSrc = entry.view.scrollDOM ?? dom;
   entry.scrollTop = (scrollSrc as HTMLElement).scrollTop ?? 0;
   const parent = dom.parentElement;
@@ -547,7 +595,9 @@ export function parkCmEditor(entry: CmCacheEntry): void {
 
 /**
  * Evict the CM6 editor — THE ONLY path that calls view.destroy() /
- * provider.destroy() / ydoc.destroy().
+ * provider.destroy() / ydoc.destroy(). Emits `ok/cache/evict-failed` on
+ * any sub-destroy throw so real memory/socket/Y.Doc leaks surface in
+ * telemetry (review Major #12).
  */
 export function evictCmEditor(docName: string): boolean {
   const entry = cmCache.get(docName);
@@ -555,18 +605,33 @@ export function evictCmEditor(docName: string): boolean {
 
   try {
     entry.view.destroy();
-  } catch {
-    // safe to ignore
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'cm',
+      stage: 'view',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   try {
     entry.provider.destroy();
-  } catch {
-    // safe to ignore
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'cm',
+      stage: 'provider',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   try {
     entry.ydoc.destroy();
-  } catch {
-    // safe to ignore
+  } catch (err) {
+    mark('ok/cache/evict-failed', {
+      docName,
+      kind: 'cm',
+      stage: 'ydoc',
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
 
   cmCache.delete(docName);
@@ -590,6 +655,22 @@ function getTiptapEditorView(editor: Editor): { dom: HTMLElement; scrollDOM?: HT
   const view = (editor as unknown as { editorView?: { dom: HTMLElement; scrollDOM?: HTMLElement } })
     .editorView;
   return view ?? null;
+}
+
+/**
+ * Whether the given DOM element (or any descendant) holds the document's
+ * current active element. Used to gate focus restoration on Activity flip
+ * (review Major #11) — blind .focus() on every mount hijacks focus from
+ * keyboard users + deep-link cold loads where focus was legitimately
+ * elsewhere.
+ */
+function computeHadFocus(root: HTMLElement): boolean {
+  if (typeof document === 'undefined') return false;
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active === root) return true;
+  // `HTMLElement.contains` is DOM-level, read-only, no side effects.
+  return root.contains(active);
 }
 
 function reparentTiptapDom(entry: TiptapCacheEntry, container: HTMLElement): void {
@@ -670,33 +751,52 @@ export function setActivityMountList(docNames: readonly string[]): void {
   const prev = activityMountList;
   const next = new Set(docNames);
 
-  // Demotion — fired for docs that were active, now aren't.
+  // Demotion — fired for docs that were active, now aren't. Emits
+  // `ok/cache/disconnect` only on success, `ok/cache/disconnect-failed`
+  // on provider-destroyed state so FR3b (observer-CPU cap) signal is
+  // honest (review Major #12).
   for (const docName of prev) {
     if (next.has(docName)) continue;
     const provider = findProvider(docName);
     if (!provider) continue;
     try {
       provider.disconnect();
-    } catch {
-      // provider may already be in tear-down — safe to ignore
+      mark('ok/cache/disconnect', { docName });
+    } catch (err) {
+      mark('ok/cache/disconnect-failed', {
+        docName,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-    mark('ok/cache/disconnect', { docName });
   }
 
-  // Promotion — fired for docs that are newly active.
+  // Promotion — fired for docs that are newly active. connect() returns a
+  // Promise; we fire-and-forget, but attach explicit handlers so a
+  // rejected Promise doesn't surface as an unhandled rejection and so
+  // failures emit telemetry (review Major #12).
   for (const docName of next) {
     if (prev.has(docName)) continue;
     const provider = findProvider(docName);
     if (!provider) continue;
     try {
-      // connect() returns a Promise but we don't await; sync happens
-      // asynchronously and the existing `'synced'` listener will re-run
-      // setupObservers' initialization idempotently.
-      void provider.connect();
-    } catch {
-      // provider may be destroyed — safe to ignore
+      const result = provider.connect();
+      mark('ok/cache/connect', { docName });
+      // connect() may return a Promise — catch rejections to avoid
+      // unhandled-promise-rejection and to emit connect-failed telemetry.
+      if (result && typeof (result as Promise<unknown>).then === 'function') {
+        (result as Promise<unknown>).catch((err) => {
+          mark('ok/cache/connect-failed', {
+            docName,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    } catch (err) {
+      mark('ok/cache/connect-failed', {
+        docName,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-    mark('ok/cache/connect', { docName });
   }
 
   activityMountList = next;

@@ -79,6 +79,13 @@ export interface DocumentContextValue {
    */
   recycleDocument: (docName: string) => void;
   /**
+   * Pre-warm a provider for `docName` without promoting it to active
+   * (review Major #7 / V2 SPEC FR12 Option G). Used by the sidebar's
+   * hover-intent handler to shave the Hocuspocus sync cost off the
+   * eventual click. Idempotent + no-op for system docs.
+   */
+  prewarm: (docName: string) => void;
+  /**
    * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
    * does not change the URL even when agent focus moves elsewhere. Persisted
    * per-tab via localStorage `ok-pin-v1`. Null = not pinned = follow agent.
@@ -363,6 +370,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
       p.recycle(docName);
+    },
+    prewarm: (docName: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.prewarm(docName);
     },
     pinnedDoc,
     pin: (docName: string) => {

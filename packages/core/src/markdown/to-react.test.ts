@@ -271,6 +271,73 @@ describe('mdastToReact — MDX JSX elements', () => {
     expect(child.p?.items).toEqual(['TS', 'JS']);
   });
 
+  test('non-JSON expression falls back to raw string prop (no eval)', () => {
+    // Security regression (review Critical #1): attempting to invoke
+    // side-effecting code in an attribute expression must NOT execute —
+    // we hand the raw source to the component as a string prop and let
+    // the component decide what to do with it.
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Callout',
+            attributes: [
+              {
+                type: 'mdxJsxAttribute',
+                name: 'type',
+                value: {
+                  type: 'mdxJsxAttributeValueExpression',
+                  value: "(()=>{ (globalThis as any).__ok_pwned = true; return 'warning'; })()",
+                },
+              },
+            ],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast for test
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    // Raw source string, NOT the 'warning' result of executing it.
+    expect(typeof child.p?.type).toBe('string');
+    expect(child.p?.type).toContain('__ok_pwned');
+    // Sentinel: no side effect escaped into the global scope.
+    expect((globalThis as unknown as { __ok_pwned?: boolean }).__ok_pwned).toBeUndefined();
+  });
+
+  test('spread attribute that is not a JSON literal is discarded (no eval)', () => {
+    const el = mdastToReact(
+      {
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Callout',
+            attributes: [
+              {
+                type: 'mdxJsxExpressionAttribute',
+                value: '(globalThis as any).__ok_spread_pwned = true, {}',
+              },
+            ],
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast for test
+            children: [] as any,
+          } as never,
+        ],
+      },
+      { createElement: testFactory },
+    ) as TestElement;
+    const child = el.c[0] as TestElement;
+    // No props assigned — the non-JSON expression path returns the raw
+    // string, which the spread branch ignores because it isn't an object.
+    expect(child.p).toBeNull();
+    expect(
+      (globalThis as unknown as { __ok_spread_pwned?: boolean }).__ok_spread_pwned,
+    ).toBeUndefined();
+  });
+
   test('bare attribute (no value) → true prop', () => {
     const el = mdastToReact(
       {

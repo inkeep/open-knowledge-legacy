@@ -64,7 +64,7 @@ import type { EditorState, Plugin } from '@tiptap/pm/state';
 import type { ReactNode } from 'react';
 import type { InteractionLayerHandle } from '../interaction-layer';
 import { getInteractionLayer } from '../interaction-layer-host';
-import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-identity-plugin';
+import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-identity';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -81,6 +81,25 @@ export interface MarkPropPanelContext {
 
 export type MarkPropPanelRenderer = (ctx: MarkPropPanelContext) => ReactNode;
 
+/**
+ * Context passed to the optional `handlePrimary` hook. Mark chips that want
+ * to short-circuit the layer's default "open PropPanel" behavior on bare
+ * click / Enter / Space implement this to navigate directly. `newTab`
+ * reflects Cmd/Ctrl/middle-click — preserves the universal web convention.
+ */
+export interface MarkPrimaryActionContext {
+  editor: Editor;
+  nodeId: string;
+  newTab: boolean;
+}
+
+/**
+ * Primary-action hook. Return `true` to mean "handled — do NOT open the
+ * PropPanel"; return `false`/`undefined` to fall through to the default
+ * (`setActiveNode`).
+ */
+export type MarkPrimaryActionHandler = (ctx: MarkPrimaryActionContext) => boolean | undefined;
+
 export interface MarkInteractionBridgeParams {
   /** TipTap Editor instance — used for getInteractionLayer + as renderer ctx. */
   editor: Editor;
@@ -90,6 +109,16 @@ export interface MarkInteractionBridgeParams {
   predicate?: (mark: Mark) => boolean;
   /** Render the PropPanel UI for an active mark. */
   renderPropPanel: MarkPropPanelRenderer;
+  /**
+   * Optional: override the layer's default "open PropPanel" activation.
+   * Called on bare click / Enter / Space AND on Cmd/Ctrl+click (with
+   * `newTab: true`). Returning `true` skips setActiveNode; returning
+   * false/undefined falls through to the PropPanel.
+   *
+   * Used by link chips (InternalLink) to preserve universal web semantics:
+   * bare click → PropPanel, Cmd+click → navigate in new tab.
+   */
+  handlePrimary?: MarkPrimaryActionHandler;
 }
 
 /** Internal params — layer supplied explicitly. Used by tests + the factory. */
@@ -139,8 +168,9 @@ export function buildMarkBridgeHandlers(params: {
   editor: Editor;
   layer: InteractionLayerHandle;
   renderPropPanel: MarkPropPanelRenderer;
+  handlePrimary?: MarkPrimaryActionHandler;
 }): MarkBridgeHandlers {
-  const { editor, layer, renderPropPanel } = params;
+  const { editor, layer, renderPropPanel, handlePrimary } = params;
   return {
     onRegister: (info) => {
       layer.register({
@@ -154,6 +184,9 @@ export function buildMarkBridgeHandlers(params: {
               deactivate: ctx.deactivate,
             }),
         },
+        handlePrimary: handlePrimary
+          ? (ctx) => handlePrimary({ editor, nodeId: ctx.nodeId, newTab: ctx.newTab })
+          : undefined,
       });
     },
     onDeregister: (id) => {
@@ -172,8 +205,8 @@ export function buildMarkBridgeHandlers(params: {
  * layer without touching DOM.
  */
 export function buildMarkInteractionBridge(params: BuildMarkInteractionBridgeParams): Plugin {
-  const { editor, layer, markTypes, predicate, renderPropPanel } = params;
-  const handlers = buildMarkBridgeHandlers({ editor, layer, renderPropPanel });
+  const { editor, layer, markTypes, predicate, renderPropPanel, handlePrimary } = params;
+  const handlers = buildMarkBridgeHandlers({ editor, layer, renderPropPanel, handlePrimary });
   return markIdentityPlugin({
     markTypes: [...markTypes],
     predicate,

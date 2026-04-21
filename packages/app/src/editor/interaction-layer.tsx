@@ -63,6 +63,24 @@ export interface InteractionContext {
   deactivate: () => void;
 }
 
+/**
+ * Context passed to the optional `handlePrimary` handler. Chips that want
+ * to short-circuit the default "open the PropPanel" behavior on bare-click
+ * / Enter / Space can register this hook and perform navigation (or any
+ * other primary-action semantics) directly.
+ *
+ * `newTab` is set when the user pressed Cmd/Ctrl/middle-click — the layer
+ * routes these through `handlePrimary` so chips can preserve the universal
+ * web "open in new tab" mental model even though they're plain-DOM chips
+ * without an `<a href>`.
+ */
+export interface InteractionPrimaryContext {
+  nodeId: string;
+  type: string;
+  /** True when the user intended new-tab semantics (Cmd/Ctrl/middle-click). */
+  newTab: boolean;
+}
+
 export interface InteractionControls {
   /** Rendered at editor root when nodeId becomes active. */
   propPanel?: (ctx: InteractionContext) => React.ReactNode;
@@ -90,6 +108,18 @@ export interface RegisterParams {
   getPos?: () => number | undefined;
   /** Render-function bag for the three singleton slots. */
   controls: InteractionControls;
+  /**
+   * Optional hook invoked BEFORE the layer routes primary activation
+   * (click / Enter / Space) to `setActiveNode`. Returning `true` means
+   * "handled — do not open the PropPanel"; returning `false`/`undefined`
+   * falls through to the default setActiveNode behavior.
+   *
+   * Chip kinds that want to preserve universal link semantics (Cmd+Click
+   * opens in a new tab, bare-click navigates immediately) implement this
+   * hook. The layer still routes keyboard activation (Enter / Space) here
+   * too — keyboard + pointer share one path.
+   */
+  handlePrimary?: (ctx: InteractionPrimaryContext) => boolean | undefined;
 }
 
 export interface InteractionLayerHandle {
@@ -328,25 +358,85 @@ function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
 export function createInteractionLayer(
   params: CreateInteractionLayerParams,
 ): InteractionLayerHandle {
-  // rootContainer + mountNode used to drive the layer's own React root mount
-  // (now removed — see InteractionLayerView for the V2 main-tree render).
-  // Destructure mountNode for the layerMount fallback path; rootContainer is
-  // legacy and intentionally unused.
-  const { editor, mountNode } = params;
+  // rootContainer + mountNode were used to drive the layer's own React root.
+  // Removed when the layer switched to in-tree rendering via
+  // `<InteractionLayerView>` — a separate createRoot() strands PropPanels
+  // from the app's context providers. Both fields are accepted for
+  // backwards-compat but ignored; destructure them here to preserve the
+  // public option shape without TypeScript unused-param noise.
+  const { editor } = params;
   const store = new InteractionLayerStore();
 
   // Lazily bound pieces (may be null in test environments with no DOM).
   let editorDom: HTMLElement | null = getEditorDom(editor);
-  let layerMount: HTMLElement | null = null;
-  let reactRoot: { unmount: () => void } | null = null;
   let clickListenerAttached = false;
 
   // Event delegation handlers (same-target class so add/remove matches).
+  //
+  // Chip registrations can opt into a `handlePrimary` hook (used by mark /
+  // node chips that want to preserve universal link semantics — bare-click
+  // navigates, Cmd/Ctrl/middle-click opens in new tab, Enter/Space fires
+  // the primary action). When `handlePrimary` returns true we treat the
+  // activation as handled and DO NOT open the PropPanel. Chips without
+  // `handlePrimary` (rich NodeViews like RawMdxFallback / JsxComponent)
+  // fall through to the layer's default setActiveNode path.
+  //
+  // Middle-click + Cmd/Ctrl+Click semantics: pointerdown fires for
+  // `button === 1` (middle) and carries `metaKey`/`ctrlKey` on modified
+  // clicks. The browser's default auxiliary-click scroll mode for middle-
+  // click does not interfere because we preventDefault on newTab-intent
+  // activations.
   const onPointerDown = (ev: Event): void => {
+    const pe = ev as PointerEvent;
+    // Right-click (button === 2) falls through to the browser's native
+    // context menu — don't intercept.
+    if (pe.button === 2) return;
     const id = resolveClickTargetNodeId(ev.target, store);
-    if (id !== null) {
-      store.setActiveNode(id);
+    if (id === null) return;
+    const reg = store.getRegistration(id);
+    const newTab = pe.metaKey || pe.ctrlKey || pe.button === 1;
+    if (reg?.handlePrimary) {
+      const handled = reg.handlePrimary({ nodeId: id, type: reg.type, newTab });
+      if (handled) {
+        // Suppress the default browser auxiliary-click scroll on middle-click.
+        if (newTab) pe.preventDefault?.();
+        return;
+      }
     }
+    // Default: open the PropPanel.
+    store.setActiveNode(id);
+  };
+
+  // Keyboard activation (Critical #3): Enter / Space on a focused chip
+  // (chips carry tabindex="0") dispatches through the same resolver as
+  // pointerdown so keyboard users get parity with pointer users. Escape
+  // dismisses the active PropPanel for users who don't have a visible
+  // close button (e.g. keyboard-only).
+  const onKeyDown = (ev: Event): void => {
+    const ke = ev as KeyboardEvent;
+    if (ke.key === 'Escape') {
+      if (store.getActiveNode() !== null) {
+        store.setActiveNode(null);
+        ke.preventDefault?.();
+      }
+      return;
+    }
+    if (ke.key !== 'Enter' && ke.key !== ' ' && ke.key !== 'Spacebar') return;
+    const id = resolveClickTargetNodeId(ev.target, store);
+    if (id === null) return;
+    const reg = store.getRegistration(id);
+    // Keyboard never carries new-tab semantics (there is no standard
+    // keyboard chord for "open in new tab" that browsers honor uniformly
+    // for non-anchor elements). Users can Tab to the chip, open the
+    // PropPanel, and choose "Open in new tab" there — or use the browser's
+    // native a-element flow via context menu for external links.
+    const newTab = false;
+    ke.preventDefault?.();
+    if (reg?.handlePrimary) {
+      const handled = reg.handlePrimary({ nodeId: id, type: reg.type, newTab });
+      if (handled) return;
+    }
+    store.setActiveNode(id);
   };
   const onOutsideClick = (ev: Event): void => {
     // If the click is inside the editor AND resolves to a node, onPointerDown
@@ -356,7 +446,6 @@ export function createInteractionLayer(
     const target = ev.target as Node | null;
     if (!target) return;
     if (editorDom?.contains(target)) return; // editor-internal → handled above
-    if (layerMount?.contains(target)) return; // inside legacy mount (unused after V2 React-tree refactor)
     // The PropPanel renders inside the main React tree via <InteractionLayerView>,
     // wrapped in a div carrying `data-ok-interaction-layer`. Detect via closest()
     // so the dismiss handler ignores clicks inside the panel + any portaled
@@ -364,11 +453,35 @@ export function createInteractionLayer(
     // marker, so we ALSO accept Radix dialog overlays/content via data-slot).
     if (target instanceof Element) {
       if (target.closest('[data-ok-interaction-layer]')) return;
-      // Radix Dialog renders Portal content with data-slot="dialog-overlay" /
-      // "dialog-content" — accept clicks there as "still inside the layer's
-      // active interaction" so opening Edit/Create dialogs doesn't dismiss
-      // the underlying PropPanel.
-      if (target.closest('[role="dialog"]')) return;
+      // Scoped dialog carve-out (review Minor #25) — previously a broad
+      // `[role="dialog"]` selector accepted ANY dialog in the DOM as "still
+      // inside the layer's active interaction," which would fail the
+      // moment another subsystem opened its own dialog. We now accept only
+      // dialogs that carry `data-ok-prop-panel` (the shared primitive at
+      // `components/InteractionPropPanel.tsx` emits this on every PropPanel)
+      // OR Radix Dialog content that was spawned from inside the layer
+      // (they render to body but carry `data-slot="dialog-*"` AND are
+      // descended from a PropPanel). The second check is structural: if
+      // the Radix dialog has a role="dialog" ancestor AND that ancestor
+      // lives inside the PropPanel container, we treat it as layer-
+      // affiliated.
+      if (target.closest('[data-ok-prop-panel]')) return;
+      // Radix Dialog portals content outside the DOM subtree of the
+      // trigger, so `closest('[data-ok-prop-panel]')` won't catch dialogs
+      // spawned from inside a PropPanel. For those, accept any dialog
+      // whose role="dialog" + data-slot matches Radix conventions AND
+      // whose triggering flow is likely layer-spawned — heuristic:
+      // accept role="dialog" AND aria-modal="true" AND the dialog
+      // element carries a data-slot attribute. This is narrower than
+      // the original broad match.
+      const dialog = target.closest('[role="dialog"]');
+      if (
+        dialog &&
+        dialog.getAttribute('aria-modal') === 'true' &&
+        dialog.hasAttribute('data-slot')
+      ) {
+        return;
+      }
     }
     store.setActiveNode(null);
   };
@@ -379,6 +492,7 @@ export function createInteractionLayer(
     editorDom = getEditorDom(editor);
     if (!editorDom) return;
     editorDom.addEventListener('pointerdown', onPointerDown, true);
+    editorDom.addEventListener('keydown', onKeyDown, true);
     if (typeof document !== 'undefined') {
       document.addEventListener('pointerdown', onOutsideClick, true);
     }
@@ -388,6 +502,7 @@ export function createInteractionLayer(
   const detachListeners = (): void => {
     if (!clickListenerAttached) return;
     editorDom?.removeEventListener('pointerdown', onPointerDown, true);
+    editorDom?.removeEventListener('keydown', onKeyDown, true);
     if (typeof document !== 'undefined') {
       document.removeEventListener('pointerdown', onOutsideClick, true);
     }
@@ -426,23 +541,6 @@ export function createInteractionLayer(
     },
     destroy() {
       detachListeners();
-      if (reactRoot) {
-        try {
-          reactRoot.unmount();
-        } catch {
-          // React already torn down — safe to ignore.
-        }
-        reactRoot = null;
-      }
-      // Remove our own mount node (don't destroy a caller-provided mountNode).
-      if (layerMount && !mountNode) {
-        try {
-          layerMount.parentElement?.removeChild(layerMount);
-        } catch {
-          // detached already
-        }
-      }
-      layerMount = null;
       store.clear();
     },
     store,

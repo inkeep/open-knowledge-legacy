@@ -27,7 +27,7 @@ const lightTheme = basicLightInit({
 
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
 import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
@@ -49,6 +49,9 @@ const placeholderCompartment = new Compartment();
 export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Mount failures rethrow into DocumentErrorBoundary (review Minor #26).
+  const [mountError, setMountError] = useState<Error | null>(null);
+  if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
   // Update awareness mode to 'source' when SourceEditor mounts
@@ -150,9 +153,11 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
       cmEntryRef.current = entry;
       viewRef.current = entry.view;
     } catch (err) {
+      // Surface mount failures through DocumentErrorBoundary (review Minor #26).
       console.error('[SourceEditor] mountCmEditor failed', err);
       cmEntryRef.current = null;
       viewRef.current = null;
+      setMountError(err instanceof Error ? err : new Error(String(err)));
     }
 
     return () => {

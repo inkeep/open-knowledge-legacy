@@ -55,8 +55,8 @@
  *   }
  *
  * @see packages/app/src/editor/page-list-cache.ts — iter-22, side-channel store
- * @see packages/app/src/editor/extensions/mark-identity-plugin.ts — US-004, ID source
- * @see packages/app/src/editor/extensions/mark-identity-decoration-plugin.ts — iter-20, pairs
+ * @see packages/app/src/editor/extensions/mark-identity.ts — US-004, ID source
+ * @see packages/app/src/editor/extensions/mark-identity-decoration.ts — iter-20, pairs
  * @see specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/SPEC.md §FR5
  *
  * Precedent #9 (add-only schema) preserved — no mark attr added or narrowed; the
@@ -71,7 +71,7 @@ import {
   type PageListCacheSnapshot,
   subscribePageListCache,
 } from '../page-list-cache';
-import { type MarkInfo, markIdentityKey } from './mark-identity-plugin';
+import { type MarkInfo, markIdentityKey } from './mark-identity';
 
 /**
  * Shape of the plugin's internal state. `version` bumps on every refresh meta so

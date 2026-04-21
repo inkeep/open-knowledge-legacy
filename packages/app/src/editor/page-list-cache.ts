@@ -30,9 +30,9 @@
  *   {pages, folderPaths} on every render — no-ops absorbed by the equality gate).
  * - Consumer renderDecorationRefresh is a separate concern (the PM plugin in
  *   internal-link.ts will subscribe here and dispatch a transaction carrying
- *   a custom meta to force mark-identity-decoration-plugin re-run).
+ *   a custom meta to force mark-identity-decoration re-run).
  *
- * @see packages/app/src/editor/extensions/mark-identity-decoration-plugin.ts — iter-20
+ * @see packages/app/src/editor/extensions/mark-identity-decoration.ts — iter-20
  * @see packages/app/src/editor/extensions/mark-interaction-bridge.ts — iter-21
  * @see specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/SPEC.md §FR5/FR6
  */
@@ -96,7 +96,11 @@ export function setPageListCache(snapshot: PageListCacheSnapshot): void {
     (window as unknown as { __okPageListCache?: PageListCacheSnapshot }).__okPageListCache =
       snapshot;
   }
-  for (const listener of listeners) {
+  // Snapshot the listener set before iterating — a listener may synchronously
+  // unsubscribe itself or register a new one from inside the callback, and
+  // we must not mutate the Set we're iterating. Matches the docstring on
+  // `subscribePageListCache` (review Major #14).
+  for (const listener of [...listeners]) {
     try {
       listener(snapshot);
     } catch (err) {

@@ -43,10 +43,10 @@ import {
   Loader2,
   Pencil,
   Trash2,
-  X,
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import {
   folderIndexCreateSeed,
   resolveLinkTargetIntent,
@@ -396,13 +396,8 @@ export function InternalLinkPropPanel({
 
   return (
     <>
-      <div
-        role="dialog"
-        aria-label="Link options"
-        className="ok-link-prop-panel pointer-events-auto absolute left-1/2 top-2 z-40 w-80 -translate-x-1/2 rounded-md border border-border bg-popover p-3 shadow-lg"
-        data-prop-panel="internal-link"
-      >
-        <div className="mb-2 flex items-start gap-2">
+      <InteractionPropPanel kind="internal-link" ariaLabel="Link options" onDeactivate={onClose}>
+        <div className="mb-2 flex items-start gap-2 pr-8">
           <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
           <div className="flex-1 min-w-0">
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
@@ -410,14 +405,6 @@ export function InternalLinkPropPanel({
               {href}
             </div>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close link options"
-            onClick={onClose}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </button>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -458,7 +445,7 @@ export function InternalLinkPropPanel({
             Remove
           </Button>
         </div>
-      </div>
+      </InteractionPropPanel>
 
       <NewItemDialog
         open={createDialogMode !== null}

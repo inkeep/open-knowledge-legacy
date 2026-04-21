@@ -9,6 +9,7 @@
  * See SPEC §9 R6 for the full algorithm description.
  */
 import type { JSONContent } from '@tiptap/core';
+import type { Root as MdastRoot, RootContent as MdastRootContent } from 'mdast';
 import { incrementBlockFallback, incrementWholeDocFallback } from '../metrics/parse-health.ts';
 import { findFencedRegions, isInsideFence } from './fence-regions.ts';
 import { hoistRefDefs } from './ref-def-hoist.ts';
@@ -373,4 +374,138 @@ function wholeDocRawText(source: string): JSONContent {
     type: 'doc',
     content: [{ type: 'paragraph', content: [{ type: 'text', text: source }] }],
   };
+}
+
+// ===========================================================================
+// mdast-level fallback — mirrors `parseWithFallback` for consumers that
+// need an mdast Root tree directly (V2 SPEC FR11 Option E backend).
+//
+// The editor's JSONContent path (above) is the long-standing tier-1 fallback.
+// V2's `markdownToReact(md)` consumes mdast and never needs a PM round-trip,
+// so we mirror the block-split algorithm at the mdast layer — producing
+// `rawMdxFallback` mdast nodes (which `to-react.ts`'s walker already
+// handles) for every block that fails to parse.
+//
+// Why this matters (review Major #5):
+//   parseToMdast throws on structurally invalid MDX; the editor already
+//   survives via parseWithFallback, but the Suspense-fallback renderer was
+//   calling parseToMdast directly, so a single broken <Callout> would take
+//   the fallback from "pre-paint fumadocs tree" to "DocumentErrorBoundary
+//   shows 'Couldn't open document'". This fallback gives the Suspense path
+//   parity — the user sees the doc paint with a rawMdxFallback pre-block
+//   where the broken MDX was, matching what the editor will show once it
+//   finishes mounting.
+// ===========================================================================
+
+/**
+ * Parse mdast with block-level fallback. Never throws. On parse failure,
+ * substitutes a `rawMdxFallback` mdast node (type, value) for the failing
+ * block's source. The walker at `packages/core/src/markdown/to-react.ts`
+ * handles `rawMdxFallback` by rendering it as a `<pre>` so the user sees
+ * the broken source inline.
+ */
+export interface ParseToMdastWithFallbackOptions {
+  parseToMdast: (markdown: string) => MdastRoot;
+}
+
+export function parseToMdastWithFallback(
+  source: string,
+  opts: ParseToMdastWithFallbackOptions,
+): MdastRoot {
+  return parseMdastRecursive(source, opts.parseToMdast, 0);
+}
+
+// Custom mdast node type emitted for failing blocks. Matches the shape
+// `to-react.ts`'s walker consumes at case 'rawMdxFallback'.
+interface RawMdxFallbackMdast {
+  type: 'rawMdxFallback';
+  value: string;
+}
+
+function wholeDocMdastFallback(source: string): MdastRoot {
+  const fallback = { type: 'rawMdxFallback', value: source } as RawMdxFallbackMdast;
+  return {
+    type: 'root',
+    children: [fallback as unknown as MdastRootContent],
+  };
+}
+
+function parseMdastRecursive(
+  source: string,
+  parseToMdast: (md: string) => MdastRoot,
+  depth: number,
+): MdastRoot {
+  if (depth > MAX_SPLIT_DEPTH) {
+    incrementWholeDocFallback();
+    console.warn(
+      JSON.stringify({
+        event: 'mdx-mdast-whole-doc-fallback',
+        reason: 'MAX_SPLIT_DEPTH exceeded',
+      }),
+    );
+    return wholeDocMdastFallback(source);
+  }
+
+  try {
+    return parseToMdast(source);
+  } catch (e: unknown) {
+    const offset = extractErrorOffset(e);
+    if (offset === undefined) {
+      incrementWholeDocFallback();
+      console.warn(
+        JSON.stringify({
+          event: 'mdx-mdast-whole-doc-fallback',
+          reason: (e as Error)?.message ?? 'unknown error (no position)',
+        }),
+      );
+      return wholeDocMdastFallback(source);
+    }
+
+    incrementBlockFallback();
+    console.warn(
+      JSON.stringify({
+        event: 'mdx-mdast-block-fallback',
+        offset,
+        reason: (e as Error)?.message ?? 'parse error',
+      }),
+    );
+
+    try {
+      const region = findFallbackRegion(source, offset);
+      const beforeSrc = source.slice(0, region.start);
+      const brokenSrc = source.slice(region.start, region.end);
+      const afterSrc = source.slice(region.end);
+
+      const beforeChildren: MdastRootContent[] = beforeSrc.trim()
+        ? (parseMdastRecursive(beforeSrc, parseToMdast, depth + 1).children as MdastRootContent[])
+        : [];
+      const afterChildren: MdastRootContent[] = afterSrc.trim()
+        ? (parseMdastRecursive(hoistRefDefs(beforeSrc) + afterSrc, parseToMdast, depth + 1)
+            .children as MdastRootContent[])
+        : [];
+
+      const fallbackNode = {
+        type: 'rawMdxFallback',
+        value: brokenSrc,
+      } as RawMdxFallbackMdast;
+
+      return {
+        type: 'root',
+        children: [
+          ...beforeChildren,
+          fallbackNode as unknown as MdastRootContent,
+          ...afterChildren,
+        ],
+      };
+    } catch (recoveryErr) {
+      incrementWholeDocFallback();
+      console.warn(
+        JSON.stringify({
+          event: 'mdx-mdast-whole-doc-fallback',
+          reason: `Recovery failed: ${(recoveryErr as Error)?.message ?? 'unknown'}`,
+        }),
+      );
+      return wholeDocMdastFallback(source);
+    }
+  }
 }

@@ -363,23 +363,43 @@ describe('TipTap cache — lifecycle', () => {
     expect(newContainer.scrollTop).toBe(1234);
   });
 
-  test('mount: cache-hit calls editor.commands.focus() (US-001 AC 6)', () => {
+  test('mount: cache-hit restores focus ONLY when editor owned focus at park time (Major #11)', () => {
     const h = makeTiptapHarness('doc-a');
-    mountTiptapEditor({
+    const entry = mountTiptapEditor({
       docName: h.docName,
       container: h.container as unknown as HTMLElement,
       factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
     });
     const focusCountAfterFirstMount = h.spies.focusCalls;
 
-    // Second mount (cache hit) — focus should fire.
-    const newContainer = makeNode();
+    // Case A: editor did NOT own focus at park (fake harness has no DOM focus
+    // tracking, so hadFocus is false by default). Cache-hit should NOT
+    // hijack focus.
+    parkTiptapEditor(entry);
+    expect(entry.hadFocus).toBe(false);
+    const newContainerA = makeNode();
     mountTiptapEditor({
       docName: h.docName,
-      container: newContainer as unknown as HTMLElement,
+      container: newContainerA as unknown as HTMLElement,
       factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
     });
-    expect(h.spies.focusCalls).toBeGreaterThan(focusCountAfterFirstMount);
+    expect(h.spies.focusCalls).toBe(focusCountAfterFirstMount);
+
+    // Case B: editor DID own focus at park (simulate by flipping hadFocus
+    // on the entry). Cache-hit should restore focus.
+    entry.hadFocus = true;
+    parkTiptapEditor(entry);
+    // parkTiptapEditor overwrites hadFocus from current DOM — simulate the
+    // "editor had focus" case by setting AFTER park.
+    entry.hadFocus = true;
+    const newContainerB = makeNode();
+    const beforeB = h.spies.focusCalls;
+    mountTiptapEditor({
+      docName: h.docName,
+      container: newContainerB as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(h.spies.focusCalls).toBeGreaterThan(beforeB);
   });
 
   test('park: detaches DOM from container but does NOT destroy (US-001 AC 4)', () => {
@@ -632,6 +652,7 @@ describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
       ytext: h.ytext,
       provider: h.provider,
       scrollTop: 0,
+      hadFocus: false,
       activeMountKey: h.docName,
       __uncached: true,
     };
@@ -653,6 +674,7 @@ describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
       ytext: h.ytext,
       provider: h.provider,
       scrollTop: 0,
+      hadFocus: false,
       activeMountKey: h.docName,
       __uncached: true,
     };
@@ -722,7 +744,7 @@ describe('CM6 cache — lifecycle', () => {
     expect(__peekCm(h.docName)).toBe(entry);
   });
 
-  test('mount after park: restores scrollTop + calls view.focus()', () => {
+  test('mount after park: restores scrollTop (Major #11: focus only when editor owned focus)', () => {
     const h = makeCmHarness('cm-doc-a');
     const entry = mountCmEditor({
       docName: h.docName,
@@ -733,6 +755,9 @@ describe('CM6 cache — lifecycle', () => {
     parkCmEditor(entry);
     const focusBefore = h.spies.focusCalls;
 
+    // Harness has no real DOM, so hadFocus captured during park is false:
+    // cache-hit does NOT call focus (review Major #11). Scroll is still
+    // restored — that's independent of focus.
     const ctr = makeNode();
     mountCmEditor({
       docName: h.docName,
@@ -740,7 +765,21 @@ describe('CM6 cache — lifecycle', () => {
       factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
     });
     expect(ctr.scrollTop).toBe(42);
-    expect(h.spies.focusCalls).toBeGreaterThan(focusBefore);
+    expect(h.spies.focusCalls).toBe(focusBefore);
+
+    // Simulate "editor had focus at park" by flipping the cache entry's
+    // hadFocus after the park (the park path would have set it true if
+    // the real DOM reported the editor as activeElement). Next cache-hit
+    // now DOES restore focus.
+    entry.hadFocus = true;
+    const ctr2 = makeNode();
+    const before2 = h.spies.focusCalls;
+    mountCmEditor({
+      docName: h.docName,
+      container: ctr2 as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(h.spies.focusCalls).toBeGreaterThan(before2);
   });
 
   test('evict: destroys view + provider + ydoc', () => {
@@ -794,6 +833,7 @@ describe('CM6 cache — lifecycle', () => {
       ytext: h.ytext,
       provider: h.provider,
       scrollTop: 0,
+      hadFocus: false,
       activeMountKey: h.docName,
       __uncached: true,
     };

@@ -20,7 +20,7 @@
  */
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Callout } from '../Callout';
 import { getInteractionLayer } from '../interaction-layer-host';
 import { JsxComponentPropPanel } from './JsxComponentPropPanel';
@@ -79,10 +79,23 @@ export function JsxComponentView({ node, editor, getPos }: NodeViewProps) {
   // preserved — id lives only in component state, NOT in the schema.
   const [nodeId] = useState(nextJsxNodeId);
 
+  // `getPos` identity changes on EVERY NodeView update — TipTap
+  // intentionally passes a fresh reference each transaction so React memo
+  // detects the prop change (see @tiptap/react/src/ReactNodeViewRenderer.tsx
+  // lines 222-223 with that comment). Holding `getPos` in an effect deps
+  // array caused the layer to deregister+reregister on every keystroke,
+  // which dismissed the active PropPanel mid-edit (review Major #6). The
+  // fix: keep the latest `getPos` in a ref updated out-of-render, and
+  // register exactly once per NodeView instance (deps = [editor, nodeId]).
+  const getPosRef = useRef(getPos);
+  useEffect(() => {
+    getPosRef.current = getPos;
+  }, [getPos]);
+
   useEffect(() => {
     const layer = getInteractionLayer(editor);
     const safeGetPos = (): number | undefined => {
-      const pos = getPos();
+      const pos = getPosRef.current();
       return typeof pos === 'number' ? pos : undefined;
     };
     layer.register({
@@ -98,7 +111,7 @@ export function JsxComponentView({ node, editor, getPos }: NodeViewProps) {
     return () => {
       layer.deregister(nodeId);
     };
-  }, [editor, nodeId, getPos]);
+  }, [editor, nodeId]);
 
   return (
     <NodeViewWrapper

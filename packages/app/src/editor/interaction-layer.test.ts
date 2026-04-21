@@ -391,3 +391,59 @@ describe('InteractionControls — extension-point shape', () => {
     expect(r?.controls.breadcrumb).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review 2026-04-21 Critical #3 + Major #4: keyboard activation +
+// handlePrimary hook semantics on the store. The event-listener wiring
+// itself is only exercised end-to-end via Playwright (requires a DOM); here
+// we verify the store-level shape that pointerdown/keydown both dispatch
+// through.
+// ---------------------------------------------------------------------------
+describe('RegisterParams.handlePrimary (review Critical #3 / Major #4)', () => {
+  test('store persists a handlePrimary hook alongside controls', () => {
+    const s = new InteractionLayerStore();
+    const calls: Array<{ nodeId: string; type: string; newTab: boolean }> = [];
+    s.register({
+      nodeId: 'm1',
+      type: 'internalLink',
+      controls: { propPanel: () => null },
+      handlePrimary: (ctx) => {
+        calls.push({ nodeId: ctx.nodeId, type: ctx.type, newTab: ctx.newTab });
+        return true;
+      },
+    });
+    const reg = s.getRegistration('m1');
+    expect(reg?.handlePrimary).toBeDefined();
+    // Simulate event-loop behavior: layer calls the hook with newTab=true
+    // on Cmd/Ctrl/middle-click, newTab=false on bare click / Enter / Space.
+    const handled = reg?.handlePrimary?.({ nodeId: 'm1', type: 'internalLink', newTab: true });
+    expect(handled).toBe(true);
+    expect(calls).toEqual([{ nodeId: 'm1', type: 'internalLink', newTab: true }]);
+  });
+
+  test('returning false/void from handlePrimary lets caller fall through', () => {
+    // Link chips return false for bare-click so the layer still opens
+    // the PropPanel.
+    const s = new InteractionLayerStore();
+    s.register({
+      nodeId: 'm2',
+      type: 'internalLink',
+      controls: { propPanel: () => null },
+      handlePrimary: () => false,
+    });
+    const reg = s.getRegistration('m2');
+    const handled = reg?.handlePrimary?.({ nodeId: 'm2', type: 'internalLink', newTab: false });
+    expect(handled).toBe(false);
+  });
+
+  test('registrations without handlePrimary are unaffected (rich NodeViews)', () => {
+    const s = new InteractionLayerStore();
+    s.register({
+      nodeId: 'n1',
+      type: 'jsxComponent',
+      controls: { propPanel: () => 'panel' },
+    });
+    const reg = s.getRegistration('n1');
+    expect(reg?.handlePrimary).toBeUndefined();
+  });
+});

@@ -18,7 +18,7 @@ import {
   type MarkInfo,
   markIdentityKey,
   markIdentityPlugin,
-} from './mark-identity-plugin';
+} from './mark-identity';
 
 // ---------------------------------------------------------------------------
 // Test schema — minimal doc with two mark types to simulate link + wikiLink

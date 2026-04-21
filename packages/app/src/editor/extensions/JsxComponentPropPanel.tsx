@@ -7,13 +7,13 @@
  * the same `register({ type: 'jsxComponent', controls: { propPanel } })`
  * site with a descriptor-driven edit UI. See V2 spec §9.2 and FR8.
  *
- * Positioning is intentionally naive (fixed bottom-centered) for V2.
- * CB-v2 will layer floating-UI / popper anchoring on top.
+ * Review 2026-04-21 Major #8: wraps content in the shared
+ * `<InteractionPropPanel>` primitive so positioning, ARIA, and dismiss
+ * vocabulary is unified across all four V2 PropPanels.
  */
 import type { Editor } from '@tiptap/core';
-import { X } from 'lucide-react';
+import { InteractionPropPanel } from '../../components/InteractionPropPanel';
 import { Button } from '../../components/ui/button';
-import { cn } from '../../lib/utils';
 
 /**
  * Extract the component name from a raw JSX fragment. Pure — extracted so
@@ -50,24 +50,19 @@ export function JsxComponentPropPanel({ editor, getPos, onDismiss }: JsxComponen
   }
 
   return (
-    <div
-      className={cn(
-        'fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-border bg-background p-3 shadow-lg',
-        'flex items-center gap-2 min-w-48',
-      )}
-      data-ok-jsx-component-prop-panel=""
-      role="dialog"
-      aria-label="Component properties"
+    <InteractionPropPanel
+      kind="jsx-component"
+      ariaLabel="Component properties"
+      onDeactivate={onDismiss}
     >
-      <span className="text-xs text-muted-foreground">Component</span>
-      <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">{componentName}</code>
-      <div className="flex-1" />
-      <Button variant="outline" size="sm" onClick={handleDelete}>
-        Delete
-      </Button>
-      <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Close">
-        <X className="size-4" />
-      </Button>
-    </div>
+      <div className="flex items-center gap-2 pr-8">
+        <span className="text-xs text-muted-foreground">Component</span>
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">{componentName}</code>
+        <div className="flex-1" />
+        <Button variant="outline" size="sm" onClick={handleDelete}>
+          Delete
+        </Button>
+      </div>
+    </InteractionPropPanel>
   );
 }
