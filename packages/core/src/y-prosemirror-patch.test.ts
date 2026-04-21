@@ -306,7 +306,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
           `\`_item.delete(transaction)\`. Every such bundle must be patched via \`bun patch\` ` +
           `to substitute rawMdxFallback (block-context) or log+skip (inline-context); ` +
           `otherwise a schema.node()/schema.text() throw will tombstone Y.Items and ` +
-          `broadcast the delete to all peers (see CLAUDE.md precedent #9):\n${details}`,
+          `broadcast the delete to all peers (see PRECEDENTS.md precedent #9):\n${details}`,
       );
     }
   });

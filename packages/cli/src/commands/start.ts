@@ -436,7 +436,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // Userspace pre-checks cannot prevent them (see websockets/ws#1017).
     // Hocuspocus already filters by readyState in Connection.send; this
     // handler classifies + drops the expected async emission, surfacing
-    // everything else. See CLAUDE.md precedent on async socket errors.
+    // everything else. See PRECEDENTS.md precedent #23 (async socket errors at the boundary).
     if (req.url?.startsWith('/collab/keepalive')) {
       socket.on('error', (err: NodeJS.ErrnoException) => {
         if (handleCollabSocketError(err)) return;

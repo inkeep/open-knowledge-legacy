@@ -3,7 +3,7 @@
  *
  * These cover the per-node dispatch logic in isolation (not through the
  * full pipeline). The full-corpus byte-identity gate against the pre-merge
- * pipeline was a one-time ratchet per CLAUDE.md precedent #17 — the
+ * pipeline was a one-time ratchet per PRECEDENTS.md precedent #17 — the
  * validator (`evidence/r17-mdast-equivalence.{ts,md}` + `r17-run-diff.ts`)
  * was deleted after US-008 shipped green. The architectural record lives in
  * `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md`

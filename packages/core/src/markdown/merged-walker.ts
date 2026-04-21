@@ -70,7 +70,7 @@
  * correctness proof for the 5-pass → 2-phase refactor. The one-time
  * validator (`evidence/r17-mdast-equivalence.{ts,md}` + `r17-run-diff.ts`)
  * shipped with US-007 and was deleted after US-008 went green, per
- * CLAUDE.md precedent #17 (byte-identity validators are ratchets, not
+ * PRECEDENTS.md precedent #17 (byte-identity validators are ratchets, not
  * regression tests). The architectural record — why the phase split is
  * load-bearing and what ordering constraints apply — lives in
  * `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md`
