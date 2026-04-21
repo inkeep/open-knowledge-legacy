@@ -27,6 +27,9 @@ import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, historyGit } from './hi
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
+/** Per-writer inactivity TTL for session writers (agent-*, principal-*) on active branches (30 days, D54). */
+const SESSION_WRITER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 interface GcResult {
   deletedBranches: string[];
   renamedBranches: { from: string; to: string }[];
@@ -45,6 +48,11 @@ interface GcResult {
       retained: number;
     }
   >;
+  /**
+   * Count of stale session writer refs (agent-*, principal-*) deleted from
+   * active project branches due to 30-day inactivity TTL (US-019, D54, FR-18).
+   */
+  deletedStaleSessionRefs: number;
 }
 
 /**
@@ -125,6 +133,7 @@ export async function gcHistoryBranches(
     renamedBranches: [],
     retainedBranches: [],
     checkpointGc: {},
+    deletedStaleSessionRefs: 0,
   };
 
   const sg = historyGit(shadow);
@@ -155,81 +164,83 @@ export async function gcHistoryBranches(
     }
   }
 
-  if (orphaned.length === 0) return result;
-
-  // Check for renames: orphaned branch with same SHA as a new project branch
-  const newProjectBranches = new Set<string>();
-  for (const pb of projectBranches) {
-    if (!shadowBranches.has(pb)) {
-      newProjectBranches.add(pb);
-    }
-  }
-
-  for (const orphanedBranch of orphaned) {
-    // Try to detect rename by matching commit SHA
-    let renamed = false;
-
-    if (newProjectBranches.size > 0) {
-      // Get latest SHA from the orphaned branch's WIP refs
-      let orphanedSha: string | null = null;
-      for (const ref of wipRefs) {
-        if (ref.startsWith(`refs/wip/${orphanedBranch}/`)) {
-          try {
-            orphanedSha = (await sg.raw('rev-parse', ref)).trim();
-            break;
-          } catch {}
-        }
+  if (orphaned.length === 0) {
+    // No orphaned branches — skip rename/delete logic but still run per-writer TTL GC
+    // and checkpoint GC on active branches.
+  } else {
+    // Check for renames: orphaned branch with same SHA as a new project branch
+    const newProjectBranches = new Set<string>();
+    for (const pb of projectBranches) {
+      if (!shadowBranches.has(pb)) {
+        newProjectBranches.add(pb);
       }
+    }
 
-      if (orphanedSha) {
-        for (const newBranch of newProjectBranches) {
-          const newSha = await getProjectBranchSha(projectGitDir, newBranch);
-          if (newSha === orphanedSha) {
-            // Rename detected — migrate refs
-            const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
-            for (const oldRef of branchRefs) {
-              const writerId = oldRef.slice(`refs/wip/${orphanedBranch}/`.length);
-              const newRef = `refs/wip/${newBranch}/${writerId}`;
-              try {
-                const sha = (await sg.raw('rev-parse', oldRef)).trim();
-                await sg.raw('update-ref', newRef, sha);
-                await sg.raw('update-ref', '-d', oldRef);
-              } catch (e) {
-                console.error(`[history-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
+    for (const orphanedBranch of orphaned) {
+      // Try to detect rename by matching commit SHA
+      let renamed = false;
+
+      if (newProjectBranches.size > 0) {
+        // Get latest SHA from the orphaned branch's WIP refs
+        let orphanedSha: string | null = null;
+        for (const ref of wipRefs) {
+          if (ref.startsWith(`refs/wip/${orphanedBranch}/`)) {
+            try {
+              orphanedSha = (await sg.raw('rev-parse', ref)).trim();
+              break;
+            } catch {}
+          }
+        }
+
+        if (orphanedSha) {
+          for (const newBranch of newProjectBranches) {
+            const newSha = await getProjectBranchSha(projectGitDir, newBranch);
+            if (newSha === orphanedSha) {
+              // Rename detected — migrate refs
+              const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
+              for (const oldRef of branchRefs) {
+                const writerId = oldRef.slice(`refs/wip/${orphanedBranch}/`.length);
+                const newRef = `refs/wip/${newBranch}/${writerId}`;
+                try {
+                  const sha = (await sg.raw('rev-parse', oldRef)).trim();
+                  await sg.raw('update-ref', newRef, sha);
+                  await sg.raw('update-ref', '-d', oldRef);
+                } catch (e) {
+                  console.error(`[history-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
+                }
               }
+              result.renamedBranches.push({ from: orphanedBranch, to: newBranch });
+              newProjectBranches.delete(newBranch);
+              renamed = true;
+              break;
             }
-            result.renamedBranches.push({ from: orphanedBranch, to: newBranch });
-            newProjectBranches.delete(newBranch);
-            renamed = true;
-            break;
           }
         }
       }
-    }
 
-    if (!renamed) {
-      // Delete orphaned WIP refs (no grace period check in this implementation —
-      // the spec says 24h but we check commit timestamps in a future iteration)
-      const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
-      for (const ref of branchRefs) {
-        try {
-          // Check commit timestamp for grace period
-          const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
-          const commitTime = new Date(commitDate).getTime();
-          const age = Date.now() - commitTime;
+      if (!renamed) {
+        // Delete orphaned WIP refs after grace period
+        const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
+        for (const ref of branchRefs) {
+          try {
+            // Check commit timestamp for grace period
+            const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
+            const commitTime = new Date(commitDate).getTime();
+            const age = Date.now() - commitTime;
 
-          if (age < GC_GRACE_PERIOD_MS) {
-            result.retainedBranches.push(orphanedBranch);
-            break; // Skip this entire branch
+            if (age < GC_GRACE_PERIOD_MS) {
+              result.retainedBranches.push(orphanedBranch);
+              break; // Skip this entire branch
+            }
+
+            await sg.raw('update-ref', '-d', ref);
+          } catch {
+            // Ref may already be deleted
           }
-
-          await sg.raw('update-ref', '-d', ref);
-        } catch {
-          // Ref may already be deleted
         }
-      }
-      if (!result.retainedBranches.includes(orphanedBranch)) {
-        result.deletedBranches.push(orphanedBranch);
+        if (!result.retainedBranches.includes(orphanedBranch)) {
+          result.deletedBranches.push(orphanedBranch);
+        }
       }
     }
   }
@@ -256,6 +267,48 @@ export async function gcHistoryBranches(
       }
     } catch (err) {
       console.warn(`[history-gc] checkpoint GC failed for branch ${branch}:`, err);
+    }
+  }
+
+  // Per-writer 30-day TTL: GC stale session refs on ACTIVE project branches (US-019, D54, FR-18).
+  // Classified writers (file-system, git-upstream, openknowledge-service) are NEVER GC'd.
+  // Unknown writers: log warning + preserve (defensive — sweepLegacyHistoryRefs handles known-legacy).
+  for (const branch of projectBranches) {
+    const branchPrefix = `refs/wip/${branch}/`;
+    const branchRefs = wipRefs.filter((r) => r.startsWith(branchPrefix));
+    for (const ref of branchRefs) {
+      const writerId = ref.slice(branchPrefix.length);
+      const { classification } = parseWriterId(writerId);
+
+      // Classified writers are never GC'd regardless of age (D54)
+      if (
+        classification === 'classified-file-system' ||
+        classification === 'classified-git-upstream' ||
+        classification === 'classified-openknowledge-service'
+      ) {
+        continue;
+      }
+
+      // Unknown writers: preserve with a warning (defensive)
+      if (classification === 'unknown') {
+        console.warn(`[history-gc] unknown writer id in active branch ref ${ref} — preserved`);
+        continue;
+      }
+
+      // Session writers (agent-*, principal-*): check 30-day TTL
+      if (classification === 'agent' || classification === 'principal') {
+        try {
+          const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
+          if (!commitDate) continue;
+          const age = Date.now() - new Date(commitDate).getTime();
+          if (age >= SESSION_WRITER_TTL_MS) {
+            await sg.raw('update-ref', '-d', ref);
+            result.deletedStaleSessionRefs++;
+          }
+        } catch {
+          // Ref may already be deleted or timestamp unavailable — skip
+        }
+      }
     }
   }
 
