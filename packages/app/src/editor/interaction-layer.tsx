@@ -483,16 +483,31 @@ export function createInteractionLayer(
       // trigger, so `closest('[data-ok-prop-panel]')` won't catch dialogs
       // spawned from inside a PropPanel. For those, accept any dialog
       // whose role="dialog" + data-slot matches Radix conventions AND
-      // whose triggering flow is likely layer-spawned — heuristic:
-      // accept role="dialog" AND aria-modal="true" AND the dialog
-      // element carries a data-slot attribute. This is narrower than
-      // the original broad match.
+      // whose triggering flow is likely layer-spawned.
+      //
+      // Narrowing: the original broad `[role="dialog"]` match (review
+      // Minor #25) was correct to tighten — but `aria-modal="true"` as a
+      // second axis is unreliable in practice. Radix Dialog.Content does
+      // NOT surface `aria-modal` as a DOM attribute readable via
+      // `getAttribute('aria-modal')` at pointerdown-time — it's applied
+      // via FocusScope's imperative API and the attribute settles on a
+      // different element (or via the `aria-*` prop flow that React
+      // sometimes doesn't reflect to the DOM in strict cases). Relying
+      // on it caused the link-edit-dialog Save to deactivate the layer
+      // mid-click (see qa-fix for QA-005 + ux-interactions.e2e.ts:317).
+      //
+      // The `data-slot` check is the load-bearing signal: a third-party
+      // dialog would NOT carry a `data-slot` attribute unless its author
+      // opted in to the shadcn convention, so `role="dialog"` +
+      // `data-slot` is specific enough to distinguish our dialogs from
+      // random library dialogs. All four V2 PropPanels (Internal link,
+      // Wiki link, Raw MDX fallback, JsxComponent) + their spawn-dialogs
+      // (EditMarkdownLinkDialog, EditWikiLinkDialog, etc.) emit
+      // `data-slot="dialog-content"` (shadcn convention for Radix
+      // Dialog.Content) or `data-ok-prop-panel="<kind>"` (the
+      // InteractionPropPanel primitive).
       const dialog = target.closest('[role="dialog"]');
-      if (
-        dialog &&
-        dialog.getAttribute('aria-modal') === 'true' &&
-        dialog.hasAttribute('data-slot')
-      ) {
+      if (dialog?.hasAttribute('data-slot')) {
         return;
       }
     }

@@ -349,7 +349,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   // pattern. The PropPanel exposes Open / Edit / Remove (and Create-page
   // when unresolved) as plain buttons.
   await chip.click();
-  const propPanel = page.locator('[data-prop-panel="internal-link"]');
+  const propPanel = page.locator('[data-ok-prop-panel="internal-link"]');
   await expect(propPanel).toBeVisible({ timeout: 5_000 });
 
   // The "Edit" button in the PropPanel opens the EditMarkdownLinkDialog.
