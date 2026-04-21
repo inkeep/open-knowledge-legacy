@@ -1,21 +1,57 @@
 /**
  * "Connecting — waiting for collab server" banner (US-014 / FR-1.13).
  *
- * Two modes:
- *   (1) **Retrying** — `useCollabUrl()` has not yet resolved; the hook is
- *       polling `/api/config` with bounded exponential backoff. Amber banner.
- *   (2) **Terminal** — the hook gave up after ~30s of continuous failure.
+ * Three modes (see `computeBannerMode`):
+ *   (1) **Hidden** — either `collabUrl` resolved, or we're still inside the
+ *       grace window on a fresh mount. The grace window prevents a banner
+ *       flash on healthy page loads: in `bun run dev` mode `/api/config`
+ *       returns 404 and falls back to same-origin in ~50ms — showing
+ *       "Connecting…" for 50ms is pure noise.
+ *   (2) **Retrying** — `useCollabUrl()` has not yet resolved after the grace
+ *       period; the hook is polling `/api/config` with bounded exponential
+ *       backoff. Amber banner.
+ *   (3) **Terminal** — the hook gave up after ~30s of continuous failure.
  *       Red banner with (a) the underlying error classification and
- *       (b) a manual "Retry" button that resets the backoff window.
+ *       (b) a manual "Retry" button that resets the backoff window. Shown
+ *       immediately regardless of grace — the user has already waited 30s.
  *
  * A silent-forever banner is itself a form of ceremony — users hit-refresh
  * or kill the tab. The terminal state surfaces an actionable diagnostic
  * (pointer at `ok status` / `last-spawn-error.log`) so the user can fix
  * the misconfig rather than guess at it.
  */
+import { useEffect, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
 
-function describeError(
+/**
+ * Grace-period length before the amber retrying banner surfaces. 500 ms
+ * covers the normal fetch-resolution window (same-origin localhost typically
+ * resolves in <100 ms) and matches the common Suspense-fallback debounce
+ * guidance — long enough to hide fast resolutions, short enough that a
+ * genuinely slow boot is flagged before the user loses attention. Terminal
+ * state ignores this; retry-after-terminal re-enters the grace window so a
+ * fast successful retry stays silent.
+ */
+const GRACE_PERIOD_MS = 500;
+
+export type BannerMode = 'hidden' | 'retrying' | 'terminal';
+
+/**
+ * Pure decision: what should the banner show right now? Exported for unit
+ * tests so the branching logic is verifiable without a DOM — the React
+ * wrapper below adds state + effect for the grace timer only.
+ */
+export function computeBannerMode(
+  collabUrl: string | null,
+  collabTerminal: boolean,
+  graceElapsed: boolean,
+): BannerMode {
+  if (collabTerminal) return 'terminal';
+  if (collabUrl !== null) return 'hidden';
+  return graceElapsed ? 'retrying' : 'hidden';
+}
+
+export function describeError(
   err:
     | { kind: 'error'; code: number | 'network' | 'invalid-body' }
     | { kind: 'null-collab' }
@@ -30,9 +66,25 @@ function describeError(
 
 export function ConnectingBanner() {
   const { collabUrl, collabTerminal, collabLastError, retryCollab } = useDocumentContext();
-  if (collabUrl !== null) return null;
+  const [graceElapsed, setGraceElapsed] = useState(false);
 
-  if (collabTerminal) {
+  useEffect(() => {
+    // Resolved or terminal → no grace timer needed. Reset the flag so a
+    // future retry-after-terminal re-enters the grace window and hides the
+    // banner again if the retry resolves quickly.
+    if (collabUrl !== null || collabTerminal) {
+      setGraceElapsed(false);
+      return;
+    }
+    const timer = setTimeout(() => setGraceElapsed(true), GRACE_PERIOD_MS);
+    return () => clearTimeout(timer);
+  }, [collabUrl, collabTerminal]);
+
+  const mode = computeBannerMode(collabUrl, collabTerminal, graceElapsed);
+
+  if (mode === 'hidden') return null;
+
+  if (mode === 'terminal') {
     return (
       <div
         role="alert"
