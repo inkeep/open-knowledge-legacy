@@ -123,14 +123,12 @@ export function EditorHeader({
       ? `${activeDocName}.md`
       : '';
 
+  const index = activeDocName?.lastIndexOf('/') ?? -1;
+
   // Split doc path into prefix (truncatable) and filename (prioritized).
   // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
-  const pathPrefix = activeDocName?.includes('/')
-    ? `${activeDocName.substring(0, activeDocName.lastIndexOf('/') + 1)}`
-    : '';
-  const fileBaseName = activeDocName
-    ? activeDocName.substring(activeDocName.lastIndexOf('/') + 1)
-    : '';
+  const pathPrefix = index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
+  const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
