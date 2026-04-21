@@ -1324,7 +1324,8 @@ Hocuspocus Server
 ├── Shadow Repo (.git/open-knowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 ├── Shadow Branch GC (orphaned ref cleanup)
-└── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+├── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+└── Agent Presence Broadcaster (map-valued awareness on __system__ Y.Doc — N-agent coexistence)
 ```
 
 ### CC1 push-over-awareness (derived-view invalidation)
@@ -1344,6 +1345,25 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 **Status.** Server-side primitive landed (PR #106). Client-side consumer (ProviderPool pin, `main.tsx` mount, `FileSidebar` subscriber, Playwright L2 test) lands in a follow-up.
 
 **File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
+
+### Agent presence on `__system__` (map-valued awareness)
+
+All agent presence state lives on the `__system__` Y.Doc's awareness as a map-valued `agentPresence: Record<agentId, AgentPresenceEntry>` field. This is the canonical substrate for any "who is writing right now" UI — the current `PresenceBar`, the future Cluster A Activity sidebar, any cross-doc visibility. Per-content-doc agent awareness is structurally unworkable: every Hocuspocus `Document` has one shared `Awareness` with a single `clientID`, so `setLocalState({user:...})` stomps across N concurrent agents. Publishing a map keyed by `agentId` on the single shared `__system__` awareness sidesteps that constraint.
+
+**Key files.**
+- `packages/server/src/agent-presence.ts` — `AgentPresenceBroadcaster` class. API: `setPresence(agentId, entry)` (upsert), `clearPresence(agentId)` (remove one key), `touchMode(agentId, mode)` (update `mode`+`ts` only — no-op if the entry doesn't exist, so incomplete entries never reach the client), `getPresenceMap()` (diagnostic read). Structured pino logs under `[agent-presence]` namespace per precedent #3.
+- `packages/core/src/types/awareness.ts` — `AgentPresenceEntry` shape `{displayName, icon, color, currentDoc, mode:'idle'|'editing', ts}`. `AwarenessUser.type` is narrowed to `'human'`; agents never appear in per-doc awareness under this design.
+- `packages/app/src/lib/agent-presence.ts` — client helpers: `AGENT_PRESENCE_STALE_MS = 5_000`, `pickAgentsForDoc(awareness, activeDocName, now) → {current, crossDoc}`, `pickPrimary(awareness, now)`. Entries with `currentDoc === null` (D8) and entries older than `AGENT_PRESENCE_STALE_MS` are filtered.
+- `packages/app/src/presence/use-presence.ts` / `PresenceBar.tsx` — two-source hook (humans from `activeProvider.awareness`, agents from `systemProvider.awareness`) rendered in the sectioned bar (current-doc | vertical divider | cross-doc dimmed + grayscale).
+- `packages/app/src/components/SystemDocSubscriber.tsx` + `packages/app/src/editor/DocumentContext.tsx` — lift the `__system__` `HocuspocusProvider` to context so `usePresence` can read agent awareness without re-opening the provider.
+
+**Write surface.** The three agent write handlers in `api-extension.ts` (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) all call `agentPresenceBroadcaster.setPresence(..., mode:'editing')` before the transact and `touchMode(agentId, 'idle')` in a `finally` so a thrown transact still flips the badge back to idle. Agent-session lifecycle (`AgentSessionManager.getSession` / `closeSession` / `closeAllForAgent`) no longer touches content-doc awareness at all — there is no per-doc agent state to clear.
+
+**Cleanup is deterministic via the MCP keepalive WS.** The keepalive URL carries `agentId=${connectionId}` (`packages/cli/src/mcp/keepalive.ts`); `boot.ts`'s `/collab/keepalive` upgrade handler parses the param via `parseKeepaliveAgentId()` and wires `ws.on('close') → presenceBroadcaster.clearPresence(agentIdForCleanup)` so the badge disappears within ~ms of process exit. The 5 s TTL filter on the client side (`AGENT_PRESENCE_STALE_MS`) is a belt-and-suspenders fallback for ungraceful disconnects, clock skew, or proxies that eat the close frame.
+
+**STOP — the `agent-` prefix convention.** `api-extension.ts`'s `extractAgentIdentity` stores presence under the key `agent-${rawAgentId}`, but the keepalive URL carries the raw `connectionId`. Use the exported `toBroadcasterKey(rawAgentId)` helper in `packages/server/src/boot.ts` for every translation from a raw URL / HTTP-body agentId to the broadcaster-map key — the close handler, test harnesses, and any future cleanup path. Silent prefix drift between the write path and the cleanup path makes `clearPresence` no-op in production without failing any test.
+
+**Observability.** `GET /api/metrics/agent-presence` returns `{ presence: Record<agentId, AgentPresenceEntry> }` — the current map. Cold-start fallback for a tab that opens mid-session if the `__system__` awareness sync hasn't delivered any entries yet.
 
 ### Shadow repo & branch runtime
 
@@ -1418,6 +1438,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                                |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park)             |
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)                      |
+| GET    | `/api/metrics/agent-presence` | Current `agentPresence` map (cold-start fallback for mid-session tabs)                |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)                   |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                                     |
 | GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
@@ -1436,9 +1457,11 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
-- `src/agent-sessions.ts` — `AgentSessionManager` class
+- `src/agent-sessions.ts` — `AgentSessionManager` class; owns `(docName, agentId)`-keyed `DirectConnection` + per-agent `UndoManager` lifecycle. Does NOT publish any awareness state — agent presence lives on `__system__` via `AgentPresenceBroadcaster`
+- `src/agent-presence.ts` — `AgentPresenceBroadcaster`; map-valued `agentPresence` field on `__system__` awareness (see "Agent presence on `__system__`" above)
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
+- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, metrics (including `/api/metrics/agent-presence`) endpoints
+- `src/boot.ts` — `bootServer()` composition wrapper. Owns the `/collab/keepalive` WS upgrade handler; exports `parseKeepaliveAgentId(url)` + `toBroadcasterKey(rawAgentId)` for the deterministic agent-presence cleanup path
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
@@ -1536,8 +1559,10 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 ### Presence & awareness
 
-- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
-- Agent activity flash via Y.Map('activity') → CSS @keyframes
+- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source); `AwarenessUser.type === 'human'` only (agents never appear in per-doc awareness)
+- Humans live on the per-doc `HocuspocusProvider.awareness`; agents live on the `__system__` provider's `agentPresence` map. `PresenceBar` reads both sources via `usePresence(activeProvider, systemProvider, activeDocName)` and renders the sectioned layout (current-doc | vertical divider | cross-doc dimmed + grayscale). See "Agent presence on `__system__`" under Package: server for the substrate design.
+- `DocumentContext` exposes `systemProvider: HocuspocusProvider | null`; `SystemDocSubscriber.tsx` is the single mount point that holds the provider ref.
+- Agent activity flash via Y.Map('activity') → CSS @keyframes (orthogonal to presence — activity is per-write, presence is session-scoped)
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
 - Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
@@ -1592,8 +1617,9 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/GraphLegend.tsx` — Cluster color legend (fullscreen Explore only; max 10 entries)
 - `src/components/graph-colors.ts` — Deterministic hash-to-color mapping for cluster names (16-color palette, theme-aware)
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
-- `src/presence/PresenceBar.tsx` — Presence bar component
-- `src/presence/AgentUndoButton.tsx` — Undo agent edit button
+- `src/presence/PresenceBar.tsx` — Sectioned presence bar (current-doc | divider | cross-doc dimmed + grayscale). Overflow chip (M=4 current, K=3 cross-doc) via shadcn Popover per section; cross-doc tooltip shows `editing [[doc.md]]` with a clickable wiki-link that calls `openDocumentTransition(docName)` and updates `window.location.hash`
+- `src/presence/use-presence.ts` — Two-source hook reading humans from `activeProvider.awareness` + agents from `systemProvider.awareness` via `pickAgentsForDoc`; `~1s` `setInterval` tick ages out stale entries when no awareness events arrive (backup for the `AGENT_PRESENCE_STALE_MS` filter)
+- `src/lib/agent-presence.ts` — Client presence helpers (`AGENT_PRESENCE_STALE_MS`, `pickAgentsForDoc`, `pickPrimary`). See the server-side substrate doc above for the full design
 
 ## Package: desktop
 
