@@ -2,9 +2,8 @@
  * Shadow-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The shadow repo at `.git/openknowledge/` (integrated mode, when the project
- * has its own `.git/`) or `.openknowledge/` (standalone mode) is OK's
- * attribution journal. Its on-disk layout is a documented invariant:
+ * The shadow repo at `<projectRoot>/.git/open-knowledge/` is OK's attribution
+ * journal. Its on-disk layout is a documented invariant:
  *
  *   refs/wip/<project-branch>/<writer-id>
  *
@@ -21,7 +20,7 @@
  * This file uses only `node:fs` (no other server/runtime deps) so it is safe
  * to include from any workspace package.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export type WriterClassification = 'agent' | 'human' | 'upstream' | 'server' | 'unknown';
@@ -50,36 +49,17 @@ export interface ParsedWriter {
  */
 const WRITER_ID_RE = /^(human-[^/]+|agent-[^/]+|upstream|server)$/;
 
-/** Mode of the shadow-repo location; determined by whether the project has its own `.git/`. */
-export type ShadowRepoMode = 'integrated' | 'standalone';
-
-export interface ResolvedShadowDir {
-  /** Absolute path where the shadow repo lives (or would live, if not yet initialized). */
-  path: string;
-  mode: ShadowRepoMode;
-}
-
 /**
  * Resolve the shadow-repo bare git dir's target path for a project — WITHOUT
  * checking whether it exists yet. Used by init (`packages/server/src/shadow-repo.ts`)
  * to pick where to create the repo, and internally by `getShadowRepoPath`.
  *
- * Rule matches server's historical `initShadowRepo` logic:
- *   - Integrated mode (`<projectRoot>/.git/openknowledge/`) when the project
- *     has its own `.git/` directory
- *   - Standalone mode (`<projectRoot>/.openknowledge/`) otherwise
+ * Single-mode layout: the shadow always lives at `<projectRoot>/.git/open-knowledge/`.
+ * Projects without `.git/` get auto-init'd via `ensureProjectGit` before this
+ * function is consulted (SPEC 2026-04-21-shadow-repo-single-mode D12/R2).
  */
-export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
-  const abs = resolve(projectRoot);
-  const projectGit = resolve(abs, '.git');
-  try {
-    if (statSync(projectGit).isDirectory()) {
-      return { path: resolve(projectGit, 'openknowledge'), mode: 'integrated' };
-    }
-  } catch {
-    // no project .git/ — fall through to standalone
-  }
-  return { path: resolve(abs, '.openknowledge'), mode: 'standalone' };
+export function resolveShadowDir(projectRoot: string): string {
+  return resolve(projectRoot, '.git/open-knowledge');
 }
 
 /**
@@ -90,7 +70,7 @@ export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
  * `resolveShadowDir` directly.
  */
 export function getShadowRepoPath(projectRoot: string): string | null {
-  const { path } = resolveShadowDir(projectRoot);
+  const path = resolveShadowDir(projectRoot);
   return existsSync(resolve(path, 'HEAD')) ? path : null;
 }
 
