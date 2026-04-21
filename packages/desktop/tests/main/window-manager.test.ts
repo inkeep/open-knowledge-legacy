@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
   type BrowserWindowLike,
+  type ServerLockMetadataLike,
   type UtilityProcessLike,
   WindowManager,
   type WindowManagerDeps,
@@ -329,5 +330,142 @@ describe('WindowManager', () => {
     const wm = new WindowManager(env.deps);
     const stranger = makeWindow();
     expect(wm.getContextForBrowserWindow(stranger)).toBeUndefined();
+  });
+
+  // Attach-mode tests — D44 case (b) revised: when a live same-host server
+  // already holds the lock (a running `ok start` CLI, another Electron
+  // instance, etc.), reuse it instead of fighting over the lock.
+
+  describe('attach mode', () => {
+    const liveLock: ServerLockMetadataLike = {
+      pid: 65792,
+      hostname: 'my-host',
+      port: 59534,
+      startedAt: '2026-04-17T20:23:20.713Z',
+      worktreeRoot: '/tmp/dragon',
+    };
+
+    /**
+     * Wire attach-mode deps on top of the base env so a single probe path is
+     * active. Individual tests override `readServerLock` / `isProcessAlive`
+     * to exercise the fall-through criteria.
+     */
+    function enableAttachProbe(overrides?: {
+      readServerLock?: WindowManagerDeps['readServerLock'];
+      isProcessAlive?: WindowManagerDeps['isProcessAlive'];
+      hostname?: WindowManagerDeps['hostname'];
+    }) {
+      env.deps.readServerLock = overrides?.readServerLock ?? (() => liveLock);
+      env.deps.isProcessAlive = overrides?.isProcessAlive ?? (() => true);
+      env.deps.hostname = overrides?.hostname ?? (() => 'my-host');
+    }
+
+    test('attaches to live same-host lock — no utility forked', async () => {
+      enableAttachProbe();
+      const runClean = mock(() => Promise.resolve());
+      env.deps.runClean = runClean;
+
+      const wm = new WindowManager(env.deps);
+      const ctx = await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+
+      expect(env.utilities.length).toBe(0);
+      expect(runClean).not.toHaveBeenCalled();
+      expect(ctx.ownsServer).toBe(false);
+      expect(ctx.utility).toBeNull();
+      expect(ctx.port).toBe(59534);
+      expect(ctx.apiOrigin).toBe('http://localhost:59534');
+      expect(env.windows.length).toBe(1);
+    });
+
+    test('stale lock (pid dead) falls through to spawn mode', async () => {
+      enableAttachProbe({ isProcessAlive: () => false });
+      const runClean = mock(() => Promise.resolve());
+      env.deps.runClean = runClean;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+
+      // runClean is async — let its microtask drain before the utility forks.
+      await new Promise((r) => setTimeout(r, 5));
+      expect(runClean).toHaveBeenCalled();
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40001, apiOrigin: 'http://localhost:40001' });
+      const ctx = await p;
+      expect(ctx.ownsServer).toBe(true);
+    });
+
+    test('port=0 (holder still starting) falls through to spawn mode', async () => {
+      enableAttachProbe({
+        readServerLock: () => ({ ...liveLock, port: 0 }),
+      });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40002, apiOrigin: 'http://localhost:40002' });
+      await p;
+    });
+
+    test('foreign-host lock falls through (D44 case c)', async () => {
+      enableAttachProbe({ hostname: () => 'different-host' });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40003, apiOrigin: 'http://localhost:40003' });
+      await p;
+    });
+
+    test('no lock file falls through to spawn mode', async () => {
+      enableAttachProbe({ readServerLock: () => null });
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40004, apiOrigin: 'http://localhost:40004' });
+      await p;
+    });
+
+    test('window close on attached context does NOT send shutdown IPC', async () => {
+      enableAttachProbe();
+      const wm = new WindowManager(env.deps);
+      const ctx = await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      expect(ctx.utility).toBeNull();
+
+      env.windows[0]?.fireClose();
+      // Nothing to assert on the utility (there isn't one). The test
+      // guarantee is just that close doesn't throw and removes from the map.
+      expect(wm.getWindowFor('/tmp/dragon')).toBeUndefined();
+    });
+
+    test('closeProjectWindow on attached context returns true, sends no shutdown IPC', async () => {
+      enableAttachProbe();
+      const wm = new WindowManager(env.deps);
+      await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+
+      // No utility exists — just asserting this path returns cleanly.
+      expect(wm.closeProjectWindow('/tmp/dragon')).toBe(true);
+      expect(env.utilities.length).toBe(0);
+    });
+
+    test('re-opening an already-attached project focuses the existing window (case a still applies)', async () => {
+      enableAttachProbe();
+      const wm = new WindowManager(env.deps);
+      const ctx1 = await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      const ctx2 = await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+
+      expect(ctx2).toBe(ctx1);
+      expect(env.windows.length).toBe(1);
+      expect(ctx1.window.focus).toHaveBeenCalled();
+    });
+
+    test('attach-mode deps missing (back-compat) → tests without injection still spawn', async () => {
+      // Explicitly: not calling enableAttachProbe. No readServerLock in deps.
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/no-probe' });
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40005, apiOrigin: 'http://localhost:40005' });
+      await p;
+    });
   });
 });

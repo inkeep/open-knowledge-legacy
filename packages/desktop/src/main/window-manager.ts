@@ -1,17 +1,26 @@
 /**
  * Main-process window manager — spawns BrowserWindow + utilityProcess pairs
- * per project (D6, D39).
+ * per project (D6, D39), with an attach branch that reuses an existing
+ * live same-host Open Knowledge server (CLI sibling, another Electron
+ * instance, or any bootServer caller).
  *
- * Each project window owns:
- *   - one utilityProcess (forked with `windowLifecycleBound: true,
- *     windowLifecycleGraceTime: 6000` per D39 — Electron tears it down on
- *     window close + grace timeout)
- *   - one BrowserWindow with preload-injected `--ok-collab-url=ws://...`
- *     argv flags (consumed by `src/preload/index.ts`)
+ * Each project window either:
+ *   - (spawn mode, the common case) owns one utilityProcess forked with
+ *     `windowLifecycleBound: true, windowLifecycleGraceTime: 6000` per D39
+ *     + a BrowserWindow with preload-injected `--ok-collab-url` argv flags,
+ *   - (attach mode) just owns the BrowserWindow. `window.okDesktop.config
+ *     .collabUrl` points at the already-listening server; no utility of
+ *     ours is spawned and none is torn down on close. `ProjectContext
+ *     .ownsServer === false` gates every lifecycle action accordingly.
+ *
+ * Attach trigger: `<contentDir>/.open-knowledge/server.lock` references a
+ * live same-host pid with `port > 0`. The lock contract is authoritative
+ * per SPEC §6 (V0-1 shipped). Stale locks flow through the existing
+ * `runClean` pass and then spawn-mode proceeds.
  *
  * Per D44 case (a): if a project's contentDir is already open in another
  * window of THIS app, surface "Focus existing window" instead of spawning
- * a duplicate. Track via `Map<contentDir, { window, utility, port }>`.
+ * a duplicate. Track via `Map<contentDir, ProjectContext>`.
  *
  * The functions here are pure factories that take injected `electron` deps,
  * making them unit-testable without a real Electron runtime.
@@ -42,13 +51,38 @@ export interface UtilityProcessLike {
   kill(signal?: NodeJS.Signals): boolean;
 }
 
+/**
+ * Minimal shape of `server.lock` metadata that the attach probe consumes.
+ * Intentionally structural (not imported from `@inkeep/open-knowledge-server`)
+ * to keep this module runtime-independent of the server package — the real
+ * shape is `ServerLockMetadata` from process-lock.ts and is type-compatible.
+ */
+export interface ServerLockMetadataLike {
+  pid: number;
+  hostname: string;
+  port: number;
+  startedAt: string;
+  worktreeRoot: string;
+}
+
 export interface ProjectContext {
   projectPath: string;
   projectName: string;
   port: number;
   apiOrigin: string;
   window: BrowserWindowLike;
-  utility: UtilityProcessLike;
+  /**
+   * Utility we spawned for this window, or `null` in attach mode (the server
+   * is owned by a sibling process — typically `ok start` run from a terminal
+   * — and this window just connected to it).
+   */
+  utility: UtilityProcessLike | null;
+  /**
+   * Whether this window's process owns the utility/server lifecycle. Gates
+   * shutdown IPC on window close and the D39 post-exit liveness probe. When
+   * `false`, closing the window leaves the sibling-owned server running.
+   */
+  ownsServer: boolean;
 }
 
 export interface CreateProjectWindowOpts {
@@ -77,6 +111,27 @@ export interface WindowManagerDeps {
   killProbe(pid: number, signal: number | NodeJS.Signals): void;
   /** Optional hook to run runClean before forking the utility (D44). */
   runClean?(opts: { lockDir: string }): Promise<void>;
+  /**
+   * Read the Open Knowledge server lock at `<lockDir>/server.lock`. Returns
+   * null if absent or corrupt. Production: `readServerLock` from
+   * `@inkeep/open-knowledge-server`. Tests inject a stub.
+   *
+   * When omitted (back-compat with existing tests), the attach branch is
+   * effectively disabled and every call spawns a fresh utility.
+   */
+  readServerLock?(lockDir: string): ServerLockMetadataLike | null;
+  /**
+   * Check whether a pid is alive on this host (EPERM counts as alive per the
+   * `process.kill(pid, 0)` semantics in `isProcessAlive`). Production:
+   * `isProcessAlive` from `@inkeep/open-knowledge-server`.
+   */
+  isProcessAlive?(pid: number): boolean;
+  /**
+   * Current host — `os.hostname()` in production. Used to compare against
+   * `server.lock`'s `hostname` field so we only attach on same-host locks
+   * (foreign-host locks are D44 case c — refuse and fall through).
+   */
+  hostname?(): string;
   /**
    * Upper bound (ms) on waiting for the utility to post `ready` or `error`
    * after `init`. Default 15s — enough margin for `bootServer` to run shadow-
@@ -134,6 +189,17 @@ export class WindowManager {
     const projectName = basename(projectPath);
 
     const lockDir = resolve(projectPath, '.open-knowledge');
+
+    // Attach branch — if a live same-host server is already listening on
+    // this contentDir (CLI sibling, another Electron instance that we
+    // want to share with, etc.), skip the utility spawn entirely and just
+    // point the renderer at the existing collab URL. `runClean` is also
+    // skipped here because an attachable lock is by definition NOT stale.
+    const attached = this.tryAttachExistingServer(lockDir);
+    if (attached) {
+      return this.attachToExistingServer({ projectPath, projectName, lock: attached });
+    }
+
     if (this.deps.runClean) {
       try {
         await this.deps.runClean({ lockDir });
@@ -270,6 +336,7 @@ export class WindowManager {
       apiOrigin,
       window,
       utility,
+      ownsServer: true,
     };
     this.windowsByPath.set(projectPath, context);
     return context;
@@ -279,6 +346,12 @@ export class WindowManager {
   closeProjectWindow(projectPath: string): boolean {
     const ctx = this.windowsByPath.get(resolve(projectPath));
     if (!ctx) return false;
+    if (!ctx.ownsServer || !ctx.utility) {
+      // Attach mode — the server belongs to a sibling process. Closing our
+      // window drops our WS connection; we leave the server running so the
+      // sibling (and any other windows) keep working.
+      return true;
+    }
     // Guard against detached IPC port — see rationale in the window-close
     // handler above.
     try {
@@ -290,5 +363,97 @@ export class WindowManager {
       );
     }
     return true;
+  }
+
+  /**
+   * Probe `<lockDir>/server.lock` for an attachable same-host server.
+   *
+   * Returns the lock metadata when all of the following hold:
+   *   - lock file exists and parses as valid JSON
+   *   - `hostname` matches this host (foreign locks are D44 case c — we
+   *     refuse and fall through to spawn-mode, which will surface the
+   *     collision via `ServerLockCollisionError` from `acquireServerLock`)
+   *   - `isProcessAlive(pid)` is true (stale locks fall through — `runClean`
+   *     will prune them before we spawn)
+   *   - `port > 0` (port 0 means the holder is still starting — racing it
+   *     risks connecting before the listener is bound, so fall through)
+   *
+   * Returns `null` otherwise (including when the deps are not wired — tests
+   * that don't inject `readServerLock` get pure spawn behavior).
+   */
+  private tryAttachExistingServer(lockDir: string): ServerLockMetadataLike | null {
+    const read = this.deps.readServerLock;
+    const alive = this.deps.isProcessAlive;
+    const getHost = this.deps.hostname;
+    if (!read || !alive || !getHost) return null;
+    const lock = read(lockDir);
+    if (!lock) return null;
+    if (lock.hostname !== getHost()) return null;
+    if (!alive(lock.pid)) return null;
+    if (lock.port <= 0) return null;
+    return lock;
+  }
+
+  /**
+   * Finalize a project window in attach mode. Symmetric with the spawn path
+   * from the renderer's perspective — `--ok-collab-url` and `--ok-api-origin`
+   * are populated identically, so the preload + React bundle see no
+   * difference between attach-mode and spawn-mode windows.
+   *
+   * Differences from spawn mode:
+   *   - no `utilityProcess.fork`, no `init`/`ready` handshake
+   *   - no `runClean` (the lock is not stale — it references a live process)
+   *   - no post-exit liveness probe (we don't own the server)
+   *   - window `close` removes the window from the map but sends no shutdown
+   *     IPC (the sibling server survives)
+   */
+  private async attachToExistingServer(args: {
+    projectPath: string;
+    projectName: string;
+    lock: ServerLockMetadataLike;
+  }): Promise<ProjectContext> {
+    const { projectPath, projectName, lock } = args;
+    const port = lock.port;
+    const apiOrigin = `http://localhost:${port}`;
+
+    this.deps.log?.info(
+      { projectPath, holderPid: lock.pid, port, startedAt: lock.startedAt },
+      'attaching to existing Open Knowledge server',
+    );
+
+    const window = this.deps.createWindow({
+      additionalArguments: [
+        `--ok-collab-url=ws://localhost:${port}/collab`,
+        `--ok-api-origin=${apiOrigin}`,
+        `--ok-project-path=${projectPath}`,
+        `--ok-project-name=${projectName}`,
+        `--ok-mode=editor`,
+      ],
+    });
+
+    if (this.deps.rendererDevUrl) {
+      await window.loadURL(this.deps.rendererDevUrl);
+    } else {
+      await window.loadFile(this.deps.rendererEntryPath);
+    }
+
+    window.on('closed', () => {
+      // Drop from our map so a subsequent open either re-attaches (if the
+      // sibling is still live) or spawns (if it has since exited). Critically,
+      // NO shutdown IPC — the server is not ours to stop.
+      this.windowsByPath.delete(projectPath);
+    });
+
+    const context: ProjectContext = {
+      projectPath,
+      projectName,
+      port,
+      apiOrigin,
+      window,
+      utility: null,
+      ownsServer: false,
+    };
+    this.windowsByPath.set(projectPath, context);
+    return context;
   }
 }

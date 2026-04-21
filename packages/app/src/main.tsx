@@ -7,10 +7,20 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
 import '@/lib/desktop-bridge-types';
+import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './globals.css';
+
+// Electron-only: rewrite `/api/*` fetches to target the utility process. The
+// renderer host (electron-vite dev server OR packaged file://) doesn't serve
+// /api; the hocuspocus instance behind the bridge does. Must run BEFORE any
+// component mounts so the first paint's `fetch('/api/documents')` lands in
+// the right place. No-op in web / CLI distribution (okDesktop undefined).
+if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
+  installDesktopFetchRewrite({ apiOrigin: window.okDesktop.config.apiOrigin });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

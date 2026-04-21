@@ -15,8 +15,10 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
 import {
   app,
   BrowserWindow,
@@ -152,6 +154,13 @@ function ensureWindowManager() {
     killProbe: (pid, signal) => {
       process.kill(pid, signal as NodeJS.Signals | 0);
     },
+    // Attach-mode wiring — when a same-host `ok start` CLI (or any other
+    // bootServer caller) is already holding the server.lock for this
+    // contentDir, window-manager reads the lock + verifies liveness and
+    // connects the renderer directly instead of trying to spawn a duplicate.
+    readServerLock: (lockDir) => readServerLock(lockDir),
+    isProcessAlive: (pid) => isProcessAlive(pid),
+    hostname: () => osHostname(),
   });
 }
 
