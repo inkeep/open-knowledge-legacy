@@ -37,7 +37,7 @@ Existing Windsurf users: on your next `init`, any legacy single `open-knowledge`
 ### Install globally (optional)
 
 ```bash
-bun  install -g @inkeep/open-knowledge   # or: npm install -g, or: pnpm add -g
+bun install -g @inkeep/open-knowledge   # or: npm install -g, or: pnpm add -g
 ok init                                  # short alias
 ok start                                 # equivalent to `open-knowledge start`
 ```
