@@ -34,7 +34,7 @@ import { useDocumentContext } from '@/editor/DocumentContext';
  */
 const GRACE_PERIOD_MS = 500;
 
-export type BannerMode = 'hidden' | 'retrying' | 'terminal';
+type BannerMode = 'hidden' | 'retrying' | 'terminal';
 
 /**
  * Pure decision: what should the banner show right now? Exported for unit

@@ -4240,6 +4240,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
+      // Permissive CORS for /api/*. The server binds to 127.0.0.1 only (per
+      // createServer default), so `*` can't be reached from a remote origin
+      // and the blast radius is limited to other localhost processes. This is
+      // what makes the Electron renderer (served from electron-vite's dev
+      // server OR a `file://` / `resource://` in packaged builds) able to
+      // fetch `http://localhost:<utility-port>/api/*` without CORS errors.
+      //
+      // Setting via `setHeader` (not `writeHead`) so handler responses that
+      // call `writeHead(status, { 'Content-Type': ... })` inherit these. The
+      // typeof guard handles unit tests that pass a bare-mock ServerResponse
+      // (several `api-*.test.ts` files stub only `writeHead` + `end`); a
+      // production `http.ServerResponse` always has `setHeader`.
+      if (url.startsWith('/api/')) {
+        if (typeof response.setHeader === 'function') {
+          response.setHeader('Access-Control-Allow-Origin', '*');
+          response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+          response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        }
+        // OPTIONS preflight — short-circuit with 204 + the headers above.
+        if (request.method === 'OPTIONS') {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+      }
+
       // Static routes
       const handler = routes[url];
       if (handler) {

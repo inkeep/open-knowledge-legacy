@@ -3,6 +3,23 @@
 @import "shadcn/tailwind.css";
 @plugin "tailwind-scrollbar";
 
+/*
+ * Explicit source roots for Tailwind v4 content scanning.
+ *
+ * packages/app's own `bun run dev` runs with CWD=packages/app, and Tailwind
+ * v4 auto-detects sources via a package.json walk from there — that default
+ * works for the web distribution.
+ *
+ * When packages/desktop's `electron-vite dev` serves this CSS with
+ * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
+ * so Tailwind's auto-detection scans packages/desktop/** — which has no .tsx
+ * files, so zero utility classes get emitted. The @source directive below
+ * anchors the scan to packages/app/src/** (relative to this CSS file) and is
+ * inert for packages/app's own dev because the same paths are already
+ * auto-covered.
+ */
+@source "./**/*.{tsx,ts,jsx,js}";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme {

@@ -10,6 +10,7 @@ packages/
   server/  — @inkeep/open-knowledge-server (Hocuspocus server library)
   cli/     — @inkeep/open-knowledge (published CLI + MCP)
   app/     — React editor frontend (private)
+  desktop/ — @inkeep/open-knowledge-desktop (Electron app, private)
 docs/      — Next.js docs site (Fumadocs)
 ```
 
@@ -19,7 +20,9 @@ docs/      — Next.js docs site (Fumadocs)
 bun install                          # Install all workspace dependencies
 cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
+bun run dev --filter=@inkeep/open-knowledge-desktop   # Launch Electron app in dev mode (macOS)
 bun run build                        # Build all packages via turbo (cli, app, docs)
+bun run build:desktop                # Build desktop bundle via electron-vite (no DMG; M1 scope)
 cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 ```
 
@@ -170,6 +173,8 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
+- `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
+- `src/desktop-bridge.ts` — `OkDesktopBridge` interface — canonical shape of the Electron `window.okDesktop` surface. Documentation anchor; desktop's runtime consumer is a duplicated copy in `packages/desktop/src/shared/bridge-contract.ts` (see Package: desktop for why the duplication is deliberate)
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
@@ -220,6 +225,24 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 **Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to shadow refs via `parkBranch()`. On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
 
 **Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
+
+### `bootServer` — canonical HTTP-wrapping entry point
+
+`packages/server/src/boot.ts` exports `bootServer(opts: BootServerOptions): Promise<BootedServer>` — the shared wrapper that composes `createServer()`, the `node:http` listener, the server-lock port-write (`acquireServerLock` → `listen(0)` → `updateServerLockPort`), and the optional `ok ui` sibling + idle-shutdown primitives. Consumers:
+
+- **CLI `ok start`** (`packages/cli/src/commands/start.ts`) — thin Commander wrapper. `bootStartServer` is now a delegation layer; CLI-specific concerns (MCP detached-spawn stderr capture, Commander logging, `runInit` auto-init) are layered on top of `bootServer`.
+- **Electron utility** (`packages/desktop/src/utility/server-entry.ts`) — calls `bootServer({ attachUiSibling: false, idleShutdownMs: null })` so no `ok ui` sibling is spawned and the 30-minute idle-shutdown timer is not attached (D36 in the Electron spec).
+- **Vite dev plugin** (`packages/app/src/server/hocuspocus-plugin.ts`) — unchanged. Calls `createServer()` directly because the Vite HTTP server already provides the listener; it does not need `bootServer`'s composition.
+
+Opt-out flags on `BootServerOptions`:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `attachUiSibling` | `true` | Auto-spawn `ok ui` when `ui.lock` is absent/stale. Electron passes `false`. |
+| `idleShutdownMs` | `30 * 60 * 1000` (30 min) | Tear down the collab process after the threshold of zero WS clients. Pass `null` to disable (Electron). |
+| `skipAutoInit` | `false` | Bypass `initContent` auto-scaffold of `.open-knowledge/` on first start. |
+
+`BootedServer` returns `{ httpServer, destroy, port, ready, serverInstance, lockDir }` — the shape `bootStartServer` has always returned; renamed on extraction for canonical naming.
 
 ### Server process lock
 
@@ -442,6 +465,40 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
+
+## Package: desktop
+
+Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 only** (dev loop, local, unsigned). Signing, notarization, DMG packaging, auto-update, URL scheme, keyring Device Flow, MCP first-launch wiring, CLI-on-PATH menu item are all deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 (M2–M7) for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
+
+### Process model
+
+One editor BrowserWindow ↔ one `utilityProcess.fork` ↔ one `createServer` ↔ one `contentDir` (D6 in the Electron spec). Enforced by the shipped `server.lock` contract. Plus one UI-only Navigator BrowserWindow (no utility attached) that acts as a persistent launcher (D24 revised — every project pick spawns a new editor window; D3 revised — there is no switch-in-place UX).
+
+### Key files
+
+- `packages/desktop/src/main/index.ts` — app lifecycle, single-instance lock, menu bar, `runClean` on boot
+- `packages/desktop/src/main/window-manager.ts` — `createProjectWindow` spawns BrowserWindow + utility, tracks `Map<BrowserWindow, ProjectContext>`, collision dispatch
+- `packages/desktop/src/main/navigator-window.ts` — `createNavigatorWindow` persistent launcher
+- `packages/desktop/src/main/state-store.ts` — electron-store wrapper for recents + window bounds (Zod-validated, corrupt-file recovery)
+- `packages/desktop/src/main/shell-allowlist.ts` — `shell.openExternal` scheme allowlist (D47: `https | http | mailto | openknowledge`)
+- `packages/desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('okDesktop', ...)` with preload-side listener wrappers (electron/electron#33328)
+- `packages/desktop/src/utility/server-entry.ts` — `bootServer({ attachUiSibling: false, idleShutdownMs: null })` + IPC handshake + macOS poll-based parent-death detection (D49)
+- `packages/desktop/src/shared/{ipc-channels,ipc-events,ipc-handler,ipc-invoke}.ts` — typed IPC channel map (D14 hand-rolled, no tRPC)
+- `packages/desktop/src/shared/bridge-contract.ts` — desktop-local copy of `OkDesktopBridge` (canonical shape in `@inkeep/open-knowledge-core/src/desktop-bridge.ts` — duplication is deliberate; see README)
+- `packages/app/src/components/NavigatorApp.tsx` — React component rendered when `window.okDesktop?.config.mode === 'navigator'`
+- `packages/app/src/lib/use-collab-url.ts` — short-circuits on `window.okDesktop?.config.collabUrl` before the `/api/config` poll path
+
+### IPC discipline (D19)
+
+Never call `ipcMain.handle` / `ipcRenderer.invoke` directly. Use `createHandler` / `createInvoker` from `packages/desktop/src/shared/ipc-*.ts`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` fails lint on violations. Allowlist (wrapper implementations themselves): `src/shared/ipc-handler.ts`, `src/shared/ipc-invoke.ts`, `src/preload/index.ts`.
+
+### Running locally
+
+```bash
+bun install                                               # postinstall rebuilds native modules; skip with ELECTRON_SKIP_REBUILD=1
+bun run dev --filter=@inkeep/open-knowledge-desktop        # macOS, opens Navigator window
+bun run build:desktop                                     # electron-vite build (no DMG in M1)
+```
 
 ## CRDT Bridge Architecture
 

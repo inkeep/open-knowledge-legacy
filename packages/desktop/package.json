@@ -1,0 +1,32 @@
+{
+  "name": "@inkeep/open-knowledge-desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev --watch",
+    "build:desktop": "electron-vite build",
+    "build:dir": "bun run build:desktop && electron-builder --dir",
+    "postinstall": "node scripts/postinstall.mjs",
+    "rebuild:native": "electron-builder install-app-deps",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@inkeep/open-knowledge-core": "workspace:*",
+    "@inkeep/open-knowledge-server": "workspace:*",
+    "@napi-rs/keyring": "^1.2.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^22.16.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
+    "electron": "^41.0.2",
+    "electron-builder": "^26.9.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.0.0"
+  }
+}
