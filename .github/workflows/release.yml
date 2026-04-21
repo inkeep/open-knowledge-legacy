@@ -26,8 +26,9 @@ concurrency:
 
 jobs:
   # Quality gate, part 1: lint. Mirrors CI's `lint` job structure but runs
-  # only `bun run lint` (matches the previous Publish gate semantics —
-  # `bun run check` did not include knip).
+  # only `bun run lint` — the previous Publish gate (`bun run check`) never
+  # included knip, and knip is unused-export detection whose failure should
+  # not block a release. CI still runs knip; Publish intentionally does not.
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -52,6 +53,11 @@ jobs:
   # Cache key matches CI's `${{ runner.os }}-turbo-${{ matrix.task }}-${{ github.sha }}`
   # so the two workflows share turbo cache for the same SHA: when CI completes
   # first, Publish hits FULL TURBO and skips work it has already validated.
+  #
+  # KEEP IN SYNC WITH ci.yml test matrix (task list, node-version, cache key
+  # shape). The shared cache-key contract is load-bearing — diverging shape
+  # silently breaks cross-workflow cache sharing. Nothing mechanically
+  # enforces this; review both workflows together when adding/removing tasks.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -92,15 +98,24 @@ jobs:
     name: Release
     needs: [lint, test]
     runs-on: ubuntu-latest
+    # 15 min is ~4× the historical baseline. The last successful pre-matrix
+    # run (24646964907) completed in 3m43s with `bun run check` included;
+    # this job no longer runs `bun run check` (moved to `lint` + `test`), so
+    # remaining work (install + build + single-package npm publish + release
+    # creation) is lighter than that baseline. `cancel-in-progress: false`
+    # protects against mid-publish cancellation if the budget is ever hit.
     timeout-minutes: 15
-    # Write permissions scoped to this job only — required for npm OIDC
-    # publish, App-token PR creation by changesets/action, and `gh release
-    # create`. Workflow-level default is `contents: read`.
+    # Write permissions scoped to this job only. Least-privilege per scope:
+    #   contents: write       — `gh release create` (release + tag), changesets push
+    #   pull-requests: write  — changesets/action opens the "Version Packages" PR
+    #   id-token: write       — npm OIDC trusted publishing (registry.npmjs.org)
+    # Not required: `packages: write` (GitHub Packages / ghcr.io — unused here)
+    # or `issues: write` (changesets/action uses only pulls + releases APIs;
+    # `gh release create` needs only contents). Workflow-level default is
+    # `contents: read`.
     permissions:
       contents: write
       pull-requests: write
-      issues: write
-      packages: write
       id-token: write
     steps:
       - name: Checkout
