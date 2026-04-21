@@ -786,6 +786,7 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
       const withContent = mutations.filter((m) => m.text?.startsWith('Selected:'));
       return withContent.length >= 1 && performance.now() - last.at > 300;
     },
+    null,
     { timeout: 2_000 },
   );
 

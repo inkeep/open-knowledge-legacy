@@ -111,7 +111,7 @@ describe('SelectionStatePlugin integration', () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '<Card title="Hello" />\n', {
-        mode: 'replace',
+        position: 'replace',
         docName: client.docName,
       });
       await wait(300);
@@ -139,7 +139,7 @@ describe('SelectionStatePlugin integration', () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '<Cards>\n  <Card title="Inner" />\n</Cards>\n', {
-        mode: 'replace',
+        position: 'replace',
         docName: client.docName,
       });
       await wait(300);
@@ -168,7 +168,7 @@ describe('SelectionStatePlugin integration', () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '<Card title="Delete me" />\n', {
-        mode: 'replace',
+        position: 'replace',
         docName: client.docName,
       });
       await wait(300);
@@ -200,7 +200,7 @@ describe('SelectionStatePlugin integration', () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '<Callout type="info">\n\nbody text\n\n</Callout>\n', {
-        mode: 'replace',
+        position: 'replace',
         docName: client.docName,
       });
       await wait(300);
@@ -230,7 +230,7 @@ describe('SelectionStatePlugin integration', () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '<Card title="Meta test" />\n', {
-        mode: 'replace',
+        position: 'replace',
         docName: client.docName,
       });
       await wait(300);
