@@ -11,9 +11,12 @@ import {
 import { Editor, Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
+import { EditorContent } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { mountTiptapEditor, parkTiptapEditor, type TiptapCacheEntry } from './editor-cache';
+import { InteractionLayerView } from './interaction-layer';
+import { getInteractionLayer } from './interaction-layer-host';
 
 // Module-level WeakMap storing the `performance.now()` anchor captured in
 // `onBeforeCreate` and consumed in `onCreate`. Scoped per-Editor instance so
@@ -132,39 +135,53 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
   // V2 EDITOR CACHE WIRING (US-008)
   //
-  // We replace `useEditor()` (which auto-creates + scheduleDestroy(1ms) on
-  // unmount per CLAUDE.md WARN rule) with `mountTiptapEditor` from the V2
-  // cache module. The factory builds a fresh `new Editor(...)` mounted into
-  // the container; the cache reparents the existing view.dom on cache hit
-  // (no construction cost) per Path B reparent (Phase 1.0 spike probe).
+  // Architecture: V2 cache owns the EDITOR INSTANCE lifetime (creation,
+  // park-don't-destroy on React unmount, evict-on-LRU). React's
+  // <EditorContent editor={editor}> owns the DOM mount — it moves
+  // editor.view.dom into its own ref on init, sets editor.contentComponent
+  // (load-bearing for ReactRenderer + ReactNodeViewRenderer used by
+  // SlashCommand + JsxComponentView), and on unmount moves view.dom back
+  // into a fresh detached div WITHOUT calling editor.destroy().
   //
-  // - useState<Editor | null> tracks editor readiness for child component
-  //   rendering (BubbleMenuBar, TableControlsMenu).
-  // - useEffect runs the cache lifecycle keyed by docName + provider; React
-  //   re-runs the effect across navigations, providing the cache its mount
-  //   point. parkTiptapEditor never destroys (precedent #18(h)).
-  // - The container ref is the React-side mount slot; the editor's view.dom
-  //   is appended into it by the factory (initial mount) or reparented into
-  //   it by mountTiptapEditor's cache-hit path.
+  // Why this split (vs. directly reparent to a custom div ref):
+  //  - <EditorContent> sets editor.contentComponent, which
+  //    ReactRenderer (SlashCommandMenu suggestion popup) and
+  //    ReactNodeViewRenderer (JsxComponent NodeView) both REQUIRE.
+  //    Without contentComponent, ReactRenderer.setRenderer is a no-op
+  //    and ReactNodeViewRenderer returns {} (no NodeView at all).
+  //  - <EditorContent>.componentWillUnmount does NOT destroy the editor —
+  //    it only moves view.dom back to a detached div + nulls
+  //    contentComponent. So our cache's "preserve editor instance"
+  //    guarantee is intact.
+  //  - useEditor() is the destroyer (scheduleDestroy(1ms) on unmount).
+  //    We replace useEditor with the cache-managed factory; we keep
+  //    EditorContent for the React-side coordination.
   //
-  // Fallback per spec §A1 fallback ladder: if mountTiptapEditor fails (cache
-  // disabled OR factory throws), we fall through to constructing a fresh
-  // editor and parking destroys it (pre-V2 behavior). FR15 kill switch
-  // makes this controllable from a 1-line module constant flip.
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  // Cache lifecycle:
+  //  - mountTiptapEditor: factory creates `new Editor()` (default detached
+  //    div as element); cache stores entry; on cache hit returns existing
+  //    entry (no DOM work — EditorContent handles re-attach).
+  //  - parkTiptapEditor: cache marks entry non-active; no DOM work
+  //    (EditorContent already moved view.dom on its own unmount).
+  //  - evictTiptapEditor: cache calls editor.destroy() (LRU only).
+  //
+  // FR15 kill switch: when CACHE_ENABLED=false, mountTiptapEditor
+  // returns __uncached entry; parkTiptapEditor destroys immediately.
   const [editor, setEditor] = useState<Editor | null>(null);
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
   const docName = provider.configuration.name ?? '';
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
     let entry: TiptapCacheEntry | null = null;
     try {
+      // Pass a transient detached div as the cache's "container". The cache
+      // factory mounts the editor into it (default behavior — TipTap creates
+      // its own div if element is omitted). EditorContent then takes view.dom
+      // from this transient div and moves it into its own React-managed ref.
+      const transient = document.createElement('div');
       entry = mountTiptapEditor({
         docName,
-        container,
+        container: transient,
         factory: (el) => {
           const ctorStart = performance.now();
           const tipTapEditor = new Editor({
@@ -613,13 +630,28 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
       {/*
-       * V2 cache mount slot. The editor's view.dom is appended into this
-       * container by the factory at first mount, then reparented in/out
-       * of this div by mountTiptapEditor / parkTiptapEditor across nav.
-       * The h-full mirrors the pre-V2 EditorContent's class so layout is
-       * unchanged.
+       * <EditorContent> owns the React-side DOM mount and sets
+       * editor.contentComponent (load-bearing for ReactRenderer + the
+       * SlashCommandMenu suggestion popup + ReactNodeViewRenderer used by
+       * JsxComponentView). It does NOT destroy the editor on unmount —
+       * just moves view.dom to a fresh detached div. The V2 cache holds
+       * the editor instance across React unmount; EditorContent re-attaches
+       * view.dom on remount. Editor identity preserved across navigation.
        */}
-      <div ref={containerRef} className="h-full" data-tiptap-cache-mount="" />
+      <EditorContent editor={editor} className="h-full" />
+      {/*
+       * <InteractionLayerView> renders the singleton PropPanel / Toolbar /
+       * Breadcrumb subtree FOR THE ACTIVE chip — inside the main React tree
+       * so PropPanel renderers (InternalLinkPropPanel, WikiLinkPropPanel,
+       * RawMdxFallbackPropPanel) inherit context providers like
+       * <PageListProvider> + <ThemeProvider>. The layer host (per-editor
+       * WeakMap) provides the store; the View subscribes via useState +
+       * subscribe and renders the active registration's controls.
+       *
+       * Rendered AFTER EditorContent so its absolute-positioned PropPanels
+       * stack above editor content (z-index handled in CSS).
+       */}
+      {editor && <InteractionLayerView store={getInteractionLayer(editor).store} />}
     </div>
   );
 };

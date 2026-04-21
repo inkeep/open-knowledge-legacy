@@ -18,10 +18,11 @@ import { describe, expect, test } from 'bun:test';
 import type { Editor } from '@tiptap/core';
 import { type Mark, Schema } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
-import type {
-  InteractionContext,
-  InteractionLayerHandle,
-  RegisterParams,
+import {
+  type InteractionContext,
+  type InteractionLayerHandle,
+  InteractionLayerStore,
+  type RegisterParams,
 } from '../interaction-layer';
 import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-identity-plugin';
 import {
@@ -82,26 +83,34 @@ function makeFakeLayer(): FakeLayer {
   const deregisterCalls: string[] = [];
   const setActiveNodeCalls: Array<string | null> = [];
   let activeNode: string | null = null;
+  // Real InteractionLayerStore — exposes the same API the production layer
+  // uses so the fake satisfies the InteractionLayerHandle contract (which
+  // now requires `store` per the V2 PropPanel-rendered-in-main-tree fix).
+  const store = new InteractionLayerStore();
   return {
     register(params) {
       registerCalls.push(params);
+      store.register(params);
     },
     deregister(id) {
       deregisterCalls.push(id);
+      store.deregister(id);
     },
     setActiveNode(id) {
       setActiveNodeCalls.push(id);
       activeNode = id;
+      store.setActiveNode(id);
     },
     getActiveNode() {
       return activeNode;
     },
-    getRegistration() {
-      return undefined;
+    getRegistration(id) {
+      return store.getRegistration(id);
     },
     destroy() {
       /* no-op */
     },
+    store,
     registerCalls,
     deregisterCalls,
     setActiveNodeCalls,

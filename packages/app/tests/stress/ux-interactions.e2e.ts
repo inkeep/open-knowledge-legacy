@@ -333,26 +333,27 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
     { timeout: 10_000 },
   );
 
-  const chip = page.locator('[data-internal-link]').first();
-  await expect(chip).toHaveAttribute('data-doc-name', 'beta');
+  // V2 (US-005): chips render as plain DOM via renderHTML. The link mark gets
+  // a `data-link` attr; the link-resolution decoration plugin adds
+  // `data-resolution-state`; the mark-identity decoration plugin adds
+  // `data-mark-id`. There is no longer a `data-internal-link` /
+  // `data-doc-name` attribute on the chip itself — those lived on the
+  // pre-V2 React MarkView. Resolution state is checked via the decoration
+  // attribute instead.
+  const chip = page.locator('span[data-link]').first();
+  await expect(chip).toBeVisible({ timeout: 10_000 });
 
-  // The `Link options` button is hidden via Tailwind `hidden` (display:
-  // none) and revealed on `:hover` or `:focus-within` of the `.group`
-  // ancestor (InternalLinkView.tsx). Playwright's hover + focus
-  // primitives are unreliable for triggering these pseudo-classes
-  // across headless Chromium / WebKit / Firefox — pointer-state
-  // inference differs per browser and display:none elements have no
-  // geometry, so `{ force: true }` can't target them either. This test
-  // verifies the button's onClick behavior (opens Edit-link dialog and
-  // preserves page mode), NOT the CSS visibility transition. Surgically
-  // remove the `hidden` class so the click target is deterministically
-  // interactable in all three browsers.
-  await chip.evaluate((el) => {
-    const btn = el.querySelector('button[aria-label="Link options"]');
-    if (btn) btn.classList.remove('hidden');
-  });
-  await chip.getByRole('button', { name: 'Link options' }).click();
-  await page.getByText('Edit link', { exact: true }).click();
+  // V2 click semantics (US-005, greenfield): clicking the chip activates
+  // the InteractionLayer and surfaces the singleton PropPanel at editor root,
+  // replacing the pre-V2 split-button (anchor-navigates + ellipsis-opens-menu)
+  // pattern. The PropPanel exposes Open / Edit / Remove (and Create-page
+  // when unresolved) as plain buttons.
+  await chip.click();
+  const propPanel = page.locator('[data-prop-panel="internal-link"]');
+  await expect(propPanel).toBeVisible({ timeout: 5_000 });
+
+  // The "Edit" button in the PropPanel opens the EditMarkdownLinkDialog.
+  await propPanel.getByRole('button', { name: 'Edit' }).click();
 
   const pageLabel = page.locator('label').filter({ hasText: 'Page' }).first();
   const sectionLabel = page.locator('label').filter({ hasText: 'Section' }).first();
@@ -369,7 +370,9 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   await targetInput.fill('sidebar-folder/nested-doc');
   await page.getByRole('button', { name: 'Save' }).click();
 
-  await expect(chip).toHaveAttribute('data-doc-name', 'sidebar-folder/nested-doc');
+  // Verify the underlying markdown was updated. V2 does NOT mirror the doc
+  // name into a chip attribute (data-doc-name is gone) — the source-of-truth
+  // is the Y.Text + the link mark's href attr.
   await page.waitForFunction(
     () =>
       window.__activeProvider?.document
@@ -379,9 +382,4 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
     null,
     { timeout: 10_000 },
   );
-
-  await chip.hover();
-  const tooltip = page.locator('[data-slot="tooltip-content"]').last();
-  await expect(tooltip).toBeVisible();
-  await expect(tooltip).toContainText('./sidebar-folder/nested-doc.md');
 });

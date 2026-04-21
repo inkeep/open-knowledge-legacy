@@ -51,29 +51,28 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
   },
 
   renderHTML({ HTMLAttributes }) {
-    // Plain-DOM chip wrapping a child <a>. The decoration plugins add
-    // data-mark-id (mark-identity-decoration-plugin) and data-resolution-state
-    // (link-resolution-decoration-plugin) at render time. CSS in globals.css
-    // styles the chip based on data-resolution-state.
-    const href = (HTMLAttributes.href as string | null) ?? '';
+    // Plain-DOM chip — a single <span> with link text inline. We deliberately
+    // omit the `<a href>` child that the pre-V2 React MarkView wrapped its
+    // text in: clicking an `<a>` navigates immediately, which races the
+    // InteractionLayer's pointerdown handler (the layer fires setActiveNode,
+    // but the browser navigation aborts the React render before the singleton
+    // PropPanel can mount). The V2 click semantics route through the
+    // PropPanel's "Open" button — same destination, deterministic flow.
+    //
+    // The decoration plugins add data-mark-id (mark-identity-decoration-plugin)
+    // and data-resolution-state (link-resolution-decoration-plugin) at render
+    // time; CSS in globals.css styles the chip based on the latter. The
+    // original href stays in the link mark's attrs (read by PropPanel for
+    // navigate / edit) — it's just not rendered as a navigable element.
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
         'data-link': '',
+        role: 'link',
         // touch-action: manipulation eliminates the iOS 300ms tap delay.
         style: 'touch-action: manipulation;',
       }),
-      [
-        'a',
-        {
-          href,
-          // contenteditable inherits from the chip's parent paragraph; we want
-          // the text to remain editable inline. Only the chip's chrome is
-          // non-editable (handled by CSS / data-mark-id click delegation).
-          rel: 'noopener noreferrer',
-        },
-        0,
-      ],
+      0,
     ];
   },
 

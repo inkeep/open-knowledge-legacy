@@ -41,7 +41,6 @@
  */
 
 import { type FC, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -106,6 +105,14 @@ export interface InteractionLayerHandle {
   getRegistration(nodeId: string): RegisterParams | undefined;
   /** Remove event listener, clear registry, unmount React subtree. Idempotent. */
   destroy(): void;
+  /**
+   * Direct store access — exposed so the host (`<InteractionLayerView>`)
+   * can subscribe via React without going through createRoot. The store is
+   * the source of truth; the handle's register/deregister/setActiveNode
+   * are convenience proxies. Tests + main-tree React render both go through
+   * the store.
+   */
+  store: InteractionLayerStore;
 }
 
 export interface CreateInteractionLayerParams {
@@ -321,7 +328,11 @@ function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
 export function createInteractionLayer(
   params: CreateInteractionLayerParams,
 ): InteractionLayerHandle {
-  const { editor, rootContainer, mountNode } = params;
+  // rootContainer + mountNode used to drive the layer's own React root mount
+  // (now removed — see InteractionLayerView for the V2 main-tree render).
+  // Destructure mountNode for the layerMount fallback path; rootContainer is
+  // legacy and intentionally unused.
+  const { editor, mountNode } = params;
   const store = new InteractionLayerStore();
 
   // Lazily bound pieces (may be null in test environments with no DOM).
@@ -345,7 +356,20 @@ export function createInteractionLayer(
     const target = ev.target as Node | null;
     if (!target) return;
     if (editorDom?.contains(target)) return; // editor-internal → handled above
-    if (layerMount?.contains(target)) return; // inside PropPanel itself → ignore
+    if (layerMount?.contains(target)) return; // inside legacy mount (unused after V2 React-tree refactor)
+    // The PropPanel renders inside the main React tree via <InteractionLayerView>,
+    // wrapped in a div carrying `data-ok-interaction-layer`. Detect via closest()
+    // so the dismiss handler ignores clicks inside the panel + any portaled
+    // dialog content (Radix Dialog renders to body — those land OUTSIDE the
+    // marker, so we ALSO accept Radix dialog overlays/content via data-slot).
+    if (target instanceof Element) {
+      if (target.closest('[data-ok-interaction-layer]')) return;
+      // Radix Dialog renders Portal content with data-slot="dialog-overlay" /
+      // "dialog-content" — accept clicks there as "still inside the layer's
+      // active interaction" so opening Edit/Create dialogs doesn't dismiss
+      // the underlying PropPanel.
+      if (target.closest('[role="dialog"]')) return;
+    }
     store.setActiveNode(null);
   };
 
@@ -370,47 +394,23 @@ export function createInteractionLayer(
     clickListenerAttached = false;
   };
 
-  // Mount React root — deferred when document is unavailable (test env).
-  const mountReactRoot = (): void => {
-    if (reactRoot) return;
-    if (typeof document === 'undefined') return;
-    // Resolve container preference:
-    //   1. Caller-provided mountNode (owned externally)
-    //   2. Fresh div appended to rootContainer (owned by layer, destroyed on teardown)
-    //   3. Fresh div appended to editorDom's parent (fallback)
-    if (mountNode) {
-      layerMount = mountNode;
-    } else {
-      const parent = rootContainer ?? editorDom?.parentElement ?? null;
-      if (!parent) return;
-      const own = document.createElement('div');
-      own.setAttribute('data-ok-interaction-layer', '');
-      parent.appendChild(own);
-      layerMount = own;
-    }
-    // Lazy dynamic import avoids pulling react-dom's `createRoot` into the
-    // module graph for pure-logic consumers (tests). In production this is
-    // a same-tick resolve so there's no first-mount delay.
-    void import('react-dom/client').then((mod) => {
-      // Guard against destroy() racing the dynamic import: layerMount is
-      // cleared in destroy() so we check here.
-      if (!layerMount) return;
-      const root = mod.createRoot(layerMount);
-      root.render(createPortal(<InteractionLayerRoot store={store} />, layerMount));
-      reactRoot = root;
-    });
-  };
+  // The React mount used to live here (createRoot + render). Removed —
+  // separate React roots can't access the main app's context providers
+  // (PageListProvider etc.), which crashed PropPanel renderers. The host
+  // (TiptapEditor) now renders `<InteractionLayerView store={store} />`
+  // inside the main React tree.
 
-  // Initial attach (deferred if DOM not ready).
+  // Initial attach (deferred if DOM not ready). The React mount is now the
+  // host's responsibility (rendered as <InteractionLayerView> inside the
+  // main React tree by `TiptapEditor.tsx` so context providers like
+  // `<PageListProvider>` are accessible from the PropPanel renderers).
   attachListeners();
-  mountReactRoot();
 
   return {
     register(p) {
       store.register(p);
       // Re-try attach in case the DOM became available since construction.
       if (!clickListenerAttached) attachListeners();
-      if (!reactRoot) mountReactRoot();
     },
     deregister(id) {
       store.deregister(id);
@@ -445,5 +445,31 @@ export function createInteractionLayer(
       layerMount = null;
       store.clear();
     },
+    store,
   };
 }
+
+/**
+ * `<InteractionLayerView>` — React component that subscribes to a store and
+ * renders the active registration's controls (PropPanel, Toolbar, Breadcrumb).
+ *
+ * Render this INSIDE the main React tree (e.g. from `<TiptapEditor>`'s
+ * wrapper) so the PropPanel renderers have access to React context providers
+ * like `<PageListProvider>`, `<ThemeProvider>`, `<DocumentContext>`, etc.
+ *
+ * The layer's `mountReactRoot` was removed because using a separate
+ * `createRoot()` strands the PropPanel's tree from the app's providers —
+ * `usePageList()` and friends throw "no provider" errors. Hosting in the
+ * main tree is the correct pattern.
+ *
+ * The wrapping div carries `data-ok-interaction-layer` — the layer's
+ * outside-click handler uses this marker to detect clicks INSIDE the
+ * PropPanel/dialogs and avoid dismissing them as "outside".
+ */
+export const InteractionLayerView: FC<{ store: InteractionLayerStore }> = ({ store }) => {
+  return (
+    <div data-ok-interaction-layer="" className="contents">
+      <InteractionLayerRoot store={store} />
+    </div>
+  );
+};
