@@ -25,5 +25,3 @@ export interface EventChannels {
    */
   'ok:git-init-notice': { payload: { gitDir: string } };
 }
-
-export type EventChannelName = keyof EventChannels;
