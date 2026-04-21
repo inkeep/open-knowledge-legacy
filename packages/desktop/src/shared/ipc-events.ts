@@ -18,6 +18,12 @@ export interface EventChannels {
   'ok:project:switched': { payload: OkDesktopConfig };
   /** Main → renderer menu-action dispatch (File → New Doc, Edit → Toggle Sidebar, etc.). */
   'ok:menu-action': { payload: OkMenuAction };
+  /**
+   * Main → renderer one-shot after `ensureProjectGit` ran `git init` during
+   * utility boot. Renderer subscriber (app-side) surfaces a sonner `toast.info`
+   * per SPEC R5b / D10. Absent when the project already had `.git/`.
+   */
+  'ok:git-init-notice': { payload: { gitDir: string } };
 }
 
 export type EventChannelName = keyof EventChannels;

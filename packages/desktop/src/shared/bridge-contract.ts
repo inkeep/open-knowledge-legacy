@@ -57,6 +57,12 @@ export interface OkDesktopBridge {
 
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
   onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `git-init-notice` — fired at most once per window, right after
+   * `ensureProjectGit` ran `git init` during the utility's boot. Renderer uses
+   * this to surface a sonner toast (SPEC R5b / D10).
+   */
+  onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
 
   dialog: {
     openFolder(): Promise<string | null>;

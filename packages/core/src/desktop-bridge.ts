@@ -100,6 +100,13 @@ export interface OkDesktopBridge {
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
   /** Subscribe to menu-bar actions. Returns unsubscribe. */
   onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `git-init-notice` — fired at most once per window, right after
+   * `ensureProjectGit` ran `git init` during the utility's boot. Renderer uses
+   * this to surface a sonner toast (SPEC 2026-04-21-shadow-repo-single-mode
+   * R5b / D10). Returns unsubscribe.
+   */
+  onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
 
   /** Native folder-picker dialog surfaces. */
   dialog: {
