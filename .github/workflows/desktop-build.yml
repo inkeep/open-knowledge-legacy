@@ -35,9 +35,15 @@ name: Desktop build
 #
 # App Store Connect API key alternative (simpler for org-level rotation):
 # replace APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID with
-# APPLE_API_KEY (path to .p8) + APPLE_API_KEY_ID + APPLE_API_ISSUER. The
-# afterSign script auto-detects which credential shape is present and fails
-# loud if any shape is partial rather than silently skipping.
+# APPLE_API_KEY (path to .p8) + APPLE_API_KEY_ID [+ APPLE_API_ISSUER]. The
+# issuer is required only for Team keys — Individual keys rejected it with
+# 401 Unauthorized per @electron/notarize's NotaryToolApiKeyCredentials
+# type (lib/types.d.ts). The afterSign script auto-detects which credential
+# shape is present and fails loud if any shape is partial rather than
+# silently skipping. APPLE_* credentials are gated on `CSC_LINK` being
+# set (signed mode) — in unsigned mode they are explicitly not passed to
+# electron-builder so an operator who sets APPLE_* but forgets CSC_LINK
+# cannot accidentally attempt to notarize an ad-hoc-signed .app.
 
 on:
   workflow_dispatch: {}
@@ -124,12 +130,20 @@ jobs:
         # via the afterSign partial-credential guard — silent skip happens
         # only when zero credentials are present, which is the unsigned
         # path handled above by invoking `build:mac:unsigned` explicitly.
+        #
+        # Every credential env var is gated on `signmode.outputs.mode ==
+        # 'signed'`. In unsigned mode electron-builder and afterSign see
+        # empty strings and take the zero-cred paths naturally — so an
+        # operator who sets APPLE_* but forgets CSC_LINK gets a clean
+        # unsigned build, not a confusing "notarization failed: ad-hoc
+        # signed app" from Apple's notary service. GHA's `A && B || C`
+        # ternary on expressions returns B when A is truthy, else C.
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_TEAM_ID || '' }}
           # GH_TOKEN is not passed — we don't auto-publish from this
           # workflow yet. Release automation is M7.
         working-directory: packages/desktop

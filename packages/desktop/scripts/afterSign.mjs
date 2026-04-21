@@ -34,7 +34,11 @@ import { expectedFuseState, fuseStateName, targetFuses } from './target-fuses.mj
  *
  * Supported shapes:
  *   - APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (password flow)
- *   - APPLE_API_KEY + APPLE_API_KEY_ID [+ APPLE_API_ISSUER] (App Store Connect API key)
+ *   - APPLE_API_KEY + APPLE_API_KEY_ID [+ APPLE_API_ISSUER] (App Store Connect
+ *     API key). APPLE_API_ISSUER is required for **Team** keys and rejected
+ *     for **Individual** keys (401 Unauthorized). We follow
+ *     `@electron/notarize`'s `NotaryToolApiKeyCredentials` which types it as
+ *     optional — the operator decides based on which key class they're using.
  *   - APPLE_KEYCHAIN_PROFILE [+ APPLE_KEYCHAIN] (`xcrun notarytool store-credentials`
  *     profile; primarily a local-dev convenience)
  */
