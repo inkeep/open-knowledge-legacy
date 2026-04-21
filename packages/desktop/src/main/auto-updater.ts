@@ -26,6 +26,7 @@
  */
 
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron';
+import { createSender, type EventChannels, type SendTarget } from '../shared/ipc-events.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import type { AppState } from './state-store.ts';
 
@@ -54,11 +55,6 @@ export interface UpdaterLike {
   off(event: string, listener: (...args: unknown[]) => void): this;
   checkForUpdatesAndNotify(): Promise<unknown>;
   quitAndInstall(): void;
-}
-
-/** `BrowserWindow.getAllWindows()` shape — we only need `webContents.send`. */
-export interface WebContentsSink {
-  webContents: { send(channel: string, payload: unknown): void };
 }
 
 /** Minimal `ipcMain` surface — ipcMain.removeHandler() for teardown. */
@@ -91,7 +87,7 @@ export interface StartAutoUpdaterOpts {
   ipcMain: IpcMainLike;
   readState: () => AppState;
   writeState: (next: AppState) => void;
-  getWindows: () => WebContentsSink[];
+  getWindows: () => readonly SendTarget[];
   getAppVersion: () => string;
   isPackaged: boolean;
   /** True when `OK_UPDATER_FORCE_DEV=1` — lets Tier-2 smoke harness opt in. */
@@ -179,10 +175,15 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   // Helpers over AppState — isolate persistence seam
   // ————————————————————————————————————————————————————————
 
-  const broadcast = <P>(channel: string, payload: P): void => {
-    for (const win of getWindows()) {
-      win.webContents.send(channel, payload);
-    }
+  // Typed main→renderer sender — routed through `createSender` per D19
+  // (lint rule bans direct `webContents.send`). Fan-out to every open
+  // BrowserWindow so every window's toast subscriber fires once.
+  const send = createSender(getWindows);
+  const broadcast = <K extends keyof EventChannels>(
+    channel: K,
+    payload: EventChannels[K]['payload'],
+  ): void => {
+    send(channel, payload);
   };
 
   /** Evaluate D12 stuck-hint gate on every `error` emission. */
@@ -402,9 +403,12 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 }
 
 // ————————————————————————————————————————————————————————
-// Type compatibility shim — BrowserWindow satisfies WebContentsSink.
+// Type compatibility shim — BrowserWindow satisfies SendTarget.
 // Exists as a compile-time assertion; not exported for runtime use.
 // ————————————————————————————————————————————————————————
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _BrowserWindowIsWebContentsSink = BrowserWindow extends WebContentsSink ? true : false;
+type _BrowserWindowIsSendTarget = BrowserWindow extends SendTarget ? true : false;
+const _sendTargetCheck: _BrowserWindowIsSendTarget = true;
+// Silence "declared but never used" — this variable exists purely to force
+// the conditional-type check above to be evaluated.
+export const __SEND_TARGET_CHECK__ = _sendTargetCheck;

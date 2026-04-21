@@ -7,8 +7,14 @@
  * side listener wrappers (electron/electron#33328 — returned unsubscribe
  * closures must retain the wrapped-listener reference for
  * `ipcRenderer.removeListener` to match).
+ *
+ * Main-process dispatch goes through `createSender(getWindows)` — a typed
+ * factory that mirrors `createHandler` / `createInvoker`. Direct
+ * `webContents.send(...)` calls are banned outside this file by the D19
+ * lint rule in `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */
 
+import type { WebContents } from 'electron';
 import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
 
 export interface EventChannels {
@@ -44,4 +50,42 @@ export interface EventChannels {
    * the user at the manual-download page. Fires at most once per installation.
    */
   'ok:update:stuck-hint': { payload: { downloadUrl: string } };
+}
+
+export type EventChannelName = keyof EventChannels;
+
+/**
+ * Minimum shape the sender needs — `webContents.send(channel, payload)`.
+ * `BrowserWindow` satisfies this structurally, as does any mock-object in
+ * tests. Accepting the wider `WebContents` type from electron keeps the
+ * production call site honest.
+ */
+export interface SendTarget {
+  webContents: Pick<WebContents, 'send'>;
+}
+
+/**
+ * Build a typed sender that fan-outs an EventChannels-declared event to
+ * every target returned by `getTargets()` (e.g., `BrowserWindow.getAllWindows`).
+ *
+ * Channel name + payload shape are type-checked against the EventChannels
+ * map — a typo on the channel literal fails at compile time, which is the
+ * guarantee direct `webContents.send(...)` calls cannot provide.
+ *
+ * Usage:
+ * ```ts
+ * const send = createSender(() => BrowserWindow.getAllWindows());
+ * send('ok:update:downloaded', { version: '0.3.1' });
+ * ```
+ *
+ * D19: this is the only place in `packages/desktop/src/` (outside the
+ * allowlist) where `webContents.send` is legal. The lint rule
+ * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` enforces it.
+ */
+export function createSender(getTargets: () => readonly SendTarget[]) {
+  return <K extends EventChannelName>(channel: K, payload: EventChannels[K]['payload']): void => {
+    for (const target of getTargets()) {
+      target.webContents.send(channel, payload);
+    }
+  };
 }

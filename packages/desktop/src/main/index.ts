@@ -32,6 +32,7 @@ import {
 } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { type StartAutoUpdaterHandle, startAutoUpdater } from './auto-updater.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
@@ -105,6 +106,13 @@ function saveAppState(state: AppState) {
 let appState: AppState = emptyState();
 let navigatorWindow: BrowserWindowLike | null = null;
 let wm: WindowManager;
+/**
+ * M3 auto-updater handle — single instance per app launch. Wired at the
+ * end of `app.whenReady()` and torn down on `app.on('will-quit')` per
+ * parent D40 canonical shutdown ordering. Null before whenReady and
+ * after destroy.
+ */
+let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -412,7 +420,7 @@ function installLocalhostCorsInjector() {
   );
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   appState = loadAppState();
   installLocalhostCorsInjector();
   registerIpcHandlers();
@@ -428,6 +436,37 @@ app.whenReady().then(() => {
   } else {
     openNavigator();
   }
+
+  // M3 auto-updater — wired as the LAST step in whenReady, after the window-
+  // open branch (either openProjectOrFallbackToNavigator OR openNavigator).
+  // F2 audit: not gated on createNavigatorWindow specifically — Navigator
+  // only opens on the Option-held / no-last-project path, but the updater
+  // must run on every boot path. `electron-updater` is imported dynamically
+  // so unit tests that import main/index.ts indirectly don't pull in the
+  // Electron-only runtime dependency.
+  const { autoUpdater } = await import('electron-updater');
+  autoUpdaterHandle = startAutoUpdater({
+    updater: autoUpdater,
+    ipcMain,
+    readState: () => appState,
+    writeState: (next) => {
+      appState = next;
+      saveAppState(appState);
+    },
+    getWindows: () => BrowserWindow.getAllWindows(),
+    getAppVersion: () => app.getVersion(),
+    isPackaged: app.isPackaged,
+    forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+  });
+});
+
+// F17 audit: cleared on `will-quit` (parent D40 canonical ordering — NOT
+// `before-quit`, which fires earlier in the shutdown sequence). The handle
+// is safe to call multiple times via `?.destroy()` in case of spurious
+// will-quit emissions.
+app.on('will-quit', () => {
+  autoUpdaterHandle?.destroy();
+  autoUpdaterHandle = null;
 });
 
 app.on('window-all-closed', () => {
