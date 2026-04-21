@@ -73,6 +73,7 @@ import {
 } from './file-watcher.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
+import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 import {
   type HistoryRef,
   historyGit,
@@ -1022,12 +1023,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
     const agentName =
-      typeof body.agentName === 'string'
-        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
-        : 'Claude';
+      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
     if (clientName !== undefined) {
-      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+      clientName = sanitizeGitIdentity(clientName);
     }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
