@@ -13,6 +13,8 @@ export interface ReconciliationMetrics {
   branchSwitchCount: number;
   parkCount: number;
   gitAutoSaveFailureCount: number;
+  /** Count of per-writer fan-out commitWipFromTree failures (US-014, D38). */
+  gitWriterCommitFailureCount: number;
   cc1BroadcastCount: number;
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
@@ -57,6 +59,7 @@ const counters: ReconciliationMetrics = {
   branchSwitchCount: 0,
   parkCount: 0,
   gitAutoSaveFailureCount: 0,
+  gitWriterCommitFailureCount: 0,
   cc1BroadcastCount: 0,
   cc1BroadcastDropCount: 0,
   cc1SubscriberCount: 0,
@@ -102,6 +105,10 @@ export function incrementPark(): void {
 
 export function incrementGitAutoSaveFailure(): void {
   counters.gitAutoSaveFailureCount++;
+}
+
+export function incrementGitWriterCommitFailure(): void {
+  counters.gitWriterCommitFailureCount++;
 }
 
 export function incrementCC1Broadcast(): void {
@@ -202,6 +209,7 @@ export function resetMetrics(): void {
   counters.branchSwitchCount = 0;
   counters.parkCount = 0;
   counters.gitAutoSaveFailureCount = 0;
+  counters.gitWriterCommitFailureCount = 0;
   counters.cc1BroadcastCount = 0;
   counters.cc1BroadcastDropCount = 0;
   counters.cc1SubscriberCount = 0;

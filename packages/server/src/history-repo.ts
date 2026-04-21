@@ -238,6 +238,83 @@ export async function commitWip(
   }
 }
 
+// ─── Per-writer fan-out helpers (US-014, FR-7) ───────────────────────────────
+
+/**
+ * Stage the content directory and return a git tree SHA.
+ * Used by the per-writer L2 fan-out so all writers share the same tree.
+ * Uses a fresh index (no seeding from any ref) so the tree reflects
+ * current filesystem state of contentRoot.
+ */
+export async function buildWipTree(shadow: HistoryHandle, contentRoot: string): Promise<string> {
+  const tmpIndex = resolve(shadow.gitDir, `index-wip-fanout-${randomUUID()}`);
+  const sg = historyGit(shadow);
+  const gitPathspec = contentRoot || '.';
+
+  try {
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_WORK_TREE: shadow.workTree,
+        GIT_INDEX_FILE: tmpIndex,
+      })
+      .raw('add', gitPathspec);
+    return (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+}
+
+/**
+ * Create a commit from a pre-built tree SHA and advance the per-writer WIP ref.
+ * All per-writer commits in one fan-out cycle share the same treeSha.
+ */
+export async function commitWipFromTree(
+  shadow: HistoryHandle,
+  writer: WriterIdentity,
+  treeSha: string,
+  message: string,
+  branch = 'main',
+): Promise<string> {
+  const ref = `refs/wip/${branch}/${writer.id}`;
+  const sg = historyGit(shadow);
+
+  let parentSha: string | null = null;
+  try {
+    parentSha = (await sg.raw('rev-parse', ref)).trim();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+      console.error(`[history-repo] Unexpected error resolving ${ref}:`, e);
+      throw e;
+    }
+  }
+
+  const args = ['commit-tree', treeSha, '-m', message];
+  if (parentSha) args.push('-p', parentSha);
+
+  const commitSha = (
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_AUTHOR_NAME: writer.name,
+        GIT_AUTHOR_EMAIL: writer.email,
+        GIT_COMMITTER_NAME: 'openknowledge',
+        GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+      })
+      .raw(...args)
+  ).trim();
+
+  await sg.raw('update-ref', ref, commitSha);
+  return commitSha;
+}
+
 // ─── D34 classified writer-identity constants ─────────────────────────────────
 
 /** Non-attributable file-system writes (disk changes, reconciliation). */

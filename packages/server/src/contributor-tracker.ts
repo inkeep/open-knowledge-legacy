@@ -9,7 +9,7 @@
  * called only AFTER commitWip() succeeds to prevent data loss on failed commits (D16).
  */
 
-interface ContributorEntry {
+export interface ContributorEntry {
   agentId: string;
   displayName: string;
   colorSeed: string;
@@ -99,6 +99,25 @@ export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>):
  */
 export function formatContributors(): string {
   return formatContributorsFrom(pendingContributors);
+}
+
+/**
+ * Re-insert a single writer's entries back into the live accumulator.
+ * Called by persistence.ts when commitWipFromTree fails for a specific writer
+ * so that writer's attribution is not lost (D38 per-writer partition).
+ */
+export function restoreContributorEntry(agentId: string, entry: ContributorEntry): void {
+  let live = pendingContributors.get(agentId);
+  if (!live) {
+    live = {
+      agentId,
+      displayName: entry.displayName,
+      colorSeed: entry.colorSeed,
+      docs: new Set(),
+    };
+    pendingContributors.set(agentId, live);
+  }
+  for (const doc of entry.docs) live.docs.add(doc);
 }
 
 /**

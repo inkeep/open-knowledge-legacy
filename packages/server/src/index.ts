@@ -67,10 +67,12 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  buildWipTree,
   type CheckpointGcResult,
   type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  commitWipFromTree,
   DEFAULT_CHECKPOINT_RETENTION,
   FILE_SYSTEM_WRITER,
   GIT_UPSTREAM_WRITER,

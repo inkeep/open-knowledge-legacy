@@ -15,9 +15,11 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   formatContributorsFrom,
   recordContributor,
+  restoreContributorEntry,
   restoreContributors,
   swapContributors,
 } from './contributor-tracker.ts';
@@ -25,7 +27,9 @@ import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import type { HistoryRef, WriterIdentity } from './history-repo.ts';
 import {
+  buildWipTree,
   commitWip,
+  commitWipFromTree,
   FILE_SYSTEM_WRITER,
   GIT_UPSTREAM_WRITER,
   historyGit,
@@ -33,7 +37,11 @@ import {
 } from './history-repo.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
+import {
+  incrementGitAutoSaveFailure,
+  incrementGitWriterCommitFailure,
+  incrementPersistenceDiskWrite,
+} from './metrics.ts';
 
 const log = getLogger('persistence');
 
@@ -224,38 +232,84 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     // Read shadow ref at commit time (not construction time) so deferred init propagates
     const shadow = historyRef?.current;
     if (shadow) {
-      // L2 commits go to shadow repo
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
       const contributors = formatContributorsFrom(snapshot);
       const message = `wip: auto-save ${new Date().toISOString()}${contributors}`;
       const branch = getCurrentBranch?.() ?? 'main';
-      // Dispatch writer from contributor snapshot (D32, FR-16) — replaces 'server' hardcode.
-      // US-014 will loop all distinct writers for per-session fan-out; for now use first.
-      const snapshotValues = [...snapshot.values()];
-      const activeWriter: WriterIdentity =
-        snapshotValues.length > 0
-          ? {
-              id: snapshotValues[0].agentId,
-              name: snapshotValues[0].displayName,
-              email: `${snapshotValues[0].agentId}@openknowledge.local`,
-            }
-          : SERVICE_WRITER;
+
+      if (snapshot.size === 0) {
+        // No attributed contributors — fall back to single SERVICE_WRITER commit (D32)
+        try {
+          const sha = await commitWip(shadow, SERVICE_WRITER, contentRoot, message, branch);
+          consecutiveGitFailures = 0;
+          log.info(
+            { sha: sha.slice(0, 8), writer: SERVICE_WRITER.id },
+            `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${SERVICE_WRITER.id}`,
+          );
+        } catch (e) {
+          consecutiveGitFailures++;
+          incrementGitAutoSaveFailure();
+          log.error(
+            { err: e, attempt: consecutiveGitFailures },
+            `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
+          );
+          if (consecutiveGitFailures >= 3) {
+            log.error(
+              { attempt: consecutiveGitFailures },
+              '[persistence] CRITICAL: Git auto-save has failed 3+ times. Version history is NOT being recorded.',
+            );
+          }
+        }
+        return;
+      }
+
+      // Per-writer fan-out (FR-7, US-014): build tree once, commit per writer.
+      // All per-writer commits share the same tree SHA for this drain cycle.
+      let treeSha: string;
       try {
-        const sha = await commitWip(shadow, activeWriter, contentRoot, message, branch);
-        // snapshot discarded on success — new map already accumulating
-        consecutiveGitFailures = 0;
-        log.info(
-          { sha: sha.slice(0, 8), writer: activeWriter.id },
-          `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${activeWriter.id}`,
-        );
+        treeSha = await buildWipTree(shadow, contentRoot);
       } catch (e) {
-        restoreContributors(snapshot); // merge snapshot back — don't lose attribution (D16)
+        // Tree build failed — restore all contributors and abort this cycle
+        restoreContributors(snapshot);
         consecutiveGitFailures++;
         incrementGitAutoSaveFailure();
         log.error(
           { err: e, attempt: consecutiveGitFailures },
-          `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
+          `[persistence] Shadow WIP tree build failed (attempt ${consecutiveGitFailures})`,
         );
+        return;
+      }
+
+      let anySuccess = false;
+      for (const [writerId, entry] of snapshot as Map<string, ContributorEntry>) {
+        const writer: WriterIdentity = {
+          id: writerId,
+          name: entry.displayName,
+          email: `${writerId}@openknowledge.local`,
+        };
+        try {
+          const sha = await commitWipFromTree(shadow, writer, treeSha, message, branch);
+          anySuccess = true;
+          log.info(
+            { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },
+            `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${writerId}`,
+          );
+        } catch (e) {
+          // Per-writer failure — restore this writer's entry, let others succeed (D38)
+          restoreContributorEntry(writerId, entry);
+          incrementGitWriterCommitFailure();
+          log.error(
+            { err: e, writer: writerId },
+            `[persistence] Per-writer shadow commit failed for ${writerId}`,
+          );
+        }
+      }
+
+      if (anySuccess) {
+        consecutiveGitFailures = 0;
+      } else {
+        consecutiveGitFailures++;
+        incrementGitAutoSaveFailure();
         if (consecutiveGitFailures >= 3) {
           log.error(
             { attempt: consecutiveGitFailures },
