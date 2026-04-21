@@ -485,7 +485,7 @@ const FileTreeNode: FC<{
             onToggle(node.path);
           }}
         >
-          <ChevronRight className="size-4 text-muted-foreground/50" />
+          <ChevronRight className="text-muted-foreground/50" />
         </SidebarMenuAction>
       )}
     </>
@@ -1201,21 +1201,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     if (ancestorSet.has(path)) {
       return;
     }
-    if (expandedPaths.has(path)) {
-      setUserCollapsed((prev) => new Set(prev).add(path));
-      setUserExpanded((prev) => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
-    } else {
-      setUserExpanded((prev) => new Set(prev).add(path));
-      setUserCollapsed((prev) => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
-    }
+    const [add, remove] = expandedPaths.has(path)
+      ? [setUserCollapsed, setUserExpanded]
+      : [setUserExpanded, setUserCollapsed];
+
+    add((prev) => new Set(prev).add(path));
+    remove((prev) => {
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
   }
 
   function getInlineCreate(parentDir: string): InlineCreateProps | null {
