@@ -6,7 +6,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
-import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { createSourceClipboardExtension } from './clipboard/index.ts';
 import { codeLanguages } from './markdown-code-languages';
 

@@ -2,7 +2,7 @@ import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
-import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
+import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/raw-mdx-nav-event';
 import { createNavigationRetryHandler } from '@/editor/navigation-retry';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
