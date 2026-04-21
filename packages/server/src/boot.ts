@@ -24,6 +24,7 @@ import type { Server as HttpServer } from 'node:http';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
+import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 
 /** 30 minutes — matches SPEC §9 default threshold. */
@@ -85,7 +86,7 @@ export interface BootServerOptions
    * BEFORE `httpServer.listen()` so that on failure, `bootServer` rejects
    * before any port is bound (SPEC D12 — no degraded fallback).
    */
-  ensureProjectGitFn?: () => Promise<{ didInit: boolean }>;
+  ensureProjectGitFn?: () => Promise<EnsureProjectGitResult>;
   /**
    * CLI-specific UI-sibling spawn orchestration. Called once after the server
    * has bound a port IF `attachUiSibling !== false`. Receives `lockDir` so the

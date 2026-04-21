@@ -23,6 +23,7 @@ Active when no live `server.lock` is present and auto-start is **not** opted out
 - Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
 - Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) in the first tool-result error rather than silently dropping to disk-only
 - Once the poll succeeds, subsequent behavior is identical to Connected mode
+- **Transitive auto-git-init:** the spawned `ok start` runs `ensureProjectGit` on the project directory, so if there is no parent `.git/` present it will be created (default branch `main`) before the collab server binds. Running `ok mcp` against a directory without `.git/` therefore creates one transitively — the disclosure line appears in the spawned server's stderr log. To suppress both the auto-spawn and the transitive git-init together, opt out with `OK_MCP_AUTOSTART=0` (env) or `mcp.autoStart: false` (config) to fall into Disk-only mode.
 </Tab>
 <Tab value="Disk-only mode">
 Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.

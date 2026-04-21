@@ -219,10 +219,20 @@ async function openProjectOrFallbackToNavigator(projectPath: string) {
   try {
     await openProject(projectPath);
   } catch (err) {
+    const errorMessage = (err as Error).message;
     console.error('[main] openProject failed, falling back to Navigator', {
       projectPath,
-      err: (err as Error).message,
+      err: errorMessage,
     });
+    // Surface the failure so users know why the Navigator reappeared. Without
+    // this, a `ProjectGitInitError` (D12 fail-fast — git missing, permission
+    // denied, partial init) drops the user back into the picker with zero
+    // explanation, which reads as "the app is broken." Modal is blocking and
+    // self-acknowledgeable — no follow-up actions needed beyond OK. SPEC R6
+    // has the authoritative install-or-init-yourself copy for the CLI; the
+    // utility's IPC error message already includes the git-init details in
+    // its body.
+    dialog.showErrorBox('Unable to open project', `${projectPath}\n\n${errorMessage}`);
     openNavigator();
   }
 }

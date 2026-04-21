@@ -558,5 +558,49 @@ describe('WindowManager', () => {
 
       expect((window.webContents.once as ReturnType<typeof mock>).mock.calls.length).toBe(0);
     });
+
+    test('dom-ready listener registered BEFORE loadFile resolves (Electron event-order regression)', async () => {
+      // Real-Electron event order: `dom-ready` fires BEFORE `did-finish-load`,
+      // and `loadURL` / `loadFile`'s promise resolves on `did-finish-load`.
+      // Registering `webContents.once('dom-ready', ...)` AFTER the load promise
+      // resolves silently misses the event and the toast never fires.
+      // This test asserts the listener is attached BEFORE the load resolves.
+      let onceCalled = false;
+      let onceCalledBeforeLoadResolved = false;
+      env.deps.createWindow = () => {
+        const w = makeWindow();
+        const baseOnce = w.webContents.once as (event: 'dom-ready', cb: () => void) => void;
+        w.webContents.once = ((event: 'dom-ready', cb: () => void) => {
+          onceCalled = true;
+          baseOnce(event, cb);
+        }) as typeof w.webContents.once;
+        const baseLoadFile = w.loadFile as () => Promise<void>;
+        w.loadFile = mock(async () => {
+          onceCalledBeforeLoadResolved = onceCalled;
+          return baseLoadFile();
+        }) as typeof w.loadFile;
+        const baseLoadURL = w.loadURL as () => Promise<void>;
+        w.loadURL = mock(async () => {
+          onceCalledBeforeLoadResolved = onceCalled;
+          return baseLoadURL();
+        }) as typeof w.loadURL;
+        env.windows.push(w);
+        env.createWindowOpts.push({ additionalArguments: [], title: '' });
+        return w;
+      };
+
+      const wm = new WindowManager(env.deps);
+      const promise = wm.createProjectWindow({ projectPath: '/tmp/event-order' });
+      env.utilities[0]?.fire({
+        type: 'ready',
+        port: 52060,
+        apiOrigin: 'http://localhost:52060',
+        didGitInit: true,
+      });
+      await promise;
+
+      expect(onceCalled).toBe(true);
+      expect(onceCalledBeforeLoadResolved).toBe(true);
+    });
   });
 });

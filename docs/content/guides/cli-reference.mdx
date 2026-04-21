@@ -27,16 +27,19 @@ npx @inkeep/open-knowledge start [options]
 npx @inkeep/open-knowledge              # equivalent
 ```
 
-| Option                 | Description                             |
-| ---------------------- | --------------------------------------- |
-| `--port <port>`        | Server port (overrides config)          |
-| `--host <host>`        | Bind address (overrides config)         |
-| `--open`               | Open the editor in your default browser |
-| `--content-dir <path>` | Content directory to serve              |
+| Option                 | Description                                              |
+| ---------------------- | -------------------------------------------------------- |
+| `--port <port>`        | Server port (overrides config)                           |
+| `--host <host>`        | Bind address (overrides config)                          |
+| `--open`               | Open the editor in your default browser                  |
+| `--content-dir <path>` | Content directory to serve                               |
+| `--no-init`            | Skip `.open-knowledge/` scaffolding and parent-repo `git init` |
 
 The server binds to `localhost:3000` by default. Only one server can run per content directory -- a second attempt fails with a lock collision error.
 
 If the content directory has no `.git/`, `start` runs `git init --initial-branch=main` before the attribution journal is created. The CLI's first-run preview block discloses the auto-init with the line `Initialized git repo at <cwd>/.git/ (default branch: main)`. If git is not on PATH, `start` exits non-zero with a clear install-or-init-yourself message.
+
+To opt out of both `.open-knowledge/` scaffolding and the parent-repo auto-`git init`, pass `--no-init`. The flag is a single opt-out for both scaffolding behaviors — `start` will boot against whatever state the directory is in, and the attribution journal still initializes if a `.git/` exists. Useful for non-interactive smoke tests and for operators who prefer to manage `git init` themselves.
 
 ## `init`
 

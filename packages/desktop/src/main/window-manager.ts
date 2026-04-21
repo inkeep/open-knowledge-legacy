@@ -340,21 +340,25 @@ export class WindowManager {
       title: formatEditorTitle(projectName),
     });
 
-    if (this.deps.rendererDevUrl) {
-      await window.loadURL(this.deps.rendererDevUrl);
-    } else {
-      await window.loadFile(this.deps.rendererEntryPath);
-    }
-
     // SPEC R5b / D10 — dispatch `git-init-notice` to the renderer so it can
-    // surface a sonner toast. Deferred until `dom-ready` so the renderer's
-    // bridge subscriber has mounted before the event fires (defeats the
-    // SPEC §14 subscriber-mount race).
+    // surface a sonner toast. Register the `dom-ready` listener BEFORE awaiting
+    // `loadURL` / `loadFile` because their returned promises resolve on
+    // `did-finish-load`, which fires AFTER `dom-ready` — registering after the
+    // await would silently miss the one-shot event and the toast would never
+    // fire. Deferring to `dom-ready` (rather than firing synchronously) also
+    // ensures the renderer's bridge subscriber has mounted before the event
+    // lands (defeats the SPEC §14 subscriber-mount race).
     if (didGitInit) {
       const gitDir = resolve(projectPath, '.git');
       window.webContents.once('dom-ready', () => {
         sendToRenderer(window.webContents, 'ok:git-init-notice', { gitDir });
       });
+    }
+
+    if (this.deps.rendererDevUrl) {
+      await window.loadURL(this.deps.rendererDevUrl);
+    } else {
+      await window.loadFile(this.deps.rendererEntryPath);
     }
 
     window.on('closed', () => {
