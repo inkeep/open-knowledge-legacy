@@ -45,6 +45,11 @@ jobs:
       - run: bun run knip
       - run: bun run lint
 
+  # KEEP IN SYNC WITH release.yml test matrix (task list, node-version, cache
+  # key shape). The shared cache-key contract is load-bearing — diverging
+  # shape silently breaks cross-workflow cache sharing (CI's green cache
+  # stops priming Publish's runs). Nothing mechanically enforces this;
+  # review both workflows together when adding/removing tasks.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15

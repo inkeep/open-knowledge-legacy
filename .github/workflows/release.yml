@@ -9,18 +9,114 @@ on:
     branches:
       - main
 
+# Default to read-only. The `release` job overrides with the write-class
+# permissions needed for npm OIDC + GitHub release creation. Lint and test
+# jobs do not need write access — keeping them read-only reduces blast
+# radius if a third-party action is ever compromised.
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  packages: write
-  id-token: write
+  contents: read
+
+# Serialize publishes per ref so two pushes landing within seconds cannot
+# race on `changeset publish` (which would corrupt npm publishing).
+# `cancel-in-progress: false` is critical — never cancel an in-progress
+# publish mid-npm-push.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # Quality gate, part 1: lint. Mirrors CI's `lint` job structure but runs
+  # only `bun run lint` — the previous Publish gate (`bun run check`) never
+  # included knip, and knip is unused-export detection whose failure should
+  # not block a release. CI still runs knip; Publish intentionally does not.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  # Quality gate, part 2: matrix-fanned turbo tasks. Mirrors CI's `test` job
+  # exactly. Each task runs on its own runner — no CPU contention from sibling
+  # tasks. This split was made on 2026-04-21 to eliminate flakes that surfaced
+  # when the previous single-job gate ran `turbo run typecheck test test:integration
+  # test:conversion test:fidelity` in parallel on a single 2-vCPU runner. The
+  # resulting CPU contention let @parcel/watcher (inotify) drop `create` events
+  # for files written into freshly-created subdirectories, breaking
+  # `agent-focus-wiring.test.ts` and others. Same SHA passed CI (matrix-sharded)
+  # but failed Publish (single-runner) — see run 24701604487.
+  #
+  # Cache key matches CI's `${{ runner.os }}-turbo-${{ matrix.task }}-${{ github.sha }}`
+  # so the two workflows share turbo cache for the same SHA: when CI completes
+  # first, Publish hits FULL TURBO and skips work it has already validated.
+  #
+  # KEEP IN SYNC WITH ci.yml test matrix (task list, node-version, cache key
+  # shape). The shared cache-key contract is load-bearing — diverging shape
+  # silently breaks cross-workflow cache sharing. Nothing mechanically
+  # enforces this; review both workflows together when adding/removing tasks.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        task:
+          - typecheck
+          - test
+          - test:integration
+          - test:conversion
+          - test:fidelity
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Node 22+ is required because turbo's `^build` pulls in
+      # `@inkeep/open-knowledge-app#build` (vite build) transitively via the cli
+      # package's workspace dep on the app. Vite's config loader evaluates
+      # the bundled config with native `import()`, and externalized workspace
+      # deps that resolve to `.ts` sources (e.g., `@inkeep/open-knowledge-server`
+      # which exports `./src/index.ts`) hit Node's ESM loader. Node 20 throws
+      # ERR_UNKNOWN_FILE_EXTENSION; Node 22.6+ strips TypeScript types natively.
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: "1.3.11"
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ matrix.task }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-${{ matrix.task }}-
+      - run: bun install --frozen-lockfile
+      - run: bunx turbo run ${{ matrix.task }}
+
   release:
     name: Release
+    needs: [lint, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 15 min is ~4× the historical baseline. The last successful pre-matrix
+    # run (24646964907) completed in 3m43s with `bun run check` included;
+    # this job no longer runs `bun run check` (moved to `lint` + `test`), so
+    # remaining work (install + build + single-package npm publish + release
+    # creation) is lighter than that baseline. `cancel-in-progress: false`
+    # protects against mid-publish cancellation if the budget is ever hit.
+    timeout-minutes: 15
+    # Write permissions scoped to this job only. Least-privilege per scope:
+    #   contents: write       — `gh release create` (release + tag), changesets push
+    #   pull-requests: write  — changesets/action opens the "Version Packages" PR
+    #   id-token: write       — npm OIDC trusted publishing (registry.npmjs.org)
+    # Not required: `packages: write` (GitHub Packages / ghcr.io — unused here)
+    # or `issues: write` (changesets/action uses only pulls + releases APIs;
+    # `gh release create` needs only contents). Workflow-level default is
+    # `contents: read`.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -56,6 +152,9 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # Build cache lives under its own key so `bun run build`'s `^build` task
+      # graph (vite build for app + cli) is not polluted or evicted by the
+      # test-matrix caches that share keys with CI.
       - name: Setup Turborepo cache
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
@@ -67,8 +166,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run quality gate
-        run: bun run check
+      # Quality gate (lint + typecheck + test + test:integration + test:conversion +
+      # test:fidelity) is satisfied by the `lint` and `test` jobs above — see
+      # `needs: [lint, test]`. Do not re-run `bun run check` here.
 
       - name: Build packages
         run: bun run build
