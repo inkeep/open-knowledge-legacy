@@ -54,7 +54,6 @@ export {
   type ComponentMap,
   type CreateElement,
   mdastToElementTree,
-  mdastToReact,
   type WalkerOptions,
 } from './markdown/to-react.ts';
 export {

@@ -33,7 +33,7 @@ import { markdownToReact } from '@/editor/mdast-to-react';
 import { mark } from '@/lib/perf';
 import { EditorSkeleton } from './EditorSkeleton';
 
-export interface FallbackDocumentRenderProps {
+interface FallbackDocumentRenderProps {
   /** Markdown bytes — typically from `/api/document-disk`. */
   markdown: string;
   /** Optional docName for telemetry annotation. */
@@ -52,7 +52,7 @@ export interface FallbackDocumentRenderProps {
  */
 const FALLBACK_RENDER_MAX_BYTES = 500_000;
 
-export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdown, docName }) => {
+const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdown, docName }) => {
   // The parse + walk is the dominant cost of this component. We memoize
   // per-instance keyed on the `markdown` identity so (a) ancestor re-
   // renders with the same markdown see O(0) cost (just reference the
@@ -116,7 +116,7 @@ export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdo
 // render the full fumadocs tree.
 // ---------------------------------------------------------------------------
 
-export interface SuspenseDocumentFallbackProps {
+interface SuspenseDocumentFallbackProps {
   docName: string;
   /** Optional override — for tests. */
   children?: ReactNode;

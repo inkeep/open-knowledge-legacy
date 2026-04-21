@@ -89,8 +89,7 @@ export interface WalkerOptions<E = unknown> {
  *
  * Name: environment-agnostic (review Minor #21). `createElement` can be
  * React's, Preact's `h`, a string factory for SSR/test — the walker just
- * calls it. `mdastToReact` is retained as a deprecated alias for backward
- * compatibility with existing consumers.
+ * calls it.
  */
 export function mdastToElementTree<E = unknown>(
   node: Nodes | Root,
@@ -98,13 +97,6 @@ export function mdastToElementTree<E = unknown>(
 ): E | string | null {
   return walk(node as Nodes, opts);
 }
-
-/**
- * @deprecated Renamed to `mdastToElementTree` — the walker is
- * environment-agnostic; `React` in the original name was misleading
- * (review Minor #21). Alias retained for backward compatibility.
- */
-export const mdastToReact = mdastToElementTree;
 
 // ---------------------------------------------------------------------------
 // Core dispatch

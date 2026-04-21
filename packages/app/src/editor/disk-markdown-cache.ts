@@ -154,7 +154,7 @@ export function __resetDiskMarkdownCacheForTests(): void {
 // Network — exported so tests can override without touching `fetch` globally.
 // ---------------------------------------------------------------------------
 
-export type DiskMarkdownFetcher = (docName: string) => Promise<DiskMarkdownEntry | null>;
+type DiskMarkdownFetcher = (docName: string) => Promise<DiskMarkdownEntry | null>;
 
 let _fetcher: DiskMarkdownFetcher = defaultFetcher;
 

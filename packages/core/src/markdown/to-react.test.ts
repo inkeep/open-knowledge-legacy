@@ -11,7 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared';
 import { MarkdownManager } from './index';
-import { mdastToReact } from './to-react';
+import { mdastToElementTree } from './to-react';
 
 // ---------------------------------------------------------------------------
 // Test factory: produces a plain-object tree inspectable by tests.
@@ -39,14 +39,14 @@ const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
 function convert(md: string) {
   const mdast = mdManager.parseToMdast(md);
-  return mdastToReact(mdast, { createElement: testFactory });
+  return mdastToElementTree(mdast, { createElement: testFactory });
 }
 
 // ---------------------------------------------------------------------------
 // Per-node-type coverage
 // ---------------------------------------------------------------------------
 
-describe('mdastToReact — basic blocks', () => {
+describe('mdastToElementTree — basic blocks', () => {
   test('paragraph + text → <p>', () => {
     const el = convert('Hello world') as TestElement;
     expect(el.t).toBe('div');
@@ -154,7 +154,7 @@ describe('mdastToReact — basic blocks', () => {
   });
 });
 
-describe('mdastToReact — tables (GFM)', () => {
+describe('mdastToElementTree — tables (GFM)', () => {
   test('basic table with header + body', () => {
     const el = convert('| A | B |\n|---|---|\n| 1 | 2 |') as TestElement;
     const table = el.c[0] as TestElement;
@@ -176,7 +176,7 @@ describe('mdastToReact — tables (GFM)', () => {
   });
 });
 
-describe('mdastToReact — security (HTML passthrough)', () => {
+describe('mdastToElementTree — security (HTML passthrough)', () => {
   test('html nodes render as TEXT, never as raw HTML (FR11 AC)', () => {
     // When the fallback receives inline HTML (including <script> or other
     // risky tags), it must treat them as text. The factory always sees a
@@ -199,10 +199,10 @@ describe('mdastToReact — security (HTML passthrough)', () => {
   });
 });
 
-describe('mdastToReact — MDX JSX elements', () => {
+describe('mdastToElementTree — MDX JSX elements', () => {
   test('<Callout /> resolves to componentMap entry when provided', () => {
     const Callout = { __component: 'Callout' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -228,7 +228,7 @@ describe('mdastToReact — MDX JSX elements', () => {
     // e.g. `<Iframe srcdoc="<script>…</script>"/>` (browser treats the
     // uppercase tag case-insensitively). The gate now requires either a
     // mapped component OR a tag in the safe-HTML allowlist.
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -255,7 +255,7 @@ describe('mdastToReact — MDX JSX elements', () => {
     // Component must be admitted via componentMap for attributes to
     // surface (unmapped uppercase → placeholder per Pass-2 Critical #1).
     const Tabs = { __component: 'Tabs' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -289,7 +289,7 @@ describe('mdastToReact — MDX JSX elements', () => {
     // we hand the raw source to the component as a string prop and let
     // the component decide what to do with it.
     const Callout = { __component: 'Callout' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -323,7 +323,7 @@ describe('mdastToReact — MDX JSX elements', () => {
 
   test('spread attribute that is not a JSON literal is discarded (no eval)', () => {
     const Callout = { __component: 'Callout' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -354,7 +354,7 @@ describe('mdastToReact — MDX JSX elements', () => {
 
   test('bare attribute (no value) → true prop', () => {
     const Note = { __component: 'Note' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -374,7 +374,7 @@ describe('mdastToReact — MDX JSX elements', () => {
   });
 
   test('fragment (<>...</>) → <div data-ok-fragment>', () => {
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -395,7 +395,7 @@ describe('mdastToReact — MDX JSX elements', () => {
   });
 });
 
-describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
+describe('mdastToElementTree — XSS guards (review Pass-2 Critical #1)', () => {
   test('<Iframe srcdoc="<script>…</script>"/> is neutralized to placeholder', () => {
     // Primary attack vector: uppercase-initial `<Iframe>` reaches the
     // walker as an mdxJsxFlowElement (lowercase `<iframe>` is absorbed
@@ -403,7 +403,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
     // variant survives). Browser renders `<Iframe>` case-insensitively
     // as `<iframe>` and executes the srcdoc payload. Gate MUST reject
     // this with an inert placeholder.
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -439,7 +439,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
   });
 
   test('<Script>alert(1)</Script> renders as placeholder, not as <script>', () => {
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -465,7 +465,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
     // React 19 sanitizes `action`/`formAction` URLs — but we reject the
     // uppercase `<Form>` before it ever reaches the DOM, so the defense
     // is two-layer.
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -496,7 +496,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
     // `<iframe>` ever reaches the walker as mdxJsxFlowElement (e.g. a
     // future pipeline change, or a rare nested-inline edge case), the
     // allowlist still catches it.
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -520,7 +520,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
     // Admission path 1: name in componentMap — no rejection regardless of
     // what the name is. Keeps the fumadocs bindings working.
     const Callout = { __component: 'Callout' };
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -543,7 +543,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
     // Admission path 2: lowercase tag in SAFE_HTML_TAGS allowlist. `<p>`
     // is on the list — the walker renders it verbatim. This keeps
     // inline HTML like `<div>wrapper</div>` working.
-    const el = mdastToReact(
+    const el = mdastToElementTree(
       {
         type: 'root',
         children: [
@@ -644,7 +644,7 @@ describe('mdastToReact — XSS guards (review Pass-2 Critical #1)', () => {
   });
 });
 
-describe('mdastToReact — wikiLink + rawMdxFallback (OK-specific)', () => {
+describe('mdastToElementTree — wikiLink + rawMdxFallback (OK-specific)', () => {
   test('wikiLink renders as <a class="ok-wiki-link">', () => {
     const el = convert('[[SomePage]]') as TestElement;
     const para = el.c[0] as TestElement;
@@ -667,7 +667,7 @@ describe('mdastToReact — wikiLink + rawMdxFallback (OK-specific)', () => {
   });
 });
 
-describe('mdastToReact — frontmatter skipped', () => {
+describe('mdastToElementTree — frontmatter skipped', () => {
   test('yaml frontmatter is skipped (returns null, not rendered)', () => {
     const md = '---\ntitle: Hi\n---\n\nBody';
     const el = convert(md) as TestElement;
@@ -681,7 +681,7 @@ describe('mdastToReact — frontmatter skipped', () => {
   });
 });
 
-describe('mdastToReact — corpus parity (spot check)', () => {
+describe('mdastToElementTree — corpus parity (spot check)', () => {
   test('renders the full commonmark "paragraphs and phrasing" shape', () => {
     const md = `# Title
 

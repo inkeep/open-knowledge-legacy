@@ -36,13 +36,13 @@ import type { FC, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 
-export type InteractionPropPanelKind =
+type InteractionPropPanelKind =
   | 'internal-link'
   | 'wiki-link'
   | 'raw-mdx-fallback'
   | 'jsx-component';
 
-export interface InteractionPropPanelProps {
+interface InteractionPropPanelProps {
   /** Chip-kind discriminator — emitted as `data-ok-prop-panel="<kind>"`. */
   kind: InteractionPropPanelKind;
   /** ARIA label (e.g. "Link options"). */

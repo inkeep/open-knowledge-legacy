@@ -32,13 +32,7 @@ import { resolveLinkTargetIntent } from '../../components/link-target-intent';
 import type { PageListCacheSnapshot } from '../page-list-cache';
 import type { MarkInfo } from './mark-identity';
 
-export type LinkResolutionState =
-  | 'loading'
-  | 'external'
-  | 'anchor'
-  | 'resolved'
-  | 'folder'
-  | 'unresolved';
+type LinkResolutionState = 'loading' | 'external' | 'anchor' | 'resolved' | 'folder' | 'unresolved';
 
 /**
  * Compute the resolution state for a single link href + source-doc + cache snapshot.

@@ -70,7 +70,7 @@ import { type MarkInfo, markIdentityKey, markIdentityPlugin } from './mark-ident
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface MarkPropPanelContext {
+interface MarkPropPanelContext {
   /** TipTap Editor the panel belongs to. Use for `.chain()`, state reads, etc. */
   editor: Editor;
   /** Mark ID — stable per mark lifetime, resolves via `getCurrentMarkInfo`. */
@@ -79,7 +79,7 @@ export interface MarkPropPanelContext {
   deactivate: () => void;
 }
 
-export type MarkPropPanelRenderer = (ctx: MarkPropPanelContext) => ReactNode;
+type MarkPropPanelRenderer = (ctx: MarkPropPanelContext) => ReactNode;
 
 /**
  * Context passed to the optional `handlePrimary` hook. Mark chips that want
@@ -87,7 +87,7 @@ export type MarkPropPanelRenderer = (ctx: MarkPropPanelContext) => ReactNode;
  * click / Enter / Space implement this to navigate directly. `newTab`
  * reflects Cmd/Ctrl/middle-click — preserves the universal web convention.
  */
-export interface MarkPrimaryActionContext {
+interface MarkPrimaryActionContext {
   editor: Editor;
   nodeId: string;
   newTab: boolean;
@@ -98,9 +98,9 @@ export interface MarkPrimaryActionContext {
  * PropPanel"; return `false`/`undefined` to fall through to the default
  * (`setActiveNode`).
  */
-export type MarkPrimaryActionHandler = (ctx: MarkPrimaryActionContext) => boolean | undefined;
+type MarkPrimaryActionHandler = (ctx: MarkPrimaryActionContext) => boolean | undefined;
 
-export interface MarkInteractionBridgeParams {
+interface MarkInteractionBridgeParams {
   /** TipTap Editor instance — used for getInteractionLayer + as renderer ctx. */
   editor: Editor;
   /** Mark type names to track (e.g. `['link']`). */
@@ -122,7 +122,7 @@ export interface MarkInteractionBridgeParams {
 }
 
 /** Internal params — layer supplied explicitly. Used by tests + the factory. */
-export interface BuildMarkInteractionBridgeParams extends MarkInteractionBridgeParams {
+interface BuildMarkInteractionBridgeParams extends MarkInteractionBridgeParams {
   layer: InteractionLayerHandle;
 }
 
@@ -151,7 +151,7 @@ export function getCurrentMarkInfo(state: EditorState, markId: string): MarkInfo
 // Handler factory — testable without a PM View or DOM
 // ---------------------------------------------------------------------------
 
-export interface MarkBridgeHandlers {
+interface MarkBridgeHandlers {
   onRegister: (info: MarkInfo) => void;
   onDeregister: (id: string) => void;
 }

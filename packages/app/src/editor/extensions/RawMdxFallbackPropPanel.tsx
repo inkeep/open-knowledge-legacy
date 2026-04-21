@@ -35,7 +35,7 @@ import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from './raw-mdx-nav-event';
  * Public shape of the span attached to the rawMdxFallback node. Matches the
  * `originalSpan` attribute schema in `packages/core/src/extensions/raw-mdx-fallback.ts`.
  */
-export interface RawMdxOriginalSpan {
+interface RawMdxOriginalSpan {
   start: number;
   end: number;
 }
@@ -120,7 +120,7 @@ export function computePmReplaceTransaction(params: {
   };
 }
 
-export interface RawMdxFallbackPropPanelProps {
+interface RawMdxFallbackPropPanelProps {
   editor: Editor;
   getPos: () => number | undefined;
   onDismiss: () => void;

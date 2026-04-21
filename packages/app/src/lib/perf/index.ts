@@ -7,18 +7,7 @@
  * See CLAUDE.md precedent #20 (appended in US-010) + `reports/perf-profiling-landscape-2026/`.
  */
 
-export { getCollector } from './collector';
-export { type MarkOptions, mark, validatePerfMarkName } from './mark';
-export { ProfilerBoundary, type ProfilerBoundaryProps } from './profiler-boundary';
-export type {
-  DevToolsColor,
-  DevToolsTrackEntry,
-  PerfCollector,
-  PerfMark,
-  PerfMarkDetail,
-  ProfilerPhase,
-  ProfilerRenderEvent,
-  WebVitalName,
-  WebVitalsMark,
-} from './types';
+export { mark } from './mark';
+export { ProfilerBoundary } from './profiler-boundary';
+
 export { initWebVitals } from './web-vitals';

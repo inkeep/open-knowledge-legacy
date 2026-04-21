@@ -13,7 +13,7 @@
  * When CB-v2 lands and fumadocs-ui becomes a direct dep, this file swaps
  * to the real imports with no change to the walker's contract. Callers
  * invoke `getMDXComponents()` to receive the map; the walker passes it to
- * `mdastToReact` via `{ componentMap }`.
+ * `mdastToElementTree` via `{ componentMap }`.
  *
  * Mermaid carve-out (Audit §B9): renders a fixed-aspect placeholder
  * (aspectRatio 16/9, minHeight 200) with `<pre>` of the source + a

@@ -35,12 +35,12 @@ let __wikiLinkNodeIdCounter = 0;
  * Allocate a fresh stable node id for a WikiLink NodeView instance.
  * Exported for monotonicity testing.
  */
-export function nextWikiLinkNodeId(): string {
+function nextWikiLinkNodeId(): string {
   return `wiki-link-${++__wikiLinkNodeIdCounter}`;
 }
 
 /** Reset the counter. Test-only. */
-export function __resetWikiLinkNodeIdCounterForTests(): void {
+function __resetWikiLinkNodeIdCounterForTests(): void {
   __wikiLinkNodeIdCounter = 0;
 }
 
@@ -54,7 +54,7 @@ interface BuildChipDomResult {
  * Exported for unit testing — the DOM layout (attributes, class list) can be
  * exercised without constructing a full TipTap Editor.
  */
-export function buildWikiLinkChipDom(params: {
+function buildWikiLinkChipDom(params: {
   nodeId: string;
   target: string;
   alias: string | null;

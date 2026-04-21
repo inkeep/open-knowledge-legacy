@@ -90,7 +90,7 @@ export const VIEW_COUNT_CACHE_THRESHOLD = 50;
 export const BYTES_CACHE_THRESHOLD = 500_000;
 
 /** Per-doc size stats captured at mount time to decide whether to cache. */
-export interface SizeStats {
+interface SizeStats {
   /** Count of React MarkView/NodeView targets in the editor at parse time. */
   viewCount: number;
   /** Y.Text byte-length at mount time (used as a proxy for on-disk size). */
@@ -169,26 +169,26 @@ export interface CmCacheEntry {
 }
 
 /** Factory result for TipTap — consumer builds the editor bound to container. */
-export interface TiptapFactoryResult {
+interface TiptapFactoryResult {
   editor: Editor;
   ydoc: Y.Doc;
   ytext: Y.Text;
   provider: HocuspocusProvider;
 }
 
-export type TiptapFactory = (container: HTMLElement) => TiptapFactoryResult;
+type TiptapFactory = (container: HTMLElement) => TiptapFactoryResult;
 
 /** Factory result for CM6. */
-export interface CmFactoryResult {
+interface CmFactoryResult {
   view: EditorView;
   ydoc: Y.Doc;
   ytext: Y.Text;
   provider: HocuspocusProvider;
 }
 
-export type CmFactory = (container: HTMLElement) => CmFactoryResult;
+type CmFactory = (container: HTMLElement) => CmFactoryResult;
 
-export interface MountTiptapParams {
+interface MountTiptapParams {
   docName: string;
   container: HTMLElement;
   factory: TiptapFactory;
@@ -202,7 +202,7 @@ export interface MountTiptapParams {
   sizeStats?: SizeStats;
 }
 
-export interface MountCmParams {
+interface MountCmParams {
   docName: string;
   container: HTMLElement;
   factory: CmFactory;

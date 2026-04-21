@@ -13,7 +13,7 @@
 import { Profiler, type ProfilerOnRenderCallback, type ReactNode } from 'react';
 import { mark } from './mark';
 
-export interface ProfilerBoundaryProps {
+interface ProfilerBoundaryProps {
   /** Short kebab-case identifier; becomes `ok/render/<name>`. */
   name: string;
   children: ReactNode;

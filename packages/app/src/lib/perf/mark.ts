@@ -48,7 +48,7 @@ function propsToDevToolsTuples(
   });
 }
 
-export interface MarkOptions {
+interface MarkOptions {
   /** Explicit start time (defaults to performance.now() at call time). */
   startTime?: number;
   /** Duration in ms. If omitted, a zero-duration marker is emitted. */

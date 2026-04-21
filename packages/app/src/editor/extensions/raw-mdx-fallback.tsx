@@ -22,9 +22,6 @@
 import { RawMdxFallback as BaseRawMdxFallback } from '@inkeep/open-knowledge-core';
 import { getInteractionLayer } from '../interaction-layer-host';
 import { RawMdxFallbackPropPanel } from './RawMdxFallbackPropPanel';
-import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from './raw-mdx-nav-event';
-
-export { RAW_MDX_NAV_EVENT, type RawMdxNavDetail };
 
 // Module-level monotonic counter — drives the stable `data-node-id` attribute
 // used by InteractionLayer's event delegation. Mirrors the JsxComponentView

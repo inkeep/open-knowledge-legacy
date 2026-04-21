@@ -404,7 +404,7 @@ function wholeDocRawText(source: string): JSONContent {
  * handles `rawMdxFallback` by rendering it as a `<pre>` so the user sees
  * the broken source inline.
  */
-export interface ParseToMdastWithFallbackOptions {
+interface ParseToMdastWithFallbackOptions {
   parseToMdast: (markdown: string) => MdastRoot;
 }
 

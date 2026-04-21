@@ -28,9 +28,9 @@
  */
 
 import { Editor } from '@tiptap/core';
+import { EditorView } from '@tiptap/pm/view';
 import { PureEditorContent } from '@tiptap/react';
 import { ProsemirrorBinding } from '@tiptap/y-tiptap';
-import { EditorView } from 'prosemirror-view';
 import { mark } from './mark';
 
 let installed = false;
@@ -245,21 +245,4 @@ export function installColdMountInstrumentation(): void {
 
   // Diagnostic flag — Playwright scenario can assert via window
   (globalThis as unknown as Record<string, unknown>).__okColdMountInstrumented = true;
-}
-
-/**
- * For unit testing — counts let tests assert install idempotency.
- */
-export function getColdMountInstrumentationCounters(): {
-  forceRerender: number;
-  pmUpdateState: number;
-  pmSetProps: number;
-  createNodeViews: number;
-} {
-  return {
-    forceRerender: forceRerenderCount,
-    pmUpdateState: pmUpdateStateCount,
-    pmSetProps: pmSetPropsCount,
-    createNodeViews: createNodeViewsCount,
-  };
 }

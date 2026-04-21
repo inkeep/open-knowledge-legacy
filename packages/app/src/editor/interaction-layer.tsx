@@ -51,7 +51,7 @@ import { type FC, useEffect, useState } from 'react';
  * `editorView.dom` for TipTap's non-throwing accessor — see CLAUDE.md WARN
  * rule) so event delegation can attach.
  */
-export interface InteractionLayerEditor {
+interface InteractionLayerEditor {
   editorView?: { dom: HTMLElement };
   view?: { dom: HTMLElement };
 }
@@ -145,7 +145,7 @@ export interface InteractionLayerHandle {
   store: InteractionLayerStore;
 }
 
-export interface CreateInteractionLayerParams {
+interface CreateInteractionLayerParams {
   editor: InteractionLayerEditor;
   // Prior versions accepted `rootContainer` + `mountNode` to drive a
   // per-layer React root via `createRoot(mountNode)`. That path was
@@ -161,7 +161,7 @@ export interface CreateInteractionLayerParams {
 // ---------------------------------------------------------------------------
 
 /** Snapshot consumed by `useSyncExternalStore` for React-side reads. */
-export interface LayerSnapshot {
+interface LayerSnapshot {
   /** Currently active node id, or null. */
   activeNodeId: string | null;
   /** Active registration (null if no active or deregistered). */

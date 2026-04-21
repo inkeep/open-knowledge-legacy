@@ -24,7 +24,7 @@ export function extractJsxComponentName(raw: string): string {
   return match ? match[1] : 'Unknown';
 }
 
-export interface JsxComponentPropPanelProps {
+interface JsxComponentPropPanelProps {
   editor: Editor;
   getPos: () => number | undefined;
   onDismiss: () => void;

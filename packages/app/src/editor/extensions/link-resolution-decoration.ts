@@ -98,7 +98,7 @@ export type LinkResolutionAttrsComputer = (
   cache: PageListCacheSnapshot | null,
 ) => Record<string, string> | null;
 
-export interface LinkResolutionDecorationOptions {
+interface LinkResolutionDecorationOptions {
   /**
    * Mark type names to decorate. Typically `['link']` for internal-link; could
    * also be `['wikiLink']` if wiki-links ever migrate from node to mark.

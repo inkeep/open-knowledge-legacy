@@ -102,7 +102,7 @@ export const LARGE_DOC_CHAR_THRESHOLD = 500_000;
  * for the gating decision itself — always derive render flags from this
  * helper's output.
  */
-export interface EditorMountGateArgs {
+interface EditorMountGateArgs {
   ytextLength: number;
   isSourceMode: boolean;
   visitedSource: boolean;
@@ -110,7 +110,7 @@ export interface EditorMountGateArgs {
   threshold?: number;
 }
 
-export interface EditorMountGate {
+interface EditorMountGate {
   renderSource: boolean;
   renderVisual: boolean;
   isLarge: boolean;

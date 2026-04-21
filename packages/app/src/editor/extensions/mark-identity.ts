@@ -33,7 +33,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
  * call. Accepts `tr.mapping` (which implements `Mappable` with additional
  * methods) as well as test-shaped identity mappings.
  */
-export interface PositionMapper {
+interface PositionMapper {
   map(pos: number, assoc?: number): number;
 }
 
@@ -54,12 +54,12 @@ export interface MarkInfo {
   to: number;
 }
 
-export interface MarkIdentityState {
+interface MarkIdentityState {
   byId: Map<string, MarkInfo>;
   counter: number;
 }
 
-export interface MarkIdentityPluginParams {
+interface MarkIdentityPluginParams {
   /** Mark type names to track (e.g. `['link', 'wikiLink']`). */
   markTypes: string[];
   /**
