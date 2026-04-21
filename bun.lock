@@ -146,6 +146,7 @@
       "version": "0.2.0",
       "bin": {
         "open-knowledge": "./dist/cli.mjs",
+        "ok": "./dist/cli.mjs",
       },
       "dependencies": {
         "@clack/prompts": "^1.2.0",
@@ -169,6 +170,7 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
+        "@inkeep/open-knowledge-app": "workspace:*",
         "@inkeep/open-knowledge-core": "workspace:*",
         "@inkeep/open-knowledge-server": "workspace:*",
         "@types/node": "^22.16.0",
