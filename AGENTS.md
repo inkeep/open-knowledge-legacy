@@ -20,7 +20,7 @@ docs/      — Next.js docs site (Fumadocs)
 bun install                          # Install all workspace dependencies
 cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
-bun run dev --filter=@inkeep/open-knowledge-desktop   # Launch Electron app in dev mode (macOS)
+bun run --filter=@inkeep/open-knowledge-desktop dev   # Launch Electron app in dev mode (macOS)
 bun run build                        # Build all packages via turbo (cli, app, docs)
 bun run build:desktop                # Build desktop bundle via electron-vite (no DMG; M1 scope)
 cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
@@ -496,7 +496,7 @@ Never call `ipcMain.handle` / `ipcRenderer.invoke` directly. Use `createHandler`
 
 ```bash
 bun install                                               # postinstall rebuilds native modules; skip with ELECTRON_SKIP_REBUILD=1
-bun run dev --filter=@inkeep/open-knowledge-desktop        # macOS, opens Navigator window
+bun run --filter=@inkeep/open-knowledge-desktop dev        # macOS, opens Navigator window
 bun run build:desktop                                     # electron-vite build (no DMG in M1)
 ```
 
