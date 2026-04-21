@@ -1,5 +1,6 @@
 export type { Principal } from '@inkeep/open-knowledge-core';
 export { AgentFocusBroadcaster } from './agent-focus.ts';
+export { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 export { AgentPresenceBroadcaster } from './agent-presence.ts';
 export {
   AGENT_WRITE_ORIGIN,

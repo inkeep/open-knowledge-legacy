@@ -12,49 +12,115 @@
  *     by the CC1 broadcaster). Does NOT open its own DirectConnection and
  *     does NOT bypass the `isSystemDoc` guard in `AgentSessionManager`.
  *
+ * The same `__system__` Y.Doc also carries CC1 pure-signal broadcasts
+ * (`cc1-broadcast.ts`). The two concerns use structurally-distinct channels
+ * (awareness state vs `broadcastStateless`) so they do not collide; the
+ * `isSystemDoc()` short-circuit in every subsystem that keys off
+ * `documentName` still applies to both.
+ *
  * API shape:
  *   - `setPresence(agentId, entry)` — upsert. Merges into the existing map;
- *     other agents' entries are preserved.
+ *     other agents' entries are preserved. Opportunistically evicts entries
+ *     older than 4× TTL to bound map growth when clients disconnect without
+ *     a clean close (proxy ate the close frame, process killed -9, etc.).
  *   - `clearPresence(agentId)` — remove exactly one entry. No-op if missing.
  *   - `touchMode(agentId, mode)` — update just the mode + ts of an existing
  *     entry. Graceful no-op when the agent has no existing entry (never
  *     creates a half-populated entry missing displayName/icon/color).
  *   - `getPresenceMap()` — diagnostic read.
+ *   - `destroy()` — sets a guard flag so post-destroy calls are no-ops
+ *     (parity with `CC1Broadcaster.destroy()`; called during server shutdown).
  */
 import type { Hocuspocus } from '@hocuspocus/server';
 import { type AgentPresenceEntry, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { getLogger } from './logger.ts';
+import { incrementAgentPresenceMutationError } from './metrics.ts';
+
+/**
+ * Server-side eviction threshold. Runs opportunistically during setPresence
+ * to drop entries far beyond the client-side 5s TTL filter. Generous by
+ * design — the keepalive WS close is the primary signal; eviction is a
+ * belt-and-suspenders defense against unbounded growth when the close never
+ * fires (proxy drops the frame, process killed -9, network partition).
+ *
+ * 4× the client TTL (5_000ms × 4 = 20_000ms): any entry that far stale is
+ * effectively invisible to clients already; dropping it from the server
+ * map shrinks awareness fan-out size without user-visible change.
+ */
+export const BROADCASTER_EVICTION_MS = 5_000 * 4;
 
 export class AgentPresenceBroadcaster {
   private readonly hocuspocus: Hocuspocus;
   private readonly log = getLogger('agent-presence');
   private warnedMissing = false;
+  private destroyed = false;
 
   constructor(hocuspocus: Hocuspocus) {
     this.hocuspocus = hocuspocus;
   }
 
-  /** Upsert an agent's presence entry. Other agents' entries are preserved. */
+  /**
+   * Upsert an agent's presence entry. Other agents' entries are preserved.
+   * Opportunistically evicts entries older than BROADCASTER_EVICTION_MS to
+   * bound map growth under ungraceful disconnects.
+   */
   setPresence(agentId: string, entry: AgentPresenceEntry): void {
-    const mutated = this.mutateAgentPresence((current) => ({ ...current, [agentId]: entry }));
+    let evictedCount = 0;
+    const mutated = this.mutateAgentPresence((current) => {
+      // Amortized eviction: scan once per setPresence. Cost is O(N) where N
+      // is the live agent count — bounded by the same map we're writing.
+      const now = Date.now();
+      const next: Record<string, AgentPresenceEntry> = {};
+      for (const [id, e] of Object.entries(current)) {
+        if (now - e.ts >= BROADCASTER_EVICTION_MS && id !== agentId) {
+          evictedCount++;
+          continue;
+        }
+        next[id] = e;
+      }
+      next[agentId] = entry;
+      return next;
+    });
     if (mutated) {
-      this.log.info(
+      this.log.debug(
         { agentId, action: 'set', currentDoc: entry.currentDoc, ts: entry.ts },
         '[agent-presence] set',
       );
+      if (evictedCount > 0) {
+        this.log.info(
+          { evictedCount, thresholdMs: BROADCASTER_EVICTION_MS },
+          '[agent-presence] evicted stale entries',
+        );
+      }
     }
   }
 
-  /** Remove an agent's entry. No-op if the entry doesn't exist. */
+  /**
+   * Remove an agent's entry. No-op if the entry doesn't exist.
+   *
+   * Reconnect-race defense lives at the CALLER (boot.ts keepalive close
+   * handler), NOT here. The broadcaster has no way to distinguish "the
+   * owning WS is closing normally" from "an old WS's close fired late after
+   * a successor took over" by looking at the entry alone — `entry.ts` is
+   * updated on every write regardless of which WS the write came through,
+   * so a ts-based gate would incorrectly skip every normal cleanup (every
+   * real agent writes via HTTP AFTER its keepalive WS opens → entry.ts is
+   * always newer than openedAt). boot.ts tracks the current owning WS per
+   * agent via a latest-opener map and skips the clear call when a newer WS
+   * has taken over; this method fires unconditionally when called.
+   */
   clearPresence(agentId: string): void {
     let removed = false;
     const mutated = this.mutateAgentPresence((current) => {
-      if (!(agentId in current)) return current;
+      const existing = current[agentId];
+      if (!existing) return current;
       removed = true;
       const { [agentId]: _dropped, ...rest } = current;
       return rest;
     });
     if (mutated && removed) {
+      // INFO because this is the deterministic-cleanup signal; operators
+      // read it to confirm keepalive-close routing is wired.
       this.log.info(
         { agentId, action: 'clear', currentDoc: null, ts: Date.now() },
         '[agent-presence] clear',
@@ -66,23 +132,73 @@ export class AgentPresenceBroadcaster {
    * Update the mode + ts of an existing presence entry. Graceful no-op when
    * the agent has no existing entry — we must NEVER write a half-populated
    * entry because clients filter by `currentDoc === null` but do not defend
-   * against missing displayName/icon/color.
+   * against missing displayName/icon/color. Logs at DEBUG when the no-op
+   * fires so "why is the badge stuck?" has a diagnostic breadcrumb.
    */
   touchMode(agentId: string, mode: AgentPresenceEntry['mode']): void {
     const touched: { currentDoc: string | null; ts: number }[] = [];
+    let existed = false;
     const mutated = this.mutateAgentPresence((current) => {
       const existing = current[agentId];
       if (!existing) return current;
+      existed = true;
       const ts = Date.now();
       touched.push({ currentDoc: existing.currentDoc, ts });
       return { ...current, [agentId]: { ...existing, mode, ts } };
     });
     const record = touched[0];
     if (mutated && record) {
-      this.log.info(
-        { agentId, action: 'touchMode', currentDoc: record.currentDoc, ts: record.ts },
+      this.log.debug(
+        { agentId, action: 'touchMode', currentDoc: record.currentDoc, ts: record.ts, mode },
         '[agent-presence] touchMode',
       );
+    } else if (!existed) {
+      // Diagnostic breadcrumb: a touchMode call with no matching entry means
+      // either (a) the agent's entry was cleared between setPresence and
+      // this call (keepalive close fired mid-write) or (b) a future call
+      // site invoked touchMode without a prior setPresence.
+      this.log.debug(
+        { agentId, action: 'touchMode', mode, reason: 'entry-missing' },
+        '[agent-presence] touchMode skipped — no entry for agentId',
+      );
+    }
+  }
+
+  /**
+   * Bump just the `ts` of an existing entry to `Date.now()`. Graceful no-op
+   * when there's no entry for the agent. Same half-populated-entry invariant
+   * as `touchMode` — never writes if the agent hasn't called `setPresence`.
+   *
+   * Motivation: the client-side TTL filter (`AGENT_PRESENCE_STALE_MS` = 5s)
+   * hides entries that haven't been touched recently. Write-path calls
+   * (`setPresence`/`touchMode`) only fire on MCP edits; an agent between
+   * tool calls (LLM thinking for 10-30s) doesn't emit them, so the client
+   * would drop its badge mid-session even though its keepalive WS is still
+   * open and the agent is still alive.
+   *
+   * `bumpPresenceTs` is the server-side signal that says "this agent is
+   * still connected — keep it visible." boot.ts's keepalive-upgrade handler
+   * calls this on a 3s timer for every WS with an `agentId`, which
+   * consistently beats the 5s TTL. The client filter then catches only
+   * genuinely dead keepalives (proxy ate the close frame, etc.) instead of
+   * spuriously hiding live agents.
+   *
+   * Logged at DEBUG only (called at ~3s cadence per connected agent —
+   * INFO-level would flood operator logs). `mode` is preserved so an
+   * agent whose last state was `'writing'` continues to show the pulse
+   * visual client-side until its own `touchMode('idle')` arrives.
+   */
+  bumpPresenceTs(agentId: string): void {
+    let touchedTs: number | null = null;
+    this.mutateAgentPresence((current) => {
+      const existing = current[agentId];
+      if (!existing) return current;
+      const ts = Date.now();
+      touchedTs = ts;
+      return { ...current, [agentId]: { ...existing, ts } };
+    });
+    if (touchedTs !== null) {
+      this.log.debug({ agentId, action: 'bumpTs', ts: touchedTs }, '[agent-presence] bumpTs');
     }
   }
 
@@ -96,9 +212,19 @@ export class AgentPresenceBroadcaster {
     return state?.agentPresence ?? {};
   }
 
+  /**
+   * No timers today; sets a guard flag so post-destroy
+   * setPresence/clearPresence/touchMode calls are no-ops. Parity with
+   * `CC1Broadcaster.destroy()` for shutdown-ordering symmetry.
+   */
+  destroy(): void {
+    this.destroyed = true;
+  }
+
   private mutateAgentPresence(
     update: (current: Record<string, AgentPresenceEntry>) => Record<string, AgentPresenceEntry>,
   ): boolean {
+    if (this.destroyed) return false;
     const awareness = this.resolveAwareness();
     if (!awareness) return false;
     try {
@@ -116,6 +242,11 @@ export class AgentPresenceBroadcaster {
       awareness.setLocalState({ ...existing, agentPresence: nextPresence });
       return true;
     } catch (err) {
+      // Counter + structured log: every caller (HTTP handlers, keepalive
+      // close) ignores our `false` return, so without the counter a silent
+      // awareness failure has only a pino ERROR line nobody is alerting on.
+      // The counter surfaces via GET /api/metrics/reconciliation.
+      incrementAgentPresenceMutationError();
       this.log.error({ err }, '[agent-presence] awareness mutation failed');
       return false;
     }

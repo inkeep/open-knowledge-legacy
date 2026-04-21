@@ -152,7 +152,7 @@ export function SystemDocSubscriber() {
               icon: 'claude',
               color: '#D97757',
               currentDoc: docName,
-              mode: 'editing',
+              mode: 'writing',
               ts: Date.now(),
             },
           },

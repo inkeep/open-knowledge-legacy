@@ -21,6 +21,14 @@
  * injected callbacks + post-return orchestration.
  */
 import type { Server as HttpServer } from 'node:http';
+
+// Re-export `toBroadcasterKey` so existing callers (test harnesses, direct
+// imports from `./boot.ts`) keep working after the helper was consolidated
+// into `./agent-id.ts`. Canonical definition lives in `agent-id.ts` alongside
+// the `AGENT_ID_RE` validator — both concerns are one contract.
+export { toBroadcasterKey } from './agent-id.ts';
+
+import { validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
@@ -264,7 +272,9 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         // + `clearFocus`) and (b) multi-agent-presence cleanup
         // (`clearPresence`). Legacy MCP clients that don't send `connectionId`
         // fall through to TTL-only cleanup (5s filter on the client, §FR-5).
-        // Malformed URLs → null → no-op. Never throws.
+        // Malformed URLs → null → no-op. Never throws. The parser also
+        // enforces `AGENT_ID_RE` so CR/LF bytes or other attacker-controlled
+        // chars never reach structured log fields or broadcaster keys.
         const connectionId = parseKeepaliveConnectionId(req.url);
 
         // D28: if reconnecting within grace period, cancel the timer.
@@ -285,8 +295,26 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
           }
         }, 30_000);
         pingTimer.unref?.();
+
+        // Presence-ts refresh timer — tied to this WS's lifetime. The
+        // client-side TTL filter hides entries with `now - ts >= 5s`.
+        // Write-path calls (setPresence/touchMode) only fire on MCP edits,
+        // so agents between tool calls (LLM thinking for 10-30s) would
+        // otherwise have their badge disappear mid-session even though
+        // the keepalive WS is still open. A 3s bump cadence consistently
+        // beats the 5s filter. No-op if connectionId is null (legacy MCP
+        // client that doesn't pass connectionId — TTL-only path still works
+        // the same way).
+        const tsRefreshTimer = connectionId
+          ? setInterval(() => {
+              agentPresenceBroadcaster?.bumpPresenceTs(connectionId);
+            }, 3_000)
+          : null;
+        tsRefreshTimer?.unref?.();
+
         ws.on('close', () => {
           clearInterval(pingTimer);
+          if (tsRefreshTimer !== null) clearInterval(tsRefreshTimer);
           if (!connectionId) return;
           // D28: start grace timer. Reconnect within the window cancels above.
           const timer = setTimeout(() => {
@@ -449,10 +477,23 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
 }
 
 /**
- * Extract the `connectionId` query param from a `/collab/keepalive` upgrade URL.
- * Tolerant of: missing URL (`undefined`), unparseable URL, missing/empty
- * `connectionId`, and percent-encoded values. Returns `null` on every failure
- * mode — the caller falls through to TTL-only cleanup.
+ * Extract + validate the `connectionId` query param from a `/collab/keepalive`
+ * upgrade URL. Tolerant of: missing URL (`undefined`), unparseable URL,
+ * missing/empty `connectionId`. Values that do not match `AGENT_ID_RE`
+ * (`[a-zA-Z0-9_-]+`) return `null` — the close handler then falls through
+ * to TTL-only cleanup rather than firing `clearPresence` /
+ * `closeAllForAgent` / `clearFocus` with attacker-controlled bytes.
+ *
+ * The validation is intentionally identical to the HTTP write path
+ * (`extractAgentIdentity` in `api-extension.ts`) so the write surface and
+ * the cleanup surface share one contract. Without it, a caller who can
+ * reach the keepalive WS (e.g. an unauthenticated peer when the user has
+ * bound to `0.0.0.0`) could force-evict another agent's presence entry
+ * by passing a crafted `connectionId=<victim>` on WS close. The shared
+ * regex also prevents CR/LF bytes in query-string values from reaching
+ * the structured `[keepalive] disconnected` log line (log-injection
+ * defense-in-depth — pino escapes these but some transports strip the
+ * escaping after egress).
  *
  * Exported for unit testing. Never throws.
  */
@@ -462,23 +503,8 @@ export function parseKeepaliveConnectionId(url: string | undefined): string | nu
     // The second arg is a dummy base so `new URL` accepts path-only inputs.
     const parsed = new URL(url, 'http://localhost');
     const connectionId = parsed.searchParams.get('connectionId');
-    if (!connectionId || connectionId.length === 0) return null;
-    return connectionId;
+    return validateAgentId(connectionId);
   } catch {
     return null;
   }
-}
-
-/**
- * Translate a raw agentId (as sent by the MCP keepalive URL or by HTTP
- * body `agentId` field) into the broadcaster-map key used by
- * `AgentPresenceBroadcaster.setPresence`. The `agent-` prefix is the
- * server's internal convention (see `extractAgentIdentity` in
- * `api-extension.ts`); keeping the transform here ensures the close
- * handler and the write handlers produce identical keys.
- *
- * Exported for unit testing + test-harness use.
- */
-export function toBroadcasterKey(rawAgentId: string): string {
-  return `agent-${rawAgentId}`;
 }

@@ -197,4 +197,53 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     await wait(200);
     expect(broadcaster.getPresenceMap()[survivingAgent]).toBeDefined();
   });
+
+  test('keepalive ts-refresh timer keeps entry ts fresh during agent idle (≥ 3s)', async () => {
+    // Regression: without the server-side ts-refresh timer, an agent
+    // between MCP tool calls (LLM thinking for 10-30s) would have its
+    // client-visible badge disappear after 5s because the client's TTL
+    // filter (AGENT_PRESENCE_STALE_MS) is keyed on entry.ts. The keepalive
+    // upgrade handler's 3s bump timer is the server signal that says
+    // "this agent's WS is still connected — keep it visible."
+    const s = await bootTestServer();
+    servers.push(s);
+    const { booted } = s;
+    const broadcaster = booted.serverInstance.agentPresenceBroadcaster;
+    const connectionId = 'test-agent-idle-refresh';
+
+    const ws = new WsClient(
+      `ws://localhost:${booted.port}/collab/keepalive?pid=${process.pid}&connectionId=${connectionId}`,
+    );
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', () => resolve());
+      ws.once('error', (err) => reject(err));
+    });
+
+    // Seed a presence entry with ts=now (simulating a recent agent write).
+    const initialTs = Date.now();
+    broadcaster.setPresence(connectionId, {
+      displayName: 'Claude',
+      icon: 'claude',
+      color: '#D97757',
+      currentDoc: 'foo.md',
+      mode: 'idle',
+      ts: initialTs,
+    });
+
+    // Wait just past one 3s refresh interval plus a small scheduling
+    // margin. The timer should have fired once, bumping ts on an
+    // otherwise-idle entry (no agent writes during this window).
+    await wait(3_400);
+
+    const bumped = broadcaster.getPresenceMap()[connectionId];
+    expect(bumped).toBeDefined();
+    expect(bumped?.ts).toBeGreaterThan(initialTs);
+    // Mode is preserved — bumpPresenceTs does NOT flip writing→idle.
+    expect(bumped?.mode).toBe('idle');
+    // Other fields are preserved.
+    expect(bumped?.currentDoc).toBe('foo.md');
+    expect(bumped?.displayName).toBe('Claude');
+
+    ws.close();
+  });
 });

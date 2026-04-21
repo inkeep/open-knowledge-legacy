@@ -144,10 +144,23 @@ describe('parseKeepaliveConnectionId', () => {
     );
   });
 
-  test('decodes percent-encoded connectionId values', () => {
-    expect(parseKeepaliveConnectionId('/collab/keepalive?connectionId=user%2Fagent%3D1%262')).toBe(
-      'user/agent=1&2',
-    );
+  test('rejects percent-encoded connectionId values that decode to invalid chars', () => {
+    // `user%2Fagent%3D1%262` decodes to `user/agent=1&2` which fails the
+    // AGENT_ID_RE character class (`/`, `=`, `&` are disallowed). Pre-fix
+    // the function would have returned the decoded string and the close
+    // handler would have called `clearPresence('user/agent=1&2')`,
+    // potentially colliding with other agents' map keys. Post-fix the
+    // value is rejected outright → TTL-only cleanup.
+    expect(
+      parseKeepaliveConnectionId('/collab/keepalive?connectionId=user%2Fagent%3D1%262'),
+    ).toBeNull();
+  });
+
+  test('rejects connectionId containing CR/LF (log-injection defense)', () => {
+    // `abc%0D%0Aadmin` decodes to `abc\r\nadmin`; returning the raw value
+    // would let an attacker inject a newline into structured log lines.
+    // Rejected by the shared AGENT_ID_RE.
+    expect(parseKeepaliveConnectionId('/collab/keepalive?connectionId=abc%0D%0Aadmin')).toBeNull();
   });
 
   test('tolerates query order', () => {

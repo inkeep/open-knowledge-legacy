@@ -48,7 +48,7 @@ import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
-import type { AgentPresenceBroadcaster } from './agent-presence.ts';
+import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
   type AgentSessionManager,
   applyAgentMarkdownWrite,
@@ -74,6 +74,7 @@ import { readUiLock } from './ui-lock.ts';
 export { extractPageTitle } from './page-identity.ts';
 
 import simpleGit from 'simple-git';
+import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -1135,7 +1136,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
   /**
@@ -1156,7 +1156,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
       rawAgentId = undefined;
     }
-    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
     const agentName =
       typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
@@ -1268,7 +1268,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
-      {
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
+      try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
         agentPresenceBroadcaster?.setPresence(agentId, {
@@ -1276,11 +1280,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           icon,
           color,
           currentDoc: docName,
-          mode: 'editing',
+          mode: 'writing',
           ts: Date.now(),
         });
-      }
-      try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1374,7 +1376,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      {
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
+      try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
         agentPresenceBroadcaster?.setPresence(agentId, {
@@ -1382,11 +1388,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           icon,
           color,
           currentDoc: resolvedDocName,
-          mode: 'editing',
+          mode: 'writing',
           ts: Date.now(),
         });
-      }
-      try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1900,7 +1904,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      {
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
+      try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
         agentPresenceBroadcaster?.setPresence(agentId, {
@@ -1908,11 +1916,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           icon,
           color,
           currentDoc: docName,
-          mode: 'editing',
+          mode: 'writing',
           ts: Date.now(),
         });
-      }
-      try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -2091,7 +2097,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           icon,
           color,
           currentDoc: docName,
-          mode: 'editing',
+          mode: 'writing',
           ts: Date.now(),
         });
       }
@@ -2865,12 +2871,45 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    // Loopback + Host-header gate — matches /api/workspace. The presence map
+    // exposes per-agent identity (`displayName` — operator-configured AGENT
+    // label) and the workspace-relative path each agent is currently writing
+    // to (`currentDoc`). Those are local-editing-only signals; if a user
+    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
+    // LAN peers MUST NOT be able to read the map. Authorization runs before
+    // method dispatch so a bad Host never leaks "verb the endpoint expects"
+    // via 405 (same pattern + rationale as handleWorkspace — see its
+    // comment block for the ASVS / DNS-rebinding background).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
     if (req.method !== 'GET') {
       res.writeHead(405);
       res.end('Method not allowed');
       return;
     }
-    const presence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    // Pre-filter stale entries using the same threshold the broadcaster
+    // uses for opportunistic eviction (runs inside setPresence). Eviction
+    // is write-triggered — if the last agent disconnects without the
+    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+    // agent writes after, the raw map keeps the zombie entry. Clients
+    // already filter with their own 5s TTL so this is invisible to the
+    // bar, but `/api/metrics/agent-presence` would otherwise lie to
+    // operators. Filtering here matches what a "live" read returns
+    // without paying for a sparse timer.
+    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    const now = Date.now();
+    const presence: typeof rawPresence = {};
+    for (const [agentId, entry] of Object.entries(rawPresence)) {
+      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+        presence[agentId] = entry;
+      }
+    }
     json(res, 200, { presence });
   }
 

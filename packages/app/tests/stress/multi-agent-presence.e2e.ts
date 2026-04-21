@@ -94,57 +94,74 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     // would otherwise follow the latest agent write (pickPrimary) and
     // relocate the browser to docBar, inverting which section each agent
     // lands in. Pin is respected unconditionally (DocumentContext.pin).
-    await page.evaluate((doc) => {
-      // `ok-pin-v1` is the localStorage key DocumentContext seeds from on
-      // mount; setting it via `pin()` requires a React context dance, but
-      // pushing the key directly works because the existing `loadPinFromStorage`
-      // in DocumentProvider re-reads on mount + on agent-nav check.
-      // Cleaner: use the dev-exposed context. We set storage and also
-      // dispatch a synthetic pin via the dev hook if available.
-      localStorage.setItem('ok-pin-v1', doc);
-    }, docFoo);
-    // Reload so the pin takes effect (DocumentProvider reads it on mount).
-    await page.reload();
-    await expect(bar).toBeVisible();
+    // Uses the dev-only `__test_setPin` hook rather than poking
+    // `localStorage['ok-pin-v1']` directly — keeps the test off the
+    // private storage-key shape. No reload needed: the hook writes to
+    // both React state and localStorage in one shot.
+    await page.evaluate(
+      ([doc]) => {
+        const setPin = (window as { __test_setPin?: (d: string | null) => void }).__test_setPin;
+        if (!setPin) throw new Error('__test_setPin dev hook missing');
+        setPin(doc);
+      },
+      [docFoo],
+    );
 
     // Publish after navigation + pin so auto-nav is suppressed and TTL is fresh.
-    await api.writeAsAgent(docBar, '# Cursor on bar', {
-      agentId: agentId('cursor-bar'),
-      agentName: 'Cursor',
-      clientName: 'cursor',
-    });
+    // Write order: Claude (current-doc) first, Cursor (cross-doc) last. Cursor
+    // is the tighter constraint because its assertion runs LAST and its `ts`
+    // ages linearly against the 5s TTL filter. Writing Cursor last puts its
+    // freshest timestamp closest to the cross-doc poll, reducing the race.
     await api.writeAsAgent(docFoo, '# Claude on foo', {
       agentId: agentId('claude-foo'),
       agentName: 'Claude',
       clientName: 'claude-code',
     });
+    await api.writeAsAgent(docBar, '# Cursor on bar', {
+      agentId: agentId('cursor-bar'),
+      agentName: 'Cursor',
+      clientName: 'cursor',
+    });
 
-    // Divider should appear because at least one agent is on a different doc.
     const divider = bar.locator('[data-slot="presence-divider"]');
-    await expect(divider).toBeVisible({ timeout: 10_000 });
-
     const currentSection = bar.locator('[data-presence-section="current"]');
     const crossDocSection = bar.locator('[data-presence-section="crossdoc"]');
 
-    // Claude lands in current-doc (matches docFoo), Cursor in cross-doc.
+    // Atomic polling loop: divider visible + Claude in current + Cursor in
+    // cross-doc all at once. Individual polls back-to-back risked burning
+    // through Cursor's 5s TTL budget (AGENT_PRESENCE_STALE_MS) between the
+    // divider/Claude checks and the Cursor check — under CI load the Cursor
+    // entry aged out before the last assertion fired (see PR #246 review).
+    // A unified poll catches the valid-state snapshot within a single 100ms
+    // tick, eliminating the TTL-vs-sequential-assertion race.
+    //
+    // Selector uses aria-label^="Name" (starts-with) because cross-doc
+    // avatars render as interactive <button>s whose aria-label carries the
+    // target doc ("Cursor, editing doc-mp-cross-bar"). Current-doc avatars
+    // render as <div role="img"> with just the name ("Claude"). Starts-with
+    // matches both shapes and survives the a11y evolution — review pass 2
+    // finding #6 dropped a redundant "Press Enter to open" suffix; the
+    // prior exact-match selector `[aria-label="Cursor"]` had been silently
+    // broken since US-008's pass-1 accessibility refactor made the
+    // cross-doc avatar a <button> (CI's retries: 2 masked the failure).
     await expect
       .poll(
-        async () =>
-          currentSection.locator('[data-presence-badge="agent"][aria-label="Claude"]').count(),
+        async () => ({
+          divider: await divider.count(),
+          claude: await currentSection
+            .locator('[data-presence-badge="agent"][aria-label^="Claude"]')
+            .count(),
+          cursor: await crossDocSection
+            .locator('[data-presence-badge="agent"][aria-label^="Cursor"]')
+            .count(),
+        }),
         { timeout: 10_000, intervals: [100, 250, 500] },
       )
-      .toBe(1);
-    await expect
-      .poll(
-        async () =>
-          crossDocSection.locator('[data-presence-badge="agent"][aria-label="Cursor"]').count(),
-        { timeout: 5_000, intervals: [100, 250, 500] },
-      )
-      .toBe(1);
+      .toEqual({ divider: 1, claude: 1, cursor: 1 });
 
     // Cross-doc avatar carries the data-presence-crossdoc marker.
     const crossAvatar = crossDocSection.locator(
-      '[data-presence-badge="agent"][aria-label="Cursor"]',
+      '[data-presence-badge="agent"][aria-label^="Cursor"]',
     );
     await expect(crossAvatar.first()).toHaveAttribute('data-presence-crossdoc', 'true');
   });
@@ -165,39 +182,48 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     await expect(bar).toBeVisible();
 
     // Pin docFoo to prevent auto-nav chasing the Cursor-on-bar write. The
-    // wiki-link click sets `window.location.hash` directly, which bypasses
-    // the pin guard (pin only suppresses agent-driven nav in
-    // SystemDocSubscriber). So we can keep the pin on throughout.
-    await page.evaluate((doc) => localStorage.setItem('ok-pin-v1', doc), docFoo);
-    await page.reload();
-    await expect(bar).toBeVisible();
+    // cross-doc avatar's click handler sets `window.location.hash` directly,
+    // which bypasses the pin guard (pin only suppresses agent-driven nav
+    // in SystemDocSubscriber). Uses the dev-only `__test_setPin` hook
+    // rather than poking private localStorage keys + reloading (see
+    // finding #8 remediation).
+    await page.evaluate(
+      ([doc]) => {
+        const setPin = (window as { __test_setPin?: (d: string | null) => void }).__test_setPin;
+        if (!setPin) throw new Error('__test_setPin dev hook missing');
+        setPin(doc);
+      },
+      [docFoo],
+    );
 
-    await api.writeAsAgent(docBar, '# Cursor on bar', {
-      agentId: agentId('cursor-nav-bar'),
-      agentName: 'Cursor',
-      clientName: 'cursor',
-    });
+    // Write order mirrors the sibling test above: Claude (current-doc) first,
+    // Cursor (cross-doc) last so Cursor's ts is freshest when the cross-doc
+    // avatar visibility poll begins. Avoids the AGENT_PRESENCE_STALE_MS race.
     await api.writeAsAgent(docFoo, '# Claude on foo', {
       agentId: agentId('claude-nav-foo'),
       agentName: 'Claude',
       clientName: 'claude-code',
     });
+    await api.writeAsAgent(docBar, '# Cursor on bar', {
+      agentId: agentId('cursor-nav-bar'),
+      agentName: 'Cursor',
+      clientName: 'cursor',
+    });
 
+    // The cross-doc avatar IS the interactive button (findings #3 + #7 —
+    // Radix Tooltip cannot host interactive content accessibly). The
+    // aria-label includes the doc name so keyboard + screen-reader users
+    // know what they're opening.
     const crossDocAvatar = bar.locator(
-      '[data-presence-section="crossdoc"] [data-presence-badge="agent"][aria-label="Cursor"]',
+      '[data-presence-section="crossdoc"] [data-presence-badge="agent"][data-presence-crossdoc="true"]',
+      { hasText: '' },
     );
-    await expect(crossDocAvatar).toHaveCount(1, { timeout: 10_000 });
+    await expect(crossDocAvatar.first()).toBeVisible({ timeout: 10_000 });
 
-    // Hover the cross-doc avatar to reveal the tooltip with the wiki-link.
-    await crossDocAvatar.first().hover();
-
-    // Tooltip content contains the wiki-link button. Radix Tooltip may
-    // portal to 1 or 2 DOM nodes depending on radix internals; use
-    // `.first()` to pick the actionable one. `[data-state="delayed-open"]`
-    // on the tooltip root is the stable "open" marker.
-    const navButton = page
-      .getByRole('button', { name: new RegExp(`editing \\[\\[${docBar}\\]\\]`) })
-      .first();
+    // Avatar is a real <button> (role=button) with an aria-label that
+    // embeds the docName. Regex match guards against the exact copy while
+    // asserting the semantic click target is correct.
+    const navButton = page.getByRole('button', { name: new RegExp(`editing ${docBar}`) }).first();
     await expect(navButton).toBeVisible({ timeout: 10_000 });
     await navButton.click();
 

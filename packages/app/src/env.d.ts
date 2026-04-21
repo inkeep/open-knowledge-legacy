@@ -69,9 +69,11 @@ declare namespace globalThis {
    */
   var __test_injectAgentPresence: ((docName: string) => boolean) | undefined;
   /**
-   * DEV-only: the `__system__` HocuspocusProvider created by
-   * SystemDocSubscriber and lifted into DocumentContext. Playwright reads
-   * `awareness.getStates()` to verify server→client sync of agent presence.
+   * Test-only hook: set the pinned doc via the DocumentContext API without
+   * reaching into `localStorage` internals. Playwright tests that need to
+   * suppress agent-driven auto-nav call this instead of writing
+   * `localStorage.setItem('ok-pin-v1', ...)` + reloading the page. Pass
+   * `null` to unpin.
    */
-  var __systemProvider: HocuspocusProvider | null;
+  var __test_setPin: ((docName: string | null) => void) | undefined;
 }

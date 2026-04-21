@@ -323,20 +323,35 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     };
   }, [collabUrl]);
 
-  // DEV-only: expose `systemProvider` on window for Playwright E2E — the
-  // multi-agent-presence test needs to inspect the `__system__` provider's
-  // awareness.getStates() to verify server→client sync. Tree-shaken in
-  // production via the `import.meta.env.DEV` gate (Vite replaces it
-  // statically). Gated on window to skip SSR.
+  // DEV-only: expose a pin-setter hook for Playwright E2E — keeps tests
+  // off the private `ok-pin-v1` localStorage key + reload dance, so
+  // storage-key renames or versioning changes don't silently break E2E
+  // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
+  // UX via `pin()` button) + `persistPinToStorage` so post-reload
+  // behavior also matches. See review pass 0 finding #8.
+  //
+  // STOP — empty deps is intentional and must stay empty:
+  //   - `setPinnedDoc` is a stable React state setter (guaranteed by
+  //     React's useState contract).
+  //   - `persistPinToStorage` is module-scope (not a closure over render).
+  //   - Widening the deps would cause this effect to re-register on
+  //     every render, tearing down + re-installing `window.__test_setPin`
+  //     mid-test and racing Playwright's `page.evaluate`.
+  // A biome-ignore pragma would fail lint ("suppression has no effect")
+  // because the current Biome version does not flag this effect — see
+  // review pass 1 finding #2 Declined section in the iteration log.
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
-    (window as unknown as { __systemProvider: HocuspocusProvider | null }).__systemProvider =
-      systemProvider;
-    return () => {
-      (window as unknown as { __systemProvider: HocuspocusProvider | null }).__systemProvider =
-        null;
+    (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (
+      docName: string | null,
+    ) => {
+      setPinnedDoc(docName);
+      persistPinToStorage(docName);
     };
-  }, [systemProvider]);
+    return () => {
+      delete (window as { __test_setPin?: unknown }).__test_setPin;
+    };
+  }, []);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {

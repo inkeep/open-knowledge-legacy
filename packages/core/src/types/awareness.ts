@@ -67,7 +67,7 @@ export interface AgentFocusEntry {
  * content docs). Refreshed on every agent write.
  *
  * Clients filter stale entries where `now - ts >= AGENT_PRESENCE_STALE_MS`
- * (5_000ms — matches the existing `AGENT_FOCUS_STALE_MS`) and skip entries
+ * (5_000ms) and skip entries
  * with `currentDoc === null` (D8 — "presence means doing work now"). The
  * primary cleanup signal is the MCP keepalive WS close event; TTL is a
  * belt-and-suspenders defense against clock skew / silent WS drops.
@@ -81,8 +81,17 @@ export interface AgentPresenceEntry {
   color: string;
   /** Path of the doc the agent most recently wrote to; null between writes. */
   currentDoc: string | null;
-  /** Live-editing state: `'editing'` during a write in-flight, `'idle'` otherwise. */
-  mode: 'idle' | 'editing';
+  /**
+   * Live-write state: `'writing'` during an HTTP write in-flight (setPresence
+   * fires at handler entry, touchMode flips to `'idle'` in the finally), and
+   * `'idle'` when quiescent. Distinct from `AwarenessState.mode` (whose
+   * `'editing'` literal means "human has cursor active in WYSIWYG / source")
+   * — agents don't edit, they batch-write, and sharing the `'editing'` token
+   * was ambiguous when both flowed to the same `data-presence-mode` attr on
+   * the avatar. `'writing'` is agent-only; CSS / test selectors can now
+   * distinguish by value rather than needing parallel attr names.
+   */
+  mode: 'idle' | 'writing';
   /** `Date.now()` at publication time. Stale entries (>=AGENT_PRESENCE_STALE_MS) are filtered. */
   ts: number;
 }

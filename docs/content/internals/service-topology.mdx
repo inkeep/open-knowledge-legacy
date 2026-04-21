@@ -127,7 +127,9 @@ The same `__system__` Y.Doc carries a second concern: a map-valued `agentPresenc
 
 A map-valued field is required because every Hocuspocus `Document` has exactly one server-side `Awareness` instance with one `clientID`; per-content-doc agent state would stomp across N concurrent agents. The three agent write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch` in `packages/server/src/api-extension.ts`) call `setPresence(agentId, {..., mode:'editing'})` before the transact and `touchMode(agentId, 'idle')` in a `finally` so a thrown write still flips the badge back to idle.
 
-Cleanup is deterministic via the MCP keepalive WebSocket. The keepalive URL carries `agentId=${connectionId}`; `boot.ts`'s `/collab/keepalive` upgrade handler wires `ws.on('close') -> clearPresence(agentId)` so the badge disappears within ms of the MCP process exiting. A 5-second TTL on the client side (`AGENT_PRESENCE_STALE_MS`) is a belt-and-suspenders fallback for ungraceful disconnects, clock skew, and proxies that eat the close frame. `GET /api/metrics/agent-presence` returns the current map as a diagnostic + cold-start fallback for a tab that opens mid-session before the awareness replay arrives.
+Cleanup is deterministic via the MCP keepalive WebSocket. The keepalive URL carries `agentId=${connectionId}`; `boot.ts`'s `/collab/keepalive` upgrade handler wires `ws.on('close') -> clearPresence(agentId)` so the badge disappears within ms of the MCP process exiting. A 5-second TTL on the client side (`AGENT_PRESENCE_STALE_MS`) is a belt-and-suspenders fallback for ungraceful disconnects, clock skew, and proxies that eat the close frame.
+
+`GET /api/metrics/agent-presence` returns the current map **for operator diagnostics only**. The client does not poll it -- browser tabs populate the presence bar from the `__system__` provider's awareness sync, which typically delivers within the WS handshake window. The endpoint is stable surface for `curl` + dashboards; it is NOT a client-side cold-start fallback in this iteration.
 
 ## Branch awareness
 

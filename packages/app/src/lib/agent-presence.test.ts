@@ -4,6 +4,7 @@ import {
   AGENT_PRESENCE_STALE_MS,
   type AgentPresenceAwareness,
   type AgentPresenceState,
+  hasAgentPresenceShape,
   pickAgentsForDoc,
   pickPrimary,
 } from './agent-presence';
@@ -22,7 +23,7 @@ function entry(over: Partial<AgentPresenceEntry> = {}): AgentPresenceEntry {
     icon: 'claude',
     color: '#D97757',
     currentDoc: 'foo.md',
-    mode: 'editing',
+    mode: 'writing',
     ts: 10_000,
     ...over,
   };
@@ -117,7 +118,7 @@ describe('pickAgentsForDoc', () => {
     const e = entry({ currentDoc: 'foo.md', ts: NOW });
     const awareness = makeAwareness([{ agentPresence: { 'uuid-A': e } }]);
     expect(pickAgentsForDoc(awareness, 'foo.md', NOW)).toEqual({
-      current: [e],
+      current: [{ agentId: 'uuid-A', entry: e }],
       crossDoc: [],
     });
   });
@@ -127,7 +128,7 @@ describe('pickAgentsForDoc', () => {
     const awareness = makeAwareness([{ agentPresence: { 'uuid-A': e } }]);
     expect(pickAgentsForDoc(awareness, 'foo.md', NOW)).toEqual({
       current: [],
-      crossDoc: [e],
+      crossDoc: [{ agentId: 'uuid-A', entry: e }],
     });
   });
 
@@ -136,8 +137,8 @@ describe('pickAgentsForDoc', () => {
     const onBar = entry({ currentDoc: 'bar.md', ts: NOW, displayName: 'Cursor', icon: 'cursor' });
     const awareness = makeAwareness([{ agentPresence: { 'uuid-A': onFoo, 'uuid-B': onBar } }]);
     const { current, crossDoc } = pickAgentsForDoc(awareness, 'foo.md', NOW);
-    expect(current).toEqual([onFoo]);
-    expect(crossDoc).toEqual([onBar]);
+    expect(current).toEqual([{ agentId: 'uuid-A', entry: onFoo }]);
+    expect(crossDoc).toEqual([{ agentId: 'uuid-B', entry: onBar }]);
   });
 
   test('activeDocName === null puts all non-null-currentDoc agents in crossDoc', () => {
@@ -146,10 +147,15 @@ describe('pickAgentsForDoc', () => {
     const awareness = makeAwareness([{ agentPresence: { 'uuid-A': a, 'uuid-B': b } }]);
     const { current, crossDoc } = pickAgentsForDoc(awareness, null, NOW);
     expect(current).toEqual([]);
-    // Non-null-asserting here would trip Biome; sort by currentDoc ?? '' instead.
-    const byDoc = (x: AgentPresenceEntry, y: AgentPresenceEntry): number =>
-      (x.currentDoc ?? '').localeCompare(y.currentDoc ?? '');
-    expect([...crossDoc].sort(byDoc)).toEqual([a, b].sort(byDoc));
+    // Sort by entry.currentDoc for stable comparison (Biome-safe no-non-null).
+    const byDoc = (x: { entry: AgentPresenceEntry }, y: { entry: AgentPresenceEntry }): number =>
+      (x.entry.currentDoc ?? '').localeCompare(y.entry.currentDoc ?? '');
+    expect([...crossDoc].sort(byDoc)).toEqual(
+      [
+        { agentId: 'uuid-A', entry: a },
+        { agentId: 'uuid-B', entry: b },
+      ].sort(byDoc),
+    );
   });
 
   test('currentDoc === null agents are dropped (D8)', () => {
@@ -167,7 +173,7 @@ describe('pickAgentsForDoc', () => {
     const old = entry({ currentDoc: 'foo.md', ts: stale });
     const awareness = makeAwareness([{ agentPresence: { 'uuid-live': live, 'uuid-stale': old } }]);
     expect(pickAgentsForDoc(awareness, 'foo.md', NOW)).toEqual({
-      current: [live],
+      current: [{ agentId: 'uuid-live', entry: live }],
       crossDoc: [],
     });
   });
@@ -185,7 +191,47 @@ describe('pickAgentsForDoc', () => {
       { agentPresence: { 'uuid-remote': remote } },
     ]);
     const { current, crossDoc } = pickAgentsForDoc(awareness, 'foo.md', NOW);
-    expect(current).toEqual([local]);
-    expect(crossDoc).toEqual([remote]);
+    expect(current).toEqual([{ agentId: 'uuid-local', entry: local }]);
+    expect(crossDoc).toEqual([{ agentId: 'uuid-remote', entry: remote }]);
+  });
+
+  test('returns agentId keys paired with entries (O(N) lookup contract)', () => {
+    // Regression: pickAgentsForDoc must return {agentId, entry} pairs so
+    // downstream consumers don't need a second O(N²) reverse-lookup to
+    // recover the key from the entry ref. See review pass 0 finding #11.
+    const e = entry({ currentDoc: 'foo.md', ts: NOW });
+    const awareness = makeAwareness([{ agentPresence: { 'uuid-specific': e } }]);
+    const { current } = pickAgentsForDoc(awareness, 'foo.md', NOW);
+    expect(current).toHaveLength(1);
+    expect(current[0]?.agentId).toBe('uuid-specific');
+    expect(current[0]?.entry).toBe(e);
+  });
+});
+
+describe('hasAgentPresenceShape', () => {
+  test('accepts a real-shaped awareness', () => {
+    const real: AgentPresenceAwareness = { getStates: () => new Map() };
+    expect(hasAgentPresenceShape(real)).toBe(true);
+  });
+
+  test('rejects null and undefined', () => {
+    expect(hasAgentPresenceShape(null)).toBe(false);
+    expect(hasAgentPresenceShape(undefined)).toBe(false);
+  });
+
+  test('rejects objects missing getStates', () => {
+    expect(hasAgentPresenceShape({})).toBe(false);
+    expect(hasAgentPresenceShape({ states: new Map() })).toBe(false);
+  });
+
+  test('rejects objects where getStates is not a function', () => {
+    expect(hasAgentPresenceShape({ getStates: 'not-a-function' })).toBe(false);
+    expect(hasAgentPresenceShape({ getStates: 42 })).toBe(false);
+  });
+
+  test('rejects primitives', () => {
+    expect(hasAgentPresenceShape('awareness')).toBe(false);
+    expect(hasAgentPresenceShape(42)).toBe(false);
+    expect(hasAgentPresenceShape(true)).toBe(false);
   });
 });

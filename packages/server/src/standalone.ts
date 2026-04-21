@@ -823,9 +823,15 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
           }
 
-          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          // Phase 1b: tear down CC1 broadcaster + agent-presence broadcaster +
+          // __system__ direct connection. Both broadcasters share the same
+          // `__system__` Y.Doc — their destroys clear internal state (debounce
+          // timers for CC1; idempotent no-op for agent-presence today but
+          // symmetric with the broadcaster-lifecycle contract). The single
+          // systemDocConnection handle is torn down last.
           try {
             cc1Broadcaster?.destroy();
+            agentPresenceBroadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;

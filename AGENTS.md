@@ -1363,7 +1363,7 @@ All agent presence state lives on the `__system__` Y.Doc's awareness as a map-va
 
 **STOP — the `agent-` prefix convention.** `api-extension.ts`'s `extractAgentIdentity` stores presence under the key `agent-${rawAgentId}`, but the keepalive URL carries the raw `connectionId`. Use the exported `toBroadcasterKey(rawAgentId)` helper in `packages/server/src/boot.ts` for every translation from a raw URL / HTTP-body agentId to the broadcaster-map key — the close handler, test harnesses, and any future cleanup path. Silent prefix drift between the write path and the cleanup path makes `clearPresence` no-op in production without failing any test.
 
-**Observability.** `GET /api/metrics/agent-presence` returns `{ presence: Record<agentId, AgentPresenceEntry> }` — the current map. Cold-start fallback for a tab that opens mid-session if the `__system__` awareness sync hasn't delivered any entries yet.
+**Observability.** `GET /api/metrics/agent-presence` returns `{ presence: Record<agentId, AgentPresenceEntry> }` — the current map. **Diagnostic-only** in this iteration: the browser does NOT poll this endpoint. Presence-bar state always comes from the `__system__` provider's awareness sync (delivered in the WS handshake window). The endpoint is stable surface for `curl` + operator dashboards. Wiring it as a client-side cold-start fallback is noted but not load-bearing — awareness replay is fast in practice.
 
 ### Shadow repo & branch runtime
 
@@ -1438,7 +1438,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                                |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park)             |
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)                      |
-| GET    | `/api/metrics/agent-presence` | Current `agentPresence` map (cold-start fallback for mid-session tabs)                |
+| GET    | `/api/metrics/agent-presence` | Current `agentPresence` map (diagnostic-only; clients don't poll)                     |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)                   |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                                     |
 | GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |

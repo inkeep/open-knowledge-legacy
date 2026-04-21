@@ -19,17 +19,12 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+// toBroadcasterKey is the canonical raw-id → map-key transform; importing
+// from the server package rather than re-declaring it locally keeps this
+// test aligned with the production `extractAgentIdentity` contract. If
+// the server ever changes the prefix, this test follows automatically.
+import { toBroadcasterKey } from '@inkeep/open-knowledge-server';
 import { agentWriteMd, createTestServer, type TestServer } from './test-harness';
-
-/**
- * Map a raw agentId (the value sent in POST body `agentId` or in the
- * keepalive URL) to the broadcaster-map key. Server-side
- * `extractAgentIdentity` prepends `agent-`; tests must use the same
- * convention when indexing into `getPresenceMap()`.
- */
-function toBroadcasterKey(rawAgentId: string): string {
-  return `agent-${rawAgentId}`;
-}
 
 let server: TestServer;
 
@@ -177,5 +172,19 @@ describe('multi-agent presence — Tier 1 regression gate (FR-8)', () => {
     expect(body.presence[key]).toBeDefined();
     expect(body.presence[key].displayName).toBe('Claude');
     expect(body.presence[key].currentDoc).toBe(doc);
+  });
+
+  test('GET /api/metrics/agent-presence rejects DNS-rebinding Host with 403', async () => {
+    // Mirrors the /api/workspace test: TCP peer is loopback (127.0.0.1) but
+    // Host header names an attacker-controlled domain. The host-allowlist
+    // must refuse even though the peer passes the loopback check — matches
+    // the ASVS DNS-rebinding mitigation used by /api/workspace.
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/metrics/agent-presence`, {
+      headers: { Host: 'attacker.example.com' },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('host-header-not-allowed');
   });
 });

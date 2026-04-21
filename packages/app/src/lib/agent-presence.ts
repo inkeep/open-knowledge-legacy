@@ -36,8 +36,42 @@ export interface AgentPresenceAwareness {
   getStates(): ReadonlyMap<number, AgentPresenceState>;
 }
 
+/**
+ * Narrow runtime structural check — defends the cast from
+ * `HocuspocusProvider.awareness` (typed as `y-protocols/awareness#Awareness`)
+ * to our minimal `AgentPresenceAwareness` contract. Mirrors the server-side
+ * `getAwareness(doc)` defensive pattern in `agent-presence.ts` so both sides
+ * of the map-valued-awareness substrate fail loud (log + empty-read) rather
+ * than throwing a runtime `TypeError` from `.getStates().values()` deep in a
+ * render path.
+ *
+ * Stakes: `participantsEqual` deliberately skips presence comparisons that
+ * don't affect render output, so a silent shape shift (Hocuspocus upgrade,
+ * test mock swap, etc.) would manifest as "the bar goes empty, no warning"
+ * — hard to diagnose. The guard converts that into a one-shot `[agent-
+ * presence]` warning + empty-presence read.
+ */
+export function hasAgentPresenceShape(awareness: unknown): awareness is AgentPresenceAwareness {
+  return (
+    typeof awareness === 'object' &&
+    awareness !== null &&
+    typeof (awareness as { getStates?: unknown }).getStates === 'function'
+  );
+}
+
 export interface AgentPresenceState {
   agentPresence?: Record<string, AgentPresenceEntry>;
+}
+
+/**
+ * One presence entry paired with its `agentId` key. Consumers want both —
+ * React needs a stable list key (`agentId`), the UI renders from the entry.
+ * Returning the pair here means the caller does not need a second O(M·N)
+ * reverse lookup on the awareness map to recover the id.
+ */
+export interface AgentPresenceRecord {
+  agentId: string;
+  entry: AgentPresenceEntry;
 }
 
 /**
@@ -45,6 +79,10 @@ export interface AgentPresenceState {
  * currently on the active doc vs agents elsewhere (cross-doc). Stale entries
  * (`now - ts >= AGENT_PRESENCE_STALE_MS`) and entries with
  * `currentDoc === null` (D8) are dropped before bucketing.
+ *
+ * Returns `{agentId, entry}` pairs (not bare entries) so React consumers
+ * have a stable list key without a second reverse-lookup pass. One peer walk
+ * visits each awareness state once — no quadratic scan.
  *
  * Intended shape for the sectioned presence bar (D12, Design B):
  *   `[...humans, ...current] | [divider] | [...crossDoc]`
@@ -55,19 +93,19 @@ export function pickAgentsForDoc(
   awareness: AgentPresenceAwareness,
   activeDocName: string | null,
   now: number,
-): { current: AgentPresenceEntry[]; crossDoc: AgentPresenceEntry[] } {
-  const current: AgentPresenceEntry[] = [];
-  const crossDoc: AgentPresenceEntry[] = [];
+): { current: AgentPresenceRecord[]; crossDoc: AgentPresenceRecord[] } {
+  const current: AgentPresenceRecord[] = [];
+  const crossDoc: AgentPresenceRecord[] = [];
   for (const state of awareness.getStates().values()) {
     const presence = state.agentPresence;
     if (!presence) continue;
-    for (const entry of Object.values(presence)) {
+    for (const [agentId, entry] of Object.entries(presence)) {
       if (!entry.currentDoc) continue;
       if (now - entry.ts >= AGENT_PRESENCE_STALE_MS) continue;
       if (entry.currentDoc === activeDocName) {
-        current.push(entry);
+        current.push({ agentId, entry });
       } else {
-        crossDoc.push(entry);
+        crossDoc.push({ agentId, entry });
       }
     }
   }
