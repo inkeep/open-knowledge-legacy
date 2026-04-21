@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
@@ -34,6 +35,7 @@ export interface RollbackToVersionDeps {
   serverUrl: ServerUrlOrResolver;
   config: Config;
   resolveCwd: (explicit?: string) => Promise<string>;
+  identityRef?: { current: AgentIdentity };
 }
 
 export function register(server: ServerInstance, deps: RollbackToVersionDeps): void {
@@ -66,9 +68,18 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       }
 
       // Perform the rollback
+      const identity = deps.identityRef?.current;
       const result = await httpPost(url, '/api/rollback', {
         docName,
         commitSha: args.commitSha,
+        ...(identity
+          ? {
+              agentId: identity.connectionId,
+              agentName: identity.displayName,
+              clientName: identity.clientInfo?.name,
+              colorSeed: identity.colorSeed,
+            }
+          : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 

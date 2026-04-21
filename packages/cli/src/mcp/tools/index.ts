@@ -192,6 +192,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
   });
   registerGetHistory(server, {
     serverUrl: opts.serverUrl,
@@ -203,6 +204,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
   });
   registerListDocuments(server, {
     serverUrl: opts.serverUrl,

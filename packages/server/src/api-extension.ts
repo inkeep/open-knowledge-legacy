@@ -78,6 +78,7 @@ import {
   type HistoryRef,
   historyGit,
   listRescueCheckpoints,
+  SERVICE_WRITER,
   safetyCheckpoint,
   saveVersion,
   type TimelineRescueEntry,
@@ -1784,6 +1785,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body); // attribution threading (FR-5, D42)
+
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
       if (!isSafeDocName(rawDocName)) {
@@ -1922,6 +1925,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       let userMessage: string | undefined;
+      let saveVersionBody: Record<string, unknown> = {};
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1930,6 +1934,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           json(res, 400, { ok: false, error: 'Invalid JSON' });
           return;
         }
+        saveVersionBody = body;
         if (typeof body.message === 'string' && body.message.trim()) {
           userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
@@ -1948,11 +1953,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Default writer if none provided
+      // Thread agent identity — extends writers[] with calling agent (D42).
+      const {
+        rawAgentId: svRawAgentId,
+        agentId: svAgentId,
+        agentName: svAgentName,
+        clientName: svClientName,
+      } = extractAgentIdentity(saveVersionBody);
       if (writers.length === 0) {
-        writers = [
-          { id: 'server', name: 'openknowledge-server', email: 'noreply@openknowledge.local' },
-        ];
+        if (svRawAgentId !== undefined) {
+          const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
+          writers = [
+            { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
+          ];
+        } else {
+          writers = [SERVICE_WRITER];
+        }
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
@@ -2247,6 +2263,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const {
+      agentId: rollbackAgentId,
+      agentName: rollbackAgentName,
+      colorSeed: rollbackColorSeed,
+    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+
+    const {
       docName: rawDocName,
       commitSha: rawSha,
       versionTag: rawVersionTag,
@@ -2324,6 +2346,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
+      recordContributor(docName, rollbackAgentId, rollbackAgentName, rollbackColorSeed);
       setReconciledBase(docName, markdown);
 
       // Force-flush L2 git commit so the restored version appears in the
@@ -2641,6 +2664,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
+      const {
+        agentId: createPageAgentId,
+        agentName: createPageAgentName,
+        colorSeed: createPageColorSeed,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -2682,6 +2710,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
+      recordContributor(docName, createPageAgentId, createPageAgentName, createPageColorSeed);
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -2767,6 +2796,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      const {
+        agentId: renameAgentId,
+        agentName: renameAgentName,
+        colorSeed: renameColorSeed,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { docName, newDocName } = body as Record<string, unknown>;
       if (typeof docName !== 'string' || typeof newDocName !== 'string') {
         json(res, 400, { ok: false, error: 'docName and newDocName are required' });
@@ -2801,6 +2835,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
+      recordContributor(docName as string, renameAgentId, renameAgentName, renameColorSeed);
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);
@@ -2836,6 +2871,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, fromPath, toPath } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -2943,6 +2979,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, path } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -3073,6 +3110,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const { filename, buffer, parentDocName } = uploadResult;
+    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
 
     if (!parentDocName) {
       json(res, 400, { ok: false, error: 'parentDocName is required' });
@@ -4112,10 +4153,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const body = await readBody(req);
       if (body.length > 0) {
-        const parsed = JSON.parse(body.toString()) as { op?: string };
+        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
         if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
-          op = parsed.op;
+          op = parsed.op as 'push' | 'pull' | 'sync';
         }
+        extractAgentIdentity(parsed); // attribution threading (FR-5, D42)
       }
     } catch {
       // Ignore parse errors — use default op
@@ -4139,12 +4181,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     let enabled: boolean;
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { enabled?: unknown };
+      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
       if (typeof parsed.enabled !== 'boolean') {
         json(res, 400, { ok: false, error: 'enabled must be a boolean' });
         return;
       }
       enabled = parsed.enabled;
+      extractAgentIdentity(parsed); // attribution threading (FR-5, D42)
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
@@ -4178,15 +4221,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 503, { ok: false, error: 'Sync engine not active' });
       return;
     }
-    let body: { file?: string; strategy?: string; content?: string };
+    let body: Record<string, unknown>;
     try {
       const raw = await readBody(req);
-      body = JSON.parse(raw.toString()) as { file?: string; strategy?: string; content?: string };
+      body = JSON.parse(raw.toString()) as Record<string, unknown>;
+      extractAgentIdentity(body); // attribution threading (FR-5, D42)
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
     }
-    const { file, strategy, content } = body;
+    const { file, strategy, content } = body as {
+      file?: string;
+      strategy?: string;
+      content?: string;
+    };
     if (!file || typeof file !== 'string') {
       json(res, 400, { ok: false, error: 'Missing required field: file' });
       return;
@@ -4261,6 +4309,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 503, { ok: false, error: 'Sync engine not active' });
       return;
     }
+    extractAgentIdentity({}); // attribution threading (FR-5, D42)
     try {
       await engine.abortMerge();
       json(res, 200, { ok: true });

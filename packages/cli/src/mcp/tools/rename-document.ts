@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import { type PreviewUrlSource, resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
@@ -83,6 +84,7 @@ export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: Config;
   resolveCwd: (explicit?: string) => Promise<string>;
+  identityRef?: { current: AgentIdentity };
 }
 
 export function register(server: ServerInstance, deps: RenameDocumentDeps): void {
@@ -101,9 +103,18 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       const normalizedNewDoc = normalizeDocName(args.newDocName);
       if (!normalizedNewDoc.ok) return textResult(normalizedNewDoc.error, true);
 
+      const identity = deps.identityRef?.current;
       const result = await httpPost(url, '/api/rename', {
         docName: normalizedDoc.docName,
         newDocName: normalizedNewDoc.docName,
+        ...(identity
+          ? {
+              agentId: identity.connectionId,
+              agentName: identity.displayName,
+              clientName: identity.clientInfo?.name,
+              colorSeed: identity.colorSeed,
+            }
+          : {}),
       });
 
       if (!result.ok) {
