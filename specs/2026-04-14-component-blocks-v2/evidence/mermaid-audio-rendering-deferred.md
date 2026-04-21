@@ -93,15 +93,78 @@ Listed in REPORT.md §Research Recap as potential Path-C follow-ups:
 - `@toeverything/mermaid-wasm` lineage + diagram-coverage attestation (if worker+WASM is on the table)
 - Visual diagram-builder products (Excalidraw, tldraw, Whimsical) — out of research scope but may reframe the core question ("should we ship Mermaid, or a visual tool?")
 
-## Audio gap (separate from Mermaid)
+## Audio gap (separate from Mermaid — narrower scope, cosmetic only)
 
-Audio is a narrower question. `AudioPlaceholder` already renders a working HTML5 `<audio controls src={src}>` element — audio playback works end-to-end. The gap vs spec is:
+### Current shipped state
 
-- No shadcn chrome (VR14 specifies "audio player chrome — shadcn wrapper")
-- No `title` rendering beyond "Audio" fallback
-- Placeholder component inline in `componentMap.tsx` rather than extracted to `packages/app/src/components/ui/audio.tsx`
+`AudioPlaceholder` (`packages/app/src/editor/components/componentMap.tsx:33-46`) renders a real HTML5 `<audio controls src={src}>` element wrapped in a bordered label div. Audio playback, scrubbing, volume, and keyboard shortcuts (Space to play/pause, arrow keys for seek) all work end-to-end via browser-native controls. The component's name suffix "Placeholder" is misleading — playback is functional; what's absent is the visual styling layer.
 
-A shadcn Audio wrapper scope is well-contained: one component file, replacing the inline placeholder with a labeled player + shadcn styling. No research report needed.
+### What VR14 actually requires — concretely
+
+SPEC §8 row VR14: *"`Audio` with test MP3 × {light, dark} — Audio player chrome (shadcn wrapper) matches reference."*
+
+"shadcn wrapper" translates to three concrete properties the browser-native `<audio controls>` doesn't have:
+
+1. **Theme reactivity.** Browser-native controls look identical in light and dark modes — Chromium draws the same grey UI either way, which visually clashes with the editor's dark surface. A shadcn-pattern player binds control colors to `--primary`, `--muted-foreground`, `--border` CSS variables, so dark-mode audio blocks match dark-mode Callouts / Cards / Accordions without a separate theme pass.
+2. **OS/browser consistency.** Native `<audio>` UI differs between Chrome-macOS, Firefox-Linux, Safari-iOS. Any design review / visual regression will diff depending on which browser takes the screenshot. Custom chrome gives a single canonical appearance.
+3. **Layout cohesion.** Native controls have fixed heights and spacings that don't align with the editor's 8px/16px spacing grid. Custom chrome uses the same Tailwind tokens as the rest of the surface.
+
+Functionally no user is blocked by any of this today. The gap is purely cosmetic + theme-consistency.
+
+### No user story exists
+
+US-001..US-017 (covered in the PR #165 body's "Coverage by story" table) don't include an Audio-specific story. VR14 is a spec-level test row with no implementation user story behind it. No customer bug, support ticket, or design feedback references Audio-chrome quality. Audio blocks are a long-tail authoring surface — rare in technical documentation generally, and we have no evidence any of our users embed them.
+
+### Shadcn-compatible landscape (researched 2026-04-21)
+
+**shadcn/ui core does NOT ship an audio player.** Their catalog is primitives + layout (Button, Dialog, Slider, etc.) — media is not in their scope. Four registry-compatible / adjacent options surfaced:
+
+| Option | Source | Shape | Dep posture |
+|---|---|---|---|
+| **[AI Elements `AudioPlayer`](https://elements.ai-sdk.dev/components/audio-player)** (Vercel AI SDK registry) | shadcn-CLI installable via `@<elements-registry>/audio-player`. Compound components: `AudioPlayer`, `AudioPlayerElement`, `AudioPlayerControlBar`, `AudioPlayerPlayButton`, `AudioPlayerSeekBackwardButton`/`…ForwardButton`, `AudioPlayerTimeDisplay`, `AudioPlayerDurationDisplay`, `AudioPlayerTimeRange`, `AudioPlayerMuteButton`, `AudioPlayerVolumeRange`. | Built on [`media-chrome`](https://www.media-chrome.org/) (MIT, web-components, 10+ year old, used by Mux) + shadcn Button. CSS-variable theming. | Adds `media-chrome` as runtime dep (~30 KB gzipped, lazy-loadable) |
+| **[`media-chrome`](https://www.media-chrome.org/) direct** | `<media-controller>` + individual `<media-*>` web components, framework-agnostic. | Same underlying tech as option 1 — we own all Tailwind/CSS-variable wiring. | Same runtime dep |
+| **Hand-rolled with shadcn Slider + Button** | Compose from our own `packages/app/src/components/ui/`. First requires `npx shadcn@latest add slider` — currently absent from our `ui/` dir. | Standard shadcn composition: Radix Slider + Button + `useRef`/`useEffect` on the `<audio>` element. ~150-200 LoC of code we maintain forever. | No new runtime deps beyond what shadcn Slider brings (Radix Slider) |
+| **[audio-ui](https://github.com/ouestlabs/audio-ui)** (ouestlabs) | Shape mismatch — DAW/mixer primitives (faders, knobs, channel strips, xy-pads, transport). Music-production tooling. | ❌ Not applicable — wrong problem domain |
+| **[ElevenLabs UI](https://ui.elevenlabs.io/docs)** | Includes `AudioPlayer` + `ScrubBar`, but packaged with agent-focused components (`VoiceButton`, `LiveWaveform`, `Orb`). Broader scope than we need, unclear license. | ⚠️ Plausible but over-scoped |
+
+### Current lean (2026-04-21, NOT locked)
+
+**Option 1: AI Elements `AudioPlayer`.** Rationale:
+
+- Direct-fit API shape (compound components matching the `<Audio src="…" title="…">` descriptor contract)
+- Installs via shadcn CLI directly into `packages/app/src/components/ui/`, matching our existing component layout convention
+- `media-chrome` is mature (10+ years, Mux-maintained, MIT, broad browser coverage) → lower maintenance burden than hand-rolling
+- CSS-variable theming composes naturally with our existing `globals.css` token bridge
+
+**Fallback if the lean changes**: Option 3 (hand-rolled with shadcn Slider + Button) keeps zero runtime deps but costs ~150-200 LoC we own forever. Reasonable if `media-chrome`'s customizability proves insufficient, or if first-use reveals features media-chrome doesn't provide (e.g., waveform visualization, chapter markers).
+
+### Follow-up work shape (when un-deferring)
+
+Estimated **200-300 LoC total**, 1-2 focused hours:
+
+1. **Install.** `npx shadcn@latest add @<elements-registry>/audio-player` → pulls compound components into `packages/app/src/components/ui/audio-player.tsx` (or per-component files). One new runtime dep: `media-chrome`.
+2. **Thin wrapper.** Author `packages/app/src/components/ui/audio.tsx` exposing a single `<Audio src="..." title="...">` surface that matches our descriptor's prop contract (`src` required, `title` optional — see `packages/core/src/registry/built-ins.ts:357-370`). Internally composes `AudioPlayer` + `AudioPlayerElement` + `AudioPlayerControlBar` + `…PlayButton` + `…TimeRange` + `…TimeDisplay` + `…DurationDisplay` + `…MuteButton` + `…VolumeRange`. Minimal control set; skip `SeekBackward/Forward` buttons unless explicit product feedback requests them.
+3. **Wire into registry.** Replace `Audio: AudioPlaceholder` at `componentMap.tsx:71` with the real import. Delete `AudioPlaceholder` function (lines 33-46) and its `'Audio'` fallback prop parsing. Remove the mislabeling comment at line 11.
+4. **Implement VR14.** Add a Playwright test at `packages/app/tests/visual/component-parity.e2e.ts` (or dedicated `audio-chrome.e2e.ts`) — insert `<Audio src="/fixtures/test.mp3" title="Test" />` into a seeded doc, screenshot in light + dark, diff against baseline. Add MP3 fixture to `packages/content/` or a `tests/fixtures/` dir.
+5. **Clean up SPEC.md corrigenda.** Remove the "Audio" portion of the VR14 breadcrumb once VR14 is green. Keep the VR13 (Mermaid) portion — still deferred.
+
+### Non-goals for the follow-up
+
+Explicitly OUT of scope for an audio-specific follow-up even when un-deferred:
+
+- **Waveform visualization** — not in any descriptor prop; requires `wavesurfer.js` or similar; no user story asks for it
+- **Chapter markers / timestamps** — not in descriptor prop; would require extending the `AudioProps` PropDef
+- **Playlist / multi-track** — component is single-src by design (per `src: string` in `audioProps`)
+- **Recording / capture** — `MediaRecorder` API, fundamentally different problem
+- **Transcription overlay** — out of scope, separate from playback
+
+Any of these would need their own descriptor + story; the AI Elements compound component composition cleanly supports added features later.
+
+### Trigger conditions specific to Audio
+
+The generic triggers at the document foot apply, plus one Audio-specific signal:
+
+- **First customer doc that embeds `<Audio>` and someone notices the browser-native controls clash** — most-likely un-defer trigger. Cost of addressing is bounded (Option 1 is 1-2 hours), so this doesn't need pre-emptive work.
 
 ## Video gap (not in registry at all)
 
