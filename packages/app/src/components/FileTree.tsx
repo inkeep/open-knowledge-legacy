@@ -575,6 +575,7 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={!workspace}
                 onSelect={() => {
+                  if (!workspace) return;
                   const full = joinWorkspacePath(
                     workspace.contentDir,
                     relativePathForNode(node),
