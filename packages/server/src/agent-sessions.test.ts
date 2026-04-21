@@ -11,9 +11,15 @@ import {
 // Minimal Hocuspocus mock for session management tests.
 // Each openDirectConnection call returns a unique mock DC so we can track disconnects.
 // Uses a real Y.Doc so Y.UndoManager creation succeeds (US-008).
+//
+// Awareness is also represented as a call-log, NOT as state plumbing.
+// Post-FR-3 (US-003), `AgentSessionManager` MUST NOT touch per-doc awareness —
+// presence is published on the `__system__` Y.Doc via `AgentPresenceBroadcaster`
+// instead. The log lets tests assert "getSession did not reach for awareness".
 function createMockHocuspocus() {
   const openedDocs: string[] = [];
   const ydocs = new Map<string, Y.Doc>();
+  const awarenessCalls: Array<{ method: string; args: unknown[] }> = [];
 
   function makeDC(docName: string): AgentDirectConnection {
     let disconnected = false;
@@ -24,11 +30,12 @@ function createMockHocuspocus() {
       ydocs.set(docName, ydoc);
     }
     const awareness = {
-      state: null as unknown,
-      setLocalState(s: unknown) {
-        this.state = s;
+      setLocalState(...args: unknown[]) {
+        awarenessCalls.push({ method: 'setLocalState', args });
       },
-      setLocalStateField(_field: string, _value: unknown) {},
+      setLocalStateField(...args: unknown[]) {
+        awarenessCalls.push({ method: 'setLocalStateField', args });
+      },
     };
     const doc = {
       name: docName,
@@ -52,6 +59,7 @@ function createMockHocuspocus() {
 
   return {
     openedDocs,
+    awarenessCalls,
     openDirectConnection: async (docName: string): Promise<AgentDirectConnection> => {
       openedDocs.push(docName);
       return makeDC(docName);
@@ -121,6 +129,16 @@ describe('getSession — composite key (docName + agentId)', () => {
   test('default agentId is claude-1', async () => {
     await manager.getSession('doc.md');
     expect(manager.hasSession('doc.md', 'claude-1')).toBe(true);
+  });
+
+  test('does not touch per-doc awareness (presence lives on __system__ via AgentPresenceBroadcaster)', async () => {
+    await manager.getSession('doc.md', 'agent-alice', {
+      displayName: 'Alice',
+      colorSeed: 'seed',
+      clientName: 'claude-code',
+    });
+    await manager.closeSession('doc.md', 'agent-alice');
+    expect(mockHocuspocus.awarenessCalls).toEqual([]);
   });
 });
 

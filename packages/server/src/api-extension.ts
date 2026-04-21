@@ -1268,7 +1268,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'editing',
+          ts: Date.now(),
+        });
+      }
       try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
@@ -1293,10 +1304,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           buildAgentActor({ clientName, clientVersion, label }),
         );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
+      onAgentWrite?.();
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1362,7 +1374,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'editing',
+          ts: Date.now(),
+        });
+      }
       try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
@@ -1387,33 +1410,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           buildAgentActor({ clientName, clientVersion, label }),
         );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus (attribution) and presence (UI state) on
-      // __system__ awareness. Focus drives browser push-navigation to the
-      // doc the agent just wrote (writeKind); presence drives the multi-agent
-      // presence bar (displayName/icon/color/mode/ts).
+      // Focus (attribution) on __system__ awareness. Focus drives browser
+      // push-navigation to the doc the agent just wrote (writeKind); presence
+      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
         writeKind: 'write',
         ts: Date.now(),
       });
-      {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: resolvedDocName,
-          mode: 'idle',
-          ts: Date.now(),
-        });
-      }
       onAgentWrite?.();
 
       // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
@@ -1890,7 +1900,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'editing',
+          ts: Date.now(),
+        });
+      }
       try {
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
@@ -1957,7 +1978,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             buildAgentActor({ clientName, clientVersion, label }),
           );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (staleTarget) {
@@ -1974,24 +1995,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
+      // Focus (attribution) on __system__ awareness. Presence is separately
+      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
         writeKind: 'edit',
         ts: Date.now(),
       });
-      {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: docName,
-          mode: 'idle',
-          ts: Date.now(),
-        });
-      }
       onAgentWrite?.();
 
       const subscriberCount = getSubscriberCount(docName);
@@ -2069,7 +2080,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const session = await sessionManager.getSession(docName, connectionId);
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+      // instead of the per-doc awareness — the per-doc awareness has ONE
+      // shared clientID across N concurrent agents and would stomp.
+      {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? connectionId);
+        agentPresenceBroadcaster?.setPresence(connectionId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'editing',
+          ts: Date.now(),
+        });
+      }
       let undone = false;
       try {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
@@ -2090,7 +2115,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
         }
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(connectionId, 'idle');
       }
 
       if (undone) {
@@ -2834,6 +2859,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, principal);
+  }
+
+  async function handleMetricsAgentPresence(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const presence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -4859,6 +4897,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/metrics/agent-presence': handleMetricsAgentPresence,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
