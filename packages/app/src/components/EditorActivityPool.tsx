@@ -522,7 +522,7 @@ function ActivityEntry({
                   non-active editor until its mode is visited at least once —
                   see computeEditorMountGate + evidence/s1-diagnosis.md. */}
               {gate.renderSource ? (
-                <div className={isSourceMode ? 'h-full' : 'hidden'}>
+                <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
                   <SourceEditor
                     ytext={entry.provider.document.getText('source')}
                     provider={entry.provider}
@@ -531,7 +531,7 @@ function ActivityEntry({
                 </div>
               ) : null}
               {gate.renderVisual ? (
-                <div className={isSourceMode ? 'hidden' : 'h-full'}>
+                <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
                   <TiptapEditor
                     // Composite key matches existing pattern at EditorArea.tsx:172 —
                     // forces TipTap remount on draft → saved transition (the isNewDoc

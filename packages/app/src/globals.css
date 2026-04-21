@@ -1117,3 +1117,26 @@ button:active:not(:disabled) {
   padding-inline-start: calc(8px + 2ch);
   text-indent: -2ch;
 }
+
+/* V2 mode-toggle visibility (FR9, V2 SPEC §8b) — replaces Tailwind's
+   `hidden` (`display: none`) on the non-active editor's container during
+   Visual ↔ Source mode flips. `content-visibility: hidden` skips browser
+   style + layout recalc on the 39K-PM-DOM-node tree of large docs:
+   CV:hidden probe AC22 MET at 204 ms first / 115 ms repeat in dev,
+   target G4 < 200 ms prod (cold-mount-profile §S3). `contain-intrinsic-size`
+   reserves layout space so the scrollbar doesn't collapse during the
+   toggle (no jarring scrollbar disappearance). The reserved height (8000px)
+   is generous enough to cover most docs without forcing a layout shift
+   on toggle-back; for ultra-tall docs CV:hidden's auto-resume on visibility
+   handles the diff cheaply.
+
+   Difference vs `display: none`:
+     - `display: none` removes the element from layout entirely. Browser
+       still has the DOM in memory but no layout/paint cost.
+     - `content-visibility: hidden` keeps the element in layout but skips
+       descendant layout/paint. The container reserves intrinsic size.
+       Switching back to visible is faster on large trees (no full reflow). */
+.ok-mode-hidden {
+  content-visibility: hidden;
+  contain-intrinsic-size: 0 8000px;
+}
