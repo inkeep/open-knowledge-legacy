@@ -3,7 +3,7 @@ import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel } from '@/components/DocPanel';
+import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
@@ -23,9 +23,23 @@ interface EditorAreaProps {
   previewEntry: TimelineEntry | null;
   diffLayout: DiffLayout;
   onNoDiff?: () => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
+  /** When true, EditorArea switches to the timeline tab and expands the panel. Reset via onTimelineTabHandled. */
+  requestTimelineTab?: boolean;
+  onTimelineTabHandled?: () => void;
 }
 
-export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
+export function EditorArea({
+  editorMode,
+  previewEntry,
+  diffLayout,
+  onNoDiff,
+  onEntrySelect,
+  selectedSha,
+  requestTimelineTab,
+  onTimelineTabHandled,
+}: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const isNewDoc = activeTarget?.kind === 'missing';
@@ -41,6 +55,23 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
+
+  // Lifted activeTab state — DocPanel is controlled (spec D2).
+  const [activeTab, setActiveTab] = useState<PanelTab>('outline');
+
+  // History button in EditorHeader requests the timeline tab via a one-shot flag.
+  // Auto-expand the panel if collapsed (spec D5 / FR-5).
+  useEffect(() => {
+    if (!requestTimelineTab) return;
+    setActiveTab('timeline');
+    if (isSheetMode) {
+      setSheetOpen(true);
+    } else if (isCollapsed) {
+      userCollapsedRef.current = false;
+      panelRef.current?.expand();
+    }
+    onTimelineTabHandled?.();
+  }, [requestTimelineTab, isSheetMode, isCollapsed, panelRef, onTimelineTabHandled]);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -261,7 +292,14 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
             <SheetHeader className="sr-only">
               <SheetTitle>Document panel</SheetTitle>
             </SheetHeader>
-            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+            <DocPanel
+              docName={activeDocName}
+              isSourceMode={isSourceMode}
+              activeTab={activeTab}
+              onActiveTabChange={setActiveTab}
+              onEntrySelect={onEntrySelect}
+              selectedSha={selectedSha}
+            />
           </SheetContent>
         </Sheet>
       </div>
@@ -289,7 +327,14 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
           onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
           className="flex flex-col bg-muted/20"
         >
-          <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          <DocPanel
+            docName={activeDocName}
+            isSourceMode={isSourceMode}
+            activeTab={activeTab}
+            onActiveTabChange={setActiveTab}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

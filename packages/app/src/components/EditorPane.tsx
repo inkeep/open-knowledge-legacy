@@ -13,7 +13,7 @@ import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
 import { NavigationPendingBar } from './NavigationPendingBar';
-import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePanel';
+import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
 /**
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
@@ -24,7 +24,6 @@ export type EditorMode = 'wysiwyg' | 'source' | 'diff';
 
 export function EditorPane() {
   const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
@@ -35,6 +34,8 @@ export function EditorPane() {
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /** One-shot flag: when true, EditorArea switches to the timeline tab and expands if needed. */
+  const [requestTimelineTab, setRequestTimelineTab] = useState(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
@@ -48,7 +49,7 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName, activeTarget, recycleDocument } = useDocumentContext();
+  const { activeDocName, recycleDocument } = useDocumentContext();
   const { openDocumentTransition, isPending } = useDocumentTransition();
 
   // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
@@ -98,14 +99,19 @@ export function EditorPane() {
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
 
+  // Clear stale diff state when the active document changes (spec D3 / FR-3).
+  // Uses a ref to detect doc changes in an effect that reads activeDocName,
+  // satisfying the React Compiler's dependency analysis.
+  const prevDocNameRef = useRef(activeDocName);
   useEffect(() => {
-    if (activeTarget?.kind !== 'folder') return;
-    setPreviewEntry(null);
-    setTimelineOpen(false);
-    if (editorMode === 'diff') {
-      setEditorMode(modeBeforeDiffRef.current);
+    if (prevDocNameRef.current !== activeDocName) {
+      prevDocNameRef.current = activeDocName;
+      setPreviewEntry(null);
+      if (editorMode === 'diff') {
+        setEditorMode(modeBeforeDiffRef.current);
+      }
     }
-  }, [activeTarget, editorMode]);
+  }, [activeDocName, editorMode]);
 
   // Opt-in prompt (D36): show a dismissible toast the first time we detect
   // a remote exists but sync is dormant (not yet enabled).
@@ -180,7 +186,7 @@ export function EditorPane() {
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
-        onTimelineToggle={() => setTimelineOpen((o) => !o)}
+        onTimelineToggle={() => setRequestTimelineTab(true)}
         onSaveVersion={handleSaveVersion}
         saving={saving}
         previewEntry={previewEntry}
@@ -214,13 +220,10 @@ export function EditorPane() {
         previewEntry={previewEntry}
         diffLayout={diffLayout}
         onNoDiff={handleNoDiff}
-      />
-      <TimelinePanel
-        open={timelineOpen}
-        onOpenChange={setTimelineOpen}
-        docName={activeDocName ?? ''}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
+        requestTimelineTab={requestTimelineTab}
+        onTimelineTabHandled={() => setRequestTimelineTab(false)}
       />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal

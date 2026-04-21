@@ -1,30 +1,41 @@
-import { CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { useState } from 'react';
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
+import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
 import { GraphPanel } from '@/components/GraphPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
+import { TimelineContent } from '@/components/TimelinePanel';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
-type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
+export type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph' | 'timeline';
 
 const TABS: { id: PanelTab; label: string; Icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', Icon: ListTree },
   { id: 'backlinks', label: 'Backlinks', Icon: CornerDownLeft },
   { id: 'forward-links', label: 'Outgoing Links', Icon: CornerUpRight },
   { id: 'graph', label: 'Graph', Icon: Network },
+  { id: 'timeline', label: 'Timeline', Icon: Clock },
 ];
 
 interface DocPanelProps {
   docName: string;
   isSourceMode: boolean;
+  activeTab: PanelTab;
+  onActiveTabChange: (tab: PanelTab) => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
 }
 
-export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
-  const [activeTab, setActiveTab] = useState<PanelTab>('outline');
-
+export function DocPanel({
+  docName,
+  isSourceMode,
+  activeTab,
+  onActiveTabChange,
+  onEntrySelect,
+  selectedSha,
+}: DocPanelProps) {
   return (
     <>
       <div
@@ -43,9 +54,8 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
                 aria-selected={activeTab === id}
                 aria-controls={`panel-${id}`}
                 aria-label={label}
-                onClick={() => setActiveTab(id)}
+                onClick={() => onActiveTabChange(id)}
                 className={cn(
-                  // 'flex-1 rounded-none',
                   activeTab === id
                     ? 'bg-azure-900/5 dark:bg-white/10 text-primary hover:bg-azure-900/5 dark:hover:bg-white/20 hover:text-primary'
                     : 'text-muted-foreground',
@@ -69,6 +79,13 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
         {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
         {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
         {activeTab === 'graph' && <GraphPanel activeDocName={docName} />}
+        {activeTab === 'timeline' && (
+          <TimelineContent
+            docName={docName}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+          />
+        )}
       </div>
     </>
   );
