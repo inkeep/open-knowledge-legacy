@@ -78,6 +78,7 @@ export interface Clock {
 export type DispatchKind =
   | 'update-downloaded-toast-a'
   | 'update-downloaded-deduped'
+  | 'update-downloaded-empty-version'
   | 'whats-new-toast-b'
   | 'stuck-hint-toast-c'
   | 'check-success'
@@ -307,6 +308,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     const version = typeof info.version === 'string' ? info.version : '';
     if (!version) {
       logger.warn('update-downloaded with empty version — skipping dispatch');
+      onDispatch?.('update-downloaded-empty-version');
       return;
     }
     const state = readState();

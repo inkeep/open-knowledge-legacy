@@ -115,6 +115,13 @@ export function annotateMissing(
  * new file — never a half-written blob. Logs on failure (bracket-prefixed
  * per CLAUDE.md logging conventions); does not throw.
  *
+ * Returns `true` on successful persist, `false` on any failure (EACCES,
+ * disk full, rename race, userData mkdir failure). The boolean lets
+ * callers that need disk-persistence-succeeded semantics (e.g. M3 auto-
+ * updater's persist-before-emit gate) distinguish "in-memory + disk
+ * agree" from "in-memory mutated but disk stale." Existing callers that
+ * ignore the return value get the same void-like behavior as before.
+ *
  * Injected `fs` hook for tests. Production callers pass `undefined` to use
  * the module-scope `node:fs` imports.
  */
@@ -139,7 +146,7 @@ export function saveAppStateToDir(
   state: AppState,
   fs: SaveAppStateFs = DEFAULT_FS,
   logger: { error(msg: string, ctx?: object): void } = console,
-): void {
+): boolean {
   try {
     if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
     const statePath = join(userDataDir, 'state.json');
@@ -147,6 +154,7 @@ export function saveAppStateToDir(
     try {
       fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2));
       fs.renameSync(tmpPath, statePath);
+      return true;
     } catch (err) {
       logger.error('[main] saveAppState failed', {
         err: (err as Error).message,
@@ -157,12 +165,14 @@ export function saveAppStateToDir(
       } catch {
         // tmp file may not exist — best-effort cleanup.
       }
+      return false;
     }
   } catch (err) {
     logger.error('[main] saveAppState userData setup failed', {
       err: (err as Error).message,
       userDataDir,
     });
+    return false;
   }
 }
 

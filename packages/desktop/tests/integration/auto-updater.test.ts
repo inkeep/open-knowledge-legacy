@@ -377,6 +377,9 @@ describe('update-downloaded → Toast A (AC6)', () => {
     const toastA = rig.captured.filter((c) => c.channel === 'ok:update:downloaded');
     expect(toastA).toHaveLength(0);
     expect(rig.state.versionPendingInstall).toBeNull();
+    // Review Pass 1 Finding #4: empty-version branch emits its own
+    // DispatchKind so tests can observe the malformed-payload path.
+    expect(rig.dispatches).toContain('update-downloaded-empty-version' as DispatchKind);
   });
 });
 

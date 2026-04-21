@@ -8,8 +8,17 @@
  * closures must retain the wrapped-listener reference for
  * `ipcRenderer.removeListener` to match).
  *
- * Main-process dispatch goes through `createSender(getWindows)` — a typed
- * factory that mirrors `createHandler` / `createInvoker`. Direct
+ * Main-process dispatch goes through one of two typed factories:
+ *   - `createSender(getWindows)` — fan-out to every target from
+ *     `getWindows()`. Use for channels that every open BrowserWindow should
+ *     react to (e.g., menu-action, project-switched).
+ *   - `createSingleSender(getTarget)` — deliver to ONE target from
+ *     `getTarget()`. Use for channels that must not duplicate across
+ *     multiple BrowserWindows (e.g., M3 update toasts under D24 multi-
+ *     window mode, where fan-out would render N independent toasts with N
+ *     "Relaunch now" buttons).
+ *
+ * Both factories mirror `createHandler` / `createInvoker`. Direct
  * `webContents.send(...)` calls are banned outside this file by the D19
  * lint rule in `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */

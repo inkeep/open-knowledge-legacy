@@ -97,10 +97,13 @@ function loadAppState(): AppState {
  * Persist app state atomically via the pure helper in `state-store.ts` —
  * separation so the atomic-write behavior can be unit-tested without
  * Electron's `app` module (`app.getPath('userData')` is the sole Electron
- * dependency).
+ * dependency). Returns the disk-persist success boolean so callers that
+ * need it (M3 writeState rollback) can distinguish in-memory-only updates
+ * from fully-persisted ones; callers that don't care get the same silent
+ * behavior by ignoring the return.
  */
-function saveAppState(state: AppState) {
-  saveAppStateToDir(app.getPath('userData'), state);
+function saveAppState(state: AppState): boolean {
+  return saveAppStateToDir(app.getPath('userData'), state);
 }
 
 let appState: AppState = emptyState();
@@ -459,8 +462,22 @@ app.whenReady().then(async () => {
       ipcMain,
       readState: () => appState,
       writeState: (next) => {
+        // Rollback in-memory on disk-save failure so persistSafely-false in
+        // auto-updater.ts truly means "no gate armed" (Review Pass 1
+        // Finding #1). `saveAppStateToDir` returns a success boolean — on
+        // failure it has already logged + cleaned up; we just revert the
+        // in-memory commit and throw so persistSafely's catch registers
+        // the failure, skips the broadcast, and leaves memory + disk
+        // agreeing on "nothing armed." `saveAppStateToDir` itself never
+        // throws, so the rollback path is reached purely via the return
+        // value.
+        const prev = appState;
         appState = next;
-        saveAppState(appState);
+        const ok = saveAppState(appState);
+        if (!ok) {
+          appState = prev;
+          throw new Error('saveAppState failed — rolled back in-memory state');
+        }
       },
       // Target exactly one window per update event (D24 multi-window fix).
       // Prefer the currently-focused window so the toast lands on the window
