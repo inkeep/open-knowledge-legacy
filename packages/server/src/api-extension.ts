@@ -34,6 +34,10 @@ import {
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
+import {
+  formatRenameSubject,
+  formatRollbackSubject,
+} from '@inkeep/open-knowledge-core/history-repo-layout';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
@@ -2346,7 +2350,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
-      recordContributor(docName, rollbackAgentId, rollbackAgentName, rollbackColorSeed);
+      recordContributor(
+        docName,
+        rollbackAgentId,
+        rollbackAgentName,
+        rollbackColorSeed,
+        formatRollbackSubject(docName, commitSha),
+      );
       setReconciledBase(docName, markdown);
 
       // Force-flush L2 git commit so the restored version appears in the
@@ -2835,7 +2845,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
-      recordContributor(docName as string, renameAgentId, renameAgentName, renameColorSeed);
+      recordContributor(
+        docName as string,
+        renameAgentId,
+        renameAgentName,
+        renameColorSeed,
+        formatRenameSubject(docName as string, newDocName as string),
+      );
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);

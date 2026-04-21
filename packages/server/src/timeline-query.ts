@@ -4,7 +4,8 @@
  *
  * Entry types are classified from commit message prefixes:
  *   'checkpoint:' → checkpoint
- *   'upstream:'   → upstream
+ *   'import:'     → upstream  (canonical since D53/FR-13)
+ *   'upstream:'   → upstream  (legacy fallback for pre-D53 commits)
  *   else          → wip
  */
 
@@ -50,7 +51,7 @@ const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
 
 function classifyType(subject: string): EntryType {
   if (subject.startsWith('checkpoint:')) return 'checkpoint';
-  if (subject.startsWith('upstream:')) return 'upstream';
+  if (subject.startsWith('import:') || subject.startsWith('upstream:')) return 'upstream';
   return 'wip';
 }
 

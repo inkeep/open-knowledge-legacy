@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { parseCheckpoint } from '@inkeep/open-knowledge-core/history-repo-layout';
+import { parseCheckpoint, parseOkActor } from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
@@ -15,6 +15,7 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  safetyCheckpoint,
   saveInMemoryCheckpoint,
   saveVersion,
   type WriterIdentity,
@@ -303,7 +304,7 @@ describe('commitUpstreamImport', () => {
 
     const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg).toBe('upstream: import from aabbccdd..11223344');
+    expect(msg).toBe('import: from aabbccdd..11223344');
   });
 
   test('commit message handles null oldHead (initial import)', async () => {
@@ -313,7 +314,7 @@ describe('commitUpstreamImport', () => {
 
     const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg).toBe('upstream: initial import at 11223344');
+    expect(msg).toBe('import: initial at 11223344');
   });
 
   test('upstream commit is authored by upstream writer', async () => {
@@ -324,6 +325,62 @@ describe('commitUpstreamImport', () => {
     const sg = historyGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
     expect(authorName).toBe('Git (upstream)');
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API\n');
+
+    const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabb0011', 'ccdd2233');
+
+    const sg = historyGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Git (upstream)');
+  });
+});
+
+describe('safetyCheckpoint', () => {
+  let projectRoot: string;
+  let shadow: HistoryHandle;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initHistoryRepo(projectRoot);
+  });
+
+  test('uses checkpoint: prefix subject (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await safetyCheckpoint(shadow, 'content/docs', { action: 'rollback', context: {} });
+
+    const sg = historyGit(shadow);
+    const subject = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(subject).toBe('checkpoint: pre-rollback');
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await safetyCheckpoint(shadow, 'content/docs', { action: 'rollback', context: {} });
+
+    const sg = historyGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
   });
 });
 
@@ -356,10 +413,10 @@ describe('parkBranch', () => {
     expect(sha).toHaveLength(40);
     if (!sha) throw new Error('parkBranch returned null');
 
-    // Verify commit message starts with park:
+    // Verify commit message uses park: <branch> subject format (US-015)
     const sg = historyGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg.startsWith('park:')).toBe(true);
+    expect(msg).toBe('park: main');
 
     // Verify ref
     const refSha = (await sg.raw('rev-parse', 'refs/wip/main/human-session1')).trim();
@@ -377,6 +434,22 @@ describe('parkBranch', () => {
   test('returns null for empty documents', async () => {
     const sha = await parkBranch(shadow, 'main', 'session1', []);
     expect(sha).toBeNull();
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'intro', markdown: '# Hello\n', diskSnapshot: '# Hello\n' },
+    ];
+    const sha = await parkBranch(shadow, 'feature', 'sess2', docs);
+    if (!sha) throw new Error('parkBranch returned null');
+
+    const sg = historyGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
+    expect(actor?.docs).toContain('intro');
   });
 
   test('readParkedState retrieves parked content', async () => {
@@ -519,6 +592,24 @@ describe('saveVersion', () => {
 
     expect(authorEmails).toContain(human.email);
     expect(authorEmails).toContain(agent.email);
+  });
+
+  test('checkpoint commit carries ok-actor: body line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
+    const result = await saveVersion(shadow, 'content/docs', [human]);
+
+    const sg = historyGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', result.checkpointRef)).trim();
+
+    // Subject uses checkpoint: prefix
+    const subject = (await sg.raw('log', '-1', '--format=%s', result.checkpointRef)).trim();
+    expect(subject).toBe('checkpoint: Checkpoint version');
+
+    // Body carries ok-actor: line
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
   });
 
   test('checkpoint falls back to latest checkpoint when no WIP activity', async () => {

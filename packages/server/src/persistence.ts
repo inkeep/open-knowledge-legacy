@@ -12,12 +12,16 @@ import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  formatOkActor,
+  formatWipSubject,
+  type OkActorEntry,
+} from '@inkeep/open-knowledge-core/history-repo-layout';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
-  formatContributorsFrom,
   recordContributor,
   restoreContributorEntry,
   restoreContributors,
@@ -233,14 +237,25 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     const shadow = historyRef?.current;
     if (shadow) {
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
-      const contributors = formatContributorsFrom(snapshot);
-      const message = `wip: auto-save ${new Date().toISOString()}${contributors}`;
       const branch = getCurrentBranch?.() ?? 'main';
 
       if (snapshot.size === 0) {
         // No attributed contributors — fall back to single SERVICE_WRITER commit (D32)
+        const serviceActorEntry: OkActorEntry = {
+          v: 1,
+          principal: null,
+          agent_session: null,
+          agent_type: null,
+          client_name: null,
+          client_version: null,
+          label: null,
+          display_name: SERVICE_WRITER.name,
+          color_seed: SERVICE_WRITER.id,
+          docs: [],
+        };
+        const serviceMessage = `${formatWipSubject([])}\n\n${formatOkActor(serviceActorEntry)}`;
         try {
-          const sha = await commitWip(shadow, SERVICE_WRITER, contentRoot, message, branch);
+          const sha = await commitWip(shadow, SERVICE_WRITER, contentRoot, serviceMessage, branch);
           consecutiveGitFailures = 0;
           log.info(
             { sha: sha.slice(0, 8), writer: SERVICE_WRITER.id },
@@ -287,8 +302,30 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           name: entry.displayName,
           email: `${writerId}@openknowledge.local`,
         };
+        const docs = [...entry.docs];
+        const actorEntry: OkActorEntry = {
+          v: 1,
+          principal: null,
+          agent_session: writerId.startsWith('agent-') ? writerId.slice(6) : null,
+          agent_type: null,
+          client_name: null,
+          client_version: null,
+          label: null,
+          display_name: entry.displayName,
+          color_seed: entry.colorSeed,
+          docs,
+        };
+        const contributorLine = `ok-contributors: ${JSON.stringify({
+          v: 1,
+          id: writerId,
+          name: entry.displayName,
+          colorSeed: entry.colorSeed,
+          docs,
+        })}`;
+        const subject = entry.subjectOverride ?? formatWipSubject(docs);
+        const writerMessage = `${subject}\n\n${contributorLine}\n${formatOkActor(actorEntry)}`;
         try {
-          const sha = await commitWipFromTree(shadow, writer, treeSha, message, branch);
+          const sha = await commitWipFromTree(shadow, writer, treeSha, writerMessage, branch);
           anySuccess = true;
           log.info(
             { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },

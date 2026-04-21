@@ -15,6 +15,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
+  formatCheckpointSubject,
+  formatImportSubject,
+  formatOkActor,
+  type OkActorEntry,
   type ParsedCheckpoint,
   parseCheckpoint,
   resolveHistoryDir,
@@ -357,10 +361,20 @@ export async function commitUpstreamImport(
   newHead: string,
   branch = 'main',
 ): Promise<string> {
-  const message = oldHead
-    ? `upstream: import from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
-    : `upstream: initial import at ${newHead.slice(0, 8)}`;
-
+  const subject = formatImportSubject(oldHead, newHead);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: UPSTREAM_WRITER.name,
+    color_seed: UPSTREAM_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
@@ -391,7 +405,20 @@ export async function safetyCheckpoint(
   params: SafetyCheckpointParams,
   branch = 'main',
 ): Promise<string> {
-  const message = `safety-checkpoint: pre-${params.action}`;
+  const subject = formatCheckpointSubject(`pre-${params.action}`);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: SAFETY_WRITER.name,
+    color_seed: SAFETY_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, SAFETY_WRITER, contentRoot, message, branch);
 }
 
@@ -888,12 +915,20 @@ export async function parkBranch(
       // No prior WIP on this branch for this session
     }
 
-    const args = [
-      'commit-tree',
-      treeSha,
-      '-m',
-      `park: branch context at ${new Date().toISOString()}`,
-    ];
+    const parkActorEntry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: documents.map((d) => d.docName),
+    };
+    const parkMessage = `park: ${branch}\n\n${formatOkActor(parkActorEntry)}`;
+    const args = ['commit-tree', treeSha, '-m', parkMessage];
     if (parentSha) args.push('-p', parentSha);
 
     const commitSha = (
@@ -1032,7 +1067,20 @@ export async function saveVersion(
       }
     }
 
-    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', 'checkpoint: Checkpoint version'];
+    const checkpointActorEntry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: [],
+    };
+    const checkpointMessage = `${formatCheckpointSubject('Checkpoint version')}\n\n${formatOkActor(checkpointActorEntry)}`;
+    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', checkpointMessage];
     for (const p of uniqueParents) {
       checkpointArgs.push('-p', p);
     }

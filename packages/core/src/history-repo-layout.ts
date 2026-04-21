@@ -25,21 +25,32 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export type WriterClassification = 'agent' | 'human' | 'upstream' | 'server' | 'unknown';
+/**
+ * D34 taxonomy (US-006). Classified system writers are non-attributable
+ * actions written under a fixed writer-id. Legacy values ('human-', 'upstream',
+ * 'server') are classified 'unknown' so the US-018 allowlist sweep can
+ * identify and GC them without confusing them with valid attributed refs.
+ */
+export type WriterClassification =
+  | 'agent'
+  | 'principal'
+  | 'classified-file-system'
+  | 'classified-git-upstream'
+  | 'classified-openknowledge-service'
+  | 'unknown';
 
 export interface ParsedWriter {
-  /** The full writer id as stored in the ref (e.g., "agent-abc123"). */
+  /** The full writer id as stored in the ref (e.g., "agent-<uuid>"). */
   id: string;
   classification: WriterClassification;
   /**
    * Convenience derived from `classification`:
    *   - `true`  when classification === 'agent'
-   *   - `false` when classification === 'human'
-   *   - `null`  when 'upstream' | 'server' | 'unknown' (indeterminate for
+   *   - `false` when classification === 'principal'
+   *   - `null`  for system writers and unknown (indeterminate for
    *     "who edited this?" attribution)
    *
-   * Agents reasoning about agent-vs-human authorship should prefer
-   * `classification` over this boolean — see SPEC.md R3 on disambiguation.
+   * Prefer `classification` when reasoning about attribution.
    */
   isAgent: boolean | null;
 }
@@ -48,8 +59,14 @@ export interface ParsedWriter {
  * Canonical regex matching the writer-id portion at the end of a ref.
  * Single source of truth for the layout; any ref-parsing code in the repo
  * should flow through `parseWriterId`.
+ *
+ * D34: recognized ids — `agent-<uuid>`, `principal-<uuid>`,
+ * `file-system`, `git-upstream`, `openknowledge-service`.
+ * Legacy ids (`human-*`, `upstream`, `server`) do NOT match → 'unknown',
+ * so they are eligible for GC by the US-018 allowlist sweep.
  */
-const WRITER_ID_RE = /^(human-[^/]+|agent-[^/]+|upstream|server)$/;
+const WRITER_ID_RE =
+  /^(agent-[^/]+|principal-[^/]+|file-system|git-upstream|openknowledge-service)$/;
 
 /**
  * Canonical history-repo directory name inside `.open-knowledge/` (D56).
@@ -260,6 +277,124 @@ export function formatCheckpointBodyLine(parsed: ParsedCheckpoint): string {
   return `${OK_CHECKPOINT_PREFIX}${JSON.stringify(payload)}`;
 }
 
+// ─── ok-actor: body line (US-015, FR-8, D13) ─────────────────────────────────
+
+/**
+ * Structured actor tuple written as `ok-actor:` JSON body line in every
+ * history-repo commit. Makes the repo queryable without a session registry.
+ * v:1 is the sole schema version; bump v to introduce breaking changes.
+ */
+export interface OkActorEntry {
+  v: 1;
+  /** Long-lived principal id (US-024 stub — null until human-browser auth wired). */
+  principal: string | null;
+  /** Per-session agent connection id, e.g. "conn-abc123". Null for classified writers. */
+  agent_session: string | null;
+  /** Claude model family, e.g. "claude-3-5-sonnet". Null when not known. */
+  agent_type: string | null;
+  /** MCP client name (e.g. "claude-code"). Null when not known. */
+  client_name: string | null;
+  /** MCP client version. Null when not known. */
+  client_version: string | null;
+  /** User-supplied label for this session. Null when absent. */
+  label: string | null;
+  /** Human-readable display name shown in attribution UI. */
+  display_name: string;
+  /** Color seed for deterministic color assignment — matches presence bar. */
+  color_seed: string;
+  /** Documents touched in this drain cycle. */
+  docs: string[];
+}
+
+const OK_ACTOR_PREFIX = 'ok-actor: ';
+
+/**
+ * Format an `ok-actor:` JSON body line. Produces exactly one line (no trailing newline).
+ * Pair with `parseOkActor` at the read path.
+ */
+export function formatOkActor(entry: OkActorEntry): string {
+  return `${OK_ACTOR_PREFIX}${JSON.stringify(entry)}`;
+}
+
+/**
+ * Parse the first `ok-actor:` JSON body line from a commit message body.
+ * Returns `null` when the line is absent, malformed, or fails schema validation
+ * (v must be 1; display_name and docs must be present).
+ */
+export function parseOkActor(body: string): OkActorEntry | null {
+  if (!body) return null;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_ACTOR_PREFIX)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed.slice(OK_ACTOR_PREFIX.length));
+    } catch {
+      return null;
+    }
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const obj = parsed as Record<string, unknown>;
+    // Schema validation: v must be 1, display_name and docs required
+    if (obj.v !== 1) return null;
+    if (!('display_name' in obj) || typeof obj.display_name !== 'string') return null;
+    if (!('docs' in obj) || !Array.isArray(obj.docs)) return null;
+    return {
+      v: 1,
+      principal: typeof obj.principal === 'string' ? obj.principal : null,
+      agent_session: typeof obj.agent_session === 'string' ? obj.agent_session : null,
+      agent_type: typeof obj.agent_type === 'string' ? obj.agent_type : null,
+      client_name: typeof obj.client_name === 'string' ? obj.client_name : null,
+      client_version: typeof obj.client_version === 'string' ? obj.client_version : null,
+      label: typeof obj.label === 'string' ? obj.label : null,
+      display_name: obj.display_name,
+      color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
+      docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
+    };
+  }
+  return null;
+}
+
+// ─── Subject-prefix scheme (D53, FR-13) ──────────────────────────────────────
+
+/** Format a `wip:` subject from docs touched in the drain cycle. */
+export function formatWipSubject(docs: string[]): string {
+  if (docs.length === 0) return 'wip: auto-save';
+  if (docs.length === 1) return `wip: ${docs[0]}`;
+  return `wip: ${docs.length} docs`;
+}
+
+/** Format a `reconcile:` subject for file-watcher-triggered reconcile writes (D53). */
+export function formatReconcileSubject(docName: string): string {
+  return `reconcile: ${docName}`;
+}
+
+/** Format a `rollback:` subject for rollback-to-version writes (D53). */
+export function formatRollbackSubject(docName: string, sha: string): string {
+  return `rollback: ${docName} to ${sha.slice(0, 7)}`;
+}
+
+/** Format a `park:` subject for branch-switch park commits (D53). */
+export function formatParkSubject(oldBranch: string, newBranch: string): string {
+  return `park: ${oldBranch} -> ${newBranch}`;
+}
+
+/** Format a `rename:` subject for managed-rename writes (D53). */
+export function formatRenameSubject(oldName: string, newName: string): string {
+  return `rename: ${oldName} -> ${newName}`;
+}
+
+/** Format a `checkpoint:` subject for save-version and safety-checkpoint commits (D53). */
+export function formatCheckpointSubject(message: string): string {
+  return `checkpoint: ${message}`;
+}
+
+/** Format an `import:` subject for upstream-import commits (D53). */
+export function formatImportSubject(oldHead: string | null, newHead: string): string {
+  return oldHead
+    ? `import: from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
+    : `import: initial at ${newHead.slice(0, 8)}`;
+}
+
 /**
  * Classify a writer id using the documented prefix convention. Unknown
  * prefixes (legacy commits, external git operations) classify as 'unknown'
@@ -271,9 +406,12 @@ export function parseWriterId(id: string): ParsedWriter {
     return { id, classification: 'unknown', isAgent: null };
   }
   if (id.startsWith('agent-')) return { id, classification: 'agent', isAgent: true };
-  if (id.startsWith('human-')) return { id, classification: 'human', isAgent: false };
-  if (id === 'upstream') return { id, classification: 'upstream', isAgent: null };
-  if (id === 'server') return { id, classification: 'server', isAgent: null };
+  if (id.startsWith('principal-')) return { id, classification: 'principal', isAgent: false };
+  if (id === 'file-system') return { id, classification: 'classified-file-system', isAgent: null };
+  if (id === 'git-upstream')
+    return { id, classification: 'classified-git-upstream', isAgent: null };
+  if (id === 'openknowledge-service')
+    return { id, classification: 'classified-openknowledge-service', isAgent: null };
   // Unreachable given the regex, but keeps the type narrowing honest.
   return { id, classification: 'unknown', isAgent: null };
 }

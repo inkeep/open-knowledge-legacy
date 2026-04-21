@@ -14,27 +14,48 @@ export interface ContributorEntry {
   displayName: string;
   colorSeed: string;
   docs: Set<string>;
+  /**
+   * Optional per-action commit subject override (reconcile:, rollback:, rename:, etc.).
+   * When set, replaces the default formatWipSubject(docs) subject in the L2 drain.
+   * Last non-undefined value wins within a drain cycle (US-015, D53).
+   */
+  subjectOverride?: string;
 }
 
 /** Module-level accumulator — shared between api-extension and persistence. */
 let pendingContributors = new Map<string, ContributorEntry>();
 
 /**
- * Record that an agent contributed to a document.
- * Accumulates into the module-level Map keyed by agentId.
+ * Record that a writer contributed to a document.
+ * Accumulates into the module-level Map keyed by agentId (writer ID).
+ *
+ * @param subjectOverride - Optional commit subject to use instead of the default
+ *   formatWipSubject(docs) in the L2 drain. Use for action-specific subjects:
+ *   `reconcile: <docName>`, `rollback: <docName> to <sha>`, `rename: <old> -> <new>`.
  */
 export function recordContributor(
   docName: string,
   agentId: string,
   displayName: string,
   colorSeed?: string,
+  subjectOverride?: string,
 ): void {
   let entry = pendingContributors.get(agentId);
   if (!entry) {
-    entry = { agentId, displayName, colorSeed: colorSeed ?? displayName, docs: new Set() };
+    entry = {
+      agentId,
+      displayName,
+      colorSeed: colorSeed ?? displayName,
+      docs: new Set(),
+      subjectOverride,
+    };
     pendingContributors.set(agentId, entry);
   }
   entry.docs.add(docName);
+  // Last non-undefined subjectOverride wins (most specific action in the drain window).
+  if (subjectOverride !== undefined) {
+    entry.subjectOverride = subjectOverride;
+  }
 }
 
 /**
