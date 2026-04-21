@@ -3,6 +3,7 @@ import { ThemeProvider } from 'next-themes';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { NavigatorApp } from '@/components/NavigatorApp';
+import { UpdateToast } from '@/components/UpdateToast';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
@@ -73,6 +74,14 @@ createRoot(root).render(
           {isNavigator && window.okDesktop ? <NavigatorApp bridge={window.okDesktop} /> : <App />}
         </TooltipProvider>
         <Toaster richColors />
+        {/*
+         * M3 auto-update toast subscriber. Renders null in web/CLI distribution
+         * (window.okDesktop undefined); in desktop, attaches three IPC
+         * subscribers at mount and fires sonner toasts via the <Toaster /> above.
+         * Mounted orthogonally to the navigator / editor branch so either window
+         * type receives Toast B on a version transition.
+         */}
+        <UpdateToast />
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,
