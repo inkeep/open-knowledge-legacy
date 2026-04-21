@@ -18,7 +18,7 @@ const BASE_CONFIG: Config = {
   },
 };
 
-type ToolHandler = () => Promise<{
+type ToolHandler = (args?: { cwd?: string }) => Promise<{
   content: Array<{ type: 'text'; text: string }>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
@@ -45,7 +45,12 @@ afterEach(async () => {
 function registerTool(): ToolHandler {
   let captured: ToolHandler | null = null;
   const server = {
-    tool(_name: string, _description: string, handler: ToolHandler) {
+    tool(
+      _name: string,
+      _description: string,
+      _schema: Record<string, unknown>,
+      handler: ToolHandler,
+    ) {
       captured = handler;
     },
   } as unknown as ServerInstance;

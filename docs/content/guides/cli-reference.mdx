@@ -39,7 +39,8 @@ The server binds to `localhost:3000` by default. Only one server can run per con
 
 ## `init`
 
-Scaffold the `.open-knowledge/` directory and register the MCP server in `.mcp.json`.
+Scaffold the `.open-knowledge/` directory and register the MCP server in the
+correct user-scoped editor config for each selected tool.
 
 ```bash
 npx @inkeep/open-knowledge init [options]
@@ -47,8 +48,10 @@ npx @inkeep/open-knowledge init [options]
 
 | Option | Description |
 |--------|-------------|
-| `--force` | Overwrite existing `.mcp.json` entry |
-| `--no-mcp` | Skip writing `.mcp.json` |
+| `--editor <names>` | Target specific editors instead of all detected editors |
+| `--force` | Overwrite existing Open Knowledge MCP and preview-launcher entries |
+| `--no-mcp` | Skip writing editor MCP config |
+| `--dev-mcp` | Point MCP config and Claude Code preview launchers at the local `packages/cli/dist/cli.mjs` build |
 
 The command is idempotent -- safe to run again without side effects.
 

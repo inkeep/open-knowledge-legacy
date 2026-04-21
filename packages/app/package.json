@@ -108,6 +108,7 @@
     "@size-limit/preset-app": "^12.1.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "commonmark.json": "^0.31.0",

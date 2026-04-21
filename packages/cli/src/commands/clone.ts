@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
-import simpleGit from 'simple-git';
+import simpleGit, { type SimpleGitOptions } from 'simple-git';
 import { resolveAuth } from '../auth/resolve-auth.ts';
 import { createTokenStore } from '../auth/token-store.ts';
 import { OK_DIR } from '../constants.ts';
@@ -47,6 +47,12 @@ interface CloneOptions {
   dir?: string;
 }
 
+type CredentialHelperUnsafeGitOptions = SimpleGitOptions & {
+  unsafe?: NonNullable<SimpleGitOptions['unsafe']> & {
+    allowUnsafeCredentialHelper?: boolean;
+  };
+};
+
 async function runClone(
   url: string,
   opts: CloneOptions,
@@ -78,14 +84,15 @@ async function runClone(
   // Build -c credential.helper config if needed
   const gitConfig = resolved.credentialArgs.length >= 2 ? [resolved.credentialArgs[1]] : [];
 
-  // simple-git 3.36+ blocks `credential.helper` in `config` by default. Our helper
-  // strings come from resolveAuth (hard-coded !gh/!open-knowledge invocations), not
-  // user input — so this guard doesn't apply to us. Opt in.
-  const git = simpleGit({
+  // simple-git 3.36 gates credential.helper behind a runtime-only unsafe flag
+  // that its published typings don't currently expose.
+  const gitOptions: Partial<CredentialHelperUnsafeGitOptions> = {
     baseDir: cwd,
     config: gitConfig,
     unsafe: { allowUnsafeCredentialHelper: true },
-  }).env(env);
+  };
+
+  const git = simpleGit(gitOptions as Partial<SimpleGitOptions>).env(env);
 
   let lastPct = -1;
 

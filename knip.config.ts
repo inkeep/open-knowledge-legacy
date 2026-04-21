@@ -29,7 +29,6 @@ export default {
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
-        'ws', // false positive
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
@@ -45,8 +44,6 @@ export default {
     'packages/cli': {
       entry: ['scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
-        'ws', // looks like dynamic import isn't checked
-        '@types/ws',
         '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
       ],
       ignoreFiles: [

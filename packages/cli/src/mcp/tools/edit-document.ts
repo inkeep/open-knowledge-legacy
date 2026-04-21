@@ -6,15 +6,15 @@
  */
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -37,7 +37,7 @@ export const DESCRIPTION = [
 
 interface EditDocumentDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
   identityRef?: { current: AgentIdentity };
 }
@@ -58,9 +58,23 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; find: string; replace: string; offset?: number }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: {
+      docName: string;
+      find: string;
+      replace: string;
+      offset?: number;
+      cwd?: string;
+    }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, config, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -81,9 +95,8 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const cwd = await deps.resolveCwd();
-      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const noPreviewAttached = subscriberCount === 0;

@@ -56,6 +56,9 @@ blob-report/
 
 # Editor workspace files
 .vscode/
+.mcp.json
+.cursor/mcp.json
+.claude/launch.json
 
 # Benchmark harness output — per-run artifacts, published as CI artifacts.
 # Baselines live in specs/.../evidence/perf-baseline-measured.md instead.

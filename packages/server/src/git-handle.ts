@@ -7,7 +7,7 @@
  */
 
 import { resolve } from 'node:path';
-import simpleGit, { type SimpleGit } from 'simple-git';
+import simpleGit, { type SimpleGit, type SimpleGitOptions } from 'simple-git';
 
 export { withParentLock } from './git-mutex.ts';
 
@@ -28,6 +28,12 @@ export interface GitHandle {
   credentialArgs: string[];
 }
 
+type CredentialHelperUnsafeGitOptions = SimpleGitOptions & {
+  unsafe?: NonNullable<SimpleGitOptions['unsafe']> & {
+    allowUnsafeCredentialHelper?: boolean;
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -46,14 +52,15 @@ export function createGitInstance(projectDir: string, options: GitHandleOptions 
 
   const gitConfig = credentialArgs.length >= 2 ? [credentialArgs[1]] : [];
 
-  // simple-git 3.36+ blocks `credential.helper` in `config` by default. Our helper
-  // strings come from resolveAuth (hard-coded !gh/!open-knowledge invocations), not
-  // user input — so this guard doesn't apply to us. Opt in.
-  const git = simpleGit({
+  // simple-git 3.36 gates credential.helper behind a runtime-only unsafe flag
+  // that its published typings don't currently expose.
+  const gitOptions: Partial<CredentialHelperUnsafeGitOptions> = {
     baseDir: projectDir,
     config: gitConfig,
     unsafe: { allowUnsafeCredentialHelper: true },
-  }).env(env as Record<string, string>);
+  };
+
+  const git = simpleGit(gitOptions as Partial<SimpleGitOptions>).env(env as Record<string, string>);
 
   return { git, projectDir, credentialArgs };
 }
