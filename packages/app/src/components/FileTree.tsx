@@ -319,8 +319,8 @@ const FileTreeNode: FC<{
        * rows render these badges as bright sidebar-accent-foreground while root
        * rows render them as muted-foreground/50.
        */}
-      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
       {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50!" />}
+      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
     </>
   );
 
