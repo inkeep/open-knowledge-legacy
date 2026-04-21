@@ -131,3 +131,25 @@ Two user corrections after PR #244 was opened:
    - Q5 Resolution annotated with the correction.
 
 My earlier interpretation of "the in product toast is important notification system" as endorsing macOS `Notification` was wrong — user meant in-app toasts all along. Acknowledged.
+
+## 2026-04-21 · Final finalize (post-revision)
+
+Second finalization pass after the rename + toast revisions landed.
+
+**Mechanical adversarial checks: PASS.**
+- No ASSUMED / INVESTIGATING / DEFERRED decisions; all 14 decisions LOCKED.
+- 1-way doors: only D7 (`resolveShadowDir` return-type collapse). HIGH confidence — mechanical type change with 2 call sites (`shadow-repo-layout.ts` internal + `shadow-repo.ts:69`).
+- Non-goals: NG1-NG7 all accurate.
+
+**Resolution completeness gate for W1 + W2 (+ G5 rename + G3 auto-init + R9 shim): PASS.**
+- All decisions made: D1-D14 LOCKED.
+- 3rd-party deps: none beyond existing `simple-git`; `sonner` toast already consumed by packages/app.
+- Architecture validated: `bootServer.autoInitFn` pre-listen hook + hocuspocus-plugin Vite path + R9 rename shim run-once. Desktop toast routed via existing bridge push-event pattern.
+- Acceptance criteria verifiable: each R has a test-shaped criterion.
+- No unmet dependency on Out of Scope items (worktree spec is an external dependency, not an internal blocker).
+
+**Baseline commit unchanged: `54c97051`.** No underlying code has moved since scaffold; only spec commits (1c843d0d, 3b50f572) on the feature branch.
+
+**PR status: https://github.com/inkeep/open-knowledge/pull/244** (open for review).
+
+Status stays Draft until user review — the spec workflow records Finalize in the changelog but does not flip the Status field; that's a reviewer move.
