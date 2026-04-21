@@ -343,7 +343,7 @@ test('S10: clicking "Document" breadcrumb anchor clears selection via programmat
 
 // ── S11: Per-type halo inset values (SC-P-17 / Precedent #29) ────────────
 //
-// Parameterized across [cards, steps] (-6px), [imagezoom, mermaid] (-2px),
+// Parameterized across [cards, steps] (-6px), [imagezoom] (-2px),
 // default (-4px). Tests CSS-variable resolution at runtime — only a real
 // browser evaluates `--selection-halo-inset` through the cascade.
 
@@ -364,12 +364,12 @@ const INSET_CASES: InsetCase[] = [
     componentType: 'card',
     expectedInset: '-4px',
   },
-  // Note: ImageZoom and Mermaid share the `-2px` bucket per globals.css §7a,
-  // but their fumadocs-ui components don't mount cleanly in the E2E test
-  // environment (ImageZoom requires image asset resolution; Mermaid
-  // requires a runtime chart renderer). Tested via showcase-driven manual
-  // inspection instead. The `-2px` rule itself is covered by the STOP
-  // rule for CSS regressions.
+  // Note: ImageZoom holds the `-2px` bucket per globals.css §7a, but its
+  // fumadocs-ui component doesn't mount cleanly in the E2E test environment
+  // (requires image asset resolution). Tested via showcase-driven manual
+  // inspection instead. The `-2px` rule itself is covered by the STOP rule
+  // for CSS regressions. (Mermaid was removed from the registry 2026-04-21 —
+  // see specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md)
 ];
 
 for (const { fixture, componentType, expectedInset } of INSET_CASES) {

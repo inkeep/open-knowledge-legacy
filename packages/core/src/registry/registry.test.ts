@@ -3,11 +3,11 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns all 18 built-in components + wildcard', () => {
+  test('returns all 17 built-in components + wildcard', () => {
     const registry = createRegistry();
-    // 18 built-ins + 1 wildcard
+    // 17 built-ins + 1 wildcard (Mermaid removed 2026-04-21 — stub was non-functional)
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(19);
+    expect(entries.length).toBe(18);
   });
 
   test('get returns registered component by name', () => {
@@ -76,8 +76,8 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains exactly 18 entries', () => {
-    expect(builtInComponents.length).toBe(18);
+  test('contains exactly 17 entries', () => {
+    expect(builtInComponents.length).toBe(17);
   });
 
   test('all entries have required fields', () => {

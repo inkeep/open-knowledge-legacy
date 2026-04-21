@@ -1,33 +1,48 @@
-# Mermaid + Audio Rendering — Deferred (Placeholder Shipped)
+# Mermaid Removed + Audio Functional-But-Chrome-Pending
 
 **Date:** 2026-04-21
-**Status:** Deferred for post-PR #165 scoping
+**Status:** Mermaid descriptor removed from registry. Audio functional; shadcn-chrome work deferred.
 **Related research report:** [`reports/mermaid-rendering-options-for-mdx-editors/REPORT.md`](../../../reports/mermaid-rendering-options-for-mdx-editors/REPORT.md)
 
 ---
 
 ## What this evidence captures
 
-SPEC.md's D3-LOCKED decision planned `Mermaid` and `Audio` as **shadcn wrappers** at `packages/app/src/components/ui/{mermaid,audio}.tsx`, with visual-regression tests VR13 (Mermaid × light/dark) and VR14 (Audio MP3 × light/dark). PR #165 did **not** ship these wrappers; the `Mermaid` and `Audio` registrations in `componentMap.tsx` point at inline placeholder stubs. This evidence records the divergence, the current rendering reality, and the decision framework for a future un-deferral. It is NOT a recommendation.
+SPEC.md's D3-LOCKED decision planned `Mermaid` and `Audio` as **shadcn wrappers** at `packages/app/src/components/ui/{mermaid,audio}.tsx`, with visual-regression tests VR13 (Mermaid × light/dark) and VR14 (Audio MP3 × light/dark). PR #165 initially shipped placeholder stubs in `componentMap.tsx` instead.
 
-## Shipped state audit (2026-04-21)
+**Resolution (2026-04-21, two-step):**
+
+1. **Mermaid stub removed from registry.** The `MermaidPlaceholder` function and `Mermaid` descriptor were non-functional — rendered chart source as `<pre>`, no SVG. Per greenfield directive (don't claim to ship capability the code doesn't deliver), the descriptor + props + componentMap entry were deleted. Existing `<Mermaid />` user content now auto-converts to `rawMdxFallback` (nested CM source editor) via `JsxComponentView`'s wildcard-handling path — strictly better user experience than the dead `<pre>` placeholder because the source stays editable. Built-in manifest: 18 → 17 components.
+2. **`AudioPlaceholder` renamed to `Audio`.** The code was always functional (real HTML5 `<audio controls src>` element — playback works end-to-end). The `Placeholder` suffix was misleading, not the behavior. No functional change; just honest naming. The VR14 follow-up (shadcn-styled chrome on top of the working player) stays as future work with concrete scope below.
+
+This file records the new shipped state, the rationale for the Mermaid removal, and the un-deferral decision framework for both Mermaid (re-introduce with a real renderer) and Audio (add shadcn chrome).
+
+## Shipped state audit (post-removal, 2026-04-21)
 
 Grep of `packages/app/src/editor/components/componentMap.tsx`:
 
 | Descriptor | Target in `componentMap` | What actually renders |
 |---|---|---|
-| `Mermaid` | `MermaidPlaceholder` (inline in `componentMap.tsx:24-31`) | Bordered `<div>` with `<div className="mb-1 font-medium">Mermaid Diagram</div>` + the raw `chart` string inside `<pre className="overflow-x-auto text-xs">`. **No SVG. No Mermaid.js invocation.** |
-| `Audio` | `AudioPlaceholder` (inline in `componentMap.tsx:33-46`) | Bordered `<div>` with `<audio controls src={props.src}>` inside. **Real HTML5 `<audio>` element** — the "placeholder" label is misleading; the audio actually plays at the browser level. No shadcn chrome. |
-| `ImageZoom` | `ImageZoom` from `fumadocs-ui/components/image-zoom` | **Real fumadocs `ImageZoom` component** (wraps `react-medium-image-zoom`). No placeholder. |
-| `Video` | (not in registry) | N/A — the 18-component manifest does not include a `Video` descriptor. |
+| ~~`Mermaid`~~ | ~~removed from registry~~ | Existing `<Mermaid />` in user content hits the wildcard `'*'` path in `JsxComponentView` → auto-converts to `rawMdxFallback` (nested CM source editor). User sees their Mermaid source in an editable code block with a "Unregistered component: Mermaid" badge instead of a dead `<pre>` stub. |
+| `Audio` | `Audio` (inline in `componentMap.tsx` — **not** a stub; real HTML5 `<audio controls src>`) | Bordered `<div>` with `<audio controls src={props.src}>` inside. Real HTML5 `<audio>` element — playback / scrub / volume / keyboard shortcuts all work. No shadcn chrome (browser-native controls). |
+| `ImageZoom` | `ImageZoom` from `fumadocs-ui/components/image-zoom` | Real fumadocs `ImageZoom` component (wraps `react-medium-image-zoom`). |
+| `Video` | (not in registry) | N/A — the manifest has no `Video` descriptor. |
 
-Grep of `packages/app/src/components/ui/`: `mermaid.tsx` and `audio.tsx` — **not present**. The planned shadcn wrappers were never authored.
+Grep of `packages/app/src/components/ui/`: `mermaid.tsx` and `audio.tsx` — **not present**. The originally-planned shadcn wrappers were never authored.
 
-Source code comment on the placeholder block:
+What `componentMap.tsx`'s header comment now says about the state (line 10-19):
 
-```tsx
-// packages/app/src/editor/components/componentMap.tsx:11
-// Mermaid + Audio are placeholder stubs until shadcn wrappers are built.
+```
+`Audio` is a minimal HTML5 `<audio controls>` wrapper — functional playback
+via the browser-native media element. VR14 envisioned a shadcn-styled
+player; the research + follow-up work item live at
+`specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
+(current lean: AI Elements AudioPlayer on `media-chrome`).
+
+Mermaid was removed from the registry 2026-04-21 — the prior placeholder
+rendered no SVG and was tech debt under the greenfield directive. Existing
+`<Mermaid />` user content auto-converts to `rawMdxFallback` (nested CM
+source editor) via `JsxComponentView`'s wildcard-handling path.
 ```
 
 ## What the spec said vs what shipped

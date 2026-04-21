@@ -1,10 +1,14 @@
 /**
- * Built-ins manifest — 18 component JsxComponentMeta entries.
+ * Built-ins manifest — 17 component JsxComponentMeta entries.
  *
- * 16 fumadocs-ui + Mermaid + Audio shadcn wrappers.
+ * 16 fumadocs-ui + 1 Audio (HTML5 `<audio>` wrapper; see componentMap.tsx).
  * Hand-authored PropDef arrays (react-docgen-typescript has known extraction
  * failures with ForwardRefExoticComponent, Omit<>/Pick<>, and generic <T> —
  * see FR-28). Generated props can supplement these via build-registry.ts.
+ *
+ * Mermaid was removed 2026-04-21 — see the block comment next to the `Audio`
+ * descriptor below. Un-deferral framework in
+ * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`.
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
@@ -341,18 +345,7 @@ const inlineTocProps: PropDef[] = [
   },
 ];
 
-// ── Mermaid (shadcn wrapper) ─────────────────────────────────────────────────
-
-const mermaidProps: PropDef[] = [
-  {
-    name: 'chart',
-    type: 'string',
-    required: true,
-    description: 'Mermaid diagram definition',
-  },
-];
-
-// ── Audio (shadcn wrapper) ───────────────────────────────────────────────────
+// ── Audio ────────────────────────────────────────────────────────────────────
 
 const audioProps: PropDef[] = [
   {
@@ -553,18 +546,16 @@ export const builtInComponents: JsxComponentMeta[] = [
     searchTerms: ['toc', 'table of contents', 'outline'],
   },
 
-  // Shadcn wrappers
-  {
-    name: 'Mermaid',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: mermaidProps,
-    icon: 'GitGraph',
-    category: 'data',
-    displayName: 'Mermaid',
-    description: 'Mermaid diagram (flowchart, sequence, etc.)',
-    searchTerms: ['mermaid', 'diagram', 'flowchart', 'graph', 'chart'],
-  },
+  // Media
+  // Mermaid removed (2026-04-21): the shipped placeholder stub was non-functional
+  // (rendered chart source as <pre>, no SVG). Per greenfield directive, stubs
+  // that don't ship the claimed capability are tech debt. Existing `<Mermaid />`
+  // content in user docs falls through to the wildcard `'*'` descriptor, which
+  // `JsxComponentView` auto-converts to `rawMdxFallback` — a nested CodeMirror
+  // editing surface (Precedent #24 + #26). The chart source stays fully
+  // editable; future real-renderer work is captured in
+  // `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
+  // with landscape research at `reports/mermaid-rendering-options-for-mdx-editors/`.
   {
     name: 'Audio',
     hasChildren: false,

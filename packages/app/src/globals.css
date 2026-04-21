@@ -1370,13 +1370,12 @@ button:active:not(:disabled) {
   }
 }
 
-/* Per-block-type tuning. Media blocks (ImageZoom, Mermaid) use a tight inset
- * because their visual bounds are sharper than text-heavy blocks. Cards and
- * Steps containers breathe wider because their chrome — counters, grid
- * borders — already lives on the outer edges. Callouts inherit their
- * type-color so the halo matches the callout's chroma. */
-.ProseMirror .jsx-component-wrapper[data-component-type="imagezoom"],
-.ProseMirror .jsx-component-wrapper[data-component-type="mermaid"] {
+/* Per-block-type tuning. Media blocks (ImageZoom) use a tight inset because
+ * their visual bounds are sharper than text-heavy blocks. Cards and Steps
+ * containers breathe wider because their chrome — counters, grid borders —
+ * already lives on the outer edges. Callouts inherit their type-color so the
+ * halo matches the callout's chroma. */
+.ProseMirror .jsx-component-wrapper[data-component-type="imagezoom"] {
   --selection-halo-inset: -2px;
   --selection-halo-radius: calc(0.375rem + 2px);
 }
