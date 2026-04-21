@@ -1,3 +1,23 @@
+/**
+ * JsxComponent NodeView — per-instance React render (precedent #25(c) bifurcation:
+ * NodeViews that embed live fumadocs components must render per-instance; only
+ * PropPanel/Toolbar/Breadcrumb move to the singleton InteractionLayer plane).
+ *
+ * Under V2 (US-007) this view:
+ *   1. Renders the live component (today: `<Callout>` — CB-v2 extends to Tabs /
+ *      Accordion / Steps / ...) inside a `<NodeViewWrapper>` so PM manages the
+ *      outer-element identity.
+ *   2. Registers a propPanel renderer with the per-editor InteractionLayer
+ *      singleton via `getInteractionLayer(editor)` and deregisters on destroy.
+ *      PropPanel mounts ONCE at editor root keyed by active nodeId.
+ *   3. Emits `data-node-id="jsx-${n}"` for event delegation — IDs are allocated
+ *      via the module-level monotonic counter (lazy-init via `useState`).
+ *
+ * Forward-compat with CB-v2: BridgeStore WeakMap is keyed by Editor identity.
+ * V2 editor cache preserves Editor identity across nav (precedent #25(a)) so
+ * CB-v2's per-editor BridgeStore naturally survives Activity flips without any
+ * additional coordination.
+ */
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
 import { useEffect, useState } from 'react';
