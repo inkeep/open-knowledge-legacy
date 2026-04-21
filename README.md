@@ -86,6 +86,8 @@ bun run build
 bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
 bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
 bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs init --dev-mcp --force
+                                 # Point editor MCP + Claude preview launcher at this local build
 bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)
 bun packages/cli/dist/cli.mjs mcp      # MCP stdio server
 bun packages/cli/dist/cli.mjs status   # Inspect server.lock + ui.lock state

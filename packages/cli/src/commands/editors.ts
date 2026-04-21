@@ -6,7 +6,7 @@
  * `init.ts` can loop over targets without per-editor branching.
  */
 import { homedir } from 'node:os';
-import { dirname, join, posix, win32 } from 'node:path';
+import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 
@@ -21,8 +21,60 @@ export const ALL_EDITOR_IDS: EditorId[] = [
   'codex',
 ];
 
-const MCP_SERVER_COMMAND = 'npx';
-const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
+const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+const DEV_MCP_SERVER_COMMAND = 'node';
+const DEV_MCP_ENV = {
+  MCP_DEBUG: '1',
+  OK_LOG_FILE: '/tmp/ok-mcp.log',
+} as const;
+
+export type McpInstallMode = 'published' | 'dev';
+
+export interface McpInstallOptions {
+  mode?: McpInstallMode;
+  cliEntryPath?: string;
+}
+
+export function resolveDevCliDistPath(cliEntryPath = process.argv[1]): string {
+  if (!cliEntryPath) {
+    throw new Error(
+      'Cannot infer the local CLI entry for --dev-mcp because process.argv[1] is empty.',
+    );
+  }
+
+  const resolvedEntry = resolve(cliEntryPath);
+  if (basename(resolvedEntry) === 'cli.mjs' && basename(dirname(resolvedEntry)) === 'dist') {
+    return resolvedEntry;
+  }
+
+  const pathParts = resolvedEntry.split(sep);
+  const packagesIndex = pathParts.lastIndexOf('packages');
+  if (packagesIndex === -1 || pathParts[packagesIndex + 1] !== 'cli') {
+    throw new Error(
+      `Cannot infer the repo root for --dev-mcp from ${resolvedEntry}. Run the local CLI from this repo so the built dist path can be derived.`,
+    );
+  }
+
+  const rootParts = pathParts.slice(0, packagesIndex);
+  const repoRoot = rootParts.length === 0 ? sep : rootParts.join(sep);
+  return join(repoRoot, 'packages', 'cli', 'dist', 'cli.mjs');
+}
+
+function buildManagedServerEntry(options: McpInstallOptions = {}): Record<string, unknown> {
+  if (options.mode === 'dev') {
+    return {
+      command: DEV_MCP_SERVER_COMMAND,
+      args: [resolveDevCliDistPath(options.cliEntryPath), 'mcp'],
+      env: { ...DEV_MCP_ENV },
+    };
+  }
+
+  return {
+    command: PUBLISHED_MCP_SERVER_COMMAND,
+    args: [...PUBLISHED_MCP_SERVER_ARGS],
+  };
+}
 
 interface AppSupportOptions {
   home?: string;
@@ -127,11 +179,19 @@ export interface EditorMcpTarget {
   /** Config key used for this project's MCP server entry. */
   serverName: (cwd: string) => string;
   /** Build the server entry object for this editor. */
-  buildEntry: (cwd: string) => Record<string, unknown>;
+  buildEntry: (cwd: string, options?: McpInstallOptions) => Record<string, unknown>;
   /** True when the managed MCP fields already match the target entry. */
-  isCompatible: (existing: Record<string, unknown>, cwd: string) => boolean;
+  isCompatible: (
+    existing: Record<string, unknown>,
+    cwd: string,
+    options?: McpInstallOptions,
+  ) => boolean;
   /** Merge only the managed MCP fields into an existing entry. */
-  mergeManagedFields: (existing: Record<string, unknown>, cwd: string) => Record<string, unknown>;
+  mergeManagedFields: (
+    existing: Record<string, unknown>,
+    cwd: string,
+    options?: McpInstallOptions,
+  ) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
   /** Filesystem path whose existence implies the editor is installed. */
@@ -186,11 +246,11 @@ function createEditorTarget(
 ): EditorMcpTarget {
   return {
     ...target,
-    isCompatible(existing, cwd) {
-      return hasMatchingManagedFields(existing, target.buildEntry(cwd));
+    isCompatible(existing, cwd, options) {
+      return hasMatchingManagedFields(existing, target.buildEntry(cwd, options));
     },
-    mergeManagedFields(existing, cwd) {
-      return mergeManagedFields(existing, target.buildEntry(cwd));
+    mergeManagedFields(existing, cwd, options) {
+      return mergeManagedFields(existing, target.buildEntry(cwd, options));
     },
   };
 }
@@ -203,7 +263,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => join(home ?? homedir(), '.claude'),
     legacyProjectConfigPath: (cwd) => join(cwd, '.mcp.json'),
@@ -216,7 +276,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveClaudeDesktopConfigPath({ home })),
   }),
@@ -227,7 +287,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCursorConfigPath({ home })),
     legacyProjectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
@@ -239,7 +299,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'json',
     topLevelKey: 'servers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => ({ type: 'stdio', ...buildManagedServerEntry(options) }),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveVsCodeConfigPath({ home })),
     legacyProjectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
@@ -251,7 +311,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'json',
     topLevelKey: 'mcpServers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveWindsurfConfigPath({ home })),
   }),
@@ -262,7 +322,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     format: 'toml',
     topLevelKey: 'mcp_servers',
     serverName: () => MCP_SERVER_NAME,
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
     legacyProjectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),

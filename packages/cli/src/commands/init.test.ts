@@ -27,6 +27,22 @@ describe('runInit', () => {
   const vsCodeConfigPath = () => resolveVsCodeConfigPath({ home: fakeHome });
   const codexConfigPath = () => resolveCodexConfigPath({ home: fakeHome, env: {} });
   const windsurfConfigPath = () => resolveWindsurfConfigPath({ home: fakeHome });
+  const devRepoRoot = () => join(testDir, 'local-open-knowledge');
+  const devCliEntryPath = () => join(devRepoRoot(), 'packages', 'cli', 'src', 'cli.ts');
+  const expectedDevMcpEntry = () => ({
+    command: 'node',
+    args: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'mcp'],
+    env: {
+      MCP_DEBUG: '1',
+      OK_LOG_FILE: '/tmp/ok-mcp.log',
+    },
+  });
+  const expectedDevLaunchEntry = () => ({
+    name: 'open-knowledge-ui',
+    runtimeExecutable: 'node',
+    runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
+    port: 3000,
+  });
   const runInitForTest = (options: Parameters<typeof runInit>[0] = {}) =>
     runInit({ cwd: testDir, home: fakeHome, ...options });
 
@@ -115,6 +131,15 @@ describe('runInit', () => {
       args: ['./other.js'],
     });
     expect(config.mcpServers[result.editors[0].serverName]).toBeDefined();
+  });
+
+  it('writes a local dev MCP entry when --dev-mcp is enabled', () => {
+    const result = runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+
+    expect(result.mcpAction).toBe('written');
+
+    const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
+    expect(config.mcpServers[result.editors[0].serverName]).toEqual(expectedDevMcpEntry());
   });
 
   it('flags a differing open-knowledge entry by default and leaves it untouched', () => {
@@ -207,6 +232,31 @@ describe('runInit', () => {
       cwd: testDir,
       env: { OK_MODE: 'local' },
     });
+  });
+
+  it('overwrites a published MCP entry in dev mode without --force', () => {
+    writeFileSync(
+      claudeConfigPath(),
+      JSON.stringify(
+        {
+          mcpServers: {
+            'open-knowledge': {
+              command: 'npx',
+              args: ['@inkeep/open-knowledge', 'mcp'],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+    expect(result.mcpAction).toBe('overwritten');
+    expect(result.editors[0].action).toBe('overwritten');
+
+    const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual(expectedDevMcpEntry());
   });
 
   it('does not touch ~/.claude.json when --no-mcp is passed', () => {
@@ -325,6 +375,20 @@ describe('runInit', () => {
         command: 'npx',
         args: ['@inkeep/open-knowledge', 'mcp'],
       });
+    });
+
+    it('writes the dev MCP env block to Codex TOML configs', () => {
+      const result = runInitForTest({
+        editors: ['codex'],
+        devMcp: true,
+        cliEntryPath: devCliEntryPath(),
+      });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].action).toBe('written');
+
+      const config = Bun.TOML.parse(readFileSync(codexConfigPath(), 'utf-8'));
+      expect(config.mcp_servers[result.editors[0].serverName]).toEqual(expectedDevMcpEntry());
     });
 
     it('preserves existing Codex MCP entries', () => {
@@ -629,6 +693,16 @@ describe('runInit', () => {
       expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
     });
 
+    it('writes a local dev launch target when --dev-mcp is enabled', () => {
+      const result = runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+
+      expect(result.launchJson?.action).toBe('created');
+
+      const parsed = JSON.parse(readFileSync(join(testDir, '.claude', 'launch.json'), 'utf-8'));
+      expect(parsed.configurations).toHaveLength(1);
+      expect(parsed.configurations[0]).toEqual(expectedDevLaunchEntry());
+    });
+
     it('skips an up-to-date open-knowledge-ui entry without --force', () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
@@ -654,6 +728,35 @@ describe('runInit', () => {
       const result = runInitForTest();
       expect(result.launchJson?.action).toBe('skipped-existing');
       expect(result.launchJson?.staleFields).toBeUndefined();
+    });
+
+    it('overwrites the published launch target in dev mode without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge-ui',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInitForTest({ devMcp: true, cliEntryPath: devCliEntryPath() });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations[0]).toEqual(expectedDevLaunchEntry());
     });
 
     it('migrates an existing open-knowledge-ui entry on --force', () => {

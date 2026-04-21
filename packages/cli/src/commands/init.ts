@@ -32,6 +32,8 @@ import {
   EDITOR_TARGETS,
   type EditorId,
   type EditorMcpTarget,
+  type McpInstallOptions,
+  resolveDevCliDistPath,
   resolveEditorTargets,
 } from './editors.ts';
 
@@ -135,11 +137,15 @@ export interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
   force?: boolean;
+  /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
+  devMcp?: boolean;
   editors?: EditorId[];
   /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
   /** Override home directory (test-only, for global editor config paths). */
   home?: string;
+  /** Override the current CLI entry path (test-only; used by --dev-mcp). */
+  cliEntryPath?: string;
 }
 
 export interface InitCommandResult {
@@ -240,17 +246,35 @@ function diffLaunchEntry(
  * - File exists, no OK  → merge the entry into configurations
  * - File exists, has OK → skip (unless force)
  */
-function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
+function scaffoldLaunchJson(
+  cwd: string,
+  force: boolean,
+  installOptions: McpInstallOptions = {},
+): LaunchJsonResult {
   const configPath = join(cwd, '.claude', 'launch.json');
-  const entry = {
-    name: LAUNCH_CONFIG_NAME,
-    runtimeExecutable: 'npx',
-    // Use the fully-qualified package name so `npx` resolves against the npm
-    // registry on a cold cache. `open-knowledge` alone is a bin name that only
-    // works if the package is already installed (local or global).
-    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
-    port: 3000,
-  };
+  const allowModeOverwrite = installOptions.mode === 'dev';
+  const entry: {
+    name: string;
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+  } =
+    installOptions.mode === 'dev'
+      ? {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'node',
+          runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
+          port: 3000,
+        }
+      : {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'npx',
+          // Use the fully-qualified package name so `npx` resolves against the npm
+          // registry on a cold cache. `open-knowledge` alone is a bin name that only
+          // works if the package is already installed (local or global).
+          runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+          port: 3000,
+        };
 
   try {
     if (!existsSync(configPath)) {
@@ -275,9 +299,12 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
       const existingEntry = configs[existingIdx] as Record<string, unknown>;
       const staleFields = diffLaunchEntry(existingEntry, entry);
       if (staleFields.length > 0) {
-        return { action: 'skipped-stale', configPath, staleFields };
+        if (!allowModeOverwrite) {
+          return { action: 'skipped-stale', configPath, staleFields };
+        }
+      } else {
+        return { action: 'skipped-existing', configPath };
       }
-      return { action: 'skipped-existing', configPath };
     }
 
     if (existingIdx >= 0) {
@@ -310,6 +337,7 @@ function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
   force: boolean,
+  installOptions: McpInstallOptions,
   home?: string,
 ): EditorMcpResult {
   const serverName = target.serverName(cwd);
@@ -343,20 +371,44 @@ function writeEditorMcpConfig(
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
   const existing = servers[serverName];
-  const targetEntry =
-    isObject(existing) && force ? target.mergeManagedFields(existing, cwd) : target.buildEntry(cwd);
+  const allowModeOverwrite = installOptions.mode === 'dev';
+  let targetEntry: Record<string, unknown>;
 
-  if (existing !== undefined && !force) {
-    const action =
-      isObject(existing) && target.isCompatible(existing, cwd)
-        ? 'skipped-existing'
-        : 'skipped-conflict';
+  try {
+    if (existing !== undefined && !force) {
+      if (isObject(existing) && target.isCompatible(existing, cwd, installOptions)) {
+        return {
+          editorId: target.id,
+          label: target.label,
+          action: 'skipped-existing',
+          configPath,
+          serverName,
+        };
+      }
+
+      if (!allowModeOverwrite) {
+        return {
+          editorId: target.id,
+          label: target.label,
+          action: 'skipped-conflict',
+          configPath,
+          serverName,
+        };
+      }
+    }
+
+    targetEntry =
+      isObject(existing) && (force || allowModeOverwrite)
+        ? target.mergeManagedFields(existing, cwd, installOptions)
+        : target.buildEntry(cwd, installOptions);
+  } catch (err) {
     return {
       editorId: target.id,
       label: target.label,
-      action,
+      action: 'failed',
       configPath,
       serverName,
+      error: err instanceof Error ? err.message : String(err),
     };
   }
 
@@ -413,6 +465,10 @@ function collectLegacyProjectConfig(
 
 export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const cwd = resolve(options.cwd ?? process.cwd());
+  const installOptions: McpInstallOptions = {
+    mode: options.devMcp ? 'dev' : 'published',
+    cliEntryPath: options.cliEntryPath,
+  };
 
   // 1. Scaffold .open-knowledge/
   let contentResult: ReturnType<typeof initContent>;
@@ -455,7 +511,9 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
       });
       continue;
     }
-    editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
+    editorResults.push(
+      writeEditorMcpConfig(target, cwd, options.force ?? false, installOptions, options.home),
+    );
   }
   const legacyProjectConfigs =
     options.mcp === false
@@ -468,7 +526,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const hasClaude = editorIds.includes('claude');
   const launchJson =
     hasClaude && options.mcp !== false
-      ? scaffoldLaunchJson(cwd, options.force ?? false)
+      ? scaffoldLaunchJson(cwd, options.force ?? false, installOptions)
       : undefined;
 
   // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
@@ -755,10 +813,14 @@ export function initCommand(): Command {
     .option('--no-mcp', `Scaffold the ${OK_DIR}/ directory but do not touch MCP config`)
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
+      '--dev-mcp',
+      'Register a local dev MCP entry using node + packages/cli/dist/cli.mjs with debug logging',
+    )
+    .option(
       '--editor <editors>',
       `Target editor(s): ${ALL_EDITOR_IDS.join(', ')}, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)`,
     )
-    .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
+    .action(async (opts: { mcp?: boolean; force?: boolean; devMcp?: boolean; editor?: string }) => {
       const cwd = process.cwd();
 
       let editors: EditorId[];
@@ -836,6 +898,7 @@ export function initCommand(): Command {
         cwd,
         mcp: opts.mcp,
         force: opts.force,
+        devMcp: opts.devMcp,
         editors,
       });
 
