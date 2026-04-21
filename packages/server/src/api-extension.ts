@@ -39,11 +39,7 @@ import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
-import {
-  AGENT_WRITE_ORIGIN,
-  type AgentSessionManager,
-  applyAgentMarkdownWrite,
-} from './agent-sessions.ts';
+import { type AgentSessionManager, applyAgentMarkdownWrite } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
@@ -1072,7 +1068,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1081,22 +1077,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
 
-          const activityMap = dc.document.getMap('agent-flash');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
+        }, session.origin);
         recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
@@ -1159,29 +1156,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
         body as Record<string, unknown>,
       );
-      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+      const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, markdown, position);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, markdown, position);
 
-          const activityMap = dc.document.getMap('agent-flash');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
+        }, session.origin);
         recordContributor(resolvedDocName, agentId, agentName, colorSeed);
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
@@ -1234,8 +1232,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
-      const content = dc.document.getText('source').toString();
+      const session = await sessionManager.getSession(docName);
+      const content = session.dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
       console.error('[document-read]', e);
@@ -1651,7 +1649,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
         body as Record<string, unknown>,
       );
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1660,9 +1658,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
-        dc.document.transact(() => {
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
           // Read current authoritative state. Search the FULL markdown
           // (frontmatter + body) so agents can patch frontmatter fields
           // (e.g. `title:`, `cluster:`) the same way they patch body text.
@@ -1670,8 +1669,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // frontmatter lives in Y.Map('metadata') and must be composed
           // in for the search surface to reflect the document as the
           // agent sees it on disk.
-          const xmlFragment = dc.document.getXmlFragment('default');
-          const metaMap = dc.document.getMap('metadata');
+          const xmlFragment = session.dc.document.getXmlFragment('default');
+          const metaMap = session.dc.document.getMap('metadata');
           const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
           const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
           const currentFull = prependFrontmatter(currentFm, currentBody);
@@ -1702,19 +1701,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (newFm !== currentFm) {
             metaMap.set('frontmatter', newFm);
           }
-          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
 
-          const activityMap = dc.document.getMap('agent-flash');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
+        }, session.origin);
         if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
       if (staleTarget) {

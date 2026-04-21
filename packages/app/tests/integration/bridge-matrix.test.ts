@@ -16,7 +16,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AGENT_WRITE_ORIGIN } from '@inkeep/open-knowledge-server';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { markUserTyping } from '../../src/editor/observers';
@@ -774,18 +773,21 @@ describe('FR-4: server-side per-agent UM under bridge-convergence fixes', () => 
       await pollUntil(() => client.ytext.toString().includes('baseline'), 5000);
 
       // 2. Attach UM server-side via getServerState. Mirrors V0-14's topology.
-      //    trackedOrigins uses the AGENT_WRITE_ORIGIN object ref (precedent #1).
+      //    trackedOrigins uses session.origin (US-007 F1, D2): agentWriteMd with no
+      //    explicit agentId uses the default 'claude-1' session; get it from the
+      //    server's session manager to obtain the object-identity-unique origin.
       const srv = getServerState(server, docName);
       if (!srv) throw new Error('Server doc not loaded');
+      const agentSession = await server.instance.sessionManager.getSession(docName, 'claude-1');
       const serverUm = new Y.UndoManager(srv.ytext, {
-        trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
+        trackedOrigins: new Set([agentSession.origin]),
         captureTimeout: 0,
       });
 
       // 3. User types locally in XmlFragment (undefined origin — local WYSIWYG).
       applyMarkdownToFragment(client, 'baseline paragraph.\n\nuser typed here.\n');
 
-      // 4. Agent writes concurrently — server composes under AGENT_WRITE_ORIGIN
+      // 4. Agent writes concurrently — server composes under session.origin
       //    via applyAgentMarkdownWrite (XmlFragment-authoritative, Bug-A fix).
       await agentWriteMd(server.port, 'agent wrote after.\n', { docName, position: 'append' });
       await wait(800);
@@ -794,7 +796,7 @@ describe('FR-4: server-side per-agent UM under bridge-convergence fixes', () => 
       expect(client.ytext.toString()).toContain('user typed here');
       expect(client.ytext.toString()).toContain('agent wrote after');
 
-      // 6. Server UM captured the agent's AGENT_WRITE_ORIGIN Items by identity match.
+      // 6. Server UM captured the agent's per-session origin Items by identity match.
       //    User's ORIGIN_TREE_TO_TEXT Items are correctly untracked.
       expect(serverUm.undoStack.length).toBeGreaterThan(0);
 

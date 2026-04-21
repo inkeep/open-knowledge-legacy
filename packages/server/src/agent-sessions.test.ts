@@ -175,3 +175,40 @@ describe('closeAll', () => {
     expect(manager.hasSession('doc-b.md', 'agent-alice')).toBe(true);
   });
 });
+
+// US-007 acceptance criteria (F1, D2, D23, D30)
+describe('per-session origin — US-007', () => {
+  test('D30: concurrent getSession calls produce exactly one openDirectConnection call', async () => {
+    // Launch two concurrent first-calls; dedup map must collapse them to one DC.
+    const [session1, session2] = await Promise.all([
+      manager.getSession('doc.md', 'agent-alice'),
+      manager.getSession('doc.md', 'agent-alice'),
+    ]);
+    // Same SessionRecord object — only one DC created.
+    expect(session1).toBe(session2);
+    expect(mockHocuspocus.openedDocs.filter((d) => d === 'doc.md')).toHaveLength(1);
+  });
+
+  test('D23: session.origin is deep-frozen — mutation throws in strict mode', async () => {
+    const session = await manager.getSession('doc.md', 'agent-alice');
+    // Both outer object and context must be frozen.
+    expect(Object.isFrozen(session.origin)).toBe(true);
+    expect(Object.isFrozen(session.origin.context)).toBe(true);
+    // Strict-mode mutation of a frozen object throws TypeError.
+    expect(() => {
+      (session.origin as Record<string, unknown>).source = 'remote';
+    }).toThrow(TypeError);
+  });
+
+  test('object-identity-unique: origins from different sessions are not ===', async () => {
+    const sessionA = await manager.getSession('doc.md', 'agent-alice');
+    const sessionB = await manager.getSession('doc.md', 'agent-bob');
+    expect(sessionA.origin).not.toBe(sessionB.origin);
+  });
+
+  test('SessionRecord carries correct agentId and docName', async () => {
+    const session = await manager.getSession('doc.md', 'agent-alice');
+    expect(session.agentId).toBe('agent-alice');
+    expect(session.docName).toBe('doc.md');
+  });
+});

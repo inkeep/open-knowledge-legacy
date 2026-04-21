@@ -4,9 +4,13 @@
  * Each agent gets a persistent DirectConnection to the Hocuspocus server.
  * Sessions track awareness (presence bar shows agent).
  *
- * Per-agent undo is deferred to V0-14 (three-UndoManager architecture).
- * The broken scaffold (UndoManager, undo/redo endpoints, AgentUndoButton)
- * was removed in V0-16 per TQ13.
+ * F1: Each session creates its own frozen LocalTransactionOrigin at birth
+ * (precedent #1, D2). All agent write paths call
+ * `session.dc.document.transact(fn, session.origin)` — never `dc.transact(fn)`
+ * or the shared `AGENT_WRITE_ORIGIN` constant (D32 STOP rule).
+ *
+ * D30: getSession uses an in-flight promise dedup map so concurrent first-calls
+ * share one pending openDirectConnection call and produce exactly one session.
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import {
@@ -41,8 +45,10 @@ export interface AgentDirectConnection extends DirectConnection {
  * Agent write origin — typed `PairedWriteOrigin` (bridge-correctness SPEC §6 R0,
  * precedent #1 extension, review iteration 5 compile-time gate).
  *
- * Passed to `document.transact(fn, AGENT_WRITE_ORIGIN)` in all agent write
- * paths. Load-bearing for observer origin guards and future UndoManager scoping.
+ * LEGACY EXPORT — kept for unit tests that directly test observer behavior
+ * against a paired-write origin. Production agent-write paths MUST use
+ * `session.origin` (per-session frozen origin from getSession) instead of
+ * this shared constant.
  *
  * `skipStoreHooks: false` — persistence SHOULD fire after agent writes so
  * content reaches disk through the normal debounce pipeline.
@@ -85,7 +91,7 @@ export function iconFromClientName(name?: string): string {
  * preserves non-agent Y.Text Items and their origins).
  *
  * Called within a transact() block whose origin is the caller's responsibility
- * (typically AGENT_WRITE_ORIGIN).
+ * (typically session.origin from a per-session SessionRecord).
  *
  * @see PRECEDENTS.md precedent #9 (minimize CRDT mutation in sync bridges)
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative, Y.Text mirrors)
@@ -166,10 +172,57 @@ export interface AgentSessionIdentity {
   displayName: string;
   colorSeed: string;
   clientName?: string;
+  principalId?: string;
+}
+
+/**
+ * Per-session state bundle — F1 (D2, precedent #1).
+ *
+ * Every write path must use `session.dc.document.transact(fn, session.origin)`
+ * (D32 STOP rule). Never call `session.dc.transact(fn)` or pass the shared
+ * `AGENT_WRITE_ORIGIN` constant to per-session writes.
+ */
+export interface SessionRecord {
+  dc: AgentDirectConnection;
+  /** Per-session frozen PairedWriteOrigin — unique per session (D2, D23). */
+  origin: PairedWriteOrigin;
+  agentId: string;
+  docName: string;
+}
+
+/**
+ * Create a frozen per-session PairedWriteOrigin (F1, D2, D23).
+ * Object-identity-unique per call; deep-frozen via Object.freeze on both
+ * the context and the outer object.
+ */
+function createSessionOrigin(
+  sessionId: string,
+  agentType?: string,
+  principalId?: string,
+): PairedWriteOrigin {
+  // precedent #1: typed transaction origin object (not string).
+  // D23: deep-freeze both context and outer object so accidental mutation throws.
+  const context: Record<string, unknown> & { origin: string; paired: true } = {
+    origin: 'agent-write',
+    paired: true as const,
+    session_id: sessionId,
+  };
+  if (agentType !== undefined) context.agent_type = agentType;
+  if (principalId !== undefined) context.principal = principalId;
+  Object.freeze(context);
+  const origin: PairedWriteOrigin = {
+    source: 'local',
+    skipStoreHooks: false,
+    context,
+  };
+  Object.freeze(origin);
+  return origin;
 }
 
 export class AgentSessionManager {
-  private sessions = new Map<string, AgentDirectConnection>();
+  private sessions = new Map<string, SessionRecord>();
+  /** D30: in-flight promise dedup — concurrent first-calls share one pending openDirectConnection. */
+  private pendingSessions = new Map<string, Promise<SessionRecord>>();
   private hocuspocus: Hocuspocus;
 
   constructor(hocuspocus: Hocuspocus) {
@@ -181,41 +234,81 @@ export class AgentSessionManager {
   }
 
   /**
-   * Get or create a persistent agent DirectConnection for a document.
-   * Sessions are keyed by (docName, agentId) for multi-agent isolation.
-   * Sets per-agent awareness (name, color, icon) on first open.
+   * Get or create a per-agent SessionRecord (DirectConnection + per-session origin).
+   *
+   * F1 (D2): each new session creates a frozen LocalTransactionOrigin via
+   * `createSessionOrigin`. The returned session.origin is object-identity-unique.
+   *
+   * D30: concurrent first-calls for the same (docName, agentId) share one
+   * pending openDirectConnection promise — exactly one DirectConnection created.
    */
   async getSession(
     docName: string,
     agentId = 'claude-1',
     identity?: AgentSessionIdentity,
-  ): Promise<AgentDirectConnection> {
+  ): Promise<SessionRecord> {
     if (isSystemDoc(docName)) {
       throw new Error(`Cannot create agent session for reserved doc: ${docName}`);
     }
     const key = this.sessionKey(docName, agentId);
-    let dc = this.sessions.get(key);
-    if (!dc) {
-      dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
-      const icon = iconFromClientName(identity?.clientName);
-      const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
-      dc.document.awareness.setLocalState({
-        user: {
-          name: identity?.displayName ?? 'Claude',
-          color,
-          type: 'agent',
-          icon,
-          tabId: `agent-${agentId}`,
-        },
-        mode: 'idle',
-      });
-      this.sessions.set(key, dc);
-      log.info(
-        { docName, agentId },
-        `[agent-session] Created session for: ${docName} / ${agentId}`,
-      );
+
+    const existing = this.sessions.get(key);
+    if (existing) return existing;
+
+    // D30: reuse in-flight promise if a concurrent first-call is already pending
+    const inflight = this.pendingSessions.get(key);
+    if (inflight) return inflight;
+
+    const promise = this._createSession(docName, agentId, identity);
+    this.pendingSessions.set(key, promise);
+    try {
+      const session = await promise;
+      this.sessions.set(key, session);
+      return session;
+    } finally {
+      this.pendingSessions.delete(key);
     }
-    return dc;
+  }
+
+  private async _createSession(
+    docName: string,
+    agentId: string,
+    identity: AgentSessionIdentity | undefined,
+  ): Promise<SessionRecord> {
+    const agentType = identity?.clientName;
+    // F1 (D2): per-session frozen origin — object-identity-unique
+    const origin = createSessionOrigin(agentId, agentType, identity?.principalId);
+
+    // D32: thread session context to openDirectConnection so Hocuspocus
+    // extensions (e.g. onAuthenticate) can resolve the session's identity.
+    const sessionContext = {
+      session_id: agentId,
+      ...(agentType !== undefined ? { agent_type: agentType } : {}),
+      ...(identity?.clientName !== undefined ? { client_name: identity.clientName } : {}),
+      ...(identity?.principalId !== undefined ? { principalId: identity.principalId } : {}),
+    };
+
+    const dc = (await this.hocuspocus.openDirectConnection(
+      docName,
+      sessionContext,
+    )) as AgentDirectConnection;
+
+    const icon = iconFromClientName(identity?.clientName);
+    const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
+    dc.document.awareness.setLocalState({
+      user: {
+        name: identity?.displayName ?? 'Claude',
+        color,
+        type: 'agent',
+        icon,
+        tabId: `agent-${agentId}`,
+      },
+      mode: 'idle',
+    });
+
+    log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
+
+    return { dc, origin, agentId, docName };
   }
 
   /** Check if a session exists without creating one. */
@@ -225,14 +318,14 @@ export class AgentSessionManager {
 
   /**
    * Disconnect and remove a specific agent session.
-   * Clears awareness before disconnect.
+   * Clears awareness before disconnect (D26: dc.disconnect() is the teardown primitive).
    */
   async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
-    const dc = this.sessions.get(key);
-    if (dc) {
-      dc.document.awareness.setLocalState(null);
-      await dc.disconnect();
+    const session = this.sessions.get(key);
+    if (session) {
+      session.dc.document.awareness.setLocalState(null);
+      await session.dc.disconnect();
       this.sessions.delete(key);
       log.info({ docName, agentId }, `[agent-session] Closed session for: ${docName} / ${agentId}`);
     }
@@ -241,11 +334,11 @@ export class AgentSessionManager {
   /** Close all sessions for a given agent (across all docs). */
   async closeAllForAgent(agentId: string): Promise<void> {
     const suffix = `\0${agentId}`;
-    for (const [key, dc] of this.sessions) {
+    for (const [key, session] of this.sessions) {
       if (key.endsWith(suffix)) {
         try {
-          dc.document.awareness.setLocalState(null);
-          await dc.disconnect();
+          session.dc.document.awareness.setLocalState(null);
+          await session.dc.disconnect();
           this.sessions.delete(key);
         } catch (err) {
           log.error(
@@ -260,11 +353,11 @@ export class AgentSessionManager {
   /** Close all sessions for a given document (all agents). */
   async closeAllForDoc(docName: string): Promise<void> {
     const prefix = `${docName}\0`;
-    for (const [key, dc] of this.sessions) {
+    for (const [key, session] of this.sessions) {
       if (key.startsWith(prefix)) {
         try {
-          dc.document.awareness.setLocalState(null);
-          await dc.disconnect();
+          session.dc.document.awareness.setLocalState(null);
+          await session.dc.disconnect();
           this.sessions.delete(key);
         } catch (err) {
           log.error({ err, docName }, `[agent-session] Failed to close session for doc ${docName}`);
@@ -281,11 +374,11 @@ export class AgentSessionManager {
     }
     const keys = [...this.sessions.keys()];
     for (const key of keys) {
-      const dc = this.sessions.get(key);
-      if (!dc) continue;
+      const session = this.sessions.get(key);
+      if (!session) continue;
       try {
-        dc.document.awareness.setLocalState(null);
-        await dc.disconnect();
+        session.dc.document.awareness.setLocalState(null);
+        await session.dc.disconnect();
         this.sessions.delete(key);
       } catch (err) {
         log.error({ err, key }, `[agent-session] Failed to close session: ${key}`);
