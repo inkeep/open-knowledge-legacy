@@ -137,14 +137,42 @@ done
 SERVER_LOG="$(mktemp -t perf-prod-server.XXXXXX.log)"
 UI_LOG="$(mktemp -t perf-prod-ui.XXXXXX.log)"
 
-# NOTE: broken-symlink resilience lives in our `totalist@3.0.1` patch
-# (patches/totalist@3.0.1.patch). Before that patch, a single broken
-# symlink anywhere under the content tree would crash `ok ui` at startup
-# (sirv's totalist walker does synchronous statSync and propagates
-# ENOENT). `/review-local`'s plugin bundle in `tmp/ship/pr-review-plugin/
-# skills/` routinely creates broken symlinks (relative paths assuming a
-# non-monorepo layout); the patched totalist now skips un-stat-able
-# entries instead of crashing. No pre-flight symlink cleanup needed.
+# Pre-flight WORKAROUND for the totalist/sirv broken-symlink crash.
+#
+# `ok ui` serves its content tree via `sirv` → `totalist@3.0.1`, which
+# does synchronous statSync on every entry and propagates ENOENT. A
+# single broken symlink anywhere under the walked tree crashes the UI
+# on startup before it binds a port — leaving an orphan `ui.lock` with
+# `port: 0` and the misleading error "UI did not bind within 2s; run
+# `ok clean`". `/review-local`'s plugin bundle at
+# `tmp/ship/pr-review-plugin/skills/` routinely creates broken symlinks
+# (relative paths like `../../../plugins/eng/skills/<name>` that assume
+# a non-monorepo layout).
+#
+# Auto-clean scoped to `tmp/` only — it's gitignored (never legitimate
+# content) and is where review-local/ship artifacts accumulate. Broader
+# scans of node_modules/ would hit legitimate cross-package symlinks.
+#
+# TODO: replace with upstream totalist fix — see tmp/ship/
+# totalist-sirv-crash-brief.md for the full repro + fix options. The
+# brief proposes a `bun patch totalist@3.0.1` that wraps readdirSync +
+# statSync in try/catch (ENOENT/EACCES/ENOTDIR → skip). Once that patch
+# lands, this pre-flight becomes dead code and can be deleted.
+if [[ -d "$REPO_ROOT/tmp" ]]; then
+  BROKEN_LINKS=()
+  while IFS= read -r -d '' link; do
+    if [[ ! -e "$link" ]]; then
+      BROKEN_LINKS+=("$link")
+    fi
+  done < <(find "$REPO_ROOT/tmp" -type l -print0 2>/dev/null)
+  if (( ${#BROKEN_LINKS[@]} > 0 )); then
+    echo "[perf-prod] Removing ${#BROKEN_LINKS[@]} broken symlink(s) under tmp/ (would crash ok ui):"
+    for link in "${BROKEN_LINKS[@]}"; do
+      echo "  $link"
+      rm -f "$link"
+    done
+  fi
+fi
 
 echo "[perf-prod] Starting open-knowledge (collab server) on kernel-assigned port…"
 node "$CLI_BIN" start --port 0 >"$SERVER_LOG" 2>&1 &
