@@ -2,7 +2,7 @@
 title: "Deep-linking into AI Desktop Chat Apps (2026)"
 description: "Landscape of programmatic entry points — URL schemes, App Intents, CLI bridges, scripting, and launchers — for Claude Desktop, Codex Desktop, Cursor, ChatGPT Desktop, Perplexity, and Raycast, plus prior art on capture-and-handoff patterns (react-grab, Mintlify, bookmarklets, PopClip)."
 createdAt: 2026-04-16
-updatedAt: 2026-04-16
+updatedAt: 2026-04-21
 subjects:
   - Claude Desktop
   - Codex Desktop
@@ -53,6 +53,7 @@ topics:
 - **Linear has been shipping deep-link-to-AI-coding-tools since 2026-02-26** — we missed this in the initial prior-art pass. Linear supports 9 tools (Claude Code, Codex, Conductor, Cursor, GitHub Copilot, OpenCode, Replit, v0, Zed) with `{{issue.identifier}}` / `{{context}}` prompt-template variables. Broader than Mintlify's 7 and production-proven. Linear's per-tool URL templates aren't published — a runtime-bundle inspection of `linear.app` is the most actionable follow-up for OK's menu design.
 - **Linear's registry binary-extracted (Addendum D.1): now 19 tools** (not 9 — grew ~1/week since launch). **5 of the 19 registry entries use shell-exec via Electron IPC** (`runTerminalCommand`): 4 built-in tools (Claude Code, Codex CLI, OpenCode, Amp) plus 1 user-defined hook (customTerminalScript). This is the strongest signal that **OK's own handoff registry must treat shell-exec as first-class**, peer to URL schemes — or lose coverage of terminal-native coding tools entirely. Other production details worth adopting: per-tool URL-length caps (2K default / 8K for Cursor+Copilot) with visible truncation footer, server-side `{{context}}` resolution via GraphQL, double percent-encoding for Cursor/Copilot/Windsurf, lz-string compression for Replit. No Claude Desktop entry at all — Linear chose to ship Claude Code (CLI) only. ([evidence](evidence/linear-ai-deeplinks-extraction.md))
 - **Codex 26.415 fresh probe (Addendum D.2) confirms the `codex://` URL scheme is semantically stable** despite the 9-version jump to today's release — routing logic is byte-for-byte equivalent; Vite regenerated bundle hashes and minifier renamed helper functions, but no route kinds, parser branches, or param names changed. No new routes, no new params, plugin install still CLI+IPC-only (no `codex://install`), no App Intents added. Computer Use is **Apple-Events-driven, not accessibility-API-driven** (separate sub-app `com.openai.sky.CUAService` with `com.apple.security.automation.apple-events` entitlement). Integrators can safely target the original 7-URL surface. ([evidence](evidence/codex-26415-probe.md))
+- **Folder-scoped launch is a three-primitive problem, and both Claude Desktop AND Codex Desktop support atomic single-URL prompt+workspace combos (Addendum E, live-verified 2026-04-21).** Three orthogonal primitives exist: `open -a <App> <folder>` via `CFBundleDocumentTypes` + `public.folder`, the app's CLI (`code /path`, `cursor /path`, `zed /path`, `codex app [PATH]`), and a workspace URL parameter. **Two apps now support single-URL atomic workspace+prompt:** Codex (`codex://new?prompt=<p>&path=<abs>&originUrl=<git>`) AND Claude Desktop (`claude://cowork/new?q=<p>&folder=<abs>&file=<abs>` or `claude://code/new?q=<p>&folder=<abs>&file=<abs>`). The Claude side was initially missed by the 2026-04-18 probe — the original evidence only characterized the `claude://claude.ai/*` branch of the router and didn't see the sibling `claude://cowork/*` and `claude://code/*` host routes, which dispatch via `dispatchOnCoworkFromMain` IPC (Cowork) or webview nav to `/epitaxy` (Code) and accept repeatable `folder=` + repeatable `file=`. Claude's atomic URL is actually BROADER than Codex's: multi-folder, multi-file, and tab-routed. Codex has the unique `originUrl=<git>` match-against-known-local-clones resolution. Neither shows a confirmation modal; both are pure prefill. Claude Desktop also registers `public.folder` as an `Editor` doc type — `open -a Claude.app /path` routes to the Cowork tab via the `CjA` handler (same IPC as the URL-scheme Cowork route, minus prompt). Cursor remains the two-step holdout (`cursor /path` then prompt URL + single confirmation modal) — its URL scheme has **no folder-open route of any kind** (`cursor://*` is action-oriented: prompt / command / rule / mcp / pr-review / etc.). Codex has NO `CFBundleDocumentTypes`, so `open -a Codex.app /path` silently drops the path — `codex app` or the URL scheme are the only folder-open primitives. Cursor + Windsurf inherit VS Code CLI fully; Zed's CLI-URL-passthrough (`zed /path "zed://agent?prompt=..."`) is the cleanest two-capability atomic pattern after the two URL-scheme-atomic apps. ChatGPT + Perplexity have none of the three. ([evidence](evidence/project-scoping-on-launch.md), [evidence](evidence/claude-desktop-deep-links.md) Findings 8–12, [evidence](evidence/cursor-encoding-empirics.md))
 - **Zed's namespace-collision precedent has real security lessons (Addendum D.3).** Zed is the only editor with two URL routers sharing one scheme prefix, and its solution is STRUCTURAL (two separate parsers in two crates, never on the same code path, partitioning `/agent/` sub-paths disjointly by convention). **Zed's `ExternalSourcePrompt` newtype-at-boundary is a high-ROI security pattern worth adopting** — every external URL payload consumed by an LLM is wrapped in a newtype whose only constructor sanitizes (strips bidi controls per CVE-2021-42574, caps newlines, normalizes CRLF). Complementary but distinct security patterns elsewhere in the surveyed set: **Cursor's CursorJack-hardened per-invocation confirmation modal + obfuscation-aware keyword denylist** (D3), **Linear's binary-search truncator with visible truncation footer** (D.1), **Raycast's per-category opt-in confirmation toggles** (D6). Each targets a different trust-boundary risk; the full picture is the set, not a ranked winner. OK should AVOID Zed's two-parsers-in-different-crates architecture — safer greenfield options are separate schemes (`openknowledge://` external, `openknowledge-mention://` internal) or a single dispatcher returning an exhaustiveness-checked discriminated union. ([evidence](evidence/zed-mentionuri-acp-dive.md))
 
 ---
@@ -503,6 +504,76 @@ Zed is the only editor in the surveyed sample with **two separate URL routers sh
 
 ---
 
+### Addendum E — Project/folder scoping on launch (Path C rounds 4 + 5)
+
+A narrow but often-asked follow-up: *can these apps be launched scoped to a specific folder/project, and how does that interact with prompt seeding?* The answer cuts across three orthogonal primitives and produces a clean-but-surprising matrix.
+
+> **Round 5 correction (2026-04-21).** Round 4's original claim that "only Codex supports a single-URL workspace+prompt combo" was wrong. A follow-up live-testing round against installed Claude.app 1.2581.0 discovered the previously-unseen `claude://cowork/*` and `claude://code/*` host routes — atomic prompt+folder+file primitives that dispatch via IPC (Cowork) or webview nav to `/epitaxy` (Code). The matrix and narrative below are updated; the original claim that missed these routes is retracted in `evidence/project-scoping-on-launch.md` with strike-through, and full bundle code is captured in `evidence/claude-desktop-deep-links.md` Findings 8–12.
+
+**Three primitives for workspace scoping on launch:**
+
+1. **Launch Services folder handler** — `open -a <App> <folder>` works if the app registers `public.folder` in `CFBundleDocumentTypes` with role `Editor`.
+2. **CLI with positional path** — `<cli> /path/to/folder`, typically from VS Code fork inheritance or a bespoke launcher.
+3. **Workspace-aware URL parameter** — a single URL scheme invocation that carries the folder path.
+
+**Primitive coverage matrix (updated 2026-04-21, live-verified):**
+
+| App | `open -a` folder | CLI opens folder | Workspace URL param | Single-URL workspace + prompt |
+|---|---|---|---|---|
+| **Claude Desktop** | ✅ `public.folder` Editor role → routes to Cowork via `CjA`/`dispatchOnCoworkFromMain` (live-verified) | ❌ (the `claude` CLI is terminal Claude Code, no Desktop bridge) | ✅ `folder=` + `file=` (both repeatable) — **newly confirmed 2026-04-21** | ✅ `claude://cowork/new?q=&folder=&file=` or `claude://code/new?q=&folder=&file=` (no modal, pure prefill, live-verified) |
+| **Codex Desktop** | ❌ — no `CFBundleDocumentTypes`; `open -a Codex.app /path` silently drops the path | ✅ `codex app [PATH]` + `--open-project <path>` argv | ✅ `?path=<abs>` + `?originUrl=<git>` | ✅ `codex://new?prompt=&path=&originUrl=` |
+| **Cursor** | ✅ (`public.folder` + 65 file types) | ✅ `cursor /path`, `-n`, `-r`, `-g file:line:col`, `-a <folder>` | ⚠️ `workspace=<basename>` matches by window name, not path; **`cursor://` has zero folder-open routes** | ❌ two-step (`cursor /path` then prompt URL) + single CursorJack confirmation modal (live-verified) |
+| **Zed** | ⚠️ inferred (not probed locally; CLI behavior implies yes) | ✅ `zed /path`, `-n`, `-r`; accepts `zed://` URLs as positional args | ❌ | ⚠️ closest: `zed /path "zed://agent?prompt=..."` single-invocation CLI |
+| **Windsurf** | ⚠️ inferred (VS Code fork) | ✅ `windsurf /path`, `.`, `--folder-uri` for WSL remote | ❌ | ❌ |
+| **VS Code** | ✅ | ✅ `code /path` + full CLI | N/A (no chat URL exists) | N/A |
+| **ChatGPT** | ❌ (only `public.data`) | ❌ (no CLI) | ❌ | ❌ |
+| **Perplexity** | ❌ (no `CFBundleDocumentTypes`) | ❌ (no CLI) | ❌ | ❌ |
+
+**Headline discoveries:**
+
+1. **Claude Desktop supports single-URL atomic prompt + folder + file via `claude://cowork/new?q=&folder=&file=` or `claude://code/new?q=&folder=&file=`** — peer-level capability to Codex, with one structural difference each way: Claude supports repeatable `folder=` (multi-root) and repeatable `file=` (multi-attachment); Codex has the unique `originUrl=<git>` match-against-known-local-clones resolution. Both are pure-prefill with no auto-execute, no confirmation modal. This makes Claude Desktop and Codex Desktop **peers** in the atomic-handoff axis, not a solo Codex capability.
+2. **Claude Desktop's `public.folder` handler routes specifically to the Cowork tab** (live-verified). The `CjA` function in the main bundle handles the `open-file` Electron event and calls `dispatchOnCoworkFromMain({ selectedDirectories: [path] })` — the same IPC the URL-scheme Cowork route uses, just without a prompt. Resolves the Round 4 "open question" about where `open -a Claude.app /path` ends up.
+3. **Codex Desktop lacks `CFBundleDocumentTypes` entirely.** `open -a Codex.app /path` silently drops the path — the user-facing symptom is just a launched-but-empty Codex, with nothing to indicate the path was ignored. `codex app [PATH]` or the URL scheme are the only working folder-open primitives for Codex.
+4. **Cursor's `cursor://` scheme has zero folder-open routes of any kind.** The entire `cursor://anysphere.cursor-deeplink/*` surface is action-oriented (prompt / command / rule / mcp-install / background-agent / settings / pr-review / plugin/add / createchat / glass) — none of them open a folder as a workspace. For Cursor, folder-opening is exclusively CLI or `open -a Cursor.app` via LS handler; the URL scheme cannot participate. This is a real architectural asymmetry OK's "Open in Cursor" button must accommodate (shell-out for folder-open, URL for prompt).
+5. **Cursor's prompt decoder does two decode passes with error recovery on the second pass** (live-verified, see `evidence/cursor-encoding-empirics.md`). Both single- and double-encoded prompts render cleanly for typical content, but single-encoding has a silent-corruption edge case when the prompt contains substrings that happen to look like valid URL escapes (`%41`, em-dash UTF-8 sequence, etc.). Double-encoding remains the robust rule — matches Linear's production implementation.
+
+**Canonical combo patterns per app (updated 2026-04-21):**
+
+```bash
+# Claude Desktop — single URL, atomic prompt + folder + file (no modal, pure prefill)
+open "claude://cowork/new?q=$(_urlenc "$prompt")&folder=$(_urlenc "$(pwd)")&file=$(_urlenc "$abs_file_path")"
+# Alternative: route to Code (Epitaxy) tab instead of Cowork
+open "claude://code/new?q=$(_urlenc "$prompt")&folder=$(_urlenc "$(pwd)")"
+
+# Codex — single URL, workspace-aware (no modal, pure prefill)
+open "codex://new?prompt=$(_urlenc "$prompt")&path=$(_urlenc "$(pwd)")&originUrl=$(_urlenc "$(git remote get-url origin)")"
+
+# Cursor — two-step + single CursorJack modal; double-encoded text; basename window-pin
+cursor /path/to/project
+sleep 1   # let window settle
+open "cursor://anysphere.cursor-deeplink/prompt?text=$(_urlenc "$(_urlenc "$prompt")")&mode=agent&workspace=$(basename "$(pwd)")"
+
+# Zed — atomic via CLI URL-passthrough
+zed /path/to/project "zed://agent?prompt=$(_urlenc "$prompt")"
+
+# Folder-only (no prompt) for each app
+open "claude://cowork/new?folder=$(_urlenc "$(pwd)")"   # or: open -a Claude.app $(pwd)
+codex app /path/to/project                               # NOT `open -a Codex.app` — silently drops path
+cursor /path/to/project                                  # or: open -a Cursor.app /path (no URL option)
+```
+
+**Implications for OK's handoff registry:**
+
+- The three primitives (`open -a` folder, CLI path, URL workspace param) all need to be first-class — a registry that only models URL-scheme handoff misses the Cursor folder-open pathway entirely (Cursor has no URL for it).
+- **Claude Desktop and Codex Desktop are now BOTH capable** of single-URL atomic prompt + workspace handoff. OK's "Open in Claude Desktop" and "Open in Codex Desktop" buttons should both target the atomic URL rather than the older two-step approaches.
+- **Claude's `file=` param is a particularly good fit for OK's "Open this wiki page in Claude" UX** — the wiki page becomes the specific attached file, the surrounding repo is the `folder=` context Claude can navigate if needed. Shape: `claude://cowork/new?q=<prompt-about-this-page>&folder=<repo>&file=<abs-path-to-wiki-page>`.
+- **For Cursor, shell-out is unavoidable for folder-open.** From an Electron host (`shell.openExternal`), use the URL scheme for Claude + Codex; `execFile('open', ['-a', 'Cursor.app', folder])` (or `cursor <folder>`) for Cursor's folder step. Then layer the Cursor prompt URL via `shell.openExternal` on top.
+- **Zed's CLI-URL-passthrough** (`zed /path "zed://..."`) remains the cleanest two-capability pattern after Claude and Codex's atomic URLs — worth surfacing in OK's docs as the Zed-side recommended shape.
+
+**Evidence:** [evidence/project-scoping-on-launch.md](evidence/project-scoping-on-launch.md) — full `CFBundleDocumentTypes` probes for all 5 primary apps, CLI help captures, Zed + Windsurf doc pulls; [evidence/claude-desktop-deep-links.md](evidence/claude-desktop-deep-links.md) Findings 8–12 — verbatim `Jb.Cowork` / `Jb.Code` bundle code + the `CjA` folder-drop handler + the sidebar-mode enum (`chat | code | task | epitaxy | operon`); [evidence/cursor-encoding-empirics.md](evidence/cursor-encoding-empirics.md) — two-pass-decode behavior + silent-corruption edge case + window-targeting + mode-propagation live-tests.
+
+---
+
 ## References
 
 ### Evidence Files
@@ -520,6 +591,8 @@ Zed is the only editor in the surveyed sample with **two separate URL routers sh
 - [evidence/linear-ai-deeplinks-extraction.md](evidence/linear-ai-deeplinks-extraction.md) — Full 19-tool Linear production registry from runtime bundle (AIActions.B5r9dZjO.js); per-tool URL templates verbatim; terminal-command-via-IPC for 4 tools; double-encoding for Cursor/Copilot/Windsurf; lz-string for Replit; per-tool URL-length caps; server-side `{{context}}` GraphQL resolution
 - [evidence/codex-26415-probe.md](evidence/codex-26415-probe.md) — Fresh DMG probe of Codex Desktop 26.415.20818; verbatim parser diff vs 26.406 (byte-for-byte semantic equivalence); Computer Use is Apple-Events-driven sub-app with `com.apple.security.automation.apple-events` entitlement; plugin install is IPC+CLI only (no URL); `codex marketplace add` CLI subcommand new
 - [evidence/zed-mentionuri-acp-dive.md](evidence/zed-mentionuri-acp-dive.md) — Zed's 12-variant MentionUri enum; ACP transport (JSON-RPC over stdio, Rust `agent-client-protocol@0.10.4` on crates.io); 4 ACP-compatible agents; structural two-parser disambiguation of `/agent/` subpath; `ExternalSourcePrompt` newtype-at-boundary security pattern (bidi-control strip, CVE-2021-42574 defense)
+- [evidence/project-scoping-on-launch.md](evidence/project-scoping-on-launch.md) — `CFBundleDocumentTypes` probes on all 5 apps (surfaces Claude's previously-undiscovered `public.folder` handler); CLI help captures for `cursor`, `zed`, `windsurf`, `code`, `codex`; canonical combo patterns for opening a folder + seeding a prompt; the three primitives matrix (`open -a` folder / CLI path / URL workspace param). **Updated 2026-04-21 (Round 5):** Claude row corrected from "no atomic combo" to "✅ via `claude://cowork/new?q=&folder=&file=`"; "open question" about Claude folder-drop routing resolved (→ Cowork tab via `CjA` IPC); negative search for `claude://` path params retracted. Claude and Codex are now peer apps for atomic single-URL prompt+workspace; Cursor remains the two-step holdout
+- [evidence/cursor-encoding-empirics.md](evidence/cursor-encoding-empirics.md) — 2026-04-21 live-testing of Cursor's `text=` URL param: empirically confirms two decode passes with error recovery on the second; both single- and double-encoding render cleanly for typical text; silent-corruption edge case when single-encoded prompts contain valid-escape-looking substrings (`%41`, em-dash UTF-8, pct-encoded URLs); window-targeting via `&workspace=<basename>` safety-net; `mode=agent` propagation verified end-to-end. Establishes the 5-rule canonical Cursor URL-builder recipe (R1–R5)
 
 ### Related Research
 - [reports/web-to-macos-desktop-wrapping-2025/](../web-to-macos-desktop-wrapping-2025/REPORT.md) — architectural profile of the same apps (Electron vs native Swift). This report extends that with deep-linking as a distinct dimension.
