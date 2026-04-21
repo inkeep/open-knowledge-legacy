@@ -19,6 +19,7 @@ import {
   safetyCheckpoint,
   saveInMemoryCheckpoint,
   saveVersion,
+  sweepLegacyHistoryRefs,
   type WriterIdentity,
 } from './history-repo';
 
@@ -972,5 +973,93 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
       .split('\n')
       .filter(Boolean);
     expect(refs).toContain(`refs/checkpoints/main/${untypedSha}`);
+  });
+});
+
+describe('sweepLegacyHistoryRefs (US-018, D35, NFR-6)', () => {
+  let projectRoot: string;
+  let shadow: HistoryHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'sweep-test');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initHistoryRepo(projectRoot);
+  });
+
+  /** Helper to create a bare ref pointing at an empty tree commit */
+  async function createRef(refname: string): Promise<void> {
+    const sg = historyGit(shadow);
+    const emptyTreeSha = (await sg.raw('hash-object', '-t', 'tree', '-w', '/dev/null')).trim();
+    const commitSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_DATE: '2020-01-01T00:00:00+00:00',
+          GIT_COMMITTER_DATE: '2020-01-01T00:00:00+00:00',
+          GIT_AUTHOR_NAME: 'test',
+          GIT_AUTHOR_EMAIL: 'test@test.com',
+          GIT_COMMITTER_NAME: 'test',
+          GIT_COMMITTER_EMAIL: 'test@test.com',
+        })
+        .raw('commit-tree', emptyTreeSha, '-m', `test: ${refname}`)
+    ).trim();
+    await sg.raw('update-ref', refname, commitSha);
+  }
+
+  test('deletes only legacy refs (server, human-*, upstream); preserves new taxonomy (US-018)', async () => {
+    // Create mixed refs
+    await createRef('refs/wip/main/server');
+    await createRef('refs/wip/main/human-abc');
+    await createRef('refs/wip/main/human-def123');
+    await createRef('refs/wip/main/upstream');
+    await createRef('refs/wip/main/agent-xyz');
+    await createRef('refs/wip/main/principal-def');
+    await createRef('refs/wip/main/file-system');
+    await createRef('refs/wip/main/git-upstream');
+    await createRef('refs/wip/main/openknowledge-service');
+
+    const deleted = await sweepLegacyHistoryRefs(shadow);
+    expect(deleted).toBe(4); // server + human-abc + human-def123 + upstream
+
+    const sg = historyGit(shadow);
+    const remaining = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip'))
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+
+    // Legacy refs should be gone
+    expect(remaining).not.toContain('refs/wip/main/server');
+    expect(remaining).not.toContain('refs/wip/main/human-abc');
+    expect(remaining).not.toContain('refs/wip/main/human-def123');
+    expect(remaining).not.toContain('refs/wip/main/upstream');
+
+    // New taxonomy preserved
+    expect(remaining).toContain('refs/wip/main/agent-xyz');
+    expect(remaining).toContain('refs/wip/main/principal-def');
+    expect(remaining).toContain('refs/wip/main/file-system');
+    expect(remaining).toContain('refs/wip/main/git-upstream');
+    expect(remaining).toContain('refs/wip/main/openknowledge-service');
+  });
+
+  test('idempotent — second sweep deletes nothing (US-018)', async () => {
+    await createRef('refs/wip/main/server');
+    await createRef('refs/wip/main/agent-abc');
+
+    const first = await sweepLegacyHistoryRefs(shadow);
+    expect(first).toBe(1);
+
+    const second = await sweepLegacyHistoryRefs(shadow);
+    expect(second).toBe(0); // no-op
+  });
+
+  test('fresh repo with no refs returns 0 (US-018)', async () => {
+    const deleted = await sweepLegacyHistoryRefs(shadow);
+    expect(deleted).toBe(0);
   });
 });

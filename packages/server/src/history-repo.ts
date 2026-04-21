@@ -18,13 +18,16 @@ import {
   formatCheckpointSubject,
   formatImportSubject,
   formatOkActor,
+  formatParkSubject,
   type OkActorEntry,
   type ParsedCheckpoint,
   parseCheckpoint,
+  parseWriterId,
   resolveHistoryDir,
 } from '@inkeep/open-knowledge-core/history-repo-layout';
 import simpleGit from 'simple-git';
 import { acquireLock, releaseLock } from './history-lock.ts';
+import { incrementHistoryMigrationLegacyRefsDeleted } from './metrics.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -139,10 +142,15 @@ export async function initHistoryRepo(projectRoot: string): Promise<HistoryHandl
   // the project has a .git/ — the state dir is never committed to project VCS)
   ensureGitignoreEntry(projectRoot);
 
+  // NFR-6 / D35: allowlist-based sweep of legacy WIP refs on every start.
+  // Idempotent — no-op once all legacy refs are gone.
+  const handle: HistoryHandle = { gitDir: shadowDir, workTree: projectRoot };
+  await sweepLegacyHistoryRefs(handle);
+
   // Acquire exclusive writer lock
   acquireLock(shadowDir, projectRoot);
 
-  return { gitDir: shadowDir, workTree: projectRoot };
+  return handle;
 }
 
 /**
@@ -151,6 +159,77 @@ export async function initHistoryRepo(projectRoot: string): Promise<HistoryHandl
  */
 export function destroyHistoryRepo(shadow: HistoryHandle): void {
   releaseLock(shadow.gitDir);
+}
+
+/**
+ * Allowlist-based sweep of legacy WIP refs (NFR-6, D35, US-018).
+ *
+ * Enumerates refs/wip/*\/\* and deletes ONLY refs whose writer-ID segment
+ * matches the known-legacy patterns: exact `server`, prefix `human-`, exact
+ * `upstream`. New-taxonomy refs (agent-*, principal-*, file-system,
+ * git-upstream, openknowledge-service) are preserved unchanged.
+ *
+ * Idempotent: running twice is a no-op once legacy refs are gone.
+ */
+export async function sweepLegacyHistoryRefs(shadow: HistoryHandle): Promise<number> {
+  const sg = historyGit(shadow);
+  let allRefs: string[];
+  try {
+    const raw = await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip');
+    allRefs = raw
+      .trim()
+      .split('\n')
+      .filter((r) => r.length > 0);
+  } catch {
+    // No refs yet (fresh repo) — nothing to sweep
+    return 0;
+  }
+
+  const toDelete: string[] = [];
+  const breakdown: Record<string, number> = { server: 0, 'human-': 0, upstream: 0 };
+
+  for (const refname of allRefs) {
+    // refs/wip/<branch>/<writerId>
+    const parts = refname.split('/');
+    if (parts.length < 4) continue;
+    const writerId = parts.slice(3).join('/');
+
+    // Only delete refs that parseWriterId classifies as 'unknown' AND match
+    // the known-legacy allowlist. This is deliberately narrow — we never
+    // delete a ref we can't positively identify as legacy (D35).
+    const classification = parseWriterId(writerId).classification;
+    if (classification !== 'unknown') continue;
+
+    if (writerId === 'server') {
+      toDelete.push(refname);
+      breakdown.server++;
+    } else if (writerId.startsWith('human-')) {
+      toDelete.push(refname);
+      breakdown['human-']++;
+    } else if (writerId === 'upstream') {
+      toDelete.push(refname);
+      breakdown.upstream++;
+    }
+    // All other 'unknown' refs are preserved (defensive)
+  }
+
+  if (toDelete.length === 0) return 0;
+
+  for (const ref of toDelete) {
+    try {
+      await sg.raw('update-ref', '-d', ref);
+    } catch (e) {
+      console.warn(`[history-migration] failed to delete legacy ref ${ref}:`, e);
+    }
+  }
+
+  const deleted = toDelete.length;
+  incrementHistoryMigrationLegacyRefsDeleted(deleted);
+  console.warn(
+    `[history-migration] deleted ${deleted} legacy refs: server=${breakdown.server} human-=${breakdown['human-']} upstream=${breakdown.upstream}`,
+  );
+
+  return deleted;
 }
 
 // ─── WIP commits ─────────────────────────────────────────────────────────────
@@ -867,14 +946,15 @@ export interface ParkableDoc {
 export async function parkBranch(
   shadow: HistoryHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   documents: ParkableDoc[],
+  newBranch?: string,
 ): Promise<string | null> {
   if (documents.length === 0) return null;
 
   const sg = historyGit(shadow);
   const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   const tmpBlobFile = resolve(shadow.gitDir, 'tmp-park-blob');
   try {
@@ -927,7 +1007,7 @@ export async function parkBranch(
       color_seed: SERVICE_WRITER.id,
       docs: documents.map((d) => d.docName),
     };
-    const parkMessage = `park: ${branch}\n\n${formatOkActor(parkActorEntry)}`;
+    const parkMessage = `${formatParkSubject(branch, newBranch ?? branch)}\n\n${formatOkActor(parkActorEntry)}`;
     const args = ['commit-tree', treeSha, '-m', parkMessage];
     if (parentSha) args.push('-p', parentSha);
 
@@ -966,11 +1046,11 @@ export async function parkBranch(
 export async function readParkedState(
   shadow: HistoryHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   docName: string,
 ): Promise<{ markdown: string; diskSnapshot: string } | null> {
   const sg = historyGit(shadow);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   // Check if ref exists — expected to be missing on first visit to a branch
   let refSha: string;

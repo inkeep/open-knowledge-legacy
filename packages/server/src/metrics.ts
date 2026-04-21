@@ -48,6 +48,9 @@ export interface ReconciliationMetrics {
    *  unclean close (RST). Same precedent §23 filter boundary; same
    *  observability rationale as `collabSocketEpipeCount`. */
   collabSocketEconnresetCount: number;
+  /** Count of legacy WIP refs deleted by the allowlist-based sweep in
+   *  initHistoryRepo on first run post-upgrade (US-018, NFR-6, D35). */
+  historyMigrationLegacyRefsDeleted: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -73,6 +76,7 @@ const counters: ReconciliationMetrics = {
   bridgeMergeCheckpointCreated: 0,
   collabSocketEpipeCount: 0,
   collabSocketEconnresetCount: 0,
+  historyMigrationLegacyRefsDeleted: 0,
 };
 
 export function incrementReconcile(): void {
@@ -184,6 +188,10 @@ export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET')
  *     ws.terminate();
  *   });
  */
+export function incrementHistoryMigrationLegacyRefsDeleted(count: number): void {
+  counters.historyMigrationLegacyRefsDeleted += count;
+}
+
 export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
     incrementCollabSocketFilteredError(err.code);
@@ -223,4 +231,5 @@ export function resetMetrics(): void {
   counters.bridgeMergeCheckpointCreated = 0;
   counters.collabSocketEpipeCount = 0;
   counters.collabSocketEconnresetCount = 0;
+  counters.historyMigrationLegacyRefsDeleted = 0;
 }
