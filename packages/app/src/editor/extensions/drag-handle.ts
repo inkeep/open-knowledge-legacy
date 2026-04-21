@@ -12,12 +12,12 @@
  * `Failed to execute 'removeChild' on 'Node'` (see Debug Phase 5 root
  * cause, 2026-04-18). Using the plugin imperatively with a
  * `document.createElement` container sidesteps React entirely — no refs
- * for the plugin to move, no reconciliation to break. Candidate precedent
- * (not yet filed; #27 in PRECEDENTS.md is taken by SelectionStatePlugin):
- * "DragHandle / Floating UI plugins that move DOM externally must not be
- * driven by React component wrappers when the editor lives inside an
- * `<Activity>` subtree." If another case of this pattern arises, append
- * as the next available precedent number.
+ * for the plugin to move, no reconciliation to break. Evidence: regression
+ * validated against docs-open F1/F4/F5/F10 (2026-04-18 Debug Phase 5 root
+ * cause). The same pattern would apply to any future plugin that moves its
+ * ref'd DOM into `editor.view.dom.parentElement` while the editor lives in
+ * an `<Activity>` subtree — prefer imperative `document.createElement`
+ * mounting over React component wrappers for those plugins.
  *
  * Clicking + context-aware insertion:
  *   - If the hovered block is a typed-children container (descriptor has

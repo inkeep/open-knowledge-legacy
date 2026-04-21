@@ -17,9 +17,10 @@
  * narrower ts/tsx-only glob specifically because Tailwind v4's
  * auto-source-detection is disabled once any explicit @source exists (the
  * fumadocs @source above triggers this), and we needed local utility classes
- * like data-state-active-border, callout-color tokens, etc. in editor-local
- * tab triggers / prop controls to be generated. The broader glob below
- * supersedes that narrower scope and additionally serves the desktop case:
+ * like `data-[state=active]:border-fd-primary` and `bg-(--callout-color)/50`
+ * in editor-local tab triggers / prop controls to be generated. The broader
+ * glob below supersedes that narrower scope and additionally serves the
+ * desktop case:
  *
  * When packages/desktop's `electron-vite dev` serves this CSS with
  * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
