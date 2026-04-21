@@ -39,7 +39,7 @@ import { mdManager, schema } from './test-harness';
 function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFragment): void {
   const fullText = ytext.toString();
   const { frontmatter, body } = stripFrontmatter(fullText);
-  const parsedJson = mdManager.parseSafe(body);
+  const parsedJson = mdManager.parseWithFallback(body);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, xmlFragment, pmNode, meta);
@@ -78,7 +78,7 @@ function applyToFragment(
 // ═════════════════════════════════════════════════════════════
 
 describe('Bug-D mechanism isolation', () => {
-  test.skip('D-iso-1: syncTextToFragment with stale Y.Text destroys XmlFragment content', () => {
+  test('D-iso-1: syncTextToFragment with stale Y.Text destroys XmlFragment content', () => {
     // ── Setup: fresh Y.Doc, seed both sides to a baseline ──
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
@@ -144,7 +144,7 @@ describe('Bug-D mechanism isolation', () => {
   //         destroys concurrent user's new XmlFragment keystroke
   // ═══════════════════════════════════════════════════════════
 
-  test.skip('D-iso-2: V0-14 flow — post-undo syncTextToFragment destroys new user XmlFragment keystroke', () => {
+  test('D-iso-2: V0-14 flow — post-undo syncTextToFragment destroys new user XmlFragment keystroke', () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
     const xmlFragment = doc.getXmlFragment('default');

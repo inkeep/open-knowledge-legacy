@@ -459,24 +459,21 @@ export async function agentPatch(
   return { ok: true };
 }
 
-/** POST to agent-undo endpoint */
-export async function agentUndo(port: number, docName?: string): Promise<void> {
+/** POST to agent-undo endpoint (V0-14 per-session undo) */
+export async function agentUndo(
+  port: number,
+  opts: { docName?: string; connectionId: string; scope?: 'last' | 'session' },
+): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-undo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName }),
+    body: JSON.stringify({
+      docName: opts.docName,
+      connectionId: opts.connectionId,
+      scope: opts.scope ?? 'last',
+    }),
   });
   if (!res.ok) throw new Error(`agent-undo failed: ${res.status}`);
-}
-
-/** POST to agent-redo endpoint */
-export async function agentRedo(port: number, docName?: string): Promise<void> {
-  const res = await fetch(`http://localhost:${port}/api/agent-redo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName }),
-  });
-  if (!res.ok) throw new Error(`agent-redo failed: ${res.status}`);
 }
 
 /** POST to test-reset endpoint */

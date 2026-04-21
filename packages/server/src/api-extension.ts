@@ -39,7 +39,11 @@ import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
-import { type AgentSessionManager, applyAgentMarkdownWrite } from './agent-sessions.ts';
+import {
+  type AgentSessionManager,
+  applyAgentMarkdownWrite,
+  applyAgentUndo,
+} from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
@@ -1743,6 +1747,91 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
+   *
+   * Body: { docName?: string, connectionId: string, scope?: 'last' | 'session' }
+   *   connectionId — the session's agentId (matches sessionManager key)
+   *   scope — 'last' undoes the top UM stack item; 'session' undoes all items.
+   *
+   * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
+   * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
+   */
+  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      const rawDocName =
+        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+
+      const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined;
+      if (!connectionId) {
+        json(res, 400, { ok: false, error: 'connectionId required' });
+        return;
+      }
+
+      const rawScope = body.scope;
+      const scope: 'last' | 'session' = rawScope === 'session' ? 'session' : 'last';
+
+      if (!sessionManager.hasSession(docName, connectionId)) {
+        json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
+        return;
+      }
+
+      const session = await sessionManager.getSession(docName, connectionId);
+
+      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      try {
+        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
+        // applyAgentUndo wraps um.undo() + composition in one transact under
+        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
+        applyAgentUndo(session, scope);
+      } finally {
+        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+      }
+
+      agentFocusBroadcaster?.setFocus(connectionId, {
+        agentName: connectionId,
+        currentDoc: docName,
+        writeKind: 'undo',
+        ts: Date.now(),
+      });
+
+      json(res, 200, { ok: true, docName, scope });
+    } catch (e) {
+      log.error({ err: e }, '[agent-undo] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -4202,6 +4291,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
+    '/api/agent-undo': handleAgentUndo,
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,

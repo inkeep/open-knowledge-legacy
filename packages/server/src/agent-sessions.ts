@@ -17,12 +17,7 @@
  * V0-14 applyAgentUndo path; captureTransaction excludes it from the UM stack
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
-import type {
-  DirectConnection,
-  Document,
-  Hocuspocus,
-  LocalTransactionOrigin,
-} from '@hocuspocus/server';
+import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
   applyFastDiff,
@@ -179,6 +174,65 @@ export function applyAgentMarkdownWrite(
   }
 }
 
+/**
+ * XmlFragment-authoritative agent undo (V0-14, US-009, precedent #10, D4).
+ *
+ * Calls session.um.undo() INSIDE an outer doc.transact(..., session.undoOrigin)
+ * so Y.js merges the UM's internal transaction into the outer. The whole
+ * operation fires under undoOrigin (paired: true) → Observer A/B short-circuit.
+ *
+ * After undo, Y.Text is in the desired post-undo state. We apply the
+ * XmlFragment-authoritative composition pattern: parse Y.Text markdown,
+ * apply to XmlFragment via updateYFragment (structural diff), mirror
+ * Y.Text via applyFastDiff. All atomic in one transact.
+ *
+ * scope 'last': undo one UM stack item.
+ * scope 'session': undo entire UM stack.
+ *
+ * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
+ */
+export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): void {
+  const { dc, um, undoOrigin } = session;
+  const document = dc.document;
+  const xmlFragment = document.getXmlFragment('default');
+  const ytext = document.getText('source');
+  const metaMap = document.getMap('metadata');
+
+  // F1 (D4): wrap undo + composition in one outer transact under undoOrigin.
+  // Y.js merges um.undo()'s nested transact into this outer → fires under undoOrigin.
+  // isPairedWriteOrigin(undoOrigin) === true → Observer A/B short-circuit on settle.
+  document.transact(() => {
+    if (scope === 'last') {
+      if (um.undoStack.length === 0) return;
+      um.undo();
+    } else {
+      while (um.undoStack.length > 0) {
+        um.undo();
+      }
+    }
+
+    // Post-undo: Y.Text has the desired content. Apply XmlFragment-authoritative
+    // composition so XmlFragment matches (precedent #10, #12).
+    const fullMd = ytext.toString();
+    const { body, frontmatter: newFm } = stripFrontmatter(fullMd);
+
+    const parsedJson = mdManager.parseWithFallback(body);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+
+    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    const finalFm = newFm || existingFm;
+    if (newFm && newFm !== existingFm) {
+      metaMap.set('frontmatter', finalFm);
+    }
+
+    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
+    applyFastDiff(ytext, ytext.toString(), canonicalFull);
+  }, undoOrigin);
+}
+
 export interface AgentSessionIdentity {
   displayName: string;
   colorSeed: string;
@@ -200,8 +254,8 @@ export interface SessionRecord {
   dc: AgentDirectConnection;
   /** Per-session frozen PairedWriteOrigin — unique per session (D2, D23). */
   origin: PairedWriteOrigin;
-  /** Per-session undo write origin — V0-14 placeholder. Excluded from um.captureTransaction. */
-  undoOrigin: LocalTransactionOrigin;
+  /** Per-session undo write origin — V0-14 (US-009, D4). Paired so Observer A/B short-circuit. */
+  undoOrigin: PairedWriteOrigin;
   /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
   um: Y.UndoManager;
   agentId: string;
@@ -238,18 +292,21 @@ function createSessionOrigin(
 }
 
 /**
- * Create a frozen per-session LocalTransactionOrigin for V0-14 undo writes (US-008).
- * Object-identity-unique per call; deep-frozen (D23). Excluded from UM captureTransaction
- * to prevent undo-of-undo cycles. Not a PairedWriteOrigin — V0-14 may upgrade if needed.
+ * Create a frozen per-session PairedWriteOrigin for V0-14 undo writes (US-009, D4).
+ * Object-identity-unique per call; deep-frozen (D23). isPairedWriteOrigin returns true
+ * so Observer A/B short-circuit when the undo+composition transact settles.
+ * captureTransaction: tr => tr.origin !== session.undoOrigin prevents undo-of-undo stacking.
  */
-function createUndoOrigin(sessionId: string, agentType?: string): LocalTransactionOrigin {
-  const context: Record<string, unknown> = {
+function createUndoOrigin(sessionId: string, agentType?: string): PairedWriteOrigin {
+  // precedent #1: typed transaction origin; paired: true so observers short-circuit (D4).
+  const context: Record<string, unknown> & { origin: string; paired: true } = {
     origin: 'agent-undo',
+    paired: true as const,
     session_id: sessionId,
   };
   if (agentType !== undefined) context.agent_type = agentType;
   Object.freeze(context);
-  const origin: LocalTransactionOrigin = {
+  const origin: PairedWriteOrigin = {
     source: 'local',
     skipStoreHooks: false,
     context,
