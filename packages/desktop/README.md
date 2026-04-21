@@ -6,7 +6,7 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 — dev loop, local, unsigned. `bun run dev --filter=@inkeep/open-knowledge-desktop` launches the app end-to-end on macOS with Hocuspocus running in a utility process. M2 (signing + notarization + DMG) onwards is deferred; see SPEC §14 for the milestone plan and the spec's `meta/_changelog.md` for the scope calibration that landed M1 in isolation.
+M1 — dev loop, local, unsigned. `bun run --filter=@inkeep/open-knowledge-desktop dev` launches the app end-to-end on macOS with Hocuspocus running in a utility process. M2 (signing + notarization + DMG) onwards is deferred; see SPEC §14 for the milestone plan and the spec's `meta/_changelog.md` for the scope calibration that landed M1 in isolation.
 
 ## Process model
 
@@ -81,7 +81,7 @@ From the repo root:
 
 ```bash
 bun install                                       # installs desktop deps; postinstall rebuilds native modules
-bun run dev --filter=@inkeep/open-knowledge-desktop
+bun run --filter=@inkeep/open-knowledge-desktop dev
 ```
 
 On first run, the app opens the Navigator window. Click "Open folder on disk" to pick a content directory — every project pick spawns a new editor window (D3 revised — there is no switch-in-place UX). Closing every editor window keeps the app and the Navigator running; click the Dock icon to bring the Navigator back.
