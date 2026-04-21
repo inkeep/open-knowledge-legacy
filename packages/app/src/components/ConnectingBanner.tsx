@@ -51,7 +51,7 @@ export function computeBannerMode(
   return graceElapsed ? 'retrying' : 'hidden';
 }
 
-function describeError(
+export function describeError(
   err:
     | { kind: 'error'; code: number | 'network' | 'invalid-body' }
     | { kind: 'null-collab' }
