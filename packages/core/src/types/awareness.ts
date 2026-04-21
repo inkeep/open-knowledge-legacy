@@ -22,6 +22,18 @@ export interface AwarenessState {
    * the browser should navigate to.
    */
   agentFocus?: Record<string, AgentFocusEntry>;
+  /**
+   * Map of active-agent presence entries keyed by agentId. Populated only on
+   * the `__system__` Y.Doc's awareness (never on content docs — per-doc agent
+   * awareness stomps across N concurrent agents because every Hocuspocus
+   * `Document` has one shared `Awareness` clientID). Published by the
+   * server-side `AgentPresenceBroadcaster` on a shared DirectConnection.
+   * Clients filter stale entries (`now - ts >= AGENT_PRESENCE_STALE_MS`) and
+   * skip entries with `currentDoc === null` (D8 — presence means "doing work
+   * now"). Entries are cleared deterministically via the MCP keepalive WS
+   * close event with the 5s TTL as a belt-and-suspenders fallback.
+   */
+  agentPresence?: Record<string, AgentPresenceEntry>;
 }
 
 /**
@@ -37,6 +49,32 @@ export interface AgentFocusEntry {
   /** Which MCP tool produced the update (D43). */
   writeKind: 'write' | 'edit' | 'undo' | 'rollback-apply' | null;
   /** `Date.now()` at publication time. Stale entries (>5s) are ignored. */
+  ts: number;
+}
+
+/**
+ * One active agent's presence. Lives inside the map-valued `agentPresence`
+ * field on `AwarenessState` on the `__system__` Y.Doc's awareness (never on
+ * content docs). Refreshed on every agent write.
+ *
+ * Clients filter stale entries where `now - ts >= AGENT_PRESENCE_STALE_MS`
+ * (5_000ms — matches the existing `AGENT_FOCUS_STALE_MS`) and skip entries
+ * with `currentDoc === null` (D8 — "presence means doing work now"). The
+ * primary cleanup signal is the MCP keepalive WS close event; TTL is a
+ * belt-and-suspenders defense against clock skew / silent WS drops.
+ */
+export interface AgentPresenceEntry {
+  /** Human-readable name (e.g. 'Claude', 'Cursor'). */
+  displayName: string;
+  /** Icon identifier (e.g. 'claude', 'cursor', 'openai'). */
+  icon: string;
+  /** Hex color string (e.g. '#D97757'). */
+  color: string;
+  /** Path of the doc the agent most recently wrote to; null between writes. */
+  currentDoc: string | null;
+  /** Live-editing state: `'editing'` during a write in-flight, `'idle'` otherwise. */
+  mode: 'idle' | 'editing';
+  /** `Date.now()` at publication time. Stale entries (>=AGENT_PRESENCE_STALE_MS) are filtered. */
   ts: number;
 }
 

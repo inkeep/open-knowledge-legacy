@@ -121,6 +121,7 @@ export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
   AgentFocusEntry,
+  AgentPresenceEntry,
   AwarenessState,
   AwarenessUser,
 } from './types/awareness.ts';
