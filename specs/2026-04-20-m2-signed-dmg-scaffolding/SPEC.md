@@ -82,7 +82,7 @@ One PR. Changes in:
 | Ref | Work | Owner |
 |---|---|---|
 | FU-1 | Resolve universal-merge blocker. Options: (a) force-install both darwin arches of `@napi-rs/keyring` via package.json, (b) `scripts/prepare-universal.mjs` that extracts tarballs into `node_modules/@napi-rs/` without recording them in package.json. (b) is cleaner. | Andrew |
-| FU-2 | Once certs land: add the five secrets to GitHub repo settings, trigger `desktop-build` workflow, verify signed+notarized+stapled+fuse-verified DMG uploads as artifact. Flip `electron-builder.yml` from `notarize: false` (removed here) to `mac.notarize` + full creds path. | Andrew + ops |
+| FU-2 | Once certs land: add the five secrets to GitHub repo settings, trigger `desktop-build` workflow, verify signed+notarized+stapled+fuse-verified DMG uploads as artifact. No `mac.notarize` key needed — the custom `afterSign.mjs` hook handles notarization per D1. | Andrew + ops |
 | FU-3 | Fresh-Mac install test against signed DMG — close bottom two items of parent §14 M2 DOD. | Andrew |
 | FU-4 | Add path-gated `pull_request` trigger to `.github/workflows/desktop-build.yml` once the signed path has been green at least once (avoid burning macOS minutes on unrelated PRs). | Andrew |
 
