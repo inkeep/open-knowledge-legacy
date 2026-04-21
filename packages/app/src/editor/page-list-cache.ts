@@ -25,8 +25,9 @@
  *
  * Scope carve-outs
  * ----------------
- * - This module is purely a store. It does NOT wire PageListProvider →
- *   setPageListCache. The provider-side sync is a follow-up edit within US-005.
+ * - This module is purely a store. The PageListProvider → setPageListCache
+ *   wiring lives in `PageListContext.tsx` (iter-25; a useEffect that publishes
+ *   {pages, folderPaths} on every render — no-ops absorbed by the equality gate).
  * - Consumer renderDecorationRefresh is a separate concern (the PM plugin in
  *   internal-link.ts will subscribe here and dispatch a transaction carrying
  *   a custom meta to force mark-identity-decoration-plugin re-run).
