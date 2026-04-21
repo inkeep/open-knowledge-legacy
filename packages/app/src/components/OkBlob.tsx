@@ -58,12 +58,12 @@ function particleStyle(p: FireworkParticle): CSSProperties {
  * in globals.css). Eyes track the mouse via JS, throttled to rAF.
  * Respects `prefers-reduced-motion`.
  *
- * Click reaction escalates with rapid clicks. Single click gives a 4-particle
- * puff, 2 rapid clicks trigger a 9-particle burst, 3+ rapid clicks trigger a
- * chaotic multi-color firework (16 particles, varied sizes and durations,
- * spread across five palette colors). The bounce wraps body + eyes in a group
- * so the eyes squish + translate with the body on every click. Level decays
- * back to idle after ~1s with no clicks.
+ * Click reaction escalates with rapid clicks. Every click bounces the group
+ * (body + eyes squish together). Only rage — 3+ rapid clicks within the rage
+ * window — detonates the chaotic multi-color firework (16 particles, varied
+ * sizes and durations, spread across five palette colors). Levels 1 and 2
+ * stay quiet on purpose so the rage reward feels earned. Level decays back
+ * to idle after ~1s with no clicks.
  */
 export function OkBlob({ size = 48, className, trackMouse = true }: OkBlobProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -198,8 +198,8 @@ export function OkBlob({ size = 48, className, trackMouse = true }: OkBlobProps)
         />
       </g>
 
-      {/* Firework burst — escalates 4 → 9 → 16 particles across click levels.
-          Particles live outside the bounce group so they fly free of the body squish. */}
+      {/* Firework burst — rage-click (level 3) only. Particles live outside
+          the bounce group so they fly free of the body squish. */}
       {particles.length > 0 && (
         <g key={`firework-${clickSeq}`}>
           {particles.map((p) => (

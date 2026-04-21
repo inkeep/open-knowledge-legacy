@@ -64,17 +64,13 @@ describe('generateFireworkParticles', () => {
     }
   });
 
-  test('escalation is strictly monotonic — more sparks, more reach, longer burn', () => {
-    expect(FIREWORK_LEVEL_CONFIG[1].count).toBeLessThan(FIREWORK_LEVEL_CONFIG[2].count);
-    expect(FIREWORK_LEVEL_CONFIG[2].count).toBeLessThan(FIREWORK_LEVEL_CONFIG[3].count);
-    expect(FIREWORK_LEVEL_CONFIG[1].baseDistance).toBeLessThan(
-      FIREWORK_LEVEL_CONFIG[2].baseDistance,
-    );
-    expect(FIREWORK_LEVEL_CONFIG[2].baseDistance).toBeLessThan(
-      FIREWORK_LEVEL_CONFIG[3].baseDistance,
-    );
-    expect(FIREWORK_LEVEL_CONFIG[1].durationMax).toBeLessThan(FIREWORK_LEVEL_CONFIG[2].durationMax);
-    expect(FIREWORK_LEVEL_CONFIG[2].durationMax).toBeLessThan(FIREWORK_LEVEL_CONFIG[3].durationMax);
+  test('firework is reserved for rage — levels 1 and 2 emit no particles', () => {
+    expect(FIREWORK_LEVEL_CONFIG[1].count).toBe(0);
+    expect(FIREWORK_LEVEL_CONFIG[2].count).toBe(0);
+    expect(FIREWORK_LEVEL_CONFIG[3].count).toBeGreaterThan(0);
+    expect(generateFireworkParticles(1, { rng: mulberry32(1) })).toEqual([]);
+    expect(generateFireworkParticles(2, { rng: mulberry32(2) })).toEqual([]);
+    expect(generateFireworkParticles(3, { rng: mulberry32(3) }).length).toBeGreaterThan(0);
   });
 
   test('each particle stays within configured distance and size bounds', () => {
