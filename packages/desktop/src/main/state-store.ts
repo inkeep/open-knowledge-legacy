@@ -10,7 +10,8 @@
  * OK's existing realpath-based file-watcher identity.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface RecentProject {
   path: string;
@@ -68,6 +69,64 @@ export function annotateMissing(
     ...p,
     missing: !exists(p.path),
   }));
+}
+
+/**
+ * Persist `state` to `<userDataDir>/state.json` atomically. Writes to a
+ * `.tmp-<pid>-<ms>` sibling first, then renames to the canonical path. A
+ * crash mid-write leaves either the prior file intact OR the fully-formed
+ * new file — never a half-written blob. Logs on failure (bracket-prefixed
+ * per CLAUDE.md logging conventions); does not throw.
+ *
+ * Injected `fs` hook for tests. Production callers pass `undefined` to use
+ * the module-scope `node:fs` imports.
+ */
+export interface SaveAppStateFs {
+  existsSync: typeof existsSync;
+  mkdirSync: typeof mkdirSync;
+  writeFileSync: typeof writeFileSync;
+  renameSync: typeof renameSync;
+  unlinkSync: typeof unlinkSync;
+}
+
+const DEFAULT_FS: SaveAppStateFs = {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  renameSync,
+  unlinkSync,
+};
+
+export function saveAppStateToDir(
+  userDataDir: string,
+  state: AppState,
+  fs: SaveAppStateFs = DEFAULT_FS,
+  logger: { error(msg: string, ctx?: object): void } = console,
+): void {
+  try {
+    if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
+    const statePath = join(userDataDir, 'state.json');
+    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2));
+      fs.renameSync(tmpPath, statePath);
+    } catch (err) {
+      logger.error('[main] saveAppState failed', {
+        err: (err as Error).message,
+        statePath,
+      });
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // tmp file may not exist — best-effort cleanup.
+      }
+    }
+  } catch (err) {
+    logger.error('[main] saveAppState userData setup failed', {
+      err: (err as Error).message,
+      userDataDir,
+    });
+  }
 }
 
 /**

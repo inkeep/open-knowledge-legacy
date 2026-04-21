@@ -19,11 +19,29 @@
  * The menu is rebuilt on recent-projects changes so the Open Recent submenu
  * stays current without us reaching into Electron's menu-item mutation API
  * (Electron recommends full rebuild on state change).
+ *
+ * Electron import discipline: `electron` named exports (Menu, app, dialog,
+ * shell) are only resolvable at runtime inside an Electron process. Bun's
+ * unit-test runner loads the `electron` npm package, which is just a string
+ * path to the binary — it has NO named exports. So this module uses
+ * type-only imports for interface types (MenuItemConstructorOptions) and
+ * pulls the one runtime value we need (`app.name`) + side-effecting APIs
+ * (Menu.setApplicationMenu, Menu.buildFromTemplate, dialog.showOpenDialog)
+ * via a dynamic `await import('electron')` inside `installApplicationMenu`.
+ * That keeps `buildMenuTemplate` — the pure function tests exercise —
+ * free of runtime electron bindings.
  */
 
-import { app, dialog, Menu, type MenuItemConstructorOptions, shell } from 'electron';
+import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import { promptForFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
+  /** `app.name` — the running app's name, used for the macOS App menu label. */
+  appName: string;
+  /** `electron.dialog` — injected so the File → Open Folder click handler
+   *  can call `promptForFolder(dialog)` without importing `dialog` at module
+   *  scope (breaks Bun-test module load; see file header). */
+  dialog: Dialog;
   /** Open the Project Navigator window (File → New Project…). */
   openNavigator(): void;
   /** Open a specific project folder (File → Open Folder… or File → Open Recent ▸ <row>). */
@@ -32,10 +50,17 @@ export interface MenuDeps {
   getRecentProjects(): ReadonlyArray<{ path: string; name: string }>;
   /** Clear the recent-projects list (File → Open Recent → Clear Menu). */
   clearRecentProjects(): void;
+  /** Open an external URL (Help menu). Injected so the `shell` runtime value doesn't cross the module boundary. */
+  openExternalUrl(url: string): void;
 }
 
-/** Build the menu template + install it as the application menu. */
-export function installApplicationMenu(deps: MenuDeps): void {
+/**
+ * Install the template as the application menu. Dynamically imports
+ * `Menu` so the module-top scope stays Bun-test-loadable; callers must
+ * be in an async context (typically `app.whenReady().then(async () => ...)`).
+ */
+export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
+  const { Menu } = await import('electron');
   const template = buildMenuTemplate(deps);
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -68,7 +93,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     ...(isMac
       ? [
           {
-            label: app.name,
+            label: deps.appName,
             submenu: [
               { role: 'about' as const },
               { type: 'separator' as const },
@@ -96,10 +121,9 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           label: 'Open Folder\u2026',
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
-            const result = await dialog.showOpenDialog({
-              properties: ['openDirectory', 'createDirectory'],
-            });
-            const picked = result.canceled ? null : (result.filePaths[0] ?? null);
+            // Shared with the `ok:dialog:create-folder` IPC handler so both
+            // call sites agree on dialog options forever — see dialog-helpers.
+            const picked = await promptForFolder(deps.dialog);
             if (picked) {
               await deps.openProject(picked);
             }
@@ -162,9 +186,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       submenu: [
         {
           label: 'Open Knowledge on GitHub',
-          click: () => {
-            void shell.openExternal('https://github.com/inkeep/open-knowledge');
-          },
+          click: () => deps.openExternalUrl('https://github.com/inkeep/open-knowledge'),
         },
       ],
     },

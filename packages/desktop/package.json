@@ -18,6 +18,7 @@
     "@inkeep/open-knowledge-server": "workspace:*"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.16.0",
     "@vitejs/plugin-react": "^5.0.4",
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",

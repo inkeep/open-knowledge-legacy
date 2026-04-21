@@ -18,6 +18,35 @@ import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-t
 
 type RecentProject = RecentProjectEntry;
 
+/**
+ * Resolve the user-visible error message for a thrown/rejected value.
+ * Prefers `err.message` when present, otherwise the `fallback`. Exported so
+ * unit tests can pin the surface ("non-Error throws yield fallback", "empty-
+ * message Error falls back", "Error with message wins").
+ */
+export function resolveErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/**
+ * Shape of the error-state wrapper — injected by the component, usable pure
+ * so tests can verify the "rejection → setError called" behavior without
+ * mounting React.
+ */
+export async function runWithErrorStatePure(
+  fn: () => Promise<void>,
+  fallback: string,
+  setError: (msg: string | null) => void,
+): Promise<void> {
+  try {
+    setError(null);
+    await fn();
+  } catch (err) {
+    console.error('[NavigatorApp] action failed:', err);
+    setError(resolveErrorMessage(err, fallback));
+  }
+}
+
 export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,17 +80,12 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
    * Wrap any bridge call in a visible error state. Without this the IPC
    * rejection (utility failed to boot, bad folder, dialog rejected) lands as
    * an unhandled promise rejection and the UI stays frozen in its pre-click
-   * state — no feedback, no retry path.
+   * state — no feedback, no retry path. Delegates to the pure
+   * `runWithErrorStatePure` helper so the rejection-handling logic can be
+   * unit-tested without React.
    */
-  const runWithErrorState = async (fn: () => Promise<void>, fallback: string) => {
-    try {
-      setError(null);
-      await fn();
-    } catch (err) {
-      console.error('[NavigatorApp] action failed:', err);
-      setError(err instanceof Error && err.message ? err.message : fallback);
-    }
-  };
+  const runWithErrorState = (fn: () => Promise<void>, fallback: string) =>
+    runWithErrorStatePure(fn, fallback, setError);
 
   const onClone = () =>
     runWithErrorState(async () => {

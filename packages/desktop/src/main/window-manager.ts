@@ -38,6 +38,7 @@ export interface UtilityProcessLike {
   on(event: 'exit', cb: (code: number | null) => void): void;
   once(event: 'message', cb: (msg: unknown) => void): void;
   removeListener?(event: 'message', cb: (msg: unknown) => void): void;
+  removeListener?(event: 'exit', cb: (code: number | null) => void): void;
   kill(signal?: NodeJS.Signals): boolean;
 }
 
@@ -161,7 +162,11 @@ export class WindowManager {
       const settle = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        // Detach BOTH listeners so no dead code fires after ready — the post-
+        // await lifecycle handler (see below) is the sole exit subscriber
+        // once the window is up.
         utility.removeListener?.('message', onMessage);
+        utility.removeListener?.('exit', onExit);
         fn();
       };
       const onMessage = (msg: unknown) => {
@@ -174,12 +179,12 @@ export class WindowManager {
           settle(() => reject(new Error(m.message ?? 'utility init failed')));
         }
       };
-      utility.on('message', onMessage);
-
       // Reject on early utility exit (utility died before posting ready/error).
-      utility.on('exit', (code) => {
+      const onExit = (code: number | null) => {
         settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
-      });
+      };
+      utility.on('message', onMessage);
+      utility.on('exit', onExit);
 
       // Timeout guard — final defense against spawn-phase hangs. The scheduled
       // callback calls `settle(...)` which no-ops if ready/error/exit already

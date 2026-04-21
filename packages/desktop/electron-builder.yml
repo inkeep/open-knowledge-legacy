@@ -28,6 +28,10 @@ asarUnpack:
 
 mac:
   category: public.app-category.productivity
+  # Source PNG rasterized from packages/app/public/favicon.svg by
+  # scripts/rasterize-icon.mjs. electron-builder auto-generates the .icns
+  # at package time; same PNG is used by dev-mode `app.dock.setIcon()`.
+  icon: build/icon.png
   target:
     - target: dmg
       arch: [universal]

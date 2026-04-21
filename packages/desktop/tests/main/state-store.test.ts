@@ -1,10 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   addRecentProject,
   annotateMissing,
   emptyState,
   parseAppState,
   removeRecentProject,
+  type SaveAppStateFs,
+  saveAppStateToDir,
 } from '../../src/main/state-store.ts';
 
 describe('state-store (recent projects + LRU)', () => {
@@ -92,5 +97,103 @@ describe('state-store (recent projects + LRU)', () => {
     expect(parseAppState('not state')).toBeNull();
     expect(parseAppState(null)).toBeNull();
     expect(parseAppState(42)).toBeNull();
+  });
+});
+
+describe('saveAppStateToDir (atomic write via tmp + rename)', () => {
+  test('writes tmp first, then renames to canonical — real fs round-trip', () => {
+    // Real tmpdir + real fs. Verifies the full write+rename path ends with
+    // a well-formed state.json whose content matches the input state.
+    const userDataDir = mkdtempSync(join(tmpdir(), 'ok-state-atomic-'));
+    try {
+      const state = addRecentProject(emptyState(), '/tmp/example', 'example');
+      saveAppStateToDir(userDataDir, state);
+      const statePath = join(userDataDir, 'state.json');
+      expect(existsSync(statePath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(statePath, 'utf-8'));
+      expect(parsed.recentProjects[0].path).toBe('/tmp/example');
+      expect(parsed.lastOpenedProject).toBe('/tmp/example');
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('fs call order is write-tmp → rename-tmp-to-canonical (atomicity invariant)', () => {
+    // Mocked fs — asserts the sequence is tmp-write BEFORE canonical-rename,
+    // never the other way around. A future refactor that accidentally flips
+    // these (or drops the tmp indirection) would silently regress the
+    // crash-safety property that M3 was about.
+    const calls: Array<{ op: string; path: string }> = [];
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => true),
+      mkdirSync: mock(() => undefined),
+      writeFileSync: mock((p: string) => {
+        calls.push({ op: 'write', path: p });
+      }) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock((from: string, to: string) => {
+        calls.push({ op: 'rename', path: `${from}->${to}` });
+      }) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => undefined) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    saveAppStateToDir('/fake/userdata', emptyState(), fs, {
+      error: () => {},
+    });
+    expect(calls.length).toBe(2);
+    expect(calls[0]?.op).toBe('write');
+    expect(calls[0]?.path).toContain('state.json.tmp-');
+    expect(calls[1]?.op).toBe('rename');
+    expect(calls[1]?.path).toMatch(/state\.json\.tmp-.*->.*state\.json$/);
+  });
+
+  test('renameSync failure → cleanup attempt + error log (does NOT throw)', () => {
+    const errorLog = mock(() => {});
+    const unlinkSpy = mock(() => {});
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => true),
+      mkdirSync: mock(() => undefined),
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {
+        throw new Error('EACCES: permission denied');
+      }) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: unlinkSpy as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    expect(() =>
+      saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: errorLog }),
+    ).not.toThrow();
+    expect(errorLog).toHaveBeenCalled();
+    // Best-effort cleanup — tmp file unlink attempted.
+    expect(unlinkSpy).toHaveBeenCalled();
+  });
+
+  test('mkdirSync failure → outer catch logs "userData setup failed"', () => {
+    const errorMessages: string[] = [];
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => false),
+      mkdirSync: mock(() => {
+        throw new Error('EROFS: read-only fs');
+      }),
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {}) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => {}) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    saveAppStateToDir('/fake/userdata', emptyState(), fs, {
+      error: (msg: string) => {
+        errorMessages.push(msg);
+      },
+    });
+    expect(errorMessages.some((m) => m.includes('userData setup failed'))).toBe(true);
+  });
+
+  test('creates userDataDir when absent', () => {
+    const mkdirSpy = mock(() => undefined);
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => false),
+      mkdirSync: mkdirSpy,
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {}) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => {}) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
+    expect(mkdirSpy).toHaveBeenCalledWith('/fake/userdata', { recursive: true });
   });
 });

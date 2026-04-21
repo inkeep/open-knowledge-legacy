@@ -14,19 +14,22 @@
  * this entry wires it into Electron lifecycle + IPC handlers.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, utilityProcess } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  shell,
+  utilityProcess,
+} from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { promptForFolder } from './dialog-helpers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { checkOutboundUrl } from './shell-allowlist.ts';
@@ -36,6 +39,7 @@ import {
   annotateMissing,
   emptyState,
   parseAppState,
+  saveAppStateToDir,
 } from './state-store.ts';
 import {
   type BrowserWindowLike,
@@ -86,38 +90,13 @@ function loadAppState(): AppState {
 }
 
 /**
- * Persist app state atomically. Writes to a `.tmp-<pid>-<ms>` sibling first,
- * then renames — so a crash mid-write leaves either the prior file intact OR
- * the fully-formed new file, never a half-written blob that `loadAppState`'s
- * quarantine path would discard.
- *
- * A failure here logs but does NOT throw. The caller (IPC handler or
- * `before-quit` flush) should not bring down the app because a recents-list
- * save failed.
+ * Persist app state atomically via the pure helper in `state-store.ts` —
+ * separation so the atomic-write behavior can be unit-tested without
+ * Electron's `app` module (`app.getPath('userData')` is the sole Electron
+ * dependency).
  */
 function saveAppState(state: AppState) {
-  const userDataDir = app.getPath('userData');
-  try {
-    if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
-    const statePath = join(userDataDir, 'state.json');
-    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      writeFileSync(tmpPath, JSON.stringify(state, null, 2));
-      renameSync(tmpPath, statePath);
-    } catch (err) {
-      console.error('[main] saveAppState failed', { err: (err as Error).message, statePath });
-      try {
-        unlinkSync(tmpPath);
-      } catch {
-        // tmp file may not exist — best-effort cleanup.
-      }
-    }
-  } catch (err) {
-    console.error('[main] saveAppState userData setup failed', {
-      err: (err as Error).message,
-      userDataDir,
-    });
-  }
+  saveAppStateToDir(app.getPath('userData'), state);
 }
 
 let appState: AppState = emptyState();
@@ -230,7 +209,13 @@ async function openProjectOrFallbackToNavigator(projectPath: string) {
  * projects list changes, so File → Open Recent stays current.
  */
 function refreshApplicationMenu() {
-  installApplicationMenu({
+  // Fire-and-forget: installApplicationMenu is async because it dynamically
+  // imports `electron.Menu` (see menu.ts header — keeps `buildMenuTemplate`
+  // unit-testable under Bun). Failures are logged; an uninstallable menu
+  // shouldn't crash the app.
+  void installApplicationMenu({
+    appName: app.name,
+    dialog,
     openNavigator,
     openProject: openProjectOrFallbackToNavigator,
     getRecentProjects: () => appState.recentProjects,
@@ -239,6 +224,14 @@ function refreshApplicationMenu() {
       saveAppState(appState);
       refreshApplicationMenu();
     },
+    // D47 scheme allowlist is enforced in the renderer IPC path (shell-allowlist.ts).
+    // Help-menu URLs are hardcoded in menu.ts (always `https://github.com/inkeep/…`),
+    // so they're trusted at build time — direct shell.openExternal is fine here.
+    openExternalUrl: (url: string) => {
+      void shell.openExternal(url);
+    },
+  }).catch((err) => {
+    console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
 }
 
@@ -251,10 +244,10 @@ function registerIpcHandlers() {
   });
 
   handle('ok:dialog:create-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory', 'createDirectory'],
-    });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    // Shared with the File → Open Folder menu handler — both pick an existing
+    // directory OR create a new one. See dialog-helpers.ts for the one
+    // definition of "what does Open Folder do."
+    return promptForFolder(dialog);
   });
 
   handle('ok:shell:open-external', async (_event, url) => {
@@ -305,10 +298,43 @@ function registerIpcHandlers() {
   });
 }
 
+/**
+ * Path to the Dock/app icon PNG. Rasterized from packages/app/public/favicon.svg
+ * by `scripts/rasterize-icon.mjs` at postinstall time. In packaged builds,
+ * electron-builder copies this file into the app bundle and generates .icns
+ * from it (electron-builder.yml `icon:` key) — `app.dock.setIcon()` is a no-op
+ * for the packaged case because Gatekeeper already knows the bundle's icon.
+ * In dev mode, we set it at runtime so the Dock shows the real icon instead
+ * of the generic Electron diamond.
+ */
+const ICON_PNG_PATH = join(__dirname, '..', '..', 'build', 'icon.png');
+
+function installDockIcon() {
+  if (process.platform !== 'darwin') return;
+  if (app.isPackaged) return; // packaged build uses the bundle's .icns
+  if (!existsSync(ICON_PNG_PATH)) {
+    console.warn(
+      '[main] skipping dock icon — build/icon.png missing (run `node scripts/rasterize-icon.mjs`)',
+    );
+    return;
+  }
+  try {
+    const image = nativeImage.createFromPath(ICON_PNG_PATH);
+    if (!image.isEmpty()) {
+      app.dock?.setIcon(image);
+    } else {
+      console.warn('[main] dock icon image loaded empty; skipping', { ICON_PNG_PATH });
+    }
+  } catch (err) {
+    console.warn('[main] dock icon install failed', { err: (err as Error).message });
+  }
+}
+
 app.whenReady().then(() => {
   appState = loadAppState();
   registerIpcHandlers();
   refreshApplicationMenu();
+  installDockIcon();
 
   // D3 revised: every project open spawns a NEW editor window. App boot
   // restores the last-opened project (if any) into a fresh editor window OR

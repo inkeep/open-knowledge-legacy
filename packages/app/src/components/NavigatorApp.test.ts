@@ -54,6 +54,9 @@ describe('NavigatorApp bridge contract', () => {
   test('Component module imports cleanly', async () => {
     const mod = await import('./NavigatorApp');
     expect(typeof mod.NavigatorApp).toBe('function');
+    // Pure helpers exposed for test access — absent = refactor drift.
+    expect(typeof mod.resolveErrorMessage).toBe('function');
+    expect(typeof mod.runWithErrorStatePure).toBe('function');
   });
 
   test('bridge.project.listRecent returns RecentProjectEntry[] shape', async () => {
@@ -90,5 +93,77 @@ describe('NavigatorApp bridge contract', () => {
     });
     const result = await bridge.dialog.openFolder();
     expect(result).toBe('/tmp/picked');
+  });
+});
+
+describe('NavigatorApp error-state helpers', () => {
+  test('resolveErrorMessage prefers Error.message', async () => {
+    const { resolveErrorMessage } = await import('./NavigatorApp');
+    expect(resolveErrorMessage(new Error('boom'), 'fallback')).toBe('boom');
+  });
+
+  test('resolveErrorMessage falls back when message is empty', async () => {
+    const { resolveErrorMessage } = await import('./NavigatorApp');
+    expect(resolveErrorMessage(new Error(''), 'fallback')).toBe('fallback');
+  });
+
+  test('resolveErrorMessage falls back for non-Error throws (string, undefined, object)', async () => {
+    const { resolveErrorMessage } = await import('./NavigatorApp');
+    expect(resolveErrorMessage('plain-string', 'fallback')).toBe('fallback');
+    expect(resolveErrorMessage(undefined, 'fallback')).toBe('fallback');
+    expect(resolveErrorMessage({ weird: 'object' }, 'fallback')).toBe('fallback');
+    expect(resolveErrorMessage(null, 'fallback')).toBe('fallback');
+  });
+
+  test('runWithErrorStatePure clears error state then awaits the wrapped fn', async () => {
+    const { runWithErrorStatePure } = await import('./NavigatorApp');
+    const setError = mock(() => {});
+    const fn = mock(() => Promise.resolve());
+    await runWithErrorStatePure(fn, 'fallback', setError);
+    // setError(null) fires first to clear any prior banner.
+    expect(setError).toHaveBeenCalledWith(null);
+    expect(fn).toHaveBeenCalled();
+  });
+
+  test('runWithErrorStatePure surfaces rejections via setError with Error.message', async () => {
+    const { runWithErrorStatePure } = await import('./NavigatorApp');
+    const setErrorCalls: Array<string | null> = [];
+    const setError = (msg: string | null) => {
+      setErrorCalls.push(msg);
+    };
+    await runWithErrorStatePure(
+      () => Promise.reject(new Error('boot failed')),
+      'Failed to open project.',
+      setError,
+    );
+    // Sequence: setError(null) to clear, then setError('boot failed') on catch.
+    expect(setErrorCalls).toEqual([null, 'boot failed']);
+  });
+
+  test('runWithErrorStatePure falls back when rejection has no usable message', async () => {
+    const { runWithErrorStatePure } = await import('./NavigatorApp');
+    const setErrorCalls: Array<string | null> = [];
+    const setError = (msg: string | null) => {
+      setErrorCalls.push(msg);
+    };
+    // Rejection with a string (not an Error) — resolveErrorMessage path falls back.
+    await runWithErrorStatePure(
+      () => Promise.reject('network dropped'),
+      'Failed to open project.',
+      setError,
+    );
+    expect(setErrorCalls).toEqual([null, 'Failed to open project.']);
+  });
+
+  test('runWithErrorStatePure does NOT re-throw on rejection (caller continues)', async () => {
+    const { runWithErrorStatePure } = await import('./NavigatorApp');
+    let afterAwait = false;
+    await runWithErrorStatePure(
+      () => Promise.reject(new Error('x')),
+      'fallback',
+      () => {},
+    );
+    afterAwait = true;
+    expect(afterAwait).toBe(true);
   });
 });
