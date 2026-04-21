@@ -10,13 +10,6 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type ErrorClass =
-  | 'network' // Class 1 — transient, retryable
-  | 'auth' // Class 2 — credential failure, non-retryable (needs re-auth)
-  | 'semantic' // Class 3 — logic-level rejection, non-retryable
-  | 'structural' // Class 4 — resource/policy limit, non-retryable
-  | 'local'; // Class 5 — local git state issue, retryable after cleanup
-
 /** Subclass strings, narrowed per class. */
 export type NetworkSubclass =
   | 'dns'
@@ -38,13 +31,6 @@ export type StructuralSubclass =
   | 'secret-detected'
   | 'unknown-structural';
 export type LocalSubclass = 'index-lock' | 'dirty-tree' | 'disk-full' | 'unknown-local';
-
-export type ErrorSubclass =
-  | NetworkSubclass
-  | AuthSubclass
-  | SemanticSubclass
-  | StructuralSubclass
-  | LocalSubclass;
 
 /** Tagged result from classifyGitError(). */
 export type ClassifiedError =

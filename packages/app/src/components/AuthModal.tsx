@@ -15,6 +15,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { consumeAuthEventStream } from './auth-event-stream';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
@@ -53,14 +54,14 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-export interface AuthSuccessResult {
+interface AuthSuccessResult {
   login: string;
   name?: string;
   email?: string;
   avatarUrl?: string;
 }
 
-export interface AuthModalProps {
+interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (result: AuthSuccessResult) => void;
@@ -105,45 +106,40 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as DeviceEvent;
-            if (event.type === 'verification') {
-              setUserCode(event.user_code);
-              setVerificationUri(event.verification_uri);
-              setTimeLeft(event.expires_in * 1000);
-              void copyToClipboard(event.user_code).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              });
-            } else if (event.type === 'complete') {
-              setPolling(false);
-              onSuccess({
-                login: event.login,
-                name: event.name,
-                email: event.email,
-                avatarUrl: event.avatarUrl,
-              });
-              return;
-            } else if (event.type === 'error') {
-              setError(event.message);
-              setPolling(false);
-              return;
-            }
-          } catch {
-            /* ignore malformed line */
+      const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        try {
+          const event = JSON.parse(line) as DeviceEvent;
+          if (event.type === 'verification') {
+            setUserCode(event.user_code);
+            setVerificationUri(event.verification_uri);
+            setTimeLeft(event.expires_in * 1000);
+            void copyToClipboard(event.user_code).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            });
+          } else if (event.type === 'complete') {
+            setPolling(false);
+            onSuccess({
+              login: event.login,
+              name: event.name,
+              email: event.email,
+              avatarUrl: event.avatarUrl,
+            });
+            return 'terminal';
+          } else if (event.type === 'error') {
+            setError(event.message);
+            setPolling(false);
+            return 'terminal';
           }
+        } catch {
+          /* ignore malformed line */
         }
+        return 'continue';
+      });
+
+      if (!terminated) {
+        setError('Sign-in stream ended without confirmation — please try again');
+        setPolling(false);
       }
     } catch (err) {
       if (err instanceof Error && err.name !== 'AbortError') {
@@ -289,38 +285,28 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         setLoading(false);
         return;
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as DeviceEvent;
-            if (event.type === 'complete') {
-              onSuccess({
-                login: event.login,
-                name: event.name,
-                email: event.email,
-              });
-              setLoading(false);
-              return;
-            } else if (event.type === 'error') {
-              setError(event.message);
-              setLoading(false);
-              return;
-            }
-          } catch {
-            /* ignore */
+      const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        try {
+          const event = JSON.parse(line) as DeviceEvent;
+          if (event.type === 'complete') {
+            onSuccess({
+              login: event.login,
+              name: event.name,
+              email: event.email,
+            });
+            setLoading(false);
+            return 'terminal';
+          } else if (event.type === 'error') {
+            setError(event.message);
+            setLoading(false);
+            return 'terminal';
           }
+        } catch {
+          /* ignore */
         }
-      }
-      setError('No response — try again');
+        return 'continue';
+      });
+      if (!terminated) setError('No response — try again');
     } catch (err) {
       if (err instanceof Error && err.name !== 'AbortError') {
         setError('Connection error — try again');

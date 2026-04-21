@@ -20,7 +20,7 @@ export interface PoolEntrySnapshot {
   lastAccessedAt: number;
 }
 
-export interface DocumentContextValue {
+interface DocumentContextValue {
   activeTarget: ResolvedNavigationTarget | null;
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;

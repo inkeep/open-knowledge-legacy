@@ -9,6 +9,6 @@ export default defineConfig({
   minify: true,
   deps: {
     // Native addons must stay external — they ship .node binaries resolved at runtime
-    neverBundle: ['@parcel/watcher', 'chokidar', 'simple-git'],
+    neverBundle: ['@parcel/watcher', 'simple-git'],
   },
 });

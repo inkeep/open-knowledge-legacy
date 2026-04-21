@@ -39,7 +39,7 @@ export interface GitSyncStatus {
   pausedReason?: string;
 }
 
-export type SyncStatusFetchError = 'network' | 'server';
+type SyncStatusFetchError = 'network' | 'server';
 
 interface FetchSyncStatusResult {
   status: GitSyncStatus | null;

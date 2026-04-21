@@ -42,7 +42,7 @@ import { rehypeStripMsoStyles } from './rehype-plugins/strip-mso-styles.ts';
 import { rehypeStripSlackClasses } from './rehype-plugins/strip-slack-classes.ts';
 import { rehypeStripVscodeSpans } from './rehype-plugins/strip-vscode-spans.ts';
 
-export interface HtmlToMdastOptions {
+interface HtmlToMdastOptions {
   /**
    * Additional rehype plugins appended to the cleanup chain at runtime.
    * Registered AFTER the built-in vendor cleanup plugins so callers cannot

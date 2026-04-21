@@ -29,13 +29,13 @@ import { fileURLToPath } from 'node:url';
 const FIXTURES_DIR = dirname(fileURLToPath(import.meta.url));
 
 /** Resolve a fixture path relative to the canonical fixtures root. */
-export function fixturePath(...segments: string[]): string {
+function fixturePath(...segments: string[]): string {
   return resolve(FIXTURES_DIR, ...segments);
 }
 
 // ─── gfm/ ─────────────────────────────────────────────────────────────────
 
-export interface GfmExample {
+interface GfmExample {
   section: string;
   markdown: string;
 }
@@ -50,7 +50,7 @@ export function loadGfmExamples(): GfmExample[] {
 
 // ─── mdx/ ─────────────────────────────────────────────────────────────────
 
-export interface MdxCrashEntry {
+interface MdxCrashEntry {
   id: string;
   input: string;
   class: string;
@@ -153,8 +153,8 @@ export function loadLargeRealistic(): string {
  * Each count has a matching `<count>.md` fixture generated deterministically
  * by `fixtures/perf/generate.ts` — same seed ⇒ byte-identical corpus.
  */
-export const PERF_BLOCK_COUNTS = [100, 1000, 5000, 10000, 20000] as const;
-export type PerfBlockCount = (typeof PERF_BLOCK_COUNTS)[number];
+const PERF_BLOCK_COUNTS = [100, 1000, 5000, 10000, 20000] as const;
+type PerfBlockCount = (typeof PERF_BLOCK_COUNTS)[number];
 
 /**
  * Load a pinned synthetic fixture for the benchmark harness. Block counts

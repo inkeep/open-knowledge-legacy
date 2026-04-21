@@ -15,37 +15,46 @@ bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
+Use `npx @inkeep/open-knowledge …` or `pnpm dlx @inkeep/open-knowledge …` if you prefer npm or pnpm.
+
 `init` writes MCP configuration at the correct per-editor path for every editor whose config directory exists on your machine:
 
-| Editor      | Config written to                     | Scope       |
-| ----------- | ------------------------------------- | ----------- |
-| Claude Code | `<project>/.mcp.json`                 | Project     |
-| Cursor      | `<project>/.cursor/mcp.json`          | Project     |
-| VS Code     | `<project>/.vscode/mcp.json`          | Project     |
-| Codex       | `<project>/.codex/config.toml`        | Project     |
-| Windsurf    | `~/.codeium/windsurf/mcp_config.json` | User-global |
+| Editor         | Config written to                                                                                                | Scope       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- | ----------- |
+| Claude Code    | `<project>/.mcp.json`                                                                                            | Project     |
+| Cursor         | `<project>/.cursor/mcp.json`                                                                                     | Project     |
+| VS Code        | `<project>/.vscode/mcp.json`                                                                                     | Project     |
+| Codex          | `<project>/.codex/config.toml`                                                                                   | Project     |
+| Windsurf       | `~/.codeium/windsurf/mcp_config.json`                                                                            | User-global |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) · `%APPDATA%\Claude\…` (Windows)       | User-global |
 
-Override with `--editor <name1,name2>` or `--editor all`. AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
+Override with `--editor <name1,name2>` or `--editor all` (alias: `claude_desktop` → `claude-desktop`). AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
+
+**Global-scope editors (Claude Desktop, Windsurf) use project-qualified server keys.** Each project gets its own entry in the shared config file under `open-knowledge-<project-basename>` with `--cwd <abs-path>` baked into the args, so one global config can serve multiple projects on the same machine. Re-running `init` in a project you've already configured is a no-op. Claude Desktop requires a full **quit + relaunch** to pick up new MCP servers; Windsurf hot-reloads.
+
+Existing Windsurf users: on your next `init`, any legacy single `open-knowledge` entry (the pre-spec shape, no `--cwd`) is non-interactively migrated to the project-qualified form.
 
 ### Install globally (optional)
 
 ```bash
-bun install -g @inkeep/open-knowledge
-open-knowledge init
-open-knowledge start
+bun  install -g @inkeep/open-knowledge   # or: npm install -g, or: pnpm add -g
+ok init                                  # short alias
+ok start                                 # equivalent to `open-knowledge start`
 ```
+
+The package ships two bins — `open-knowledge` (long form) and `ok` (short alias). Both point to the same CLI; pick whichever reads better in your scripts. If another tool on your `PATH` already provides `ok`, the last global install wins — use the `open-knowledge` form to disambiguate.
 
 ### Lifecycle commands
 
 The CLI ships with a pair of long-lived processes and three utility commands so you can manage them without hunting for PIDs:
 
-| Command                 | Role                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| `open-knowledge start`  | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
-| `open-knowledge ui`     | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
-| `open-knowledge stop`   | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
-| `open-knowledge clean`  | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
-| `open-knowledge status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
+| Command (long / short)                           | Role                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `open-knowledge start` / `ok start`              | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
+| `open-knowledge ui` / `ok ui`                    | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge stop` / `ok stop`                | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
+| `open-knowledge clean` / `ok clean`              | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge status` / `ok status`            | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
 Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
 

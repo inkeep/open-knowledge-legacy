@@ -16,6 +16,7 @@
   "dependencies": {
     "@handlewithcare/remark-prosemirror": "0.1.5",
     "@tiptap/core": "^3.22.3",
+    "@tiptap/extension-code": "3.22.3",
     "@tiptap/extension-bold": "^3.22.3",
     "@tiptap/extension-code-block": "^3.22.3",
     "@tiptap/extension-hard-break": "^3.22.3",
@@ -31,9 +32,6 @@
     "diff-match-patch": "^1.0.5",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-mdx": "3.0.0",
-    "mdast-util-mdx-expression": "^2.0.1",
-    "mdast-util-mdx-jsx": "^3.2.0",
-    "mdast-util-mdxjs-esm": "^2.0.1",
     "mdast-util-to-markdown": "^2.1.2",
     "micromark-extension-mdx": "2.1.0",
     "micromark-util-types": "^2.0.2",
@@ -65,6 +63,12 @@
     "build-registry": "bun run scripts/build-registry.ts"
   },
   "devDependencies": {
+    "@tiptap/extension-document": "^3.22.3",
+    "@tiptap/extension-paragraph": "^3.22.3",
+    "@tiptap/extension-text": "^3.22.3",
+    "mdast-util-to-hast": "^13.2.1",
+    "fast-check": "^4.6.0",
+    "@types/hast": "^3.0.4",
     "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",

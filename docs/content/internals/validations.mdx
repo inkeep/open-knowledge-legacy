@@ -19,7 +19,7 @@ Seven targeted validations (V1--V7) were run during the init spike, plus three a
 | V3 | **PASS** | DirectConnection agent writes via HTTP API |
 | V4 | **PASS** (V4b) | Serialize-on-toggle via `updateYFragment` (not `prosemirrorJSONToYDoc`) |
 | V5 | **PASS** | Three-tier pipeline: CRDT to markdown to git plumbing |
-| V6 | **PASS** | Component block renders React component with live editing, survives markdown round-trip |
+| V6 | **PASS** | Void node renders React component, survives markdown round-trip |
 | V7 | **FAIL** | Yjs v14 delta protocol not viable -- ecosystem pins to v13 |
 | A1 | **PASS** | Agent markdown write path + source mode live injection |
 | A2 | **PASS** | Three-way merge on toggle-back preserves agent writes |
@@ -44,7 +44,7 @@ Fixes applied (~80 LOC total):
 1. **Frontmatter strip/prepend** -- regex strip before parse, re-prepend after serialize
 2. **Image extension** -- `@tiptap/extension-image` built-in markdown support
 3. **Task lists** -- `TaskList` + `TaskItem` from `@tiptap/extension-list`
-4. **JsxComponent extension** -- originally intercepted `code` tokens with `lang === 'jsx-component'`; now parses directly from `mdxJsxFlowElement` mdast nodes via the remark-prosemirror handler pipeline
+4. **JsxComponent extension** -- custom `parseMarkdown` intercepts `code` tokens with `lang === 'jsx-component'`
 
 ## V2: Hocuspocus in Vite
 
@@ -66,9 +66,9 @@ Hocuspocus `onStoreDocument` extension with two layers:
 
 Server-side serialization is pure Yjs/JSON -- no DOM, no schema needed.
 
-## V6: Component block editing
+## V6: Void node with React component preview
 
-Originally validated as a void node with `atom: true` that intercepted fenced code blocks. Since Component Blocks v2, the `jsxComponent` extension is a non-atom block container (`content: 'block*'`, `isolating: true`) parsed directly from `mdxJsxFlowElement` mdast nodes. Known components (18 built-in fumadocs-ui descriptors) get live React preview, auto-generated PropPanel, and editable children. Unknown components get a name badge with editable children. The γ serialization pattern preserves byte-identical round-trip for unedited nodes (`sourceRaw`) and reconstructs from structured state for edited nodes.
+TipTap node extension with `atom: true`, `group: 'block'`. Intercepts `code` tokens with `lang === 'jsx-component'` at priority 60 (above codeBlock's 50). `ReactNodeViewRenderer` renders the component preview. The raw JSX string survives the round-trip unchanged. Known components (e.g., Callout) get visual styling; unknown components get a code display.
 
 ## V7: Yjs v14 delta protocol
 

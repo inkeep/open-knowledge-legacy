@@ -6,7 +6,7 @@ export const OK_MARKER_BEGIN = '<!-- open-knowledge:begin -->';
 export const OK_MARKER_END = '<!-- open-knowledge:end -->';
 const OK_MARKER_RE = /<!-- open-knowledge:begin -->[\s\S]*?<!-- open-knowledge:end -->/;
 
-export const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
+const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
 
 This directory holds Open Knowledge's configuration for this project. It's **not** where content lives — content lives wherever \`content.dir\` + \`content.include\` in \`config.yml\` point. The default is the repo root with \`**/*.md\`, so any markdown file in the project is fair game. Inspect \`config.yml\` for the actual setting.
 
@@ -93,10 +93,10 @@ If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`o
 - **Writes** via \`write_document\` / \`edit_document\` — route through the server so shadow-repo attribution (agent vs human) is captured
 - **Graph queries** via \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`
 
-These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, etc.). \`open-knowledge init\` registers the MCP server in every editor's config for you — Claude Desktop and Windsurf use project-qualified keys like \`open-knowledge-<project>\` so one config file can serve multiple projects on the same machine. Claude Desktop requires a full quit + relaunch to pick up new MCP servers; Windsurf hot-reloads.
 `;
 
-export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below
 # is commented out and shows its current default value. Uncomment any key
@@ -332,7 +332,7 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
-export type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
+type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
 
 /**
  * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.

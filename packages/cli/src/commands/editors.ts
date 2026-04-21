@@ -7,13 +7,33 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { globalScopeResolveServerKey } from './global-scope-entry.ts';
 
-export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf';
+export type EditorId = 'claude' | 'cursor' | 'vscode' | 'codex' | 'windsurf' | 'claude-desktop';
 
-export const ALL_EDITOR_IDS: EditorId[] = ['claude', 'cursor', 'vscode', 'codex', 'windsurf'];
+export const ALL_EDITOR_IDS: EditorId[] = [
+  'claude',
+  'cursor',
+  'vscode',
+  'codex',
+  'windsurf',
+  'claude-desktop',
+];
 
 const MCP_SERVER_COMMAND = 'npx';
 const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
+
+/** Result shape for the per-target server-key resolution step. */
+export interface ResolvedServerKey {
+  /** The key under which the server entry should be written. */
+  key: string;
+  /** Existing entry at that key, if any (used to decide written vs overwritten vs skipped-existing). */
+  existingEntry: unknown | undefined;
+  /** If auto-disambiguation fired, the key that conflicted with a different cwd. */
+  disambiguatedFrom?: string;
+  /** If a legacy entry was detected and will be replaced, its old key. */
+  migratedFromKey?: string;
+}
 
 export interface EditorMcpTarget {
   id: EditorId;
@@ -26,7 +46,7 @@ export interface EditorMcpTarget {
   /** Top-level JSON key that holds the server map. */
   topLevelKey: 'mcpServers' | 'servers' | 'mcp_servers';
   /** Build the server entry object for this editor. */
-  buildEntry: () => Record<string, unknown>;
+  buildEntry: (cwd: string) => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
   /**
@@ -36,6 +56,12 @@ export interface EditorMcpTarget {
    * Only declared for editors that can't read AGENTS.md directly.
    */
   instructionsPath?: (cwd: string) => string;
+  /**
+   * Optional hook for global-scope targets that need project-qualified server
+   * keys (e.g. Claude Desktop, Windsurf). When absent, the init orchestrator
+   * falls back to the default `MCP_SERVER_NAME` key.
+   */
+  resolveServerKey?: (existingServers: Record<string, unknown>, cwd: string) => ResolvedServerKey;
 }
 
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
@@ -45,7 +71,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.mcp.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
     instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   },
@@ -55,7 +81,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   vscode: {
@@ -64,7 +90,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
     format: 'json',
     topLevelKey: 'servers',
-    buildEntry: () => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ type: 'stdio', command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   codex: {
@@ -73,7 +99,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (cwd) => join(cwd, '.codex', 'config.toml'),
     format: 'toml',
     topLevelKey: 'mcp_servers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (_cwd) => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
   },
   windsurf: {
@@ -82,7 +108,53 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     configPath: (_cwd, home) => join(home ?? homedir(), '.codeium', 'windsurf', 'mcp_config.json'),
     format: 'json',
     topLevelKey: 'mcpServers',
-    buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
+    buildEntry: (cwd) => ({
+      command: MCP_SERVER_COMMAND,
+      args: [...MCP_SERVER_ARGS, '--cwd', cwd],
+    }),
+    // Windsurf is a global-scope target, so we need project-qualified keys.
+    // `detectLegacy: true` opts into a one-shot non-interactive migration of
+    // any pre-spec plain `open-knowledge` entry (no `--cwd`) left by earlier
+    // versions of this CLI (D17 LOCKED).
+    resolveServerKey: (existingServers, cwd) =>
+      globalScopeResolveServerKey(existingServers, cwd, { detectLegacy: true }),
+    scope: 'global',
+  },
+  'claude-desktop': {
+    id: 'claude-desktop',
+    label: 'Claude Desktop',
+    // Anthropic ships Claude Desktop on macOS + Windows only; Linux is
+    // explicitly out of scope (D9 / NG4). Throw on other platforms rather
+    // than silently writing a ghost macOS-shaped path (D14 LOCKED).
+    configPath: (_cwd, home) => {
+      const platform = process.platform;
+      if (platform === 'darwin') {
+        return join(
+          home ?? homedir(),
+          'Library',
+          'Application Support',
+          'Claude',
+          'claude_desktop_config.json',
+        );
+      }
+      if (platform === 'win32') {
+        // Prefer the canonical %APPDATA% env var; fall back to a homedir-derived
+        // path on the rare clean-Windows install where APPDATA is unset.
+        const appData = process.env.APPDATA ?? join(home ?? homedir(), 'AppData', 'Roaming');
+        return join(appData, 'Claude', 'claude_desktop_config.json');
+      }
+      throw new Error(`Claude Desktop is not available on ${platform}. Supported: macOS, Windows.`);
+    },
+    format: 'json',
+    topLevelKey: 'mcpServers',
+    buildEntry: (cwd) => ({
+      command: MCP_SERVER_COMMAND,
+      args: [...MCP_SERVER_ARGS, '--cwd', cwd],
+    }),
+    // Claude Desktop has no legacy state to migrate (this is its first
+    // appearance in `init`); only Windsurf needs `detectLegacy: true` (US-004).
+    resolveServerKey: (existingServers, cwd) =>
+      globalScopeResolveServerKey(existingServers, cwd, { detectLegacy: false }),
     scope: 'global',
   },
 };

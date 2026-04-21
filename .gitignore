@@ -4,6 +4,10 @@ dist/
 # Per-package lockfiles — only root bun.lock should exist in monorepo
 packages/*/bun.lock
 
+# Electron desktop build output — electron-vite output + electron-builder dist
+packages/desktop/out/
+packages/desktop/dist-desktop/
+
 # Turbo cache
 .turbo/
 

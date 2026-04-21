@@ -3,12 +3,12 @@ import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { validateGitHubHost } from './validate-host.ts';
 
-export interface StatusOptions {
+interface StatusOptions {
   host: string;
   json: boolean;
 }
 
-export async function runStatus(opts: StatusOptions, tokenStore: TokenStore): Promise<void> {
+async function runStatus(opts: StatusOptions, tokenStore: TokenStore): Promise<void> {
   const { host, json } = opts;
   validateGitHubHost(host);
   const entry = await tokenStore.get(host);

@@ -3,7 +3,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
 
-export const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
+const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
 interface UploadPluginState {
   decorations: DecorationSet;

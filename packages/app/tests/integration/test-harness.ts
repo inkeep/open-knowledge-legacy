@@ -59,7 +59,7 @@ export const schema = getSchema(sharedExtensions);
 
 // ─── Port allocation ───
 
-export async function getFreePort(): Promise<number> {
+async function getFreePort(): Promise<number> {
   return new Promise((resolve) => {
     const s = createNetServer();
     s.listen(0, () => {
@@ -297,7 +297,6 @@ export async function createTestClient(
 }
 
 // ─── Utilities ───
-
 export function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Provider sync timeout')), timeoutMs);
@@ -371,7 +370,7 @@ export async function awaitDocQuiescence(
       }
       // Yield to the microtask queue + one macro tick — lets pending
       // transacts drain and observer follow-ups fire.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await wait(0);
     }
     throw new Error(`awaitDocQuiescence: doc did not settle within ${timeoutMs} ms`);
   } finally {

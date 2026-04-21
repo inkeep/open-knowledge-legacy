@@ -30,7 +30,7 @@ export interface GraphData {
   links: GraphLink[];
 }
 
-export type GraphDocSelection = Pick<DocGraphNode, 'docName' | 'label' | 'anchor'>;
+type GraphDocSelection = Pick<DocGraphNode, 'docName' | 'label' | 'anchor'>;
 export type GraphNodeSelection =
   | ({
       kind: 'doc';
@@ -52,7 +52,7 @@ const DEFAULT_GRAPH_NODE_RADIUS = 5;
 const SELECTED_GRAPH_NODE_RADIUS = 7;
 const ACTIVE_GRAPH_NODE_RADIUS = 8;
 
-export type GraphNodeClickAction =
+type GraphNodeClickAction =
   | { kind: 'external'; url: string }
   | { kind: 'navigate'; hash: string }
   | { kind: 'select'; selection: GraphNodeSelection };
@@ -149,10 +149,6 @@ export function getGraphNodePointerRadius(
     return baseRadius + 2 / Math.max(globalScale, 0.01);
   }
   return baseRadius;
-}
-
-export function getGraphNodeSelectionId(selection: GraphNodeSelection): string {
-  return selection.id;
 }
 
 export function getHashForGraphDocSelection(selection: GraphDocSelection): string {

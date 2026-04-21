@@ -62,7 +62,7 @@ export function computeTier(elapsedMs: number): PendingTier {
  */
 const TICK_MS = 250;
 
-export interface NavigationPendingBarProps {
+interface NavigationPendingBarProps {
   /** True while navigation is mid-transition (typically from `useTransition`). */
   isPending: boolean;
   /** Called when the user clicks "Try again" at tier 3. No-op if omitted. */

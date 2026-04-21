@@ -294,8 +294,16 @@ const FileTreeNode: FC<{
 
   const showSymlink = isFile && node.isSymlink;
   const showAgentBadge = isAgentFile(node);
+  /*
+   * `!text-muted-foreground/50` (Tailwind v4 trailing-bang) is required
+   * because SidebarMenuSubButton applies `[&>svg]:text-sidebar-accent-foreground`
+   * to every direct SVG child (sidebar.tsx:636) — without !important, nested
+   * rows render these badges as bright sidebar-accent-foreground while root
+   * rows render them as muted-foreground/50.
+   */
+  const iconClass = 'size-3.5 shrink-0 text-muted-foreground/50!';
 
-  const fileContent = (
+  const displayContent = (
     <>
       <IconToUse
         className="size-4 shrink-0"
@@ -312,30 +320,20 @@ const FileTreeNode: FC<{
         {node.name}
         {isFile && '.md'}
       </span>
-      {/*
-       * `!text-muted-foreground/50` (Tailwind v4 trailing-bang) is required
-       * because SidebarMenuSubButton applies `[&>svg]:text-sidebar-accent-foreground`
-       * to every direct SVG child (sidebar.tsx:636) — without !important, nested
-       * rows render these badges as bright sidebar-accent-foreground while root
-       * rows render them as muted-foreground/50.
-       */}
-      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
-      {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50!" />}
+      {showSymlink && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link2 className={iconClass} />
+          </TooltipTrigger>
+          <TooltipContent side="right" className="text-center leading-relaxed">
+            Symlink → {node.targetPath}
+            <br />
+            Opens the same document as {node.canonicalDocName}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {showAgentBadge && <Bot className={iconClass} />}
     </>
-  );
-
-  const displayContent = showSymlink ? (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="flex min-w-0 flex-1 items-center gap-2">{fileContent}</span>
-      </TooltipTrigger>
-      <TooltipContent side="right" className="flex flex-col gap-0.5">
-        <span>Symlink → {node.targetPath}</span>
-        <span className="text-muted">Opens the same document as {node.canonicalDocName}</span>
-      </TooltipContent>
-    </Tooltip>
-  ) : (
-    fileContent
   );
 
   const editingContent = (
@@ -722,7 +720,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
    * Collapse a folder and all its descendant folders. The global derivation
    * is `expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
    * ancestors unconditionally expanded (see the `expandedPaths` loop below
-   * and AGENTS.md precedent #21). So adding subtree paths to `userCollapsed`
+   * and PRECEDENTS.md precedent #21). So adding subtree paths to `userCollapsed`
    * collapses every non-ancestor folder in the subtree; ancestors of the
    * active doc stay visible (matches VS Code / Finder semantics) — their
    * chevron is a visual no-op. See US-011 in
@@ -771,7 +769,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       // Under the ancestor-priority derivation
       // (`expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
       // ancestors exempt from userCollapsed — see the `expandedPaths` loop
-      // below and AGENTS.md precedent #21), ancestors of the active doc
+      // below and PRECEDENTS.md precedent #21), ancestors of the active doc
       // stay expanded regardless of what we put in `userCollapsed`. So
       // "collapse all" collapses every non-ancestor folder and leaves the
       // active file's chain open — which matches VS Code / Finder UX and is

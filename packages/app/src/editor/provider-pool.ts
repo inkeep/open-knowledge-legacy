@@ -8,7 +8,7 @@ import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sy
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-export interface PoolEntry {
+interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
   syncState: SyncState;
@@ -28,7 +28,7 @@ export interface PoolEntry {
   bridgeSetupFailed: boolean;
 }
 
-export type PoolChangeCallback = () => void;
+type PoolChangeCallback = () => void;
 
 const editorSchema = getSchema(sharedExtensions);
 

@@ -30,8 +30,8 @@
 
 ## 3. Non-Goals
 
-- **NEVER:** GUI/Electron packaging, Docker distribution
-- **NOT NOW:** Cloud/remote deployment (Streamable HTTP transport), plugin system, auto-update
+- **NEVER:** GUI/Electron packaging, Docker distribution<br>_[Corrected 2026-04-20 post-ship: the GUI/Electron clause is reversed — Electron distribution is now in scope via the parent Electron desktop spec. The Docker-distribution clause remains NEVER. Authoritative reconciliation in specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md D3.]_
+- **NOT NOW:** Cloud/remote deployment (Streamable HTTP transport), plugin system, auto-update<br>_[Corrected 2026-04-20 post-ship: the auto-update clause needs scope-split — CLI auto-update stays NOT NOW per specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md D10; desktop app auto-update is LOCKED via electron-updater per the parent Electron desktop spec. Cloud/remote + plugin-system remain NOT NOW as stated.]_
 - **NOT UNLESS** user count exceeds single-machine: daemon mode, background process management, multi-server orchestration
 
 ---

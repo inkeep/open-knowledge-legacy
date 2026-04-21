@@ -23,23 +23,59 @@
  *
  * The poll loop is extracted as `runCollabUrlPoll` so tests can drive it
  * with fake clocks + mocked fetch — the hook is a thin React wrapper. This
- * follows CLAUDE.md precedent #13b: implicit time-coupling is a test smell,
+ * follows PRECEDENTS.md precedent #13b: implicit time-coupling is a test smell,
  * so the primitive accepts `now / setTimeout / clearTimeout` as deps.
  */
 import { useEffect, useRef, useState } from 'react';
 import { type FetchApiConfigResult, fetchApiConfig } from '@/lib/api-config';
 import { defaultCollabWsUrl } from '@/lib/cc1';
+// Loads the `Window.okDesktop?` global augmentation. Side-effect import only
+// — the actual types are exported but unused; we just need the global declaration.
+import '@/lib/desktop-bridge-types';
+import type { OkDesktopBridge, OkDesktopConfig } from '@/lib/desktop-bridge-types';
+
+/**
+ * Pure Electron-host detector — returns the desktop bridge handle if the
+ * preload script has populated `window.okDesktop` with a usable collabUrl,
+ * else null. Exported for test seam (no React, no DOM required).
+ *
+ * Web / CLI distribution: `windowLike.okDesktop` is undefined → null.
+ */
+export function tryElectronBridge(
+  windowLike: { okDesktop?: OkDesktopBridge } | undefined,
+): OkDesktopBridge | null {
+  if (typeof windowLike === 'undefined') return null;
+  const bridge = windowLike.okDesktop;
+  if (!bridge) return null;
+  if (!bridge.config.collabUrl || bridge.config.collabUrl.length === 0) return null;
+  return bridge;
+}
+
+/** Pure shape extractor — returns the next state for `setState` given a desktop config. */
+export function electronStateFromConfig(config: OkDesktopConfig): {
+  collabUrl: string;
+  attempts: number;
+  terminal: boolean;
+  lastError: null;
+} {
+  return {
+    collabUrl: config.collabUrl,
+    attempts: 0,
+    terminal: false,
+    lastError: null,
+  };
+}
 
 const INITIAL_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 15_000;
 /** Transition to terminal after this wall-clock elapses without resolution. */
 export const TERMINAL_AFTER_MS = 30_000;
 
-export type CollabUrlError =
+type CollabUrlError =
   | { kind: 'error'; code: number | 'network' | 'invalid-body' }
   | { kind: 'null-collab' };
 
-export interface UseCollabUrlState {
+interface UseCollabUrlState {
   collabUrl: string | null;
   attempts: number;
   /** When true, automatic retries have stopped — consumer should render the
@@ -51,19 +87,19 @@ export interface UseCollabUrlState {
   retry: () => void;
 }
 
-export interface CollabPollState {
+interface CollabPollState {
   collabUrl: string | null;
   attempts: number;
   terminal: boolean;
   lastError: CollabUrlError | null;
 }
 
-export interface CollabPollHandle {
+interface CollabPollHandle {
   /** Stop the loop and abort any in-flight fetch. Safe to call multiple times. */
   cancel: () => void;
 }
 
-export interface CollabPollDeps {
+interface CollabPollDeps {
   fetchConfig: (signal: AbortSignal) => Promise<FetchApiConfigResult>;
   fallbackUrl: () => string;
   /** Current clock reading in ms. Production: `Date.now`. Tests: virtual clock. */
@@ -196,6 +232,24 @@ export function useCollabUrl(): UseCollabUrlState {
     // referenced here so the dependency is observed by the linter.
     void retrySignal;
     const token = ++retryTokenRef.current.token;
+
+    // Electron short-circuit (D37): when the desktop preload script has
+    // exposed `window.okDesktop` with a populated `collabUrl`, skip the HTTP
+    // poll entirely — main has already bound the utility's port and injected
+    // it via `webPreferences.additionalArguments`. Subscribe to mid-session
+    // project switches via `onProjectSwitched`. CLI / web distribution still
+    // hits the existing /api/config poll (window.okDesktop is undefined).
+    const bridge = tryElectronBridge(typeof window !== 'undefined' ? window : undefined);
+    if (bridge) {
+      setState(electronStateFromConfig(bridge.config));
+      const unsubscribe = bridge.onProjectSwitched((next) => {
+        if (token !== retryTokenRef.current.token) return;
+        setState(electronStateFromConfig(next));
+      });
+      return () => {
+        unsubscribe();
+      };
+    }
 
     const handle = runCollabUrlPoll({
       fetchConfig: fetchApiConfig,

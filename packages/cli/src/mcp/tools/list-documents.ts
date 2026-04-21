@@ -28,7 +28,7 @@ interface DocumentsPayload {
   documents?: Array<Record<string, unknown> & { docName?: string }>;
 }
 
-export interface ListDocumentsDeps extends PreviewUrlDeps {
+interface ListDocumentsDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

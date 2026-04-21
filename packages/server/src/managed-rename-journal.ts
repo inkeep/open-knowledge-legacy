@@ -10,7 +10,7 @@ export interface ManagedRenameSnapshot {
   content: string;
 }
 
-export interface ManagedRenameRecoveryJournal {
+interface ManagedRenameRecoveryJournal {
   version: 1;
   sourceDocName: string;
   destinationDocName: string;
@@ -18,7 +18,7 @@ export interface ManagedRenameRecoveryJournal {
   snapshots: ManagedRenameSnapshot[];
 }
 
-export interface ManagedRenameRecoveryResult {
+interface ManagedRenameRecoveryResult {
   recovered: boolean;
   journal: ManagedRenameRecoveryJournal | null;
   restoredDocNames: string[];
@@ -95,7 +95,7 @@ function parseManagedRenameRecoveryJournal(value: unknown): ManagedRenameRecover
   };
 }
 
-export function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
+function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
   const path = managedRenameJournalPath(contentDir);
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8');
@@ -119,7 +119,7 @@ export function writeManagedRenameJournal(
   renameSync(tempPath, path);
 }
 
-export function clearManagedRenameJournal(contentDir: string): void {
+function clearManagedRenameJournal(contentDir: string): void {
   rmSync(managedRenameJournalPath(contentDir), { force: true });
 }
 

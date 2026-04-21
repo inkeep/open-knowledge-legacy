@@ -15,9 +15,7 @@ import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
 
-export type { EntryType, TimelineEntry };
-
-export interface HistoryQuery {
+interface HistoryQuery {
   docName: string;
   branch?: string;
   /** Filter to specific entry types (comma-separated or array). */
@@ -30,7 +28,7 @@ export interface HistoryQuery {
   offset?: number;
 }
 
-export interface HistoryResult {
+interface HistoryResult {
   entries: TimelineEntry[];
   total: number;
   hasMore: boolean;

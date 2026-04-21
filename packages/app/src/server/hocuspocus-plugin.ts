@@ -169,7 +169,7 @@ if (!isTestIsolated) {
 // them post-init.
 let contentFilter: ReturnType<typeof createContentFilter>;
 let backlinkIndex: BacklinkIndex;
-export let hocuspocus: Hocuspocus;
+let hocuspocus: Hocuspocus;
 let sessionManager: AgentSessionManager;
 let persistence: ReturnType<typeof createPersistenceExtension>;
 let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
