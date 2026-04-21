@@ -108,12 +108,12 @@ describe('WindowManager', () => {
     env = buildEnv();
   });
 
-  test('createProjectWindow passes projectName as BrowserWindow title (spawn path)', async () => {
+  test('createProjectWindow sets BrowserWindow title to "<projectName> — Open Knowledge" (spawn path)', async () => {
     const wm = new WindowManager(env.deps);
     const promise = wm.createProjectWindow({ projectPath: '/tmp/dragon-wiki' });
     env.utilities[0]?.fire({ type: 'ready', port: 52010, apiOrigin: 'http://localhost:52010' });
     await promise;
-    expect(env.createWindowOpts[0]?.title).toBe('dragon-wiki');
+    expect(env.createWindowOpts[0]?.title).toBe('dragon-wiki — Open Knowledge');
   });
 
   test('createProjectWindow forks utility, sends init, waits for ready, creates window', async () => {
@@ -389,7 +389,7 @@ describe('WindowManager', () => {
       expect(ctx.apiOrigin).toBe('http://localhost:59534');
       expect(env.windows.length).toBe(1);
       // Title is set from projectName in the attach path too.
-      expect(env.createWindowOpts[0]?.title).toBe('dragon');
+      expect(env.createWindowOpts[0]?.title).toBe('dragon — Open Knowledge');
     });
 
     test('stale lock (pid dead) falls through to spawn mode', async () => {

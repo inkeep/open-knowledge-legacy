@@ -28,6 +28,19 @@
 
 import { basename, resolve } from 'node:path';
 
+/**
+ * Editor window title format — `<projectName> — Open Knowledge`. The em dash
+ * + app-name suffix follows the macOS/VS Code/Cursor convention: the project
+ * name leads so users can scan the Dock / Cmd-Tab switcher by content, and
+ * the app branding is retained as a recognizable tail. Exported for tests.
+ *
+ * Navigator windows use a static "Open Knowledge" title set in
+ * `navigator-window.ts` — no project context there to prepend.
+ */
+export function formatEditorTitle(projectName: string): string {
+  return `${projectName} — Open Knowledge`;
+}
+
 /** Subset of `electron.BrowserWindow` we use — keeps tests Electron-free. */
 export interface BrowserWindowLike {
   focus(): void;
@@ -313,7 +326,7 @@ export class WindowManager {
         `--ok-project-name=${projectName}`,
         `--ok-mode=editor`,
       ],
-      title: projectName,
+      title: formatEditorTitle(projectName),
     });
 
     if (this.deps.rendererDevUrl) {
@@ -438,7 +451,7 @@ export class WindowManager {
         `--ok-project-name=${projectName}`,
         `--ok-mode=editor`,
       ],
-      title: projectName,
+      title: formatEditorTitle(projectName),
     });
 
     if (this.deps.rendererDevUrl) {
