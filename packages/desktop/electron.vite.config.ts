@@ -55,7 +55,17 @@ export default defineConfig({
       sourcemap: 'inline',
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/preload/index.ts') },
-        output: { format: 'es' },
+        // CommonJS, not ESM. Electron's sandboxed preload (webPreferences.sandbox: true,
+        // our locked default per D38) only supports CommonJS — ESM preloads require
+        // sandbox: false and are an Electron 28+ feature with different ABI. Emitting
+        // `cjs` produces `out/preload/index.js` (matches `preload:` path in main/index.ts)
+        // and works under our sandbox. Without this, Electron silently fails to load
+        // the preload script and `window.okDesktop` is never populated — renderer
+        // falls into the web-mode branch and the Navigator never appears.
+        // `entryFileNames: '[name].js'` overrides electron-vite's default `.cjs`/`.mjs`
+        // suffixing so main's `join(__dirname, '../preload/index.js')` load path works
+        // without having to special-case the extension.
+        output: { format: 'cjs', entryFileNames: '[name].js' },
       },
     },
   },

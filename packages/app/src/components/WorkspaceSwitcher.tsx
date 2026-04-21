@@ -18,7 +18,6 @@
 
 import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenuContent,
@@ -29,30 +28,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
-import { runWithErrorStatePure } from '@/lib/error-state';
+import { runWithToast as runWithToastBase } from '@/lib/error-state';
 
 /**
- * Bridge the shared `runWithErrorStatePure` helper to a sonner toast. The
- * dropdown auto-closes on any action click, so an inline banner wouldn't be
- * visible — toasts are the right surface for transient failure feedback.
- * Exported for unit testing via a mockable `toastApi` indirection.
+ * Backward-compat re-export of the shared helper with this component's log
+ * prefix baked in — existing tests import `runWithToast` from this module
+ * (Pass 3). The shared helper moved to `@/lib/error-state` in Pass 4 once
+ * a second consumer (CommandPalette) landed.
  */
-export async function runWithToast(
+export const runWithToast = (
   fn: () => Promise<void>,
   fallback: string,
-  toastApi: { error(msg: string): void } = toast,
-): Promise<void> {
-  await runWithErrorStatePure(
-    fn,
-    fallback,
-    (msg) => {
-      // setError(null) fires at the start; ignore the clear — toasts auto-
-      // dismiss. Only surface non-null messages (actual rejections).
-      if (msg !== null) toastApi.error(msg);
-    },
-    'WorkspaceSwitcher',
-  );
-}
+  toastApi?: { error(msg: string): void },
+): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'WorkspaceSwitcher');
 
 interface WorkspaceSwitcherProps {
   bridge: OkDesktopBridge;

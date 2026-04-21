@@ -30,6 +30,19 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { runWithToast as runWithToastBase } from '@/lib/error-state';
+
+/**
+ * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
+ * surface WorkspaceSwitcher uses — consistent launcher UX (every rejection
+ * surfaces as a sonner toast). Exported for unit-testing with a mockable
+ * `toastApi` indirection; the default uses sonner's module-level `toast`.
+ */
+export const runWithToast = (
+  fn: () => Promise<void>,
+  fallback: string,
+  toastApi?: { error(msg: string): void },
+): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'CommandPalette');
 
 interface CommandPaletteProps {
   bridge: OkDesktopBridge;
@@ -41,18 +54,16 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
 
   // Lazy-load recents each time the palette opens so the list is always fresh.
   // Cheap (<10ms over IPC), and avoids a stale snapshot if the user opens
-  // another project in a sibling window between palette opens.
+  // another project in a sibling window between palette opens. IPC rejection
+  // surfaces as a toast so users know the list is stale rather than silently
+  // seeing an empty group.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    bridge.project
-      .listRecent()
-      .then((result) => {
-        if (!cancelled) setRecents(result);
-      })
-      .catch((err) => {
-        console.error('[CommandPalette] listRecent failed:', err);
-      });
+    void runWithToast(async () => {
+      const result = await bridge.project.listRecent();
+      if (!cancelled) setRecents(result);
+    }, 'Failed to load recent workspaces.');
     return () => {
       cancelled = true;
     };
@@ -71,13 +82,13 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const runAction = async (fn: () => Promise<void> | void) => {
+  const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
     setOpen(false);
-    try {
+    // Normalize `fn` to `() => Promise<void>` so the shared helper's
+    // signature lines up; sync callbacks get wrapped into a resolved promise.
+    void runWithToast(async () => {
       await fn();
-    } catch (err) {
-      console.error('[CommandPalette] action failed:', err);
-    }
+    }, fallback);
   };
 
   const currentPath = bridge.config.projectPath;
