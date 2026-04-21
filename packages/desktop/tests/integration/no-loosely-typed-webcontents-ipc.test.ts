@@ -28,6 +28,7 @@ const SRC_ROOT = join(__dirname, '..', '..', 'src');
 const ALLOWLIST: ReadonlySet<string> = new Set([
   'shared/ipc-invoke.ts',
   'shared/ipc-handler.ts',
+  'shared/ipc-send.ts',
   'shared/ipc-channels.ts',
   'shared/ipc-events.ts',
   'preload/index.ts',

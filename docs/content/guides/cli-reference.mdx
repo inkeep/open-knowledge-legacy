@@ -2,7 +2,6 @@
 title: CLI reference
 description: Complete reference for the open-knowledge command-line interface.
 ---
-
 The `@inkeep/open-knowledge` CLI is the primary interface for managing projects, authentication, and sync.
 
 ```bash
@@ -11,13 +10,13 @@ npx @inkeep/open-knowledge <command> [options]
 
 Global options available on all commands:
 
-| Option | Description |
-|--------|-------------|
-| `--cwd <path>` | Working directory |
+| Option                | Description                 |
+| --------------------- | --------------------------- |
+| `--cwd <path>`        | Working directory           |
 | `--log-level <level>` | Log level (default: `info`) |
-| `--no-color` | Disable color output |
-| `--color` | Force color output |
-| `--version` | Print version |
+| `--no-color`          | Disable color output        |
+| `--color`             | Force color output          |
+| `--version`           | Print version               |
 
 ## `start`
 
@@ -28,14 +27,19 @@ npx @inkeep/open-knowledge start [options]
 npx @inkeep/open-knowledge              # equivalent
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--port <port>` | Server port (overrides config) |
-| `--host <host>` | Bind address (overrides config) |
-| `--open` | Open the editor in your default browser |
-| `--content-dir <path>` | Content directory to serve |
+| Option                 | Description                                              |
+| ---------------------- | -------------------------------------------------------- |
+| `--port <port>`        | Server port (overrides config)                           |
+| `--host <host>`        | Bind address (overrides config)                          |
+| `--open`               | Open the editor in your default browser                  |
+| `--content-dir <path>` | Content directory to serve                               |
+| `--no-init`            | Skip `.open-knowledge/` scaffolding and parent-repo `git init` |
 
 The server binds to `localhost:3000` by default. Only one server can run per content directory -- a second attempt fails with a lock collision error.
+
+If the content directory has no `.git/`, `start` runs `git init --initial-branch=main` before the attribution journal is created. The CLI's first-run preview block discloses the auto-init with the line `Initialized git repo at <cwd>/.git/ (default branch: main)`. If git is not on PATH, `start` exits non-zero with a clear install-or-init-yourself message.
+
+To opt out of both `.open-knowledge/` scaffolding and the parent-repo auto-`git init`, pass `--no-init`. The flag is a single opt-out for both scaffolding behaviors — `start` will boot against whatever state the directory is in, and the attribution journal still initializes if a `.git/` exists. Useful for non-interactive smoke tests and for operators who prefer to manage `git init` themselves.
 
 ## `init`
 
@@ -53,7 +57,7 @@ npx @inkeep/open-knowledge init [options]
 | `--no-mcp` | Skip writing editor MCP config |
 | `--dev-mcp` | Point MCP config and Claude Code preview launchers at the local `packages/cli/dist/cli.mjs` build |
 
-The command is idempotent -- safe to run again without side effects.
+The command is idempotent -- safe to run again without side effects. If the project has no `.git/`, `init` runs `git init --initial-branch=main` first and prints the same disclosure line as `start`.
 
 ## `clone`
 
@@ -63,16 +67,17 @@ Clone a git repository, scaffold `.open-knowledge/`, and start the editor.
 npx @inkeep/open-knowledge clone <url> [dir] [options]
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `url` | Repository URL or `owner/repo` shorthand |
-| `dir` | Target directory (default: `./<repo-name>`) |
+| Argument | Description                                 |
+| -------- | ------------------------------------------- |
+| `url`    | Repository URL or `owner/repo` shorthand    |
+| `dir`    | Target directory (default: `./<repo-name>`) |
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description                                                |
+| -------- | ---------------------------------------------------------- |
 | `--json` | Output JSONL progress events (for editor subprocess relay) |
 
 Accepted URL formats:
+
 - `https://github.com/owner/repo`
 - `git@github.com:owner/repo.git`
 - `ssh://git@github.com/owner/repo`
@@ -92,10 +97,10 @@ Sign in via GitHub's Device Flow (OAuth).
 npx @inkeep/open-knowledge auth login [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option          | Description                             |
+| --------------- | --------------------------------------- |
 | `--host <host>` | GitHub hostname (default: `github.com`) |
-| `--json` | Output JSON events |
+| `--json`        | Output JSON events                      |
 
 ### `auth status`
 
@@ -105,10 +110,10 @@ Check authentication status for a host.
 npx @inkeep/open-knowledge auth status [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option          | Description                             |
+| --------------- | --------------------------------------- |
 | `--host <host>` | GitHub hostname (default: `github.com`) |
-| `--json` | Output JSON |
+| `--json`        | Output JSON                             |
 
 Exits with code 1 if not authenticated.
 
@@ -120,10 +125,10 @@ List repositories accessible with the current token.
 npx @inkeep/open-knowledge auth repos [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option          | Description                             |
+| --------------- | --------------------------------------- |
 | `--host <host>` | GitHub hostname (default: `github.com`) |
-| `--json` | Output JSON |
+| `--json`        | Output JSON                             |
 
 ### `auth signout`
 
@@ -133,8 +138,8 @@ Remove the stored token for a host.
 npx @inkeep/open-knowledge auth signout [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option          | Description                             |
+| --------------- | --------------------------------------- |
 | `--host <host>` | GitHub hostname (default: `github.com`) |
 
 ### `auth pat`
@@ -145,10 +150,10 @@ Validate and store a Personal Access Token.
 npx @inkeep/open-knowledge auth pat [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option          | Description                             |
+| --------------- | --------------------------------------- |
 | `--host <host>` | GitHub hostname (default: `github.com`) |
-| `--json` | Output JSON |
+| `--json`        | Output JSON                             |
 
 The token is read interactively from stdin.
 
@@ -170,8 +175,8 @@ Commit local changes, pull from remote, and push to remote.
 npx @inkeep/open-knowledge sync [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description                  |
+| -------- | ---------------------------- |
 | `--json` | Output JSONL progress events |
 
 Discovers a running server via `server.lock` and delegates to its sync engine. Falls back to direct simple-git operations when no server is running.
@@ -184,8 +189,8 @@ Push local commits to the remote.
 npx @inkeep/open-knowledge push [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description                  |
+| -------- | ---------------------------- |
 | `--json` | Output JSONL progress events |
 
 ## `pull`
@@ -196,8 +201,8 @@ Pull changes from the remote.
 npx @inkeep/open-knowledge pull [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description                  |
+| -------- | ---------------------------- |
 | `--json` | Output JSONL progress events |
 
 ## `mcp`

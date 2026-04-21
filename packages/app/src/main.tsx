@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
 import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
+import { installGitInitToast } from '@/lib/install-git-init-toast';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -20,6 +21,15 @@ import './globals.css';
 // the right place. No-op in web / CLI distribution (okDesktop undefined).
 if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
   installDesktopFetchRewrite({ apiOrigin: window.okDesktop.config.apiOrigin });
+}
+
+// Desktop-only: subscribe to the `git-init-notice` bridge event so the user
+// sees a sonner toast when ensureProjectGit ran `git init` during boot (SPEC
+// R5b / D10). Registered here (module-init, before React mount) so the IPC
+// listener is in place before main fires the event on dom-ready. No-op in
+// web / CLI distribution (window.okDesktop undefined).
+if (typeof window !== 'undefined') {
+  installGitInitToast({ bridge: window.okDesktop });
 }
 
 const queryClient = new QueryClient({

@@ -34,7 +34,6 @@ const DIRECTORY_SCAN_CAP = 1000;
 const DIR_SKIP: ReadonlySet<string> = new Set([
   '.git',
   OK_DIR,
-  '.openknowledge',
   'node_modules',
   '.changeset',
   '.claude',

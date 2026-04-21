@@ -66,6 +66,12 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:menu-action', listener);
   },
 
+  onGitInitNotice(cb: (evt: { gitDir: string }) => void) {
+    const listener = (_event: IpcRendererEvent, evt: { gitDir: string }) => cb(evt);
+    ipcRenderer.on('ok:git-init-notice', listener);
+    return () => ipcRenderer.removeListener('ok:git-init-notice', listener);
+  },
+
   dialog: {
     openFolder: () => invoke('ok:dialog:open-folder'),
     createFolder: () => invoke('ok:dialog:create-folder'),
