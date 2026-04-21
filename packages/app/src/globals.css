@@ -287,8 +287,90 @@
   }
 }
 
-.ok-blob-clicked {
+/* Level 2 — rapid click, bouncier + snappier */
+@keyframes ok-blob-click-bounce-2 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  20% {
+    transform: scaleY(0.84) scaleX(1.13);
+  }
+  45% {
+    transform: scaleY(1.1) scaleX(0.93);
+  }
+  70% {
+    transform: scaleY(0.97) scaleX(1.02);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Level 3 — rage click, max squish + max stretch */
+@keyframes ok-blob-click-bounce-3 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  18% {
+    transform: scaleY(0.76) scaleX(1.2);
+  }
+  42% {
+    transform: scaleY(1.16) scaleX(0.88);
+  }
+  65% {
+    transform: scaleY(0.96) scaleX(1.03);
+  }
+  85% {
+    transform: scaleY(1.02) scaleX(0.99);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.ok-blob-clicked-1 {
   animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-2 {
+  animation: ok-blob-click-bounce-2 550ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-3 {
+  animation: ok-blob-click-bounce-3 650ms var(--ease-out-strong) forwards;
+}
+
+/* Sparkle burst — level-3 rage-click reward */
+.ok-blob-sparkle {
+  fill: var(--color-azure-blue);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ok-blob-sparkle-pop 600ms var(--ease-out-strong) forwards;
+}
+.dark .ok-blob-sparkle {
+  fill: var(--color-sky-blue);
+}
+.ok-blob-sparkle-0 {
+  animation-delay: 0ms;
+}
+.ok-blob-sparkle-1 {
+  animation-delay: 55ms;
+}
+.ok-blob-sparkle-2 {
+  animation-delay: 110ms;
+}
+
+@keyframes ok-blob-sparkle-pop {
+  0% {
+    transform: scale(0);
+    opacity: 1;
+  }
+  40% {
+    transform: scale(1.6);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -298,8 +380,13 @@
   .ok-blob-body {
     animation: none;
   }
-  .ok-blob-clicked {
+  .ok-blob-clicked-1,
+  .ok-blob-clicked-2,
+  .ok-blob-clicked-3 {
     animation: none;
+  }
+  .ok-blob-sparkle {
+    display: none;
   }
 }
 
