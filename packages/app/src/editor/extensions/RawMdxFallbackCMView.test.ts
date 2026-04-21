@@ -2,14 +2,24 @@
  * Nested CodeMirror sync math tests (NCM02-NCM04, M15).
  *
  * Tests the `computeChange` function that computes minimal string diffs
- * for PM→CM and CM→PM synchronization, and the `shouldEscapeNestedCM`
- * boundary predicate that drives arrow-key escape from nested CM to outer PM.
+ * for PM→CM and CM→PM synchronization, the `shouldEscapeNestedCM` boundary
+ * predicate that drives arrow-key escape from nested CM to outer PM, and
+ * `computeCMSelectionForwarding` — the PM→CM selection mirror decision
+ * (ef49b53a, Precedent #27 "Selection state as typed PM PluginState").
  */
 
 import { describe, expect, test } from 'bun:test';
-import { EditorState } from '@codemirror/state';
+import { EditorState as CMEditorState } from '@codemirror/state';
 import type { EditorView as CMEditorView } from '@codemirror/view';
-import { computeChange, shouldEscapeNestedCM } from './RawMdxFallbackCMView';
+import { sharedExtensions } from '@inkeep/open-knowledge-core';
+import { getSchema } from '@tiptap/core';
+import type { Node as PMNode } from '@tiptap/pm/model';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+import {
+  computeChange,
+  computeCMSelectionForwarding,
+  shouldEscapeNestedCM,
+} from './RawMdxFallbackCMView';
 
 /**
  * Build a minimal CM EditorView stand-in that satisfies
@@ -22,9 +32,25 @@ function makeCMView(doc: string, selPos: number | { anchor: number; head: number
     typeof selPos === 'number'
       ? { anchor: selPos, head: selPos }
       : { anchor: selPos.anchor, head: selPos.head };
-  const state = EditorState.create({ doc, selection });
+  const state = CMEditorState.create({ doc, selection });
   // We never mount the view — only `.state` is read by shouldEscapeNestedCM.
   return { state } as unknown as CMEditorView;
+}
+
+// ── PM fixtures for computeCMSelectionForwarding ─────────────────────────
+
+const pmSchema = getSchema(sharedExtensions);
+
+function fallbackNode(source: string): PMNode {
+  return pmSchema.node(
+    'rawMdxFallback',
+    { reason: 'test fixture' },
+    source ? [pmSchema.text(source)] : [],
+  );
+}
+
+function docWithFallback(source: string): PMNode {
+  return pmSchema.node('doc', null, [fallbackNode(source)]);
 }
 
 describe('computeChange', () => {
@@ -206,5 +232,186 @@ describe('shouldEscapeNestedCM', () => {
   test('single line: line/Down (col 2) → escape', () => {
     const view = makeCMView('hello', 2);
     expect(shouldEscapeNestedCM(view, 'line', 1)).toBe(true);
+  });
+});
+
+describe('computeCMSelectionForwarding', () => {
+  // Canonical fixture: doc containing one rawMdxFallback with source "hello".
+  //   fallback opens at pos 0, text content at pos 1..5, closes at pos 6
+  //   nodeSize = 7, nodeStart = 1, nodeEnd = 6
+  const doc = docWithFallback('hello');
+  const NODE_POS = 0;
+  const NODE_SIZE = 7;
+  const CM_DOC_LEN = 5; // "hello" → 5 chars
+
+  describe('NodeSelection ON this exact node', () => {
+    test('CM lacks focus → returns {kind: "focus"}', () => {
+      const pmSel = NodeSelection.create(doc, NODE_POS);
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'focus' });
+    });
+
+    test('CM already has focus → returns {kind: "noop"} (avoid re-dispatch)', () => {
+      const pmSel = NodeSelection.create(doc, NODE_POS);
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 2, head: 2 },
+        cmHasFocus: true,
+      });
+      expect(action).toEqual({ kind: 'noop' });
+    });
+  });
+
+  describe('NodeSelection on a different node', () => {
+    // Two-fallback doc — select the SECOND one, then test the helper for the FIRST.
+    // <fallback>first</fallback><fallback>second</fallback>
+    //   first:  pos 0..7  (nodeSize 7, text at 1..6)
+    //   second: pos 7..15 (nodeSize 8, text at 8..14)
+    test('PM selects a different rawMdxFallback → returns noop for this one', () => {
+      const d = pmSchema.node('doc', null, [fallbackNode('first'), fallbackNode('second')]);
+      const pmSel = NodeSelection.create(d, 7); // select second
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: 0, // test from the first's perspective
+        nodeSize: 7,
+        cmDocLen: 5,
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'noop' });
+    });
+  });
+
+  describe("TextSelection inside this node's content range", () => {
+    test('cursor at content start → returns selection {anchor:0, head:0}', () => {
+      const pmSel = TextSelection.create(doc, 1); // nodeStart
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 3, head: 3 }, // CM currently elsewhere
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'selection', anchor: 0, head: 0 });
+    });
+
+    test('cursor at content end → returns selection at cmDocLen', () => {
+      const pmSel = TextSelection.create(doc, 6); // nodeEnd
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'selection', anchor: 5, head: 5 });
+    });
+
+    test('range selection inside content → returns selection with both anchor/head offset', () => {
+      const pmSel = TextSelection.create(doc, 2, 5); // "ell" range
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'selection', anchor: 1, head: 4 });
+    });
+
+    test('CM selection already matches + has focus → returns noop', () => {
+      const pmSel = TextSelection.create(doc, 3); // middle of content
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 2, head: 2 }, // 3 - nodeStart(1) = 2
+        cmHasFocus: true,
+      });
+      expect(action).toEqual({ kind: 'noop' });
+    });
+
+    test('CM selection matches but lacks focus → returns selection (to trigger focus)', () => {
+      const pmSel = TextSelection.create(doc, 3);
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: CM_DOC_LEN,
+        cmSel: { anchor: 2, head: 2 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'selection', anchor: 2, head: 2 });
+    });
+  });
+
+  describe("TextSelection outside this node's content range", () => {
+    // Multi-block doc: <p>outside</p><fallback>inside</fallback>
+    //   paragraph: pos 0..9 (open at 0, text 1..7, close at 8, after at 9)
+    //   fallback:  pos 9..17 (nodeSize 8, text 10..15)
+    const d2 = pmSchema.node('doc', null, [
+      pmSchema.node('paragraph', null, [pmSchema.text('outside')]),
+      fallbackNode('inside'),
+    ]);
+
+    test('PM selection in preceding paragraph → returns noop for fallback', () => {
+      const pmSel = TextSelection.create(d2, 3); // inside paragraph
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: 9, // fallback position
+        nodeSize: 8,
+        cmDocLen: 6,
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'noop' });
+    });
+  });
+
+  describe('Offset clamping (defense against stale PM range under concurrent edit)', () => {
+    test('PM offset > cmDocLen → clamped to cmDocLen', () => {
+      // PM thinks content is at pos 6 (nodeEnd), but CM doc was just
+      // shrunk to 3 chars — the forwarded offset must clamp to 3.
+      const pmSel = TextSelection.create(doc, 6);
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: NODE_POS,
+        nodeSize: NODE_SIZE,
+        cmDocLen: 3, // CM doc shorter than PM believes
+        cmSel: { anchor: 0, head: 0 },
+        cmHasFocus: false,
+      });
+      expect(action).toEqual({ kind: 'selection', anchor: 3, head: 3 });
+    });
+
+    test('PM anchor negative (synthetic) → clamped to 0', () => {
+      // Synthetic stale state: PM sel.anchor - nodeStart < 0.
+      // Using a nodePos that makes nodeStart > pmSel.anchor in math.
+      const pmSel = TextSelection.create(doc, 1); // at nodeStart
+      const action = computeCMSelectionForwarding({
+        pmSel,
+        nodePos: 5, // nodeStart would be 6 → 1 - 6 = -5
+        nodeSize: 3,
+        cmDocLen: 10,
+        cmSel: { anchor: 5, head: 5 },
+        cmHasFocus: false,
+      });
+      // pmSel.from (=1) < nodeStart (=6), so falls through to noop
+      expect(action).toEqual({ kind: 'noop' });
+    });
   });
 });

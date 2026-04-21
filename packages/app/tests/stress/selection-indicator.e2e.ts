@@ -810,3 +810,84 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
   // changes. 3 rapid selections should not produce 3 announcements.
   expect(contentMutations.length).toBeLessThan(3);
 });
+
+// ── S19: CM→PM focus sync in rawMdxFallback (ef49b53a wiring guard) ──────
+
+test('S19: clicking inside nested CM forwards focus as NodeSelection on rawMdxFallback', async ({
+  page,
+  api,
+}) => {
+  // Seed markdown that parses into a rawMdxFallback (tag mismatch triggers
+  // the block-level fallback path — see mid-type-recovery.e2e.ts at the
+  // "tag mismatch" test for the proven shape). The CM NodeView mounts once
+  // the fallback is in the doc.
+  await setupDoc(page, api, 'before\n\n<Foo>some text</Bar>\n\nafter\n');
+  const fallbackWrapper = page.locator('.raw-mdx-fallback-wrapper').first();
+  await expect(fallbackWrapper).toBeAttached({ timeout: 5_000 });
+
+  // CM content editable lives inside the wrapper. `cm-content` is the
+  // canonical CodeMirror 6 content-DOM class.
+  const cmContent = fallbackWrapper.locator('.cm-content').first();
+  await expect(cmContent).toBeAttached({ timeout: 5_000 });
+
+  // Establish a baseline: PM selection is NOT initially a NodeSelection on
+  // the fallback (setupDoc leaves selection at doc start or unset).
+  const baseline = await page.evaluate(() => {
+    const ed = window.__activeEditor;
+    if (!ed) return null;
+    const sel = ed.state.selection;
+    return {
+      type: sel.constructor.name,
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection of PM internals
+      nodeType: (sel as any).node?.type?.name ?? null,
+      from: sel.from,
+    };
+  });
+  expect(baseline).not.toBeNull();
+  // If the baseline is already a NodeSelection on rawMdxFallback, the test
+  // can't distinguish the click's effect — retarget the assertion to a
+  // different doc shape. In practice setupDoc opens at top, so baseline
+  // should be a TextSelection in the 'before' paragraph.
+  expect(baseline?.type === 'NodeSelection' && baseline?.nodeType === 'rawMdxFallback').toBe(false);
+
+  // Click inside the nested CM. This triggers:
+  //   1. Browser focus → CM view
+  //   2. CM updateListener fires with focusChanged + hasFocus=true
+  //   3. The handler in RawMdxFallbackCMView dispatches NodeSelection on
+  //      the fallback at getPos() (ef49b53a focus-sync pathway)
+  //   4. PM commits the tx; SelectionStatePlugin sees the new selection
+  await cmContent.click();
+
+  // Wait for PM selection to become NodeSelection on rawMdxFallback. Use
+  // condition-based polling per precedent #20(a) — any fixed sleep is
+  // flake-prone.
+  await page.waitForFunction(
+    () => {
+      const ed = window.__activeEditor;
+      if (!ed) return false;
+      const sel = ed.state.selection;
+      if (sel.constructor.name !== 'NodeSelection') return false;
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection
+      return (sel as any).node?.type?.name === 'rawMdxFallback';
+    },
+    null,
+    { timeout: 5_000 },
+  );
+
+  // Final assertion — the selection is exactly what the canonical
+  // ef49b53a pathway dispatches: NodeSelection on the fallback.
+  const afterClick = await page.evaluate(() => {
+    const ed = window.__activeEditor;
+    if (!ed) return null;
+    const sel = ed.state.selection;
+    return {
+      type: sel.constructor.name,
+      // biome-ignore lint/suspicious/noExplicitAny: test-only introspection
+      nodeType: (sel as any).node?.type?.name ?? null,
+    };
+  });
+  expect(afterClick).toEqual({
+    type: 'NodeSelection',
+    nodeType: 'rawMdxFallback',
+  });
+});

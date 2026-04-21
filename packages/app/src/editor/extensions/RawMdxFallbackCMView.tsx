@@ -18,6 +18,7 @@
 import { Compartment } from '@codemirror/state';
 import { EditorView as CMEditorView, keymap } from '@codemirror/view';
 import type { NodeViewProps } from '@tiptap/core';
+import type { Selection as PmSelection } from '@tiptap/pm/state';
 import { NodeSelection, Selection } from '@tiptap/pm/state';
 import { NodeViewWrapper } from '@tiptap/react';
 import { Trash2 } from 'lucide-react';
@@ -58,6 +59,64 @@ export function shouldEscapeNestedCM(
     return dir < 0 ? line.from === 0 : line.to === state.doc.length;
   }
   return dir < 0 ? main.head === 0 : main.head === state.doc.length;
+}
+
+/**
+ * Action a caller should apply to a CodeMirror view in response to a PM
+ * selectionUpdate. Computed purely from state — the caller handles the
+ * feedback-loop guard (`updatingRef`) and side effects (dispatch/focus).
+ */
+export type CMForwardAction =
+  | { kind: 'noop' }
+  | { kind: 'focus' }
+  | { kind: 'selection'; anchor: number; head: number };
+
+/**
+ * Given the outer PM selection and this NodeView's position, decide how to
+ * mirror PM's selection into the nested CodeMirror editor:
+ *
+ *   - NodeSelection ON this exact node → take CM focus (cursor stays at
+ *     CM's current position, matching canonical `selectNode` behavior).
+ *   - TextSelection inside this node's content range → forward anchor +
+ *     head with clamping, and take focus if not already.
+ *   - Anything else → no-op.
+ *
+ * Offsets are clamped to `[0, cmDocLen]` because PM's content window
+ * (`nodePos+1` ..= `nodePos+nodeSize-1`) can lag the CM doc during a
+ * concurrent edit — out-of-range offsets would throw inside
+ * `cmView.dispatch`. Clamping keeps the dispatch safe.
+ *
+ * Callers that find `{kind:'noop'}` must not dispatch — returning early on
+ * noop is how we avoid PM→CM→PM cascades (together with `updatingRef`).
+ */
+export function computeCMSelectionForwarding(opts: {
+  pmSel: PmSelection;
+  nodePos: number;
+  nodeSize: number;
+  cmDocLen: number;
+  cmSel: { anchor: number; head: number };
+  cmHasFocus: boolean;
+}): CMForwardAction {
+  const { pmSel, nodePos, nodeSize, cmDocLen, cmSel, cmHasFocus } = opts;
+
+  // NodeSelection ON this exact node — just take focus
+  if (pmSel instanceof NodeSelection && pmSel.from === nodePos) {
+    return cmHasFocus ? { kind: 'noop' } : { kind: 'focus' };
+  }
+
+  // TextSelection inside this node's content — forward anchor/head with clamping
+  const nodeStart = nodePos + 1; // offset 0 of content
+  const nodeEnd = nodePos + nodeSize - 1;
+  if (pmSel.from >= nodeStart && pmSel.to <= nodeEnd) {
+    const anchor = Math.max(0, Math.min(pmSel.anchor - nodeStart, cmDocLen));
+    const head = Math.max(0, Math.min(pmSel.head - nodeStart, cmDocLen));
+    if (cmSel.anchor === anchor && cmSel.head === head && cmHasFocus) {
+      return { kind: 'noop' };
+    }
+    return { kind: 'selection', anchor, head };
+  }
+
+  return { kind: 'noop' };
 }
 
 /**
@@ -318,42 +377,34 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       const currentNode = pmView.state.doc.nodeAt(pos);
       if (!currentNode) return;
 
-      const sel = pmView.state.selection;
-      const nodeStart = pos + 1; // offset 0 of content
-      const nodeEnd = pos + currentNode.nodeSize - 1;
+      const action = computeCMSelectionForwarding({
+        pmSel: pmView.state.selection,
+        nodePos: pos,
+        nodeSize: currentNode.nodeSize,
+        cmDocLen: cmView.state.doc.length,
+        cmSel: {
+          anchor: cmView.state.selection.main.anchor,
+          head: cmView.state.selection.main.head,
+        },
+        cmHasFocus: cmView.hasFocus,
+      });
 
-      // NodeSelection on this exact node — just take focus
-      if (sel instanceof NodeSelection && sel.from === pos) {
-        if (!cmView.hasFocus) {
-          updatingRef.current = true;
-          try {
-            cmView.focus();
-          } catch (err) {
-            updatingRef.current = false;
-            throw err;
-          }
-          updatingRef.current = false;
-        }
-        return;
-      }
+      if (action.kind === 'noop') return;
 
-      // TextSelection inside this node's content range — forward anchor/head
-      if (sel.from >= nodeStart && sel.to <= nodeEnd) {
-        const maxOffset = cmView.state.doc.length;
-        const anchor = Math.max(0, Math.min(sel.anchor - nodeStart, maxOffset));
-        const head = Math.max(0, Math.min(sel.head - nodeStart, maxOffset));
-        const cmSel = cmView.state.selection.main;
-        if (cmSel.anchor === anchor && cmSel.head === head && cmView.hasFocus) return;
-        updatingRef.current = true;
-        try {
-          cmView.dispatch({ selection: { anchor, head } });
-          if (!cmView.hasFocus) cmView.focus();
-        } catch (err) {
-          updatingRef.current = false;
-          throw err;
+      // Symmetric feedback-loop guard release: both dispatch and focus can
+      // throw (view destroyed mid-effect); release the flag in the catch
+      // path so a later PM→CM sync can still run.
+      updatingRef.current = true;
+      try {
+        if (action.kind === 'selection') {
+          cmView.dispatch({ selection: { anchor: action.anchor, head: action.head } });
         }
+        if (!cmView.hasFocus) cmView.focus();
+      } catch (err) {
         updatingRef.current = false;
+        throw err;
       }
+      updatingRef.current = false;
     };
     editor.on('selectionUpdate', handler);
     return () => {

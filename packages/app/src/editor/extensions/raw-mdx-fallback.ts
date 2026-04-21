@@ -17,24 +17,45 @@
  */
 import { RawMdxFallback as BaseRawMdxFallback } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
+import type { EditorState } from '@tiptap/pm/state';
 import { Selection } from '@tiptap/pm/state';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import { RawMdxFallbackView } from './RawMdxFallbackCMView';
 
-function arrowIntoRawMdxFallback(editor: Editor, dir: 'up' | 'down' | 'left' | 'right'): boolean {
-  const { state, view } = editor;
-  if (!state.selection.empty) return false;
-  if (!view.endOfTextblock(dir)) return false;
+/**
+ * Given an editor state + arrow direction, return the PM Selection that
+ * should be dispatched IF the next textblock-boundary hop lands inside a
+ * rawMdxFallback node. Returns null when the hop is a no-op or lands
+ * somewhere else.
+ *
+ * Caller is responsible for checking `view.endOfTextblock(dir)` first —
+ * that check depends on DOM layout (line wrapping) for up/down and must
+ * stay view-coupled. This helper does the selection-resolution + node-type
+ * gate, which is pure state math and unit-testable.
+ */
+export function computeArrowIntoTargetAtBoundary(
+  state: EditorState,
+  dir: 'up' | 'down' | 'left' | 'right',
+): Selection | null {
+  if (!state.selection.empty) return null;
   const side: -1 | 1 = dir === 'up' || dir === 'left' ? -1 : 1;
   const $head = state.selection.$head;
   const boundary = side > 0 ? $head.after() : $head.before();
-  if (typeof boundary !== 'number') return false;
+  if (typeof boundary !== 'number') return null;
   const nextSel = Selection.near(state.doc.resolve(boundary), side);
   if (nextSel.$head?.parent.type.name === 'rawMdxFallback') {
-    view.dispatch(state.tr.setSelection(nextSel));
-    return true;
+    return nextSel;
   }
-  return false;
+  return null;
+}
+
+function arrowIntoRawMdxFallback(editor: Editor, dir: 'up' | 'down' | 'left' | 'right'): boolean {
+  const { state, view } = editor;
+  if (!view.endOfTextblock(dir)) return false;
+  const nextSel = computeArrowIntoTargetAtBoundary(state, dir);
+  if (!nextSel) return false;
+  view.dispatch(state.tr.setSelection(nextSel));
+  return true;
 }
 
 export const RawMdxFallback = BaseRawMdxFallback.extend({
