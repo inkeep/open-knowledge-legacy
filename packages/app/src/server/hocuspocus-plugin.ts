@@ -20,10 +20,7 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
-  ensureProjectGit,
   handleCollabSocketError,
-  initShadowRepo,
-  ProjectGitInitError,
   readBranchFromHead,
   releaseServerLock,
   type ShadowRef,
@@ -37,6 +34,7 @@ import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
+import { runDevShadowInit } from './dev-shadow-init.ts';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
@@ -143,23 +141,13 @@ const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 // Shadow repo — initialized lazily. Deferred ref pattern matches standalone.ts.
 // SPEC 2026-04-21-shadow-repo-single-mode R2 / D12: ensureProjectGit runs BEFORE
 // initShadowRepo so a missing `git` binary fails the dev server fast instead of
-// leaving the shadow in a degraded state.
+// leaving the shadow in a degraded state. Core pipeline + error dispatch live in
+// `./dev-shadow-init.ts` so the fail-fast / degraded branches are unit-tested.
 const shadowRef: ShadowRef = { current: undefined };
 if (!isTestIsolated) {
-  ensureProjectGit(PROJECT_ROOT)
-    .then(() => initShadowRepo(PROJECT_ROOT))
-    .then((shadow) => {
-      shadowRef.current = shadow;
-      console.log(`[dev] Shadow repo initialized at ${shadow.gitDir}`);
-    })
-    .catch((e) => {
-      if (e instanceof ProjectGitInitError) {
-        console.warn(`[dev] ensureProjectGit failed: ${e.message}`);
-        if (e.stderr) console.warn(`[dev] git stderr: ${e.stderr.trim()}`);
-        process.exit(1);
-      }
-      console.warn('[dev] Shadow repo init failed (timeline features unavailable):', e);
-    });
+  void runDevShadowInit(PROJECT_ROOT, (shadow) => {
+    shadowRef.current = shadow;
+  });
 }
 
 // All throwable module-scope init runs inside this try. If anything fails we
