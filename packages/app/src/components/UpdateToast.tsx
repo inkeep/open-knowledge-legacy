@@ -31,7 +31,20 @@ export const TOAST_C_BODY =
   'This app may not be receiving updates. Visit inkeep.com/open-knowledge/download to install a fresh copy.';
 export const TOAST_C_ACTION = 'Open download page';
 
-/** Toast B body copy for a given version — `"Updated to v${version} — see what's new"`. */
+/**
+ * Toast B body copy for a given version — `"Updated to v${version} — see what's new"`.
+ *
+ * Version is interpolated raw here, intentionally asymmetric with
+ * `releaseUrlFor` in `auto-updater.ts` which percent-encodes the same
+ * input. Rationale: `version` comes from `app.getVersion()` (reads the
+ * app's own `package.json`, fully trusted), sonner renders the body into
+ * a React text node (XSS-safe by default), and users read display text
+ * literally — encoding a malformed version like `1.2.3/..` to `1.2.3%2F..`
+ * would be actively worse UX. The URL surface has different semantics:
+ * the browser's resolver can path-traverse unencoded segments, so that
+ * surface gets defensive encoding. Body-surface trust matches URL-surface
+ * trust for this input; do not "fix" the asymmetry.
+ */
 export function toastBBody(version: string): string {
   return `Updated to v${version} — see what's new`;
 }
