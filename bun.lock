@@ -169,6 +169,7 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
+        "@inkeep/open-knowledge-app": "workspace:*",
         "@inkeep/open-knowledge-core": "workspace:*",
         "@inkeep/open-knowledge-server": "workspace:*",
         "@types/node": "^22.16.0",
