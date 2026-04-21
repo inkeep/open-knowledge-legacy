@@ -121,8 +121,11 @@ function ensureWindowManager() {
   const rendererEntryPath = app.isPackaged
     ? join(process.resourcesPath, 'app', 'index.html')
     : join(__dirname, '../renderer/index.html');
-  // Utility entry: electron-vite builds it into out/utility/server-entry.js.
-  const utilityEntryPath = join(__dirname, '../utility/server-entry.js');
+  // Utility entry: electron-vite piggybacks the utility build into main's
+  // bundle (see electron.vite.config.ts main.build.rollupOptions comment),
+  // so it lands at `out/main/utility/server-entry.js` — same folder tree as
+  // `out/main/index.js`, nested one level deeper. Not `out/utility/...`.
+  const utilityEntryPath = join(__dirname, 'utility/server-entry.js');
 
   wm = new WindowManager({
     createWindow: (opts) => {

@@ -39,8 +39,22 @@ export default defineConfig({
     build: {
       sourcemap: 'inline',
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') },
-        output: { format: 'es' },
+        // Two entries in the main bundle: the main-process entry itself AND
+        // the utility-process entry that main.forks. electron-vite's config
+        // only has `main`/`preload`/`renderer` sections — there is no native
+        // `utility` slot — so we piggyback on main. `entryFileNames` uses the
+        // input key as a path pattern (`utility/server-entry` → that nested
+        // filename), which matches main.index.ts's `join(__dirname,
+        // '../utility/server-entry.js')` load path: main lands at
+        // `out/main/index.js` and utility at `out/main/utility/server-entry.js`,
+        // so `../utility/...` from `out/main/index.js` resolves up one + back
+        // into the same folder. Alternative: multi-root rollup config — not
+        // worth the complexity for a single extra entry.
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'utility/server-entry': resolve(__dirname, 'src/utility/server-entry.ts'),
+        },
+        output: { format: 'es', entryFileNames: '[name].js' },
       },
     },
     resolve: {
