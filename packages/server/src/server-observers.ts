@@ -247,7 +247,7 @@ export interface SetupServerObserversOpts {
  * handler. The settlement handler holds no timers; cleanup is O(1).
  */
 export function setupServerObservers(opts: SetupServerObserversOpts): () => void {
-  const { doc, xmlFragment, ytext, mdManager } = opts;
+  const { doc, xmlFragment, ytext, mdManager, schema } = opts;
 
   /**
    * Structured-log + silent-checkpoint writer for mergeThreeWay post-condition
