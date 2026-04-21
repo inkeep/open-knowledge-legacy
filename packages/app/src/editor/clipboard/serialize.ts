@@ -34,7 +34,7 @@ import type { Fragment, Schema, Slice } from '@tiptap/pm/model';
 import { DOMSerializer, Slice as SliceCtor } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 
-export interface WysiwygSerializerDeps {
+interface WysiwygSerializerDeps {
   mdManager: MarkdownManager;
 }
 

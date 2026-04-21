@@ -34,7 +34,7 @@ export interface AsyncSubscription {
   unsubscribe(): Promise<void>;
 }
 
-export type WatcherBackend = 'parcel' | 'chokidar';
+type WatcherBackend = 'parcel' | 'chokidar';
 
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 

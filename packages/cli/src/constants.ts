@@ -1,7 +1,7 @@
 import pkgJson from '../package.json' with { type: 'json' };
 
 /** Root directory name for open-knowledge inside a project. */
-export const OK_DIR = '.open-knowledge';
+export { OK_DIR } from '@inkeep/open-knowledge-core';
 
 /** Conventions file for agent navigation without MCP. */
 export const AGENTS_FILENAME = 'AGENTS.md';

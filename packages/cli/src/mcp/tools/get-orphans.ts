@@ -22,7 +22,7 @@ interface OrphansPayload {
   orphans?: Array<Record<string, unknown> & { docName?: string }>;
 }
 
-export interface GetOrphansDeps extends PreviewUrlDeps {
+interface GetOrphansDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

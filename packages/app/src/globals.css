@@ -3,6 +3,23 @@
 @import "shadcn/tailwind.css";
 @plugin "tailwind-scrollbar";
 
+/*
+ * Explicit source roots for Tailwind v4 content scanning.
+ *
+ * packages/app's own `bun run dev` runs with CWD=packages/app, and Tailwind
+ * v4 auto-detects sources via a package.json walk from there — that default
+ * works for the web distribution.
+ *
+ * When packages/desktop's `electron-vite dev` serves this CSS with
+ * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
+ * so Tailwind's auto-detection scans packages/desktop/** — which has no .tsx
+ * files, so zero utility classes get emitted. The @source directive below
+ * anchors the scan to packages/app/src/** (relative to this CSS file) and is
+ * inert for packages/app's own dev because the same paths are already
+ * auto-covered.
+ */
+@source "./**/*.{tsx,ts,jsx,js}";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme {
@@ -200,6 +217,13 @@
 }
 
 /* OK Blob mascot */
+
+/* Group wrapper — the click bounce animates the group so body + eyes squish together. */
+.ok-blob-group {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+
 .ok-blob-body {
   fill: var(--color-azure-blue);
   animation: ok-blob-squish 6s ease-in-out infinite;
@@ -287,8 +311,86 @@
   }
 }
 
-.ok-blob-clicked {
+/* Level 2 — rapid click, bouncier + snappier */
+@keyframes ok-blob-click-bounce-2 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  20% {
+    transform: scaleY(0.84) scaleX(1.13);
+  }
+  45% {
+    transform: scaleY(1.1) scaleX(0.93);
+  }
+  70% {
+    transform: scaleY(0.97) scaleX(1.02);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Level 3 — rage click, max squish + max stretch */
+@keyframes ok-blob-click-bounce-3 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  18% {
+    transform: scaleY(0.76) scaleX(1.2);
+  }
+  42% {
+    transform: scaleY(1.16) scaleX(0.88);
+  }
+  65% {
+    transform: scaleY(0.96) scaleX(1.03);
+  }
+  85% {
+    transform: scaleY(1.02) scaleX(0.99);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.ok-blob-clicked-1 {
   animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-2 {
+  animation: ok-blob-click-bounce-2 550ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-3 {
+  animation: ok-blob-click-bounce-3 650ms var(--ease-out-strong) forwards;
+}
+
+/* Firework burst — radial particles launch from the blob center, translate
+   outward with varied distance/size/delay/duration, then fade. Per-particle
+   variation is pumped in via CSS custom properties (--fx-tx, --fx-ty,
+   --fx-delay, --fx-duration) set inline by the React component so one keyframe
+   serves every spark. */
+.ok-blob-firework {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ok-blob-firework-pop var(--fx-duration, 700ms) var(--ease-out-strong)
+    var(--fx-delay, 0ms) forwards;
+}
+
+@keyframes ok-blob-firework-pop {
+  0% {
+    transform: translate(0, 0) scale(0.2);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(calc(var(--fx-tx, 0px) * 0.22), calc(var(--fx-ty, 0px) * 0.22)) scale(1.35);
+    opacity: 1;
+  }
+  70% {
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.7);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.1);
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -298,8 +400,13 @@
   .ok-blob-body {
     animation: none;
   }
-  .ok-blob-clicked {
+  .ok-blob-clicked-1,
+  .ok-blob-clicked-2,
+  .ok-blob-clicked-3 {
     animation: none;
+  }
+  .ok-blob-firework {
+    display: none;
   }
 }
 

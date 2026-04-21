@@ -26,10 +26,6 @@
  *   6. Exhaustive `switch` sites need new `case` arms — the TS compiler
  *      will surface them when `RootContentMap` is augmented.
  */
-
-// Re-export for convenience in handler files
-export type { Nodes, Parent, Root } from 'mdast';
-
 import type { Position } from 'unist';
 
 /**
@@ -181,6 +177,3 @@ declare module 'mdast-util-mdx-expression' {
     sourceRaw?: string;
   }
 }
-
-// mdxjsEsm augmentation removed (R4): agnostic mode never produces mdxjsEsm nodes.
-// Directive augmentations removed (D14): remark-directive removed from pipeline.

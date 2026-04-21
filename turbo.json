@@ -5,6 +5,19 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**"]
     },
+    "build:desktop": {
+      "dependsOn": ["^build", "@inkeep/open-knowledge#build"],
+      "outputs": ["out/**"]
+    },
+    "build:desktop:dir": {
+      "dependsOn": ["build:desktop"],
+      "outputs": ["dist-desktop/**"],
+      "env": ["ELECTRON_CACHE", "ELECTRON_MIRROR"]
+    },
+    "rebuild:native": {
+      "cache": false,
+      "dependsOn": []
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },

@@ -35,7 +35,7 @@ export const DESCRIPTION = [
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
-export interface EditDocumentDeps {
+interface EditDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: Config;
   resolveCwd: (explicit?: string) => Promise<string>;

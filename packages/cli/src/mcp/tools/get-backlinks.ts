@@ -23,7 +23,7 @@ interface BacklinksPayload {
   backlinks?: Array<Record<string, unknown> & { source?: string }>;
 }
 
-export interface GetBacklinksDeps extends PreviewUrlDeps {
+interface GetBacklinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
 }
 

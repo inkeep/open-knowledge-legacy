@@ -23,7 +23,7 @@ import {
 import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
-import { handleCollabSocketError, type PinoLogger } from '@inkeep/open-knowledge-server';
+import type { BootedServer, PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
@@ -37,7 +37,7 @@ export type UiSpawnDecision =
   | { action: 'spawn'; reason: 'stale'; stalePid: number }
   | { action: 'skip'; reason: 'alive'; pid: number; port: number };
 
-export interface DecideUiSpawnInput {
+interface DecideUiSpawnInput {
   uiLock: { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
 }
@@ -55,7 +55,7 @@ export function decideUiSpawn(input: DecideUiSpawnInput): UiSpawnDecision {
   return { action: 'skip', reason: 'alive', pid: input.uiLock.pid, port: input.uiLock.port };
 }
 
-export interface SpawnOkUiOptions {
+interface SpawnOkUiOptions {
   lockDir: string;
   cwd: string;
   /** Override for tests — defaults to `node:child_process#spawn`. */
@@ -109,7 +109,7 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   }
 }
 
-export interface BuildIdleShutdownHandlerInput {
+interface BuildIdleShutdownHandlerInput {
   readUiLock: () => { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
   killPid: (pid: number, signal: NodeJS.Signals) => void;
@@ -130,8 +130,8 @@ export interface BuildIdleShutdownHandlerInput {
 /** 10s grace before SIGKILL escalation — long enough for a healthy UI to
  * release its lock + close sockets; short enough that a wedged UI (GC
  * pause, downstream fetch hang) doesn't stall idle-shutdown indefinitely. */
-export const DEFAULT_SIGTERM_GRACE_MS = 10_000;
-export const DEFAULT_SIGTERM_POLL_MS = 200;
+const DEFAULT_SIGTERM_GRACE_MS = 10_000;
+const DEFAULT_SIGTERM_POLL_MS = 200;
 
 /**
  * Build the idle-shutdown `onShutdown` closure. On fire:
@@ -200,7 +200,7 @@ export function buildIdleShutdownHandler(
   };
 }
 
-export interface BootStartServerOptions {
+interface BootStartServerOptions {
   config: Config;
   cwd: string;
   /** Skip auto-init scaffolding of `<cwd>/.open-knowledge/` (tests usually want this). */
@@ -245,6 +245,11 @@ export interface BootedStartServer {
  * Boot the collab server end-to-end and return a handle. Pure of process-level
  * concerns (signal handlers, banner, browser-open, exit codes) so integration
  * tests can drive it directly. The Commander action layers signals + UX on top.
+ *
+ * D35 extraction: the HTTP + WebSocket + listen + lock + idle-shutdown plumbing
+ * lives in `@inkeep/open-knowledge-server`'s `bootServer()`; this wrapper adds
+ * CLI-specific concerns (auto-init via `initContent`, resolveContentDir, UI-
+ * sibling spawn via `spawnOkUi`, open-browser-on-first-agent-edit).
  */
 export async function bootStartServer(opts: BootStartServerOptions): Promise<BootedStartServer> {
   const { config, cwd } = opts;
@@ -253,57 +258,41 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   const idleThresholdMs = opts.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   const { existsSync, mkdirSync } = await import('node:fs');
-  const { createServer: createHttpServer } = await import('node:http');
   const { resolve } = await import('node:path');
-  const {
-    attachIdleShutdown,
-    createServer,
-    getLogger,
-    isProcessAlive,
-    readUiLock,
-    updateServerLockPort,
-  } = await import('@inkeep/open-knowledge-server');
+  const { bootServer, getLogger, isProcessAlive, readUiLock } = await import(
+    '@inkeep/open-knowledge-server'
+  );
   const { resolveContentDir } = await import('../config/paths.ts');
-  const { WebSocketServer } = await import('ws');
 
   const log = opts.log ?? getLogger('start');
 
-  // Auto-init: scaffold .open-knowledge/ on every boot (unless skipped).
-  //
-  // We call initContent (not runInit) so the scaffolding is idempotent and
-  // scoped — it only fills in missing files under .open-knowledge/. We
-  // deliberately do NOT invoke upsertRootInstructions or MCP-config writes
-  // on every boot; those are first-time-setup concerns owned by `ok init`
-  // and the clone auto-init path. This makes partial .open-knowledge/
-  // states (scaffold files deleted, prior boot killed mid-init, etc.)
-  // self-heal on the next `ok start` without surprising the user by
-  // rewriting their root AGENTS.md.
-  let didAutoInit = false;
-  const okDir = resolve(cwd, OK_DIR);
-  const needsScaffold = !existsSync(okDir);
-  if (!skipAutoInit) {
-    try {
-      const { initContent } = await import('../content/init.ts');
-      const result = initContent(cwd);
-      if (needsScaffold || result.created.length > 0) {
-        didAutoInit = true;
-      }
-    } catch (err) {
-      console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
-    }
-  }
-
-  // Ensure content directory exists (for non-default content.dir).
+  // Resolve content directory before bootServer (CLI reads it from Config;
+  // bootServer takes a resolved contentDir as input).
   const contentDir = resolveContentDir(config, cwd);
   if (!existsSync(contentDir)) {
     mkdirSync(contentDir, { recursive: true });
     log.info({ contentDir }, 'Created content directory');
   }
 
+  // Track whether the upcoming auto-init actually scaffolded anything — the
+  // CLI banner branches on this (first-run tip, content preview).
+  const okDir = resolve(cwd, OK_DIR);
+  const needsScaffold = !existsSync(okDir);
+  const autoInitFn = skipAutoInit
+    ? undefined
+    : async () => {
+        try {
+          const { initContent } = await import('../content/init.ts');
+          const result = initContent(cwd);
+          return needsScaffold || result.created.length > 0;
+        } catch (err) {
+          console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
+          return false;
+        }
+      };
+
   // First-agent-edit auto-open points at the UI sibling when we can find one,
   // so the browser lands on the editor rather than the bare collab endpoint.
-  // Lookup is lazy — the sibling may still be binding on the first agent
-  // write; if `ui.lock` isn't usable we skip open silently.
   let agentEditOpened = false;
   const lockDirForUiLookup = resolve(contentDir, OK_DIR);
   const onAgentWrite = config.server.openOnAgentEdit
@@ -321,13 +310,38 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
       }
     : undefined;
 
-  const {
-    hocuspocus,
-    destroy: destroyHocuspocus,
-    ready,
-    degraded,
-    lockDir,
-  } = createServer({
+  // Capture uiSpawnDecision from inside the spawnUiSiblingFn callback so we
+  // can return it on the BootedStartServer handle for tests + status output.
+  let uiSpawnDecision: UiSpawnDecision | null = null;
+  const spawnUiSiblingFn = async ({
+    lockDir: resolvedLockDir,
+  }: {
+    lockDir: string;
+    log: PinoLogger;
+  }) => {
+    const uiLockBefore = readUiLock(resolvedLockDir);
+    uiSpawnDecision = decideUiSpawn({
+      uiLock: uiLockBefore,
+      isAlive: isProcessAlive,
+    });
+    if (uiSpawnDecision.action === 'spawn' && !skipUiAutoSpawn) {
+      try {
+        spawnOkUi({ lockDir: resolvedLockDir, cwd, spawn: opts.spawn });
+        log.info({ reason: uiSpawnDecision.reason }, '[start] auto-spawned ok ui sibling');
+      } catch (err) {
+        console.warn(
+          `[start] failed to auto-spawn ok ui: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (uiSpawnDecision.action === 'skip') {
+      log.info(
+        { port: uiSpawnDecision.port, pid: uiSpawnDecision.pid },
+        `UI already running at port ${uiSpawnDecision.port}`,
+      );
+    }
+  };
+
+  const booted: BootedServer = await bootServer({
     contentDir,
     projectDir: cwd,
     contentRoot: config.content.dir,
@@ -342,218 +356,42 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // Pass the exact runtime that started this server so /api/local-op/* can
     // spawn additional CLI processes without needing open-knowledge on PATH.
     localOpCliArgs: [process.execPath, process.argv[1]],
+    // CLI-specific opt-ins
+    attachUiSibling: true,
+    idleShutdownMs: idleThresholdMs,
+    skipAutoInit,
+    autoInitFn,
+    spawnUiSiblingFn,
+    idleShutdownHandler: (destroyServer) =>
+      buildIdleShutdownHandler({
+        readUiLock: () => readUiLock(booted.lockDir),
+        isAlive: isProcessAlive,
+        killPid: (pid, signal) => {
+          process.kill(pid, signal);
+        },
+        destroy: destroyServer,
+        log,
+      }),
+    log,
   });
 
-  // Auto-spawn the UI sibling when none is running. Greenfield: we don't try
-  // to adopt alien siblings — if another `ok ui` is already live we leave it
-  // alone and let it keep serving.
-  const uiLockBefore = readUiLock(lockDir);
-  const uiSpawnDecision = decideUiSpawn({
-    uiLock: uiLockBefore,
-    isAlive: isProcessAlive,
-  });
-  if (uiSpawnDecision.action === 'spawn' && !skipUiAutoSpawn) {
-    try {
-      spawnOkUi({ lockDir, cwd, spawn: opts.spawn });
-      log.info({ reason: uiSpawnDecision.reason }, '[start] auto-spawned ok ui sibling');
-    } catch (err) {
-      console.warn(
-        `[start] failed to auto-spawn ok ui: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  } else if (uiSpawnDecision.action === 'skip') {
-    log.info(
-      { port: uiSpawnDecision.port, pid: uiSpawnDecision.pid },
-      `UI already running at port ${uiSpawnDecision.port}`,
-    );
+  if (!uiSpawnDecision) {
+    // bootServer skipped the UI-sibling callback (attachUiSibling=false is
+    // never set here, so this path is unreachable under CLI — included for
+    // type exhaustiveness).
+    uiSpawnDecision = { action: 'skip', reason: 'alive', pid: 0, port: 0 };
   }
 
-  // Create HTTP server — collab + /api/* only. Static React assets are served
-  // by `ok ui` after the lifecycle split (SPEC FR-1.2).
-  const httpServer = createHttpServer((req, res) => {
-    const url = req.url?.split('?')[0];
-
-    // Priority 1: API routes via Hocuspocus onRequest extensions.
-    if (url?.startsWith('/api/')) {
-      hocuspocus
-        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-        .hooks('onRequest', { request: req, response: res } as any)
-        .then(() => {
-          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
-          // `res.writeHead(200)` and returns before `res.end()` runs, so
-          // `writableEnded` is still false here while `headersSent` is already
-          // true. Treat either as "a handler owns the response" and skip the
-          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
-          if (res.writableEnded || res.headersSent) return;
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
-        })
-        .catch((err) => {
-          console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded && !res.headersSent) {
-            res.writeHead(500);
-            res.end('Internal server error');
-          } else if (!res.writableEnded) {
-            res.end();
-          }
-        });
-      return;
-    }
-
-    // Anything else — collab only, no static assets. `ok ui` owns the browser
-    // surface; point users there.
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'Not found. The React UI is served by `ok ui` (default port 3000).',
-        path: url ?? '/',
-      }),
-    );
-  });
-
-  const wss = new WebSocketServer({ noServer: true });
-  wss.on('error', (err) => {
-    log.error({ err }, 'WebSocketServer error');
-  });
-  httpServer.on('upgrade', (req, socket, head) => {
-    // D-034 — MCP keep-alive channel.
-    //
-    // Path `/collab/keepalive` is intercepted BEFORE Hocuspocus sees it. The
-    // `ok mcp` process opens a bare WebSocket here on startup (no docName,
-    // no Y.Doc) purely to have a TCP socket that is visible to the idle-
-    // shutdown primitive's `/collab*` upgrade counter. Without this channel,
-    // MCP stdio uses HTTP fetch for every tool call and never holds a WS —
-    // so the server can idle-shutdown while MCP is still actively connected
-    // (observed 2026-04-16: tool calls failed with "Server unreachable:
-    // fetch failed" until user manually `/mcp` reconnected).
-    //
-    // The idle-shutdown listener (registered separately below) already
-    // counts this upgrade via its own `/collab*`-prefixed path check; no
-    // change is needed there.
-    // EPIPE/ECONNRESET are kernel-level TCP-teardown signals that surface
-    // asynchronously after ws.send()/socket.write() has already returned.
-    // Userspace pre-checks cannot prevent them (see websockets/ws#1017).
-    // Hocuspocus already filters by readyState in Connection.send; this
-    // handler classifies + drops the expected async emission, surfacing
-    // everything else. See CLAUDE.md precedent on async socket errors.
-    if (req.url?.startsWith('/collab/keepalive')) {
-      socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (handleCollabSocketError(err)) return;
-        log.error({ err }, 'MCP keepalive socket error');
-      });
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        // Optional server-initiated ping keeps the connection lively through
-        // any TCP idle pruning. Local loopback typically does not need this,
-        // but emitting a ping every 30s costs effectively nothing.
-        const pingTimer = setInterval(() => {
-          try {
-            ws.ping();
-          } catch {
-            // best-effort
-          }
-        }, 30_000);
-        pingTimer.unref?.();
-        ws.on('close', () => clearInterval(pingTimer));
-        ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (!handleCollabSocketError(err)) {
-            log.error({ err }, 'MCP keepalive WS error');
-          }
-          ws.terminate();
-        });
-      });
-      return;
-    }
-
-    if (req.url?.startsWith('/collab')) {
-      socket.on('error', (err: NodeJS.ErrnoException) => {
-        if (handleCollabSocketError(err)) return;
-        log.error({ err }, 'Upgrade socket error');
-      });
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = hocuspocus.handleConnection(
-          ws as unknown as WebSocket,
-          req as unknown as Request,
-        );
-        ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
-        });
-        ws.on('close', (code: number, reason: Buffer) => {
-          clientConnection.handleClose({ code, reason: reason.toString() });
-        });
-        ws.on('error', (err: NodeJS.ErrnoException) => {
-          if (!handleCollabSocketError(err)) {
-            log.error({ err }, 'WebSocket error');
-          }
-          ws.terminate();
-        });
-      });
-    }
-  });
-
-  // Wire idle-shutdown AFTER upgrade handler so both listeners see the same
-  // events (Node fires `upgrade` listeners in registration order). WebSocket
-  // count only — DirectConnections are invisible per D-017.
-  const idleHandle = attachIdleShutdown({
-    httpServer,
-    thresholdMs: idleThresholdMs,
-    log,
-    onShutdown: buildIdleShutdownHandler({
-      readUiLock: () => readUiLock(lockDir),
-      isAlive: isProcessAlive,
-      killPid: (pid, signal) => {
-        process.kill(pid, signal);
-      },
-      destroy: async () => {
-        await destroyHocuspocus();
-      },
-      log,
-    }),
-  });
-
-  // Listen — return only after the kernel has bound the port so callers can
-  // probe `port` immediately.
-  await new Promise<void>((resolveListen, reject) => {
-    const onError = (err: Error) => reject(err);
-    httpServer.once('error', onError);
-    httpServer.listen(config.server.port, config.server.host, () => {
-      httpServer.removeListener('error', onError);
-      resolveListen();
-    });
-  });
-
-  // Update the lock file with the kernel-assigned port (or confirm the
-  // configured one). MCP discovery reads this field to connect.
-  const addr = httpServer.address();
-  const realPort = typeof addr === 'object' && addr !== null ? addr.port : config.server.port;
-  updateServerLockPort(lockDir, realPort);
-
-  // Composite destroy: detach idle, close http listener, then destroy server.
-  // Order matters — closing http first frees the port; destroyHocuspocus then
-  // tears down persistence + releases server.lock as its final step.
-  let destroyed = false;
-  const destroy = async (): Promise<void> => {
-    if (destroyed) return;
-    destroyed = true;
-    idleHandle.detach();
-    await new Promise<void>((resolveClose) => {
-      httpServer.close(() => resolveClose());
-    });
-    await destroyHocuspocus();
-  };
-
   return {
-    httpServer,
-    destroy,
-    lockDir,
+    httpServer: booted.httpServer,
+    destroy: booted.destroy,
+    lockDir: booted.lockDir,
     contentDir,
-    port: realPort,
-    ready,
-    degraded,
+    port: booted.port,
+    ready: booted.ready,
+    degraded: booted.degraded,
     uiSpawnDecision,
-    didAutoInit,
+    didAutoInit: booted.didAutoInit,
   };
 }
 

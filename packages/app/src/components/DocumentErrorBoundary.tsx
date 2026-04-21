@@ -46,7 +46,7 @@ import {
   SyncTimeoutError,
 } from '@/editor/sync-promise';
 
-export interface ErrorCopy {
+interface ErrorCopy {
   title: string;
   summary: string;
 }
@@ -197,7 +197,7 @@ function DocumentErrorFallback({
   );
 }
 
-export interface DocumentErrorBoundaryProps {
+interface DocumentErrorBoundaryProps {
   activeDocName: string;
   previousDocName?: string;
   onNavigateBack?: (previousDocName: string) => void;
@@ -208,7 +208,7 @@ export interface DocumentErrorBoundaryProps {
    * remain in the pool and the retry would resolve immediately via the
    * warm-path (the broken provider has `synced=true` from the original sync)
    * without re-running `setupObservers`, leaving the user with a
-   * non-functional editor and no further error UI. Per CLAUDE.md precedent
+   * non-functional editor and no further error UI. Per PRECEDENTS.md precedent
    * #7 ("remove broken capabilities rather than shipping them"), the
    * known-broken fallback path (invalidate-only) is removed entirely — every
    * caller must wire recycle or the retry button is not functional.

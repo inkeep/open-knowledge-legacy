@@ -132,7 +132,7 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
 /**
  * Maximum number of editors mounted concurrently inside `<Activity>` boundaries.
  * Decoupled from `MAX_POOL` (exported from `provider-pool.ts`, default 10) per
- * SPEC.md §10 DX9 / CLAUDE.md precedent #15(c) — pool-resident-but-not-
+ * SPEC.md §10 DX9 / PRECEDENTS.md precedent #15(c) — pool-resident-but-not-
  * Activity-mounted docs keep their warm provider (so revisiting is fast via
  * Suspense-gated remount with `syncPromise` resolving immediately from
  * `hasSynced=true`) but skip the per-editor memory + observer-CPU cost of
@@ -174,7 +174,7 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 
-export interface EditorActivityPoolProps {
+interface EditorActivityPoolProps {
   activeDocName: string;
   isSourceMode: boolean;
   editorPlaceholder?: string;

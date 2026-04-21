@@ -33,7 +33,7 @@ export const DESCRIPTION = [
   '- `position` — Where to insert: "append", "prepend", or "replace"',
 ].join('\n');
 
-export interface WriteDocumentDeps {
+interface WriteDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: Config;
   resolveCwd: (explicit?: string) => Promise<string>;

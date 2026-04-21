@@ -34,6 +34,7 @@ import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { ProjectSwitcher } from './ProjectSwitcher';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge } from './ui/badge';
@@ -122,14 +123,13 @@ export function EditorHeader({
       ? `${activeDocName}.md`
       : '';
 
+  const index = activeDocName?.lastIndexOf('/') ?? -1;
+
   // Split doc path into prefix (truncatable) and filename (prioritized).
   // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
-  const pathPrefix = activeDocName?.includes('/')
-    ? `${activeDocName.substring(0, activeDocName.lastIndexOf('/') + 1)}`
-    : '';
-  const fileBaseName = activeDocName
-    ? activeDocName.substring(activeDocName.lastIndexOf('/') + 1)
-    : '';
+  const pathPrefix =
+    activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
+  const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -351,6 +351,15 @@ export function EditorHeader({
             {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
           </TooltipContent>
         </Tooltip>
+        {typeof window !== 'undefined' && window.okDesktop ? (
+          <>
+            <Separator
+              orientation="vertical"
+              className="mx-1 h-4 shrink-0 data-vertical:self-center"
+            />
+            <ProjectSwitcher bridge={window.okDesktop} />
+          </>
+        ) : null}
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         {isFolderTarget ? (
           <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">

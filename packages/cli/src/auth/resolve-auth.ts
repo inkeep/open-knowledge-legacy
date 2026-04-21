@@ -1,9 +1,9 @@
 import { detectGh } from './gh-detect.ts';
 import type { TokenStore } from './token-store.ts';
 
-export type AuthTier = 'A' | 'B' | 'C' | 'none';
+type AuthTier = 'A' | 'B' | 'C' | 'none';
 
-export interface ResolvedAuth {
+interface ResolvedAuth {
   tier: AuthTier;
   /**
    * git -c flags to pass for credential injection.
@@ -12,7 +12,7 @@ export interface ResolvedAuth {
   credentialArgs: string[];
 }
 
-export interface ResolveAuthOptions {
+interface ResolveAuthOptions {
   /** Skip gh detection even if gh is on PATH */
   skipGhDetect?: boolean;
 }

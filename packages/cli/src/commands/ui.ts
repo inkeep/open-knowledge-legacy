@@ -71,7 +71,7 @@ export async function closeHttpServers(servers: HttpServer[]): Promise<void> {
   );
 }
 
-export interface StartUiServerOptions {
+interface StartUiServerOptions {
   config: Config;
   cwd: string;
   port: number;
@@ -425,11 +425,11 @@ function resolveRequestedPort(optsPort: string | undefined, envPort: string | un
  * No side effects beyond starting the proxy server on the "proxy" branch.
  * Tests verify each branch directly without driving Commander.
  */
-export type UiCollisionResult =
+type UiCollisionResult =
   | { mode: 'already-running'; port: number }
   | { mode: 'proxy'; handle: ProxyServerHandle; upstreamPort: number };
 
-export interface ResolveUiLockCollisionOptions {
+interface ResolveUiLockCollisionOptions {
   requestedPort: number;
   host: string;
   lockDir: string;

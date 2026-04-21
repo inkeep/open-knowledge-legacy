@@ -127,7 +127,7 @@ export interface BridgeMergeContentLossInfo {
  * "how much" + "is it the same substring across events" signals for rate
  * charting + deduplication without leaking raw user content into logs.
  */
-export interface RedactedLostSubstring {
+interface RedactedLostSubstring {
   len: number;
   digest: string;
 }

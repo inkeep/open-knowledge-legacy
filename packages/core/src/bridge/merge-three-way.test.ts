@@ -20,6 +20,9 @@ import {
   mergeThreeWay,
 } from './merge-three-way.ts';
 
+const BENCH_ENABLED = process.env.RUN_BENCH === '1' || process.env.RUN_BENCH === 'true';
+const describeBench = BENCH_ENABLED ? describe : describe.skip;
+
 // ── DMP baseline for comparison ────────────────────────────────────────
 // This mirrors the current `applyUserDelta` three-way merge:
 // patch_make(baseline, userText) → patch_apply(patches, agentText)
@@ -301,8 +304,12 @@ describe('T7: Delete/edit conflict', () => {
 //
 // What it validates: The merge algorithm is fast enough for the 50ms
 // debounce budget. Regression gate against O(n^2) algorithms.
+//
+// GATING. Wall-clock assertions are tier-2-only in this repo. Keep the
+// correctness suite in tier 1 and run timing-sensitive checks only when
+// `RUN_BENCH=1` is set by the dedicated perf workflows/scripts.
 // ────────────────────────────────────────────────────────────────────────
-describe('T-perf: Performance gate', () => {
+describeBench('T-perf: Performance gate', () => {
   // 200-line document — representative of typical product documents.
   // The merge fires per Observer A debounce (50ms), not on a 1000-line
   // synthetic corpus. Real documents are 50-200 lines with 1-5 concurrent

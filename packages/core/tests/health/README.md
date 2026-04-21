@@ -90,7 +90,7 @@ Both live inside the `y-prosemirror@1.3.7` patch at the `schema.node()` call whe
 - **Block context** (attempting to materialize a block-level element that doesn't exist in our schema): increment `ypsMismatch.block`, substitute a `rawMdxFallback` node carrying the raw source. Visible in the editor; user sees "this block didn't match any known component" surface.
 - **Inline context** (schema throw on a mark or inline node): increment `ypsMismatch.inline`, log + skip. We don't have an inline fallback node, so the offending mark is silently dropped from the materialized PM tree.
 
-See AGENTS.md precedent #9 for the CRDT-permanent multi-peer data loss that motivated the patch, and `specs/2026-04-13-mdx-tolerant-parsing/evidence/y-prosemirror-failure-modes.md` for the full propagation trace.
+See PRECEDENTS.md precedent #9 for the CRDT-permanent multi-peer data loss that motivated the patch, and `specs/2026-04-13-mdx-tolerant-parsing/evidence/y-prosemirror-failure-modes.md` for the full propagation trace.
 
 ---
 

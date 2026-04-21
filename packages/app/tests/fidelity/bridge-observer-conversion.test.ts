@@ -337,7 +337,7 @@ const unicodeParagraph = fc
 
 /**
  * Empty-YAML frontmatter arbitrary — `---\n---\n` with nothing between
- * the fences. This is NG11 class per CLAUDE.md precedent; the parser
+ * the fences. This is NG11 class per AGENTS.md (Irreducible gaps); the parser
  * must not crash or corrupt the body. Used via `mdWithFrontmatterOrEmpty`
  * which mixes empty-YAML and populated cases under one property.
  */
@@ -993,7 +993,7 @@ describe('Chain D — frontmatter strip/prepend conversion', () => {
     PBT_TIMEOUT_MS,
   );
 
-  // Empty-YAML frontmatter is a real edge case (NG11 class per CLAUDE.md):
+  // Empty-YAML frontmatter is a real edge case (NG11 class per AGENTS.md, Irreducible gaps):
   // a spec file may ship with `---\n---\n` placeholder frontmatter that
   // the parser must not crash on and the round-trip must preserve body
   // content. This is a deterministic point-check (not PBT) — the edge
@@ -1127,7 +1127,7 @@ describe('Meta — PBT harness is live', () => {
 // content-loss scenario does throw. If a future refactor accidentally
 // removes the throw (or changes the exported error class), fidelity tier
 // fails loudly rather than silently degrading the one-permitted-catch-site
-// invariant documented in AGENTS.md precedent #11(b) + CLAUDE.md STOP rule.
+// invariant documented in PRECEDENTS.md precedent #11(b) + CLAUDE.md STOP rule.
 describe('Error-path anchor — BridgeMergeContentLossError', () => {
   test('BridgeMergeContentLossError is exported and instantiable', () => {
     expect(typeof BridgeMergeContentLossError).toBe('function');

@@ -3,6 +3,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { createCodeFenceTracker } from '@inkeep/open-knowledge-core';
 import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
@@ -215,9 +216,13 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
           }
         }
       }
+      // Skip `#` comments inside fenced code blocks — they render as code, not headings,
+      // so they must stay out of the heading count that maps 1:1 onto the outline index.
+      const isInCodeFence = createCodeFenceTracker();
       let seen = 0;
       for (let i = startLine; i <= doc.lines; i++) {
         const line = doc.line(i);
+        if (isInCodeFence(line.text)) continue;
         if (/^#{1,6}\s/.test(line.text)) {
           if (seen === detail.index) {
             view.dispatch({

@@ -55,13 +55,6 @@ import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 const SAFE_URL_SCHEME = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
 
-/**
- * Unsafe URL schemes we deliberately block from the outbound clipboard HTML.
- * Tests assert this list — do not remove entries without revisiting
- * `mdast-to-html.test.ts`.
- */
-export const UNSAFE_URL_SCHEMES = ['javascript:', 'data:', 'vbscript:', 'file:'] as const;
-
 function isSafeUrl(url: string): boolean {
   const trimmed = url.trim();
   if (trimmed === '') return true; // empty href — benign, keep.

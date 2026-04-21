@@ -5,7 +5,7 @@ import type { Config } from '../config/schema.ts';
  * Public — committed to source. Overridable via env var or config.
  * See: packages/cli/src/github/app-config.ts
  */
-export const DEFAULT_OAUTH_CLIENT_ID = 'Ov23liqlSd0V1MwR6rhI';
+const DEFAULT_OAUTH_CLIENT_ID = 'Ov23liqlSd0V1MwR6rhI';
 
 /**
  * Resolve the OAuth App client ID with this precedence:

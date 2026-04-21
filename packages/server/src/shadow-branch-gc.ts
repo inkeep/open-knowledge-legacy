@@ -27,7 +27,7 @@ import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './sha
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
-export interface GcResult {
+interface GcResult {
   deletedBranches: string[];
   renamedBranches: { from: string; to: string }[];
   retainedBranches: string[];

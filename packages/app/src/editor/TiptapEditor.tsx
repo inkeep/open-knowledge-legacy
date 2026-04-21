@@ -452,7 +452,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       // count-monotonicity logic in `triggerFlash` below derives the next
       // count from `flashStateRef.current?.count ?? 0`, not from the
       // window hook. The `window.__agentFlashState` write is a DEV-only
-      // test observation channel (US-006 / AGENTS.md precedent #20); Vite
+      // test observation channel (US-006 / PRECEDENTS.md precedent #20); Vite
       // statically replaces `import.meta.env.DEV` at build time so the
       // branch tree-shakes out of production bundles.
       flashStateRef.current = state;
