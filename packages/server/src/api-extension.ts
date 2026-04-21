@@ -2001,65 +2001,82 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
       if (projectDir) {
+        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
+        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
+        let parentGitAvailable = false;
         try {
-          versionTag = await withParentLock(async () => {
-            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-            // Count existing ok/v* tags to derive N
-            const existing = await pg.tags(['--list', 'ok/v*']);
-            const n = existing.all.length + 1;
-            const tag = `ok/v${n}`;
-
-            // Author identity: principal from body > git config > openknowledge fallback
-            let authorName = 'openknowledge';
-            let authorEmail = 'noreply@openknowledge.local';
-            if (principalName && principalEmail) {
-              authorName = principalName;
-              authorEmail = principalEmail;
-            } else {
-              try {
-                const gitId = await resolveGitIdentity(projectDir);
-                if (gitId) {
-                  authorName = gitId.name;
-                  authorEmail = gitId.email;
-                }
-              } catch {
-                // no-op — use defaults
-              }
-            }
-
-            // Co-Authored-By trailers for agent/principal session contributors (US-020)
-            const coAuthorLines: string[] = [];
-            for (const entry of contributorSnapshot.values()) {
-              if (entry.writerId.startsWith('agent-') || entry.writerId.startsWith('principal-')) {
-                const trailerEmail = `${entry.writerId}@openknowledge.local`;
-                coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
-              }
-            }
-
-            // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
-            const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
-            const commitMsg =
-              coAuthorLines.length > 0
-                ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
-                : subjectLine;
-
-            // Stage content changes and create commit (allow-empty so a tag always lands)
-            const gitPathspec = resolvedContentRoot || '.';
-            await pg.add(gitPathspec);
-            await pg
-              .env({
-                GIT_AUTHOR_NAME: authorName,
-                GIT_AUTHOR_EMAIL: authorEmail,
-                GIT_COMMITTER_NAME: authorName,
-                GIT_COMMITTER_EMAIL: authorEmail,
-              })
-              .commit(commitMsg, ['--allow-empty']);
-            await pg.addTag(tag);
-            console.log(`[checkpoint] parent-git commit + tag ${tag}`);
-            return tag;
-          });
+          const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+          await checkPg.revparse(['--git-dir']);
+          parentGitAvailable = true;
         } catch (e) {
-          console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+          console.warn(
+            `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        if (parentGitAvailable) {
+          try {
+            versionTag = await withParentLock(async () => {
+              const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+              // Count existing ok/v* tags to derive N
+              const existing = await pg.tags(['--list', 'ok/v*']);
+              const n = existing.all.length + 1;
+              const tag = `ok/v${n}`;
+
+              // Author identity: principal from body > git config > openknowledge fallback
+              let authorName = 'openknowledge';
+              let authorEmail = 'noreply@openknowledge.local';
+              if (principalName && principalEmail) {
+                authorName = principalName;
+                authorEmail = principalEmail;
+              } else {
+                try {
+                  const gitId = await resolveGitIdentity(projectDir);
+                  if (gitId) {
+                    authorName = gitId.name;
+                    authorEmail = gitId.email;
+                  }
+                } catch {
+                  // no-op — use defaults
+                }
+              }
+
+              // Co-Authored-By trailers for agent/principal session contributors (US-020)
+              const coAuthorLines: string[] = [];
+              for (const entry of contributorSnapshot.values()) {
+                if (
+                  entry.writerId.startsWith('agent-') ||
+                  entry.writerId.startsWith('principal-')
+                ) {
+                  const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                  coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+                }
+              }
+
+              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+              const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+              const commitMsg =
+                coAuthorLines.length > 0
+                  ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                  : subjectLine;
+
+              // Stage content changes and create commit (allow-empty so a tag always lands)
+              const gitPathspec = resolvedContentRoot || '.';
+              await pg.add(gitPathspec);
+              await pg
+                .env({
+                  GIT_AUTHOR_NAME: authorName,
+                  GIT_AUTHOR_EMAIL: authorEmail,
+                  GIT_COMMITTER_NAME: authorName,
+                  GIT_COMMITTER_EMAIL: authorEmail,
+                })
+                .commit(commitMsg, ['--allow-empty']);
+              await pg.addTag(tag);
+              console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+              return tag;
+            });
+          } catch (e) {
+            console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+          }
         }
       }
 
