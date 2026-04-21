@@ -20,13 +20,19 @@
 #
 # What it does (precedent #22 shell-script conventions):
 #   1. Runs `bun run build` from repo root (turbo-cached; no-op when clean).
-#   2. Starts `open-knowledge start --port 0` (kernel-assigned) in the
-#      background; polls `<repo>/.open-knowledge/server.lock` for the real
-#      port (same lock MCP discovery reads — see precedent #1 + cli.ts).
-#   3. Runs `bun run perf:profile --scenario=<name> --target=http://localhost:<port> --headless`
+#   2. Starts TWO CLI processes on kernel-assigned ports:
+#        a. `open-knowledge start --port 0` — collab server (Hocuspocus +
+#           /api/*). Polls `.open-knowledge/server.lock` for bound port.
+#        b. `open-knowledge ui --port 0` — React asset server + /api/config
+#           proxy. Reads server.lock to derive collab URL for the SPA.
+#           Polls `.open-knowledge/ui.lock` for bound port.
+#      Post-2026-04-16 CLI split: `ok start` is collab-only (no static
+#      assets), `ok ui` is the sole server of the React bundle. Playwright
+#      must navigate against the UI port, NOT the collab port.
+#   3. Runs `bun run perf:profile --scenario=<name> --target=http://localhost:<ui-port> --headless`
 #      N times. Results land at `packages/app/tests/perf/results/<scenario>.<ts>.json`.
-#   4. Sends SIGTERM to the server; the CLI's CC8 shutdown ordering
-#      releases the lock cleanly. Waits up to 5s for lock to disappear.
+#   4. Sends SIGTERM to both processes; CLI's CC8 shutdown ordering releases
+#      both locks cleanly. Waits up to 5s for both locks to disappear.
 #   5. Parses the N most recent result files, extracts the scenario's
 #      primary metric, reports individual values + median.
 #
@@ -84,7 +90,8 @@ require_jq
 REPO_ROOT="$(resolve_repo_root)"
 
 CLI_BIN="$REPO_ROOT/packages/cli/dist/cli.mjs"
-LOCK_FILE="$REPO_ROOT/.open-knowledge/server.lock"
+SERVER_LOCK="$REPO_ROOT/.open-knowledge/server.lock"
+UI_LOCK="$REPO_ROOT/.open-knowledge/ui.lock"
 RESULTS_DIR="$REPO_ROOT/packages/app/tests/perf/results"
 
 # ── 1. Build (turbo-cached) ──────────────────────────────────────────────────
@@ -102,76 +109,132 @@ if [[ ! -x "$CLI_BIN" && ! -f "$CLI_BIN" ]]; then
   exit 2
 fi
 
-# ── 2. Start CLI in background ───────────────────────────────────────────────
+# ── 2. Start both CLI processes in background ───────────────────────────────
+#
+# Post-2026-04-16 CLI split: `ok start` is the collab server (Hocuspocus +
+# /api/*), `ok ui` is a sibling process that serves the built React bundle
+# from packages/app/dist + proxies /api/config pointing at the start lock.
+# Neither is sufficient alone — the app needs ui's static assets to load the
+# SPA, and ui needs start's server.lock to bootstrap HocuspocusProvider.
+# Playwright must navigate against the UI port, NOT the collab port.
+#
+# Start `ok start` first so its server.lock exists before `ok ui` runs its
+# /api/config derivation. A silently-failing ui (no collab target) would
+# produce a React app that paints but never hydrates content.
 
-# Remove any stale lock file from a previous crashed run. The CLI's
-# acquireServerLock has stale-PID recovery but we'd rather start clean.
-if [[ -f "$LOCK_FILE" ]]; then
-  STALE_PID="$(jq -r '.pid // "0"' "$LOCK_FILE" 2>/dev/null || echo "0")"
-  if [[ "$STALE_PID" != "0" ]] && ! kill -0 "$STALE_PID" 2>/dev/null; then
-    echo "[perf-prod] Removing stale server.lock from dead pid $STALE_PID"
-    rm -f "$LOCK_FILE"
+# Remove stale locks from crashed prior runs. The CLI has stale-PID recovery
+# but starting clean is simpler; skip only when the lock references a live pid.
+for lock in "$SERVER_LOCK" "$UI_LOCK"; do
+  if [[ -f "$lock" ]]; then
+    STALE_PID="$(jq -r '.pid // "0"' "$lock" 2>/dev/null || echo "0")"
+    if [[ "$STALE_PID" != "0" ]] && ! kill -0 "$STALE_PID" 2>/dev/null; then
+      echo "[perf-prod] Removing stale $(basename "$lock") from dead pid $STALE_PID"
+      rm -f "$lock"
+    fi
   fi
-fi
+done
 
-echo "[perf-prod] Starting open-knowledge on kernel-assigned port…"
-# Send CLI stdout/stderr to a logfile we can tail for debugging but don't
-# flood the parent's output with it.
 SERVER_LOG="$(mktemp -t perf-prod-server.XXXXXX.log)"
+UI_LOG="$(mktemp -t perf-prod-ui.XXXXXX.log)"
+
+# NOTE: broken-symlink resilience lives in our `totalist@3.0.1` patch
+# (patches/totalist@3.0.1.patch). Before that patch, a single broken
+# symlink anywhere under the content tree would crash `ok ui` at startup
+# (sirv's totalist walker does synchronous statSync and propagates
+# ENOENT). `/review-local`'s plugin bundle in `tmp/ship/pr-review-plugin/
+# skills/` routinely creates broken symlinks (relative paths assuming a
+# non-monorepo layout); the patched totalist now skips un-stat-able
+# entries instead of crashing. No pre-flight symlink cleanup needed.
+
+echo "[perf-prod] Starting open-knowledge (collab server) on kernel-assigned port…"
 node "$CLI_BIN" start --port 0 >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
   local ec=$?
-  if kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "[perf-prod] Stopping server (pid $SERVER_PID)…"
-    kill -TERM "$SERVER_PID" 2>/dev/null || true
-    # Wait up to 5s for clean shutdown + lock release.
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      if ! kill -0 "$SERVER_PID" 2>/dev/null && [[ ! -f "$LOCK_FILE" ]]; then break; fi
-      sleep 0.5
-    done
-    # If still alive, force-kill. The CLI's CC8 shutdown is deterministic,
-    # so this path shouldn't trigger under normal conditions.
-    if kill -0 "$SERVER_PID" 2>/dev/null; then
-      echo "[perf-prod] WARN: server did not exit on SIGTERM; sending SIGKILL" >&2
-      kill -KILL "$SERVER_PID" 2>/dev/null || true
+  for proc in "UI:$UI_PID" "SERVER:$SERVER_PID"; do
+    local label="${proc%%:*}"
+    local pid="${proc##*:}"
+    [[ -z "$pid" || "$pid" == "$proc" ]] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[perf-prod] Stopping $label (pid $pid)…"
+      kill -TERM "$pid" 2>/dev/null || true
     fi
-  fi
+  done
+  # Wait up to 5s for both to exit + locks to release. Termination order
+  # doesn't matter — each owns its own lock and releases it on SIGTERM per
+  # the CLI's CC8 shutdown protocol.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    local alive=0
+    [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null && alive=$((alive + 1))
+    [[ -n "${UI_PID:-}" ]] && kill -0 "$UI_PID" 2>/dev/null && alive=$((alive + 1))
+    if (( alive == 0 )) && [[ ! -f "$SERVER_LOCK" && ! -f "$UI_LOCK" ]]; then break; fi
+    sleep 0.5
+  done
+  # Force-kill any remaining processes.
+  for pid in "${UI_PID:-}" "${SERVER_PID:-}"; do
+    [[ -z "$pid" ]] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[perf-prod] WARN: pid $pid did not exit on SIGTERM; sending SIGKILL" >&2
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
   if [[ $ec -ne 0 ]]; then
-    echo "[perf-prod] Script exited non-zero ($ec). Server log: $SERVER_LOG" >&2
+    echo "[perf-prod] Script exited non-zero ($ec). Logs:" >&2
+    echo "  server: $SERVER_LOG" >&2
+    echo "  ui:     $UI_LOG" >&2
   else
-    rm -f "$SERVER_LOG" 2>/dev/null || true
+    rm -f "$SERVER_LOG" "$UI_LOG" 2>/dev/null || true
   fi
   exit $ec
 }
+UI_PID=""
 trap cleanup EXIT INT TERM
 
-# ── 3. Wait for lock with real port ──────────────────────────────────────────
+# ── 3. Wait for server lock, then start ui, then wait for ui lock ────────────
 
-echo "[perf-prod] Waiting for $LOCK_FILE with a bound port…"
-PORT=""
-for i in $(seq 1 60); do
-  if [[ -f "$LOCK_FILE" ]]; then
-    PORT="$(jq -r '.port // 0' "$LOCK_FILE" 2>/dev/null || echo "0")"
-    if [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT > 0 )); then
-      echo "[perf-prod] Server listening on port $PORT (after ${i} * 0.5s = $((i*500))ms)"
-      break
+wait_for_lock() {
+  local lock="$1"
+  local pid="$2"
+  local label="$3"
+  local log="$4"
+  local port=""
+  # NOTE: informational messages go to stderr (>&2); only the port number
+  # goes to stdout. Caller captures this function via `PORT="$(wait_for_lock ...)"`,
+  # so any stdout write other than the port number would corrupt the value.
+  for i in $(seq 1 60); do
+    if [[ -f "$lock" ]]; then
+      port="$(jq -r '.port // 0' "$lock" 2>/dev/null || echo "0")"
+      if [[ "$port" =~ ^[0-9]+$ ]] && (( port > 0 )); then
+        echo "[perf-prod] $label listening on port $port (after ${i} * 0.5s = $((i*500))ms)" >&2
+        printf '%s\n' "$port"
+        return 0
+      fi
     fi
-  fi
-  # Check the server didn't crash on startup.
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "error: open-knowledge server exited before binding a port — log:" >&2
-    tail -30 "$SERVER_LOG" >&2 || true
-    exit 3
-  fi
-  sleep 0.5
-done
-if [[ -z "$PORT" || ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT == 0 )); then
-  echo "error: server lock never populated with a real port after 30s — log:" >&2
-  tail -30 "$SERVER_LOG" >&2 || true
-  exit 3
-fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "error: $label process exited before binding a port — log:" >&2
+      tail -30 "$log" >&2 || true
+      return 1
+    fi
+    sleep 0.5
+  done
+  echo "error: $label lock never populated with a real port after 30s — log:" >&2
+  tail -30 "$log" >&2 || true
+  return 1
+}
+
+echo "[perf-prod] Waiting for $SERVER_LOCK with a bound port…"
+COLLAB_PORT="$(wait_for_lock "$SERVER_LOCK" "$SERVER_PID" "collab server" "$SERVER_LOG")" || exit 3
+
+# Now start the UI server. It reads server.lock (already populated) to derive
+# /api/config's collabUrl. Use port 0 for kernel-assigned; respects
+# resolveUiLockCollision (US-005 lock handling).
+echo "[perf-prod] Starting open-knowledge ui (React asset server) on kernel-assigned port…"
+node "$CLI_BIN" ui --port 0 >"$UI_LOG" 2>&1 &
+UI_PID=$!
+
+echo "[perf-prod] Waiting for $UI_LOCK with a bound port…"
+PORT="$(wait_for_lock "$UI_LOCK" "$UI_PID" "ui server" "$UI_LOG")" || exit 3
 
 # ── 4. Run perf:profile N times ──────────────────────────────────────────────
 
@@ -257,12 +320,30 @@ else
   # Compute median of non-negative values. Negative values (scenario
   # sentinel for "could not measure") are excluded from the median but
   # still reported above as -1 for visibility.
-  median="$(printf '%s' "$values" | awk 'BEGIN{c=0} /^-?[0-9]+(\.[0-9]+)?$/ && $1 >= 0 {a[c++]=$1+0} END {
-    if (c == 0) { print "NO_VALID_VALUES"; exit }
-    asort(a)
-    if (c % 2 == 1) { print a[(c+1)/2] }
-    else { print (a[c/2] + a[c/2+1]) / 2 }
-  }' LC_ALL=C)"
+  #
+  # Portability note (precedent #22(d)): GNU awk has `asort()`, BSD awk
+  # (macOS default) does not. The POSIX-compatible path is an explicit
+  # insertion sort over the collected array — a handful of lines, no
+  # external dependency. `LC_ALL=C` keeps `.`-as-decimal-separator so a
+  # non-US locale doesn't break numeric parsing.
+  median="$(printf '%s' "$values" | LC_ALL=C awk '
+    /^-?[0-9]+(\.[0-9]+)?$/ && $1 >= 0 { a[c++] = $1 + 0 }
+    END {
+      if (c == 0) { print "NO_VALID_VALUES"; exit }
+      # Insertion sort — portable across BSD awk + gawk + mawk.
+      for (i = 1; i < c; i++) {
+        key = a[i]
+        j = i - 1
+        while (j >= 0 && a[j] > key) {
+          a[j+1] = a[j]
+          j--
+        }
+        a[j+1] = key
+      }
+      if (c % 2 == 1) { print a[(c-1)/2] }
+      else { print (a[c/2-1] + a[c/2]) / 2 }
+    }
+  ')"
   echo ""
   if [[ "$median" == "NO_VALID_VALUES" ]]; then
     echo "[perf-prod] WARN: no valid (non-negative) values to compute median from" >&2
