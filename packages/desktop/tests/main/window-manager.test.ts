@@ -58,6 +58,8 @@ function makeWindow(): BrowserWindowLike & { fireClose: () => void } {
 interface TestEnv {
   utilities: MockUtility[];
   windows: Array<ReturnType<typeof makeWindow>>;
+  /** Opts recorded from each createWindow call, parallel to `windows`. */
+  createWindowOpts: Array<{ additionalArguments: string[]; title: string }>;
   timers: Array<{ cb: () => void; ms: number }>;
   killProbe: ReturnType<typeof mock>;
   deps: WindowManagerDeps;
@@ -66,16 +68,19 @@ interface TestEnv {
 function buildEnv(): TestEnv {
   const utilities: MockUtility[] = [];
   const windows: Array<ReturnType<typeof makeWindow>> = [];
+  const createWindowOpts: Array<{ additionalArguments: string[]; title: string }> = [];
   const timers: Array<{ cb: () => void; ms: number }> = [];
   const killProbe = mock(() => {});
   let pidCounter = 10000;
   return {
     utilities,
     windows,
+    createWindowOpts,
     timers,
     killProbe,
     deps: {
-      createWindow: () => {
+      createWindow: (opts) => {
+        createWindowOpts.push(opts);
         const w = makeWindow();
         windows.push(w);
         return w;
@@ -101,6 +106,14 @@ describe('WindowManager', () => {
 
   beforeEach(() => {
     env = buildEnv();
+  });
+
+  test('createProjectWindow passes projectName as BrowserWindow title (spawn path)', async () => {
+    const wm = new WindowManager(env.deps);
+    const promise = wm.createProjectWindow({ projectPath: '/tmp/dragon-wiki' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52010, apiOrigin: 'http://localhost:52010' });
+    await promise;
+    expect(env.createWindowOpts[0]?.title).toBe('dragon-wiki');
   });
 
   test('createProjectWindow forks utility, sends init, waits for ready, creates window', async () => {
@@ -375,6 +388,8 @@ describe('WindowManager', () => {
       expect(ctx.port).toBe(59534);
       expect(ctx.apiOrigin).toBe('http://localhost:59534');
       expect(env.windows.length).toBe(1);
+      // Title is set from projectName in the attach path too.
+      expect(env.createWindowOpts[0]?.title).toBe('dragon');
     });
 
     test('stale lock (pid dead) falls through to spawn mode', async () => {

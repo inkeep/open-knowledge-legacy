@@ -40,6 +40,9 @@ export function createNavigatorWindow(deps: NavigatorDeps): BrowserWindowLike {
       '--ok-project-path=',
       '--ok-project-name=Project Navigator',
     ],
+    // Static launcher title — no project bound, so branded app name works
+    // here. Editor windows override with their own `projectName` title.
+    title: 'Open Knowledge',
   });
   if (deps.rendererDevUrl) {
     void window.loadURL(deps.rendererDevUrl);

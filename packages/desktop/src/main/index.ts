@@ -133,11 +133,21 @@ function ensureWindowManager() {
     createWindow: (opts) => {
       const win = new BrowserWindow({
         ...DEFAULT_WIN_OPTS,
+        title: opts.title,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
           additionalArguments: opts.additionalArguments,
           preload: join(__dirname, '../preload/index.js'),
         },
+      });
+      // Electron defaults to updating the window title from the renderer's
+      // `<title>` tag after page load — that would clobber our per-project
+      // title with `packages/app/index.html`'s static "Open Knowledge" on
+      // every navigation. `preventDefault()` in the event handler keeps our
+      // title, while still letting the renderer read `document.title` for
+      // its own purposes if it wants to.
+      win.on('page-title-updated', (e) => {
+        e.preventDefault();
       });
       return win as unknown as BrowserWindowLike;
     },

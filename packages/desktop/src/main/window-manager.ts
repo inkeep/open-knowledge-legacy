@@ -94,6 +94,14 @@ export interface WindowManagerDeps {
   /** `electron.BrowserWindow` constructor (subsetted). */
   createWindow(opts: {
     additionalArguments: string[];
+    /**
+     * Window title — the project name. Passed through to Electron's
+     * `new BrowserWindow({ title })` so users can distinguish open windows
+     * at the OS level (Dock, Mission Control, ⌘-` switcher, Cmd+Tab).
+     * Main-process also hooks `page-title-updated` to prevent the renderer's
+     * `<title>Open Knowledge</title>` from overwriting this after load.
+     */
+    title: string;
     /** Other webPreferences / window opts the manager wants to set. */
   }): BrowserWindowLike;
   /** `electron.utilityProcess.fork(entry, args, opts)`. */
@@ -305,6 +313,7 @@ export class WindowManager {
         `--ok-project-name=${projectName}`,
         `--ok-mode=editor`,
       ],
+      title: projectName,
     });
 
     if (this.deps.rendererDevUrl) {
@@ -429,6 +438,7 @@ export class WindowManager {
         `--ok-project-name=${projectName}`,
         `--ok-mode=editor`,
       ],
+      title: projectName,
     });
 
     if (this.deps.rendererDevUrl) {
