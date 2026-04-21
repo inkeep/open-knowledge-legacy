@@ -41,7 +41,7 @@ export interface ComponentRegistry {
 }
 
 /**
- * Creates a registry pre-populated with the 18 built-in components
+ * Creates a registry pre-populated with the 17 built-in components
  * and the wildcard '*' fallback. Additional entries can be added
  * via `registry.set()` (future NG13 extensibility seam).
  */

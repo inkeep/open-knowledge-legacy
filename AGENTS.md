@@ -182,7 +182,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/registry/` — Component descriptor registry subsystem (single source of truth for descriptors; `built-ins.ts` is the hand-authored manifest, `createRegistry()` returns the runtime `ComponentRegistry` with wildcard `'*'` fallback)
   - `types.ts` — `PropDef` (discriminated union: string/boolean/number/enum/reactnode) + `JsxComponentMeta` (name, props, icon, category, searchTerms, emptyChildName)
-  - `built-ins.ts` — Manifest of 18 built-in component descriptors (Callout, Card, Cards, Steps, Step, Tabs, Tab, Accordions, Accordion, Files, Folder, File, ImageZoom, Banner, TypeTable, InlineTOC, Mermaid, Audio)
+  - `built-ins.ts` — Manifest of 17 built-in component descriptors (Callout, Card, Cards, Steps, Step, Tabs, Tab, Accordions, Accordion, Files, Folder, File, ImageZoom, Banner, TypeTable, InlineTOC, Audio). Mermaid was removed 2026-04-21 (placeholder stub was non-functional — no SVG rendering); existing `<Mermaid />` content auto-converts to `rawMdxFallback` via the wildcard path. Un-defer framework at `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`.
   - `index.ts` — `createRegistry()` factory returning `ComponentRegistry` (get/set/has/entries), pre-populated with built-ins + wildcard `'*'` fallback
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils

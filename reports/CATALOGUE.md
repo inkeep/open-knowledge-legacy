@@ -1,12 +1,13 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-16 by `generate-catalogue.ts`
-> 85 valid reports indexed
+> Auto-generated on 2026-04-16 by `generate-catalogue.ts`; manually amended 2026-04-21 to add the Mermaid-rendering report.
+> 86 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Mermaid Rendering Options for MDX Editors — Factual La…](mermaid-rendering-options-for-mdx-editors/REPORT.md) | 2026-04-21 | 5 files | mermaid rendering, mdx editor, nod… | Mermaid, fumadocs, TipTap, ProseMi… |
 | [Block-Level Selection Indicator Patterns in Rich-Text …](block-selection-indicator-patterns/REPORT.md) | 2026-04-16 | 6 files | block selection UX, focus indicato… | Notion, Tiptap, Lexical, Anytype, … |
 | [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-15 | 18 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
 | [Storybook Ecosystem Survey — Component Blocks v2 Reuse…](storybook-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 7 files | component registration patterns, p… | Storybook 8.x, argTypes, Controls … |
@@ -97,6 +98,15 @@
 ---
 
 ## Report Details
+
+### [Mermaid Rendering Options for MDX Editors — Factual Landscape](mermaid-rendering-options-for-mdx-editors/REPORT.md)
+
+> Factual research on Mermaid rendering options for a live MDX editor context. Covers the official `mermaid` package at version 11.14.0 (API, theme, error surface, known issues, version drift), alternative renderers (beautiful-mermaid, Rust WASM forks, server-side via mermaid-cli/mermaid.ink/Kroki), how 10 sibling editors (Notion, Obsidian, Outline, BlockNote, MDXEditor, TipTap community, Lexical, AFFiNE, VS Code, mermaid-live-editor) implement Mermaid in a NodeView-like slot, re-render patterns, and bundle-size measurements. No recommendations — evidence-cited facts only.
+
+- **Created:** 2026-04-21
+- **Topics:** mermaid rendering, mdx editor, nodeview, bundle size, react rerender, promise cache, decoration widget, client-side diagrams
+- **Subjects:** Mermaid, fumadocs, TipTap, ProseMirror, Outline, Obsidian, Notion, BlockNote, MDXEditor, Lexical, AFFiNE, VS Code, beautiful-mermaid, mermaid-cli, mermaid.ink, Kroki
+- **Evidence files:** 5
 
 ### [Block-Level Selection Indicator Patterns in Rich-Text Editors](block-selection-indicator-patterns/REPORT.md)
 
