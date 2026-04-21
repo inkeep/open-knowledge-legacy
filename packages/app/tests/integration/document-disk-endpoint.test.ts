@@ -41,26 +41,22 @@ describe('GET /api/document-disk — happy path', () => {
 
     const res = await fetch(`http://127.0.0.1:${server.port}/api/document-disk?docName=${docName}`);
     expect(res.status).toBe(200);
-    // Response shape aligned with /api/document (review Minor #16 post-fix):
-    // `content` + `sizeBytes` are the canonical names; `markdown` + `bytes`
-    // remain duplicated for one rollout cycle.
+    // Response shape aligned with /api/document (review Minor #16):
+    // `content` + `sizeBytes` are the canonical names. No backwards-compat
+    // keys — the endpoint is new with no external consumers (Pass-1
+    // Minor #2 resolution).
     const body = (await res.json()) as {
       ok: boolean;
       docName: string;
       content: string;
       sizeBytes: number;
       mtime: number;
-      markdown: string;
-      bytes: number;
     };
     expect(body.ok).toBe(true);
     expect(body.docName).toBe(docName);
     expect(body.content).toBe(content);
     expect(body.sizeBytes).toBe(content.length);
     expect(typeof body.mtime).toBe('number');
-    // Backwards-compat keys duplicate the canonical values.
-    expect(body.markdown).toBe(content);
-    expect(body.bytes).toBe(content.length);
     // Cache-Control: no-store (review Minor #23).
     expect(res.headers.get('cache-control')).toBe('no-store');
   });

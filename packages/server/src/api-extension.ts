@@ -1320,11 +1320,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
         throw err;
       }
-      // Response shape aligned with `/api/document` — `content` (not
-      // `markdown`) and `sizeBytes` (not `bytes`) so future consumers
-      // calling both endpoints don't re-key responses (review Minor #16).
-      // `markdown` + `bytes` remain duplicated for one rollout cycle so the
-      // client can work against either server version.
+      // Response shape aligned with `/api/document` — `content` + `sizeBytes`
+      // (review Minor #16). No dual-key emission: the endpoint is new in
+      // V2 and has no external consumers yet, so there's nothing to
+      // preserve compat for (review Pass-1 Minor #2 — dropping the earlier
+      // "remove after one rollout cycle" debt up-front).
       //
       // `Cache-Control: no-store` — disk bytes are a snapshot, not a long-
       // lived resource; the Suspense fallback path wants the current value
@@ -1338,9 +1338,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           content: markdown,
           sizeBytes: stat.size,
           mtime: stat.mtimeMs,
-          // Backwards-compat keys — remove after one rollout cycle.
-          markdown,
-          bytes: stat.size,
         },
         { 'Cache-Control': 'no-store' },
       );

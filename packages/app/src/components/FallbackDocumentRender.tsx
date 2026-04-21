@@ -41,12 +41,27 @@ export interface FallbackDocumentRenderProps {
 }
 
 export const FallbackDocumentRender: FC<FallbackDocumentRenderProps> = ({ markdown, docName }) => {
-  // Lazy-init `startTime` and the rendered tree so React Compiler can
-  // reason about pure reads during render. The parse + walk is the
-  // dominant cost of this component; memoizing it per instance bounds
-  // the cost to O(ancestor re-renders → 0) during the fallback window.
+  // The parse + walk is the dominant cost of this component. We memoize
+  // per-instance keyed on the `markdown` identity so (a) ancestor re-
+  // renders with the same markdown see O(0) cost (just reference the
+  // cached tree) and (b) a markdown-prop change on the same component
+  // instance triggers a fresh walk. Review Pass-1 Minor #4 — pre-fix
+  // the lazy-init `useState(() => markdownToReact(markdown))` served
+  // (a) but stranded (b): once `invalidateDiskMarkdown` is wired into
+  // the file-watcher signal path, the same component instance would
+  // keep rendering stale bytes after the cache refreshed.
+  //
+  // The "setState during render when derived state changed" pattern is
+  // documented in React docs as compiler-safe: React discards the
+  // current render and re-renders with the updated state immediately,
+  // so callers never see the intermediate stale state.
   const [startTime] = useState(() => performance.now());
-  const [tree] = useState(() => markdownToReact(markdown));
+  const [cachedMarkdown, setCachedMarkdown] = useState(markdown);
+  const [tree, setTree] = useState(() => markdownToReact(markdown));
+  if (markdown !== cachedMarkdown) {
+    setCachedMarkdown(markdown);
+    setTree(markdownToReact(markdown));
+  }
 
   useEffect(() => {
     const duration = performance.now() - startTime;

@@ -1239,7 +1239,7 @@ describe('US-002 telemetry marks', () => {
     expect(evicts.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('setActivityMountList emits ok/cache/connect + ok/cache/disconnect', () => {
+  test('setActivityMountList emits ok/cache/connect + ok/cache/disconnect', async () => {
     const h = makeTiptapHarness('doc-a');
     mountTiptapEditor({
       docName: h.docName,
@@ -1247,12 +1247,56 @@ describe('US-002 telemetry marks', () => {
       factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
     });
     setActivityMountList(['doc-a']);
+    // connect() returns a Promise in the test harness — the `ok/cache/connect`
+    // mark fires inside .then so success + failure are mutually exclusive
+    // (review Pass-1 Minor #3). Flush microtasks before asserting.
+    await Promise.resolve();
     const connects = performance.getEntriesByName('ok/cache/connect');
     expect(connects.length).toBeGreaterThanOrEqual(1);
 
     setActivityMountList([]);
+    // disconnect() is synchronous — mark fires inside the try (no Promise).
     const disconnects = performance.getEntriesByName('ok/cache/disconnect');
     expect(disconnects.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('connect telemetry is mutually exclusive: reject emits connect-failed only (review Pass-1 Minor #3)', async () => {
+    const rejectingProvider = {
+      document: new Y.Doc(),
+      destroy: mock(() => {}),
+      connect: mock(() => Promise.reject(new Error('connect failed'))),
+      disconnect: mock(() => {}),
+    } as unknown as HocuspocusProvider;
+    const dom = makeNode();
+    const editor = {
+      editorView: { dom, scrollDOM: dom },
+      commands: { focus: mock(() => {}) },
+      destroy: mock(() => {}),
+    } as unknown as Editor;
+    const ytext = rejectingProvider.document.getText('source');
+    mountTiptapEditor({
+      docName: 'doc-reject',
+      container: makeNode() as unknown as HTMLElement,
+      factory: () => ({
+        editor,
+        ydoc: rejectingProvider.document,
+        ytext,
+        provider: rejectingProvider,
+      }),
+    });
+    // Clear prior marks from other tests.
+    performance.clearMarks('ok/cache/connect');
+    performance.clearMarks('ok/cache/connect-failed');
+    setActivityMountList(['doc-reject']);
+    // Flush microtasks so the rejection propagates.
+    await Promise.resolve();
+    await Promise.resolve();
+    const connects = performance.getEntriesByName('ok/cache/connect');
+    const failed = performance.getEntriesByName('ok/cache/connect-failed');
+    // The key invariant: reject emits connect-failed WITHOUT emitting
+    // connect first. Pre-fix, both marks fired for the same docName.
+    expect(failed.length).toBeGreaterThanOrEqual(1);
+    expect(connects.length).toBe(0);
   });
 
   test('US-012 FR13: mount with sizeStats emits ok/cold/editor-mount-stats', () => {

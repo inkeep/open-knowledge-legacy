@@ -770,32 +770,40 @@ export function setActivityMountList(docNames: readonly string[]): void {
     }
   }
 
-  // Promotion — fired for docs that are newly active. connect() returns a
-  // Promise; we fire-and-forget, but attach explicit handlers so a
-  // rejected Promise doesn't surface as an unhandled rejection and so
-  // failures emit telemetry (review Major #12).
+  // Promotion — fired for docs that are newly active. connect() may
+  // return a Promise (Hocuspocus v3+) or undefined (older versions). The
+  // success vs failure emission is mutually exclusive (review Pass-1
+  // Minor #3): when the returned Promise rejects, only `connect-failed`
+  // fires — not `connect` followed by `connect-failed` for the same
+  // activation. Consumers filtering by mark kind (FR3b observer-CPU cap
+  // dashboards) no longer over-count successes.
   for (const docName of next) {
     if (prev.has(docName)) continue;
     const provider = findProvider(docName);
     if (!provider) continue;
-    try {
-      const result = provider.connect();
-      mark('ok/cache/connect', { docName });
-      // connect() may return a Promise — catch rejections to avoid
-      // unhandled-promise-rejection and to emit connect-failed telemetry.
-      if (result && typeof (result as Promise<unknown>).then === 'function') {
-        (result as Promise<unknown>).catch((err) => {
-          mark('ok/cache/connect-failed', {
-            docName,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-    } catch (err) {
+    const emitFailed = (err: unknown): void => {
       mark('ok/cache/connect-failed', {
         docName,
         message: err instanceof Error ? err.message : String(err),
       });
+    };
+    try {
+      const result = provider.connect();
+      if (result && typeof (result as Promise<unknown>).then === 'function') {
+        // Async branch — emit success inside .then so failure is
+        // mutually exclusive. The .then+reject form is preferred over
+        // .then().catch() because .catch rejections from the success
+        // handler would double-count as failures.
+        (result as Promise<unknown>).then(
+          () => mark('ok/cache/connect', { docName }),
+          (err) => emitFailed(err),
+        );
+      } else {
+        // Synchronous return — success is observable immediately.
+        mark('ok/cache/connect', { docName });
+      }
+    } catch (err) {
+      emitFailed(err);
     }
   }
 

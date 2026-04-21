@@ -153,21 +153,8 @@ async function defaultFetcher(docName: string): Promise<DiskMarkdownEntry | null
   });
   if (!res.ok) return null;
   const body = (await res.json()) as
-    | {
-        ok: true;
-        docName: string;
-        content?: string;
-        markdown?: string;
-        mtime: number;
-        sizeBytes?: number;
-        bytes?: number;
-      }
+    | { ok: true; docName: string; content: string; sizeBytes: number; mtime: number }
     | { ok: false; error: string };
   if (!('ok' in body) || !body.ok) return null;
-  // Accept both `content`+`sizeBytes` (post-review rename per Minor #16) and
-  // `markdown`+`bytes` (pre-rename) so the client can work against either
-  // server version during the rollout window.
-  const md = typeof body.content === 'string' ? body.content : (body.markdown ?? '');
-  const sizeBytes = typeof body.sizeBytes === 'number' ? body.sizeBytes : (body.bytes ?? md.length);
-  return { markdown: md, mtime: body.mtime, sizeBytes };
+  return { markdown: body.content, mtime: body.mtime, sizeBytes: body.sizeBytes };
 }

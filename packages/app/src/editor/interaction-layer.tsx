@@ -20,7 +20,7 @@
  *
  * Consumer wiring (example — actual ports land in US-005/006/007):
  *
- *     const layer = createInteractionLayer({ editor, rootContainer });
+ *     const layer = createInteractionLayer({ editor });
  *     layer.register({
  *       type: 'internalLink',
  *       nodeId: 'm1',
@@ -147,18 +147,13 @@ export interface InteractionLayerHandle {
 
 export interface CreateInteractionLayerParams {
   editor: InteractionLayerEditor;
-  /**
-   * Optional container override for the React subtree. Defaults to the
-   * parent of `editor.view.dom` (the editor's immediate wrapper — same
-   * height/width the chips live in, so PropPanel positioning is natural).
-   */
-  rootContainer?: HTMLElement;
-  /**
-   * Optional externally-provided root mount point. If omitted, a new
-   * `<div data-ok-interaction-layer>` is created and appended to
-   * `rootContainer`.
-   */
-  mountNode?: HTMLElement;
+  // Prior versions accepted `rootContainer` + `mountNode` to drive a
+  // per-layer React root via `createRoot(mountNode)`. That path was
+  // removed because separate React roots can't access the main app's
+  // context providers (PageListProvider etc.) — the host now renders
+  // `<InteractionLayerView store={store} />` inside the main React
+  // tree. The fields were kept temporarily as "backwards-compat" but
+  // had no callers, so they're gone now. See review Pass-1 Minor #1.
 }
 
 // ---------------------------------------------------------------------------
@@ -358,12 +353,6 @@ function getEditorDom(editor: InteractionLayerEditor): HTMLElement | null {
 export function createInteractionLayer(
   params: CreateInteractionLayerParams,
 ): InteractionLayerHandle {
-  // rootContainer + mountNode were used to drive the layer's own React root.
-  // Removed when the layer switched to in-tree rendering via
-  // `<InteractionLayerView>` — a separate createRoot() strands PropPanels
-  // from the app's context providers. Both fields are accepted for
-  // backwards-compat but ignored; destructure them here to preserve the
-  // public option shape without TypeScript unused-param noise.
   const { editor } = params;
   const store = new InteractionLayerStore();
 
@@ -373,38 +362,62 @@ export function createInteractionLayer(
 
   // Event delegation handlers (same-target class so add/remove matches).
   //
-  // Chip registrations can opt into a `handlePrimary` hook (used by mark /
-  // node chips that want to preserve universal link semantics — bare-click
-  // navigates, Cmd/Ctrl/middle-click opens in new tab, Enter/Space fires
-  // the primary action). When `handlePrimary` returns true we treat the
-  // activation as handled and DO NOT open the PropPanel. Chips without
+  // Chip registrations can opt into a `handlePrimary` hook for universal-
+  // link semantics — bare click opens PropPanel, Cmd/Ctrl+click and
+  // middle-click open in a new tab via `window.open`. Chips without
   // `handlePrimary` (rich NodeViews like RawMdxFallback / JsxComponent)
-  // fall through to the layer's default setActiveNode path.
+  // always fall through to the default setActiveNode path.
   //
-  // Middle-click + Cmd/Ctrl+Click semantics: pointerdown fires for
-  // `button === 1` (middle) and carries `metaKey`/`ctrlKey` on modified
-  // clicks. The browser's default auxiliary-click scroll mode for middle-
-  // click does not interfere because we preventDefault on newTab-intent
-  // activations.
+  // Event split (review Pass-1 Consider #1): bare-click PropPanel activation
+  // fires on `pointerdown` (early, responsive); new-tab navigation fires
+  // on `click` / `auxclick` (Safari's popup blocker prefers user
+  // activation from click-family events over pointer-family — Firefox
+  // and Chrome also accept click as user activation for window.open).
+  // Keeping the two code paths disjoint means there's no coordination
+  // between them — pointerdown handles PropPanel, click/auxclick handles
+  // navigate, and neither fires the other's path.
   const onPointerDown = (ev: Event): void => {
     const pe = ev as PointerEvent;
-    // Right-click (button === 2) falls through to the browser's native
-    // context menu — don't intercept.
+    // Right-click (button === 2) → browser context menu.
     if (pe.button === 2) return;
+    const isNewTabIntent = pe.metaKey || pe.ctrlKey || pe.button === 1;
+    if (isNewTabIntent) {
+      // Let `click` / `auxclick` drive navigation. Suppress the browser's
+      // default middle-click scroll-cursor so the user isn't confused.
+      if (pe.button === 1) pe.preventDefault?.();
+      return;
+    }
     const id = resolveClickTargetNodeId(ev.target, store);
     if (id === null) return;
     const reg = store.getRegistration(id);
-    const newTab = pe.metaKey || pe.ctrlKey || pe.button === 1;
     if (reg?.handlePrimary) {
-      const handled = reg.handlePrimary({ nodeId: id, type: reg.type, newTab });
-      if (handled) {
-        // Suppress the default browser auxiliary-click scroll on middle-click.
-        if (newTab) pe.preventDefault?.();
-        return;
-      }
+      const handled = reg.handlePrimary({ nodeId: id, type: reg.type, newTab: false });
+      if (handled) return;
     }
-    // Default: open the PropPanel.
     store.setActiveNode(id);
+  };
+
+  // Click / auxclick: fires handlePrimary only when the gesture carries
+  // new-tab intent. Bare clicks were already handled by onPointerDown.
+  //
+  // Dedupe note: Firefox historically fires BOTH `click` and `auxclick`
+  // for middle-click; Chrome fires only `auxclick` for middle-click;
+  // Safari ignores middle-click entirely (navigation-wise). We filter
+  // `click` events with `button === 1` out here so a Firefox middle-
+  // click doesn't fire handlePrimary twice — auxclick is the sole middle-
+  // click channel.
+  const onMouseActivate = (ev: Event): void => {
+    const me = ev as MouseEvent;
+    if (me.button === 2) return;
+    if (me.type === 'click' && me.button === 1) return;
+    const newTab = me.metaKey || me.ctrlKey || me.button === 1;
+    if (!newTab) return;
+    const id = resolveClickTargetNodeId(ev.target, store);
+    if (id === null) return;
+    const reg = store.getRegistration(id);
+    if (!reg?.handlePrimary) return;
+    const handled = reg.handlePrimary({ nodeId: id, type: reg.type, newTab: true });
+    if (handled) me.preventDefault?.();
   };
 
   // Keyboard activation (Critical #3): Enter / Space on a focused chip
@@ -492,6 +505,11 @@ export function createInteractionLayer(
     editorDom = getEditorDom(editor);
     if (!editorDom) return;
     editorDom.addEventListener('pointerdown', onPointerDown, true);
+    // Click + auxclick for new-tab navigation (Consider #1 split —
+    // Safari/Firefox popup blockers prefer click-sourced user activation
+    // over pointerdown).
+    editorDom.addEventListener('click', onMouseActivate, true);
+    editorDom.addEventListener('auxclick', onMouseActivate, true);
     editorDom.addEventListener('keydown', onKeyDown, true);
     if (typeof document !== 'undefined') {
       document.addEventListener('pointerdown', onOutsideClick, true);
@@ -502,6 +520,8 @@ export function createInteractionLayer(
   const detachListeners = (): void => {
     if (!clickListenerAttached) return;
     editorDom?.removeEventListener('pointerdown', onPointerDown, true);
+    editorDom?.removeEventListener('click', onMouseActivate, true);
+    editorDom?.removeEventListener('auxclick', onMouseActivate, true);
     editorDom?.removeEventListener('keydown', onKeyDown, true);
     if (typeof document !== 'undefined') {
       document.removeEventListener('pointerdown', onOutsideClick, true);
