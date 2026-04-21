@@ -14,13 +14,13 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'javascript',
     alias: ['js', 'jsx'],
     extensions: ['js', 'mjs', 'cjs', 'jsx'],
-    load: () => javascript({ jsx: true }),
+    load: async () => javascript({ jsx: true }),
   }),
   LanguageDescription.of({
     name: 'typescript',
     alias: ['ts', 'tsx'],
     extensions: ['ts', 'mts', 'cts', 'tsx'],
-    load: () => javascript({ typescript: true, jsx: true }),
+    load: async () => javascript({ typescript: true, jsx: true }),
   }),
   LanguageDescription.of({
     name: 'json',
@@ -38,13 +38,13 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'css',
     alias: ['scss', 'less'],
     extensions: ['css', 'scss', 'less'],
-    load: () => css(),
+    load: async () => css(),
   }),
   LanguageDescription.of({
     name: 'html',
     alias: ['htm'],
     extensions: ['html', 'htm'],
-    load: () => html(),
+    load: async () => html(),
   }),
   LanguageDescription.of({
     name: 'python',
@@ -62,7 +62,7 @@ export const codeLanguages: LanguageDescription[] = [
     name: 'markdown',
     alias: ['md', 'mdx'],
     extensions: ['md', 'mdx', 'markdown'],
-    load: () => markdown(),
+    load: async () => markdown(),
   }),
   LanguageDescription.of({
     name: 'bash',
