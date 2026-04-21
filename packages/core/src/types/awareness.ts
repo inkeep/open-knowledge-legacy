@@ -1,7 +1,12 @@
 export interface AwarenessUser {
   name: string;
   color: string;
-  type: 'human' | 'agent';
+  /**
+   * Always `'human'`. Agents no longer publish per-doc awareness — their
+   * presence lives on the `__system__` Y.Doc's `agentPresence` map instead
+   * (multi-agent-presence SPEC FR-3 + FR-10, precedent #3).
+   */
+  type: 'human';
   icon?: string;
   coeditor?: string;
   tabId: string;
@@ -21,7 +26,9 @@ export interface AwarenessState {
    *
    * Scope: per-write attribution (writeKind + doc the agent wrote to). Distinct
    * from `agentPresence` below, which carries sustained session state
-   * (displayName, icon, color, mode, ts). Both fields coexist on `__system__`.
+   * (displayName, icon, color, mode, ts). Both fields coexist on `__system__`
+   * — the identity-attribution spec owns `agentFocus`, the multi-agent-presence
+   * spec owns `agentPresence`.
    */
   agentFocus?: Record<string, AgentFocusEntry>;
   /**

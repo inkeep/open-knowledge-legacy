@@ -60,10 +60,12 @@ declare namespace globalThis {
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
   /**
-   * Test-only hook: inject a fake agent-focus awareness state into the
-   * `__system__` provider, simulating a remote agent peer focusing on
+   * Test-only hook: inject a fake agent-presence awareness state into the
+   * `__system__` provider, simulating a remote agent peer writing to
    * `docName`. Fires the awareness 'change' event which triggers
-   * SystemDocSubscriber's debounced nav check → hash change.
+   * SystemDocSubscriber's debounced nav check → hash change. See
+   * `SystemDocSubscriber.tsx` for the injected state shape (matches
+   * `AgentPresenceEntry`).
    */
-  var __test_injectAgentFocus: ((docName: string) => boolean) | undefined;
+  var __test_injectAgentPresence: ((docName: string) => boolean) | undefined;
 }

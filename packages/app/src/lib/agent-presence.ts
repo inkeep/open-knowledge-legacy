@@ -1,0 +1,98 @@
+/**
+ * Client-side helpers for observing agent presence on `__system__` awareness.
+ *
+ * The server publishes a map-valued `agentPresence?: Record<agentId, entry>`
+ * field on its local awareness state (see `AgentPresenceBroadcaster` on the
+ * server). Clients walk every awareness peer (the `__system__` DirectConnection
+ * is the only producer in production — walking is defensive against test
+ * injections and future producers), collect map entries, filter stale ones
+ * + entries with `currentDoc === null` (D8), and expose helpers for the
+ * presence bar's sectioned layout + the nav consumer.
+ *
+ * Decisions: SPEC §6 FR-5 (TTL filter), D4 (AGENT_PRESENCE_STALE_MS = 5_000),
+ * D8 (hide currentDoc=null), D11 (cross-doc agents stay visible), D12
+ * (sectioned bar — current vs cross-doc).
+ */
+import type { AgentPresenceEntry } from '@inkeep/open-knowledge-core';
+
+/** Awareness entries older than this are filtered out. */
+export const AGENT_PRESENCE_STALE_MS = 5_000;
+
+/** Debounce window applied to awareness change events before picking primary. */
+export const AGENT_PRESENCE_DEBOUNCE_MS = 300;
+
+/**
+ * Window during which nav is suppressed after a user keystroke. Conservative
+ * default — don't yank focus while the user is mid-edit. Tune down if users
+ * report "it's too slow to follow."
+ */
+export const AGENT_PRESENCE_TYPING_GUARD_MS = 3_000;
+
+/**
+ * Minimal Yjs awareness shape needed by the helpers — keeps them testable
+ * without importing the full `y-protocols/awareness` module.
+ */
+export interface AgentPresenceAwareness {
+  getStates(): ReadonlyMap<number, AgentPresenceState>;
+}
+
+export interface AgentPresenceState {
+  agentPresence?: Record<string, AgentPresenceEntry>;
+}
+
+/**
+ * Aggregate and filter agent presence entries into two buckets: agents
+ * currently on the active doc vs agents elsewhere (cross-doc). Stale entries
+ * (`now - ts >= AGENT_PRESENCE_STALE_MS`) and entries with
+ * `currentDoc === null` (D8) are dropped before bucketing.
+ *
+ * Intended shape for the sectioned presence bar (D12, Design B):
+ *   `[...humans, ...current] | [divider] | [...crossDoc]`
+ * where `current` agents get mode-based visual treatment and `crossDoc`
+ * agents are dimmed + grayscaled.
+ */
+export function pickAgentsForDoc(
+  awareness: AgentPresenceAwareness,
+  activeDocName: string | null,
+  now: number,
+): { current: AgentPresenceEntry[]; crossDoc: AgentPresenceEntry[] } {
+  const current: AgentPresenceEntry[] = [];
+  const crossDoc: AgentPresenceEntry[] = [];
+  for (const state of awareness.getStates().values()) {
+    const presence = state.agentPresence;
+    if (!presence) continue;
+    for (const entry of Object.values(presence)) {
+      if (!entry.currentDoc) continue;
+      if (now - entry.ts >= AGENT_PRESENCE_STALE_MS) continue;
+      if (entry.currentDoc === activeDocName) {
+        current.push(entry);
+      } else {
+        crossDoc.push(entry);
+      }
+    }
+  }
+  return { current, crossDoc };
+}
+
+/**
+ * Pick the single doc the browser should navigate to, given the current
+ * awareness snapshot. Reads the latest-ts non-stale `agentPresence` entry's
+ * `currentDoc`. Returns `null` when no live presence exists. Behavior
+ * parity with the pre-migration `pickPrimary` over `agentFocus` — latest-ts
+ * wins, staleness filter matches.
+ */
+export function pickPrimary(awareness: AgentPresenceAwareness, now: number): string | null {
+  const entries: AgentPresenceEntry[] = [];
+  for (const state of awareness.getStates().values()) {
+    const presence = state.agentPresence;
+    if (!presence) continue;
+    for (const entry of Object.values(presence)) {
+      if (!entry.currentDoc) continue;
+      if (now - entry.ts >= AGENT_PRESENCE_STALE_MS) continue;
+      entries.push(entry);
+    }
+  }
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => b.ts - a.ts);
+  return entries[0].currentDoc;
+}

@@ -93,6 +93,20 @@ interface DocumentContextValue {
   /** Unpin — resume agent nav on the next focus change. */
   unpin: () => void;
   /**
+   * The `__system__` HocuspocusProvider, lifted from `SystemDocSubscriber`
+   * so presence-bar consumers (`usePresence` in US-006) can read agent
+   * presence from `__system__.awareness` without re-materializing a second
+   * provider. `null` while the subscriber is mounting or between collabUrl
+   * resets. Set via `setSystemProvider` — do NOT assign directly.
+   */
+  systemProvider: HocuspocusProvider | null;
+  /**
+   * Provider-registration callback used by `SystemDocSubscriber` to publish
+   * its `__system__` provider (and null on unmount). Single-writer by
+   * convention — only one SystemDocSubscriber should mount at a time.
+   */
+  setSystemProvider: (provider: HocuspocusProvider | null) => void;
+  /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
    * while `server.lock` is absent — consumers that also need the URL
@@ -214,6 +228,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
   const {
     collabUrl,
     terminal: collabTerminal,
@@ -397,6 +412,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setPinnedDoc(null);
       persistPinToStorage(null);
     },
+    systemProvider,
+    setSystemProvider,
     collabUrl,
     collabTerminal,
     collabLastError,
