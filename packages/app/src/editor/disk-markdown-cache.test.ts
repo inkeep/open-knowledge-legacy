@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   __resetDiskMarkdownCacheForTests,
-  __setDiskMarkdownFetcher,
+  __setDiskMarkdownFetcherForTests,
   type DiskMarkdownEntry,
   getDiskMarkdown,
   invalidateDiskMarkdown,
@@ -21,12 +21,12 @@ import {
 describe('disk-markdown-cache', () => {
   beforeEach(() => {
     __resetDiskMarkdownCacheForTests();
-    __setDiskMarkdownFetcher(null);
+    __setDiskMarkdownFetcherForTests(null);
   });
 
   afterEach(() => {
     __resetDiskMarkdownCacheForTests();
-    __setDiskMarkdownFetcher(null);
+    __setDiskMarkdownFetcherForTests(null);
   });
 
   describe('getDiskMarkdown (synchronous accessor)', () => {
@@ -36,7 +36,7 @@ describe('disk-markdown-cache', () => {
 
     test('does NOT trigger a fetch side-effect', () => {
       let calls = 0;
-      __setDiskMarkdownFetcher(async () => {
+      __setDiskMarkdownFetcherForTests(async () => {
         calls += 1;
         return { markdown: 'x', mtime: 1, sizeBytes: 1 };
       });
@@ -49,7 +49,7 @@ describe('disk-markdown-cache', () => {
   describe('primeDiskMarkdown (happy path)', () => {
     test('fetches, caches, and notifies listeners on first prime', async () => {
       const entry: DiskMarkdownEntry = { markdown: '# hi', mtime: 42, sizeBytes: 4 };
-      __setDiskMarkdownFetcher(async () => entry);
+      __setDiskMarkdownFetcherForTests(async () => entry);
 
       let notifyCount = 0;
       const unsub = subscribeDiskMarkdown(() => {
@@ -67,7 +67,7 @@ describe('disk-markdown-cache', () => {
     test('is idempotent — concurrent calls share the same in-flight Promise', async () => {
       let calls = 0;
       let resolveInFlight: (v: DiskMarkdownEntry | null) => void = () => {};
-      __setDiskMarkdownFetcher(
+      __setDiskMarkdownFetcherForTests(
         () =>
           new Promise<DiskMarkdownEntry | null>((resolve) => {
             calls += 1;
@@ -86,7 +86,7 @@ describe('disk-markdown-cache', () => {
 
     test('post-resolve prime returns resolved value without refetching', async () => {
       let calls = 0;
-      __setDiskMarkdownFetcher(async () => {
+      __setDiskMarkdownFetcherForTests(async () => {
         calls += 1;
         return { markdown: 'x', mtime: 1, sizeBytes: 1 };
       });
@@ -101,7 +101,7 @@ describe('disk-markdown-cache', () => {
 
     test('different docNames fetch independently', async () => {
       const seen: string[] = [];
-      __setDiskMarkdownFetcher(async (name) => {
+      __setDiskMarkdownFetcherForTests(async (name) => {
         seen.push(name);
         return { markdown: name, mtime: 1, sizeBytes: name.length };
       });
@@ -119,7 +119,7 @@ describe('disk-markdown-cache', () => {
       const unsub = subscribeDiskMarkdown(() => {
         notifyCount += 1;
       });
-      __setDiskMarkdownFetcher(async () => {
+      __setDiskMarkdownFetcherForTests(async () => {
         throw new Error('network boom');
       });
 
@@ -136,7 +136,7 @@ describe('disk-markdown-cache', () => {
       const unsub = subscribeDiskMarkdown(() => {
         notifyCount += 1;
       });
-      __setDiskMarkdownFetcher(async () => null);
+      __setDiskMarkdownFetcherForTests(async () => null);
 
       const result = await primeDiskMarkdown('doc-a');
       expect(result).toBeNull();
@@ -148,7 +148,7 @@ describe('disk-markdown-cache', () => {
 
     test('in-flight entry cleared even on reject so retry re-fetches', async () => {
       let calls = 0;
-      __setDiskMarkdownFetcher(async () => {
+      __setDiskMarkdownFetcherForTests(async () => {
         calls += 1;
         if (calls === 1) throw new Error('transient');
         return { markdown: 'recovered', mtime: 1, sizeBytes: 9 };
@@ -165,7 +165,7 @@ describe('disk-markdown-cache', () => {
 
   describe('invalidateDiskMarkdown', () => {
     test('removes cached entry and notifies listeners', async () => {
-      __setDiskMarkdownFetcher(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
+      __setDiskMarkdownFetcherForTests(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
       await primeDiskMarkdown('doc-a');
       expect(getDiskMarkdown('doc-a')).not.toBeNull();
 
@@ -196,7 +196,7 @@ describe('disk-markdown-cache', () => {
 
   describe('subscribeDiskMarkdown', () => {
     test('unsubscribed listener does not fire on future resolves', async () => {
-      __setDiskMarkdownFetcher(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
+      __setDiskMarkdownFetcherForTests(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
 
       let notifyCount = 0;
       const unsub = subscribeDiskMarkdown(() => {
@@ -209,7 +209,7 @@ describe('disk-markdown-cache', () => {
     });
 
     test('listener exception does not prevent other listeners from firing', async () => {
-      __setDiskMarkdownFetcher(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
+      __setDiskMarkdownFetcherForTests(async () => ({ markdown: 'x', mtime: 1, sizeBytes: 1 }));
 
       // The disk-markdown-cache's `notify()` wraps each listener in try/catch
       // and forwards to console.error so one misbehaving consumer doesn't

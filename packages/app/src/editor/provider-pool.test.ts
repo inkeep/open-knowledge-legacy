@@ -668,7 +668,7 @@ function makeFakeNode(): FakeContainer {
 describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () => {
   test('close() evicts both TipTap + CM cache entries before destroying the provider', async () => {
     const cacheModule = await import('./editor-cache');
-    cacheModule.__resetCache();
+    cacheModule.__resetCacheForTests();
     const fakeTipDom = makeFakeNode();
     const fakeCmDom = makeFakeNode();
     const fakeEditor = {
@@ -721,7 +721,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 
   test('recycle() also evicts both caches (used by Try-Again retry path)', async () => {
     const cacheModule = await import('./editor-cache');
-    cacheModule.__resetCache();
+    cacheModule.__resetCacheForTests();
     const fakeTipDom = makeFakeNode();
     const fakeCmDom = makeFakeNode();
     const fakeEditor = {
@@ -769,7 +769,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 
   test('dispose() evicts all cached editors across all pool entries', async () => {
     const cacheModule = await import('./editor-cache');
-    cacheModule.__resetCache();
+    cacheModule.__resetCacheForTests();
     const makeProv = () =>
       ({
         destroy: mock(() => {}),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Editor } from '@tiptap/core';
-import { __hasInteractionLayer, getInteractionLayer } from './interaction-layer-host';
+import { __hasInteractionLayerForTests, getInteractionLayer } from './interaction-layer-host';
 
 // Minimal Editor stub — the host only touches `on('destroy', cb)` and the
 // `interaction-layer.ts` factory (which duck-types `editorView`/`view`).
@@ -32,10 +32,10 @@ describe('interaction-layer-host', () => {
   describe('getInteractionLayer', () => {
     it('creates a handle on first call', () => {
       const { editor } = makeFakeEditor();
-      expect(__hasInteractionLayer(editor)).toBe(false);
+      expect(__hasInteractionLayerForTests(editor)).toBe(false);
       const handle = getInteractionLayer(editor);
       expect(handle).toBeTruthy();
-      expect(__hasInteractionLayer(editor)).toBe(true);
+      expect(__hasInteractionLayerForTests(editor)).toBe(true);
     });
 
     it('returns the same handle on subsequent calls (singleton per editor)', () => {
@@ -58,11 +58,11 @@ describe('interaction-layer-host', () => {
     it('removes the handle when the editor fires destroy', () => {
       const { editor, fireDestroy } = makeFakeEditor();
       const handle = getInteractionLayer(editor);
-      expect(__hasInteractionLayer(editor)).toBe(true);
+      expect(__hasInteractionLayerForTests(editor)).toBe(true);
 
       fireDestroy();
 
-      expect(__hasInteractionLayer(editor)).toBe(false);
+      expect(__hasInteractionLayerForTests(editor)).toBe(false);
       // The handle is still referenced by the test but its internal state
       // was torn down — we verify that setActiveNode is a no-op post-destroy.
       expect(() => handle.setActiveNode(null)).not.toThrow();

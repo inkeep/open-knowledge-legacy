@@ -32,7 +32,7 @@ import {
   __getCacheSize,
   __peekCm,
   __peekTiptap,
-  __resetCache,
+  __resetCacheForTests,
   BYTES_CACHE_THRESHOLD,
   CACHE_ENABLED,
   type CmCacheEntry,
@@ -291,10 +291,10 @@ describe('MAX_CACHE constant', () => {
 
 describe('TipTap cache — lifecycle', () => {
   beforeEach(() => {
-    __resetCache();
+    __resetCacheForTests();
   });
   afterEach(() => {
-    __resetCache();
+    __resetCacheForTests();
   });
 
   test('mount: cache-miss calls factory and stores entry (US-001 AC 2)', () => {
@@ -466,8 +466,8 @@ describe('TipTap cache — lifecycle', () => {
 });
 
 describe('TipTap cache — mount-park-mount round-trip (US-001 AC 9)', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('doc content preserved (Y.XmlFragment + Y.Text)', () => {
     const h = makeTiptapHarness('doc-a');
@@ -578,8 +578,8 @@ describe('TipTap cache — mount-park-mount round-trip (US-001 AC 9)', () => {
 });
 
 describe('TipTap cache — LRU eviction at MAX_CACHE capacity', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('11th mount evicts the LRU entry (oldest first)', () => {
     const harnesses: TiptapHarness[] = [];
@@ -638,8 +638,8 @@ describe('TipTap cache — LRU eviction at MAX_CACHE capacity', () => {
 });
 
 describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('__uncached entry: park() destroys the editor (pre-V2 behavior)', () => {
     // Simulate kill-switch path without toggling the module constant:
@@ -691,8 +691,8 @@ describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
 // ---------------------------------------------------------------------------
 
 describe('CM6 cache — lifecycle', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('mount: cache-miss calls factory and stores entry', () => {
     const h = makeCmHarness('cm-doc-a');
@@ -897,8 +897,8 @@ describe('STOP rule: editor-cache never calls editor.mount() / editor.unmount()'
 // ---------------------------------------------------------------------------
 
 describe('Module-level cache survives simulated remounts', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('double-mount with same docName (StrictMode style) does not leak', () => {
     const h = makeTiptapHarness('doc-a');
@@ -976,8 +976,8 @@ describe('shouldCacheEditor — pure gate', () => {
 });
 
 describe('mountTiptapEditor — size gate falls through to __uncached', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('gate-refused mount: entry is __uncached and NOT stored in cache', () => {
     const h = makeTiptapHarness('big-doc');
@@ -1031,8 +1031,8 @@ describe('mountTiptapEditor — size gate falls through to __uncached', () => {
 });
 
 describe('mountCmEditor — size gate mirror of TipTap', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('CM gate-refused entry: park destroys', () => {
     const h = makeCmHarness('cm-big');
@@ -1054,8 +1054,8 @@ describe('mountCmEditor — size gate mirror of TipTap', () => {
 // ---------------------------------------------------------------------------
 
 describe('setActivityMountList — connect/disconnect transitions', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('promotion: newly active doc triggers provider.connect()', () => {
     const h = makeTiptapHarness('doc-a');
@@ -1146,8 +1146,8 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
 });
 
 describe('LRU eviction respects activity-mount list (never evicts active doc)', () => {
-  beforeEach(() => __resetCache());
-  afterEach(() => __resetCache());
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
 
   test('when cache is full, evicts oldest NON-active entry', () => {
     // Mount MAX_CACHE entries, mark the oldest (doc-0) as Activity-mounted.
@@ -1207,14 +1207,14 @@ describe('US-002 telemetry marks', () => {
   // Telemetry is side-effect only — the collector's in-test observability
   // is via performance.getEntriesByName. We spot-check a few key paths.
   beforeEach(() => {
-    __resetCache();
+    __resetCacheForTests();
     try {
       performance.clearMeasures();
     } catch {
       // some envs
     }
   });
-  afterEach(() => __resetCache());
+  afterEach(() => __resetCacheForTests());
 
   test('mount emits ok/cache/hit on cache-hit path', () => {
     const h = makeTiptapHarness('doc-a');

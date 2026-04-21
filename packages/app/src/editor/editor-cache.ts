@@ -867,7 +867,7 @@ export function __getActivityMountList(): string[] {
 }
 
 /** Test-only: reset all cache state. Destroys live entries. */
-export function __resetCache(): void {
+export function __resetCacheForTests(): void {
   for (const docName of [...tiptapCache.keys()]) evictTiptapEditor(docName);
   for (const docName of [...cmCache.keys()]) evictCmEditor(docName);
   activityMountList = new Set();

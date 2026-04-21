@@ -55,6 +55,6 @@ export function getInteractionLayer(editor: Editor): InteractionLayerHandle {
  * (WeakMap is not enumerable), but we can probe whether a specific Editor
  * has a registered layer. Used by unit tests to verify idempotence.
  */
-export function __hasInteractionLayer(editor: Editor): boolean {
+export function __hasInteractionLayerForTests(editor: Editor): boolean {
   return layers.has(editor);
 }

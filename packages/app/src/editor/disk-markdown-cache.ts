@@ -159,7 +159,7 @@ type DiskMarkdownFetcher = (docName: string) => Promise<DiskMarkdownEntry | null
 let _fetcher: DiskMarkdownFetcher = defaultFetcher;
 
 /** Test-only: override the fetcher. */
-export function __setDiskMarkdownFetcher(f: DiskMarkdownFetcher | null): void {
+export function __setDiskMarkdownFetcherForTests(f: DiskMarkdownFetcher | null): void {
   _fetcher = f ?? defaultFetcher;
 }
 
