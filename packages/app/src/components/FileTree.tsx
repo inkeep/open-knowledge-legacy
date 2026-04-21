@@ -461,41 +461,33 @@ const FileTreeNode: FC<{
 
   const triggerContent = isEditing ? (
     editingContent
-  ) : isFile ? (
-    <ButtonToUse
-      isActive={isActive}
-      onClick={handleClick}
-      className="cursor-pointer"
-      aria-current={isActive ? 'page' : undefined}
-    >
-      {displayContent}
-    </ButtonToUse>
   ) : (
     <>
       <ButtonToUse
         isActive={isActive}
-        className="w-full cursor-pointer pr-8"
         aria-current={isActive ? 'page' : undefined}
         onClick={handleClick}
       >
         {displayContent}
       </ButtonToUse>
-      <SidebarMenuAction
-        type="button"
-        className={cn('top-1', expanded && 'rotate-90')}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
-        aria-expanded={expanded}
-        onPointerDown={(event) => {
-          // The row wrapper is the draggable source. Stop the chevron's
-          // pointer-down here so expand/collapse never arms a drag gesture.
-          event.stopPropagation();
-        }}
-        onClick={() => {
-          onToggle(node.path);
-        }}
-      >
-        <ChevronRight className="size-4 text-muted-foreground/50" />
-      </SidebarMenuAction>
+      {!isFile && (
+        <SidebarMenuAction
+          type="button"
+          className={expanded ? 'rotate-90' : ''}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
+          aria-expanded={expanded}
+          onPointerDown={(event) => {
+            // The row wrapper is the draggable source. Stop the chevron's
+            // pointer-down here so expand/collapse never arms a drag gesture.
+            event.stopPropagation();
+          }}
+          onClick={() => {
+            onToggle(node.path);
+          }}
+        >
+          <ChevronRight className="size-4 text-muted-foreground/50" />
+        </SidebarMenuAction>
+      )}
     </>
   );
 
