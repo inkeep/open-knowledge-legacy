@@ -92,6 +92,11 @@ export interface CreateTestServerOptions {
    *  survives for a subsequent test-server instance. Defaults to false
    *  (random-tmpdir behavior preserved). */
   keepContentDir?: boolean;
+  /**
+   * Grace period (ms) before keepalive-close triggers session cleanup. Default 30 000.
+   * Integration tests pass a small value (e.g. 150) for fast teardown.
+   */
+  keepaliveGraceMs?: number;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -151,7 +156,49 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 30_000;
+  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   httpServer.on('upgrade', (req, socket, head) => {
+    // D-034 keepalive route (mirrors boot.ts logic — configurable grace for tests).
+    if (req.url?.startsWith('/collab/keepalive')) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        let connectionId: string | undefined;
+        try {
+          const sp = new URL(req.url ?? '', 'http://localhost').searchParams;
+          connectionId = sp.get('connectionId') ?? undefined;
+        } catch {
+          // ignore malformed URL
+        }
+        if (connectionId) {
+          const existing = keepaliveGraceTimers.get(connectionId);
+          if (existing !== undefined) {
+            clearTimeout(existing);
+            keepaliveGraceTimers.delete(connectionId);
+          }
+        }
+        ws.on('close', () => {
+          if (!connectionId) return;
+          const timer = setTimeout(async () => {
+            keepaliveGraceTimers.delete(connectionId as string);
+            try {
+              await srv.sessionManager.closeAllForAgent(connectionId as string);
+            } catch {
+              // best-effort
+            }
+            try {
+              srv.agentFocusBroadcaster?.clearFocus(connectionId as string);
+            } catch {
+              // best-effort
+            }
+          }, KEEPALIVE_GRACE_MS);
+          timer.unref?.();
+          keepaliveGraceTimers.set(connectionId, timer);
+        });
+        ws.on('error', () => ws.terminate());
+      });
+      return;
+    }
     if (req.url?.startsWith('/collab')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         const clientConnection = srv.hocuspocus.handleConnection(
@@ -426,7 +473,7 @@ export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
 export async function agentWriteMd(
   port: number,
   markdown: string,
-  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace' },
+  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace'; agentId?: string },
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
@@ -435,6 +482,7 @@ export async function agentWriteMd(
       markdown,
       position: opts?.position ?? 'append',
       docName: opts?.docName,
+      agentId: opts?.agentId,
     }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
