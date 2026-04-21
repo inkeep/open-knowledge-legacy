@@ -350,7 +350,7 @@ const FileTreeNode: FC<{
   }, [isEditing]);
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
-  const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
+  const IconToUse = isFile ? File : expanded ? FolderOpen : Folder;
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
@@ -409,8 +409,7 @@ const FileTreeNode: FC<{
           isActive ? 'text-sidebar-accent-foreground' : 'text-sidebar-foreground/70',
         )}
       >
-        {node.name}
-        {isFile && '.md'}
+        {node.name + (isFile ? '.md' : '')}
       </span>
       {showSymlink && (
         <Tooltip>
@@ -471,7 +470,7 @@ const FileTreeNode: FC<{
       {displayContent}
     </ButtonToUse>
   ) : (
-    <div>
+    <>
       <ButtonToUse
         isActive={isActive}
         className="w-full cursor-pointer pr-8"
@@ -493,25 +492,23 @@ const FileTreeNode: FC<{
       >
         <ChevronRight className="size-4 text-muted-foreground/50" />
       </SidebarMenuAction>
-    </div>
+    </>
   );
 
   return (
     <ComponentToUse>
       <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div
-            ref={rowRef}
-            className={cn(
-              'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
-              isDragging && 'opacity-40',
-              overDropClass,
-            )}
-            {...(isEditing ? {} : listeners)}
-            {...(isEditing ? {} : attributes)}
-          >
-            {triggerContent}
-          </div>
+        <ContextMenuTrigger
+          ref={rowRef}
+          className={cn(
+            'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
+            isDragging && 'opacity-40',
+            overDropClass,
+          )}
+          {...(!isEditing && listeners)}
+          {...(!isEditing && attributes)}
+        >
+          {triggerContent}
         </ContextMenuTrigger>
         <ContextMenuContent
           onCloseAutoFocus={(e) => {
@@ -682,8 +679,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [busyPath, setBusyPath] = useState<string | null>(null);
-  const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
-  const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
+  const [userExpanded, setUserExpanded] = useState(() => new Set<string>());
+  const [userCollapsed, setUserCollapsed] = useState(() => new Set<string>());
   const {
     selectedFilePath,
     selectedFolderPath,
