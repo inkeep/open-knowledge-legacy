@@ -566,6 +566,16 @@ export async function awaitFileWatcherIndexed(
  * source→target map. Two-stage async gap that a single wall-clock sleep
  * cannot robustly close.
  *
+ * Watcher-drop recovery: on Linux CI, `@parcel/watcher` can drop `create`
+ * events for files rapidly written into freshly-created subdirectories
+ * (inotify subwatch registration race — PR #234 documents the same class
+ * at the workflow level). If the target's backlink hasn't shown up by
+ * `rescueAfterMs`, this helper POSTs to the test-only
+ * `/api/test-rescan-backlinks` endpoint once — which forces
+ * `backlinkIndex.rebuildFromDisk()` and covers dropped events. The rescue
+ * is a one-shot: if polling still fails after rescue, the timeout error
+ * surfaces (indicating a real setup bug, not a watcher flake).
+ *
  * Usage:
  *
  *   seedDoc(server.contentDir, `${folder}/README`, `[[${target}]]`);
@@ -579,9 +589,11 @@ export async function awaitBacklinkIndexed(
   targetDocName: string,
   sourceDocName: string,
   timeoutMs = 30_000,
+  rescueAfterMs = 2_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
+  let rescueTriggered = false;
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(
       `http://localhost:${server.port}/api/backlinks?docName=${encodeURIComponent(targetDocName)}`,
@@ -596,10 +608,16 @@ export async function awaitBacklinkIndexed(
     } else if (res) {
       lastStatus = res.status;
     }
+    if (!rescueTriggered && Date.now() - start >= rescueAfterMs) {
+      rescueTriggered = true;
+      await fetch(`http://localhost:${server.port}/api/test-rescan-backlinks`, {
+        method: 'POST',
+      }).catch(() => null);
+    }
     await wait(50);
   }
   throw new Error(
-    `awaitBacklinkIndexed: ${sourceDocName} → ${targetDocName} not indexed within ${timeoutMs}ms (last status=${lastStatus})`,
+    `awaitBacklinkIndexed: ${sourceDocName} → ${targetDocName} not indexed within ${timeoutMs}ms (last status=${lastStatus}, rescueTriggered=${rescueTriggered})`,
   );
 }
 

@@ -68,9 +68,10 @@ export interface ServerOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use and must never be
+   * exposed in production. Enable only in tests.
    */
   enableTestRoutes?: boolean;
   /** Shadow repo handle — passed to persistence. */
