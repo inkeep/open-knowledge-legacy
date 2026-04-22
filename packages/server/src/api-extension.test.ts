@@ -288,9 +288,10 @@ describe('handleUploadImage', () => {
 
   test('D-M accept-all: spoofed MIME no longer rejects, file is stored under sanitized name', async () => {
     // Pre-D-M behavior rejected with "Unsupported file type". Under D-M
-    // accept-all (SPEC §10), any file under maxBytes is accepted; only
-    // the SVG <img>-only routing relies on a successful magic-byte sniff
-    // (NFR-3 LOAD-BEARING). The "exe spoofed as .png" test now confirms
+    // accept-all (SPEC §10), every file is accepted; post-streaming there
+    // is no user-facing byte cap either, only disk fullness. The SVG
+    // <img>-only routing relies on a successful magic-byte sniff (NFR-3
+    // LOAD-BEARING). The "exe spoofed as .png" test now confirms
     // accept-all + storage; the security posture flips to render-time:
     // unrecognized types serve as opaque blobs, never inline-executed.
     const exeBuffer = Buffer.from('MZexecutable content here');
@@ -397,14 +398,14 @@ describe('handleUploadImage', () => {
   });
 });
 
-describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
+describe('handleUploadImage — config-driven upload surface (FR-5)', () => {
   let tmpDir: string;
   let contentDir: string;
   let server: import('node:http').Server;
   let port: number;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'upload-maxbytes-'));
+    tmpDir = await mkdtemp(join(tmpdir(), 'upload-config-'));
     contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
     mkdirSync(join(contentDir, 'docs'), { recursive: true });
@@ -421,11 +422,11 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
       sessionManager,
       contentDir,
       getFileIndex: () => new Map(),
-      // Set an artificially small cap so a 200-byte payload trips rejection.
+      // Custom `wikiEmbedExtensions` allowlist so we can verify the
+      // server reflects operator config verbatim on `GET /api/upload-config`.
       getUploadConfig: () => ({
         attachmentFolderPath: './',
         emitFormat: 'wikiembed',
-        maxBytes: 100,
         dedup: { mode: 'same-dir', ui: 'toast' },
         wikiEmbedExtensions: ['png'],
       }),
@@ -465,7 +466,7 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
   // .changeset/asset-embed-surface.md. The previously-asserted 413 envelope
   // + P1.3 scenario are deleted intentionally.
 
-  test('under-cap upload still works with custom config', async () => {
+  test('small upload works with custom config', async () => {
     const tiny = Buffer.from('tiny');
     const formData = new FormData();
     formData.append('parentDocName', 'docs/guide.md');
@@ -479,22 +480,23 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
 
   // US-015: client-side emit-dispatch reads operator-resolved `upload.*`
   // via this endpoint. Returning the configured values is the contract.
-  test('GET /api/upload-config returns the resolved upload config', async () => {
+  test('GET /api/upload-config returns the resolved upload config (no maxBytes post-streaming)', async () => {
     const res = await fetch(`http://localhost:${port}/api/upload-config`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      maxBytes: number;
       emitFormat: string;
       dedup: { mode: string; ui: string };
       wikiEmbedExtensions: string[];
       attachmentFolderPath: string;
     };
-    expect(body.maxBytes).toBe(100);
     expect(body.emitFormat).toBe('wikiembed');
     expect(body.dedup.mode).toBe('same-dir');
     expect(body.dedup.ui).toBe('toast');
     expect(body.wikiEmbedExtensions).toEqual(['png']);
     expect(body.attachmentFolderPath).toBe('./');
+    // Post-streaming (2026-04-22) the response no longer carries a
+    // `maxBytes` field. See reports/streaming-upload-refactor/REPORT.md §D8.
+    expect(Object.hasOwn(body, 'maxBytes')).toBe(false);
   });
 
   test('GET /api/upload-config rejects non-GET methods', async () => {
@@ -533,7 +535,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
       getUploadConfig: () => ({
         attachmentFolderPath: './',
         emitFormat: 'wikiembed',
-        maxBytes: 25 * 1024 * 1024,
         // The mode is read per-request, so flipping the closure variable
         // between tests is enough to exercise both branches.
         dedup: { mode: dedupMode, ui: 'toast' },

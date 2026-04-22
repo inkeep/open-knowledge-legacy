@@ -178,7 +178,6 @@ const DEDUP_UI_MODES = new Set(['silent', 'toast', 'confirm']);
 function isUploadConfig(x: unknown): x is UploadConfig {
   if (!x || typeof x !== 'object') return false;
   const c = x as Record<string, unknown>;
-  if (typeof c.maxBytes !== 'number') return false;
   if (!Array.isArray(c.wikiEmbedExtensions)) return false;
   if (!c.wikiEmbedExtensions.every((e) => typeof e === 'string')) return false;
   // emitFormat + attachmentFolderPath are `.optional()` per US-018.
@@ -269,18 +268,6 @@ interface UploadResponseBody {
   deduped?: boolean;
   error?: string;
   message?: string;
-  attemptedBytes?: number;
-  maxBytes?: number;
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
-  if (bytes < 1024) return `${bytes} bytes`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
 }
 
 export async function uploadAndInsert(
@@ -331,21 +318,13 @@ export async function uploadAndInsert(
   }
 
   if (!res.ok) {
-    let message = body.error ?? `Upload failed (${res.status})`;
-    // SPEC P1.3: byte-size-specific message naming both attempted size
-    // and configured limit. Server populates `message` with the human-
-    // readable form; fall through to a generic shape only if it didn't.
-    if (body.error === 'max-bytes' || body.error === 'maxBytes') {
-      if (typeof body.message === 'string') {
-        message = body.message;
-      } else if (typeof body.maxBytes === 'number') {
-        const attempted =
-          typeof body.attemptedBytes === 'number'
-            ? formatBytes(body.attemptedBytes)
-            : `${formatBytes(file.size)} (this file)`;
-        message = `File is ${attempted} but the upload limit is ${formatBytes(body.maxBytes)}.`;
-      }
-    }
+    // Server-side reasons the upload rejects a request
+    // (`malformed-upload`, `storage-full`, `storage-readonly`,
+    // `collision-exhaustion`, etc. — see `UploadWriteReason` in
+    // `packages/server/src/upload-errors.ts`) all populate `message` with
+    // a human-readable form. Fall through to a generic shape only if the
+    // response lacks one.
+    const message = body.message ?? body.error ?? `Upload failed (${res.status})`;
     console.error('[uploadAndInsert] Server error:', message);
     showError(editor, uploadId, message);
     return;

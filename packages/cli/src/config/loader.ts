@@ -85,6 +85,18 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     sources.push(workspaceConfigPath);
   }
 
+  // Deprecation WARN — `upload.maxBytes` was removed when uploads switched
+  // to streaming (reports/streaming-upload-refactor/REPORT.md §D8). The
+  // schema is not `.strict()`, so the key parses cleanly and gets silently
+  // stripped; surface a one-time note so users can remove it from their
+  // config.
+  const mergedUpload = merged.upload;
+  if (isObject(mergedUpload) && mergedUpload.maxBytes !== undefined) {
+    console.warn(
+      '[config] upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
+    );
+  }
+
   // Validate with Zod (applies defaults for missing fields)
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {

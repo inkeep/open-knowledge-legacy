@@ -122,11 +122,13 @@ function resolveContentConfig(): ContentConfig {
             `[hocuspocus] config.yml upload.emitFormat must be 'wikiembed' or 'markdown-image' (got ${JSON.stringify(upload.emitFormat)}); falling back to default`,
           );
         }
-        if (typeof upload.maxBytes === 'number' && Number.isInteger(upload.maxBytes)) {
-          userUpload.maxBytes = upload.maxBytes;
-        } else if (upload.maxBytes !== undefined) {
+        if (upload.maxBytes !== undefined) {
+          // Streaming-upload refactor removed user-facing upload caps
+          // (reports/streaming-upload-refactor/REPORT.md §D8). Legacy
+          // YAML still carrying this key parses cleanly; we just warn
+          // once per process so operators see the setting is ignored.
           console.warn(
-            `[hocuspocus] config.yml upload.maxBytes must be an integer (got ${JSON.stringify(upload.maxBytes)}); falling back to default`,
+            '[hocuspocus] config.yml upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
           );
         }
         const dedup = upload.dedup as Record<string, unknown> | undefined;

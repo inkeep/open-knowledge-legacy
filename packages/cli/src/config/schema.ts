@@ -38,8 +38,6 @@ export type FolderRule = z.infer<typeof FolderRuleSchema>;
 // drifting apart when either side was edited in isolation.
 const DEFAULT_WIKI_EMBED_EXTENSIONS: readonly string[] = DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions;
 
-const DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_UPLOAD_CONFIG.maxBytes;
-
 export const UploadDedupSchema = z
   .object({
     mode: z.enum(['off', 'same-dir']).default('same-dir'),
@@ -56,16 +54,21 @@ export const UploadDedupSchema = z
 // dev-plugin boot path sees `undefined` when the user didn't set them
 // and falls back to the vault partial (if present) or the canonical
 // DEFAULT_UPLOAD_CONFIG. See resolveUploadConfig() in core.
+//
+// `maxBytes` was removed 2026-04-22 alongside the streaming-upload
+// refactor (reports/streaming-upload-refactor/REPORT.md §D8). The
+// buffer-to-memory guard it represented is obsolete under streaming;
+// disk is the only bound. Legacy configs still containing
+// `upload.maxBytes:` parse cleanly — Zod silently strips unknown keys
+// since the object schema is not `.strict()`.
 export const UploadConfigSchema = z
   .object({
     attachmentFolderPath: z.string().optional(),
     emitFormat: z.enum(['wikiembed', 'markdown-image']).optional(),
-    maxBytes: z.number().int().min(0).default(DEFAULT_MAX_UPLOAD_BYTES),
     dedup: UploadDedupSchema,
     wikiEmbedExtensions: z.array(z.string()).default([...DEFAULT_WIKI_EMBED_EXTENSIONS]),
   })
   .default({
-    maxBytes: DEFAULT_MAX_UPLOAD_BYTES,
     dedup: { mode: 'same-dir', ui: 'toast' },
     wikiEmbedExtensions: [...DEFAULT_WIKI_EMBED_EXTENSIONS],
   });

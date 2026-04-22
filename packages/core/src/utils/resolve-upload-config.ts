@@ -9,7 +9,6 @@ import { DEFAULT_UPLOAD_CONFIG, type UploadConfig } from '../constants/upload.ts
 export interface PartialUserUploadConfig {
   attachmentFolderPath?: string;
   emitFormat?: UploadConfig['emitFormat'];
-  maxBytes?: number;
   dedup?: {
     mode?: UploadConfig['dedup']['mode'];
     ui?: UploadConfig['dedup']['ui'];
@@ -27,8 +26,8 @@ export interface PartialUserUploadConfig {
  *
  * Only `attachmentFolderPath` and `emitFormat` accept vault input — those
  * are the fields `detectObsidianVault` maps from `.obsidian/app.json`. The
- * other four fields (`maxBytes`, `dedup.mode`, `dedup.ui`,
- * `wikiEmbedExtensions`) resolve from user config or fall to defaults.
+ * other two fields (`dedup`, `wikiEmbedExtensions`) resolve from user
+ * config or fall to defaults.
  *
  * The return type is the fully resolved {@link UploadConfig}, so downstream
  * consumers (the `/api/upload-config` handler, upload handler, client emit
@@ -45,7 +44,6 @@ export function resolveUploadConfig(
       vault?.attachmentFolderPath ??
       DEFAULT_UPLOAD_CONFIG.attachmentFolderPath,
     emitFormat: user?.emitFormat ?? vault?.emitFormat ?? DEFAULT_UPLOAD_CONFIG.emitFormat,
-    maxBytes: user?.maxBytes ?? DEFAULT_UPLOAD_CONFIG.maxBytes,
     dedup: {
       mode: userDedup?.mode ?? DEFAULT_UPLOAD_CONFIG.dedup.mode,
       ui: userDedup?.ui ?? DEFAULT_UPLOAD_CONFIG.dedup.ui,

@@ -209,7 +209,6 @@ describe('ConfigSchema.upload (FR-5)', () => {
     // distinguish "user kept default" from "user never set it."
     expect(config.upload.attachmentFolderPath).toBeUndefined();
     expect(config.upload.emitFormat).toBeUndefined();
-    expect(config.upload.maxBytes).toBe(25 * 1024 * 1024);
     expect(config.upload.dedup.mode).toBe('same-dir');
     expect(config.upload.dedup.ui).toBe('toast');
     expect(config.upload.wikiEmbedExtensions).toEqual([
@@ -233,12 +232,12 @@ describe('ConfigSchema.upload (FR-5)', () => {
 
   test('partial upload override preserves other defaults', () => {
     const config = ConfigSchema.parse({
-      upload: { maxBytes: 104857600 },
+      upload: { dedup: { mode: 'off' } },
     });
-    expect(config.upload.maxBytes).toBe(104857600);
+    expect(config.upload.dedup.mode).toBe('off');
+    expect(config.upload.dedup.ui).toBe('toast'); // sibling default preserved
     // emitFormat is optional pre-resolution (US-018)
     expect(config.upload.emitFormat).toBeUndefined();
-    expect(config.upload.dedup.mode).toBe('same-dir');
   });
 
   test('US-018 invariant: attachmentFolderPath + emitFormat must stay optional — adding a Zod default would break user-wins precedence', () => {
@@ -265,29 +264,21 @@ describe('ConfigSchema.upload (FR-5)', () => {
     expect(config.upload.emitFormat).toBe('markdown-image');
   });
 
-  test('upload.maxBytes with string value fails with a Zod error naming the field', () => {
-    const result = ConfigSchema.safeParse({
-      upload: { maxBytes: 'big' },
+  test('legacy upload.maxBytes keys parse cleanly — Zod strips unknown keys (post-streaming refactor 2026-04-22)', () => {
+    // `upload.maxBytes` was removed when uploads switched to streaming (see
+    // reports/streaming-upload-refactor/REPORT.md §D8). The field is no
+    // longer on the Zod shape, but `UploadConfigSchema` is not `.strict()`,
+    // so legacy configs that still carry the key continue to parse — the
+    // key is silently stripped. A deprecation WARN in `loader.ts` surfaces
+    // the removal so users can clean up `config.yml`.
+    const config = ConfigSchema.parse({
+      // biome-ignore lint/suspicious/noExplicitAny: intentional cast to assert shape
+      upload: { maxBytes: 104857600 } as any,
     });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const paths = result.error.issues.map((i) => i.path.join('.'));
-      expect(paths.some((p) => p.includes('maxBytes'))).toBe(true);
-    }
-  });
-
-  test('upload.maxBytes with non-integer fails', () => {
-    const result = ConfigSchema.safeParse({
-      upload: { maxBytes: 10.5 },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test('upload.maxBytes with negative number fails', () => {
-    const result = ConfigSchema.safeParse({
-      upload: { maxBytes: -1 },
-    });
-    expect(result.success).toBe(false);
+    expect(Object.hasOwn(config.upload, 'maxBytes')).toBe(false);
+    // Other defaults untouched.
+    expect(config.upload.dedup.mode).toBe('same-dir');
+    expect(config.upload.attachmentFolderPath).toBeUndefined();
   });
 
   test('upload.emitFormat accepts markdown-image', () => {
@@ -421,13 +412,13 @@ describe('ConfigSchema.upload × resolveUploadConfig (US-018 precedence integrat
     expect(resolved.emitFormat).toBe('markdown-image');
   });
 
-  test('user overrides maxBytes → resolved UploadConfig carries user value', () => {
+  test('user sets emitFormat + no vault → resolved UploadConfig carries user value + defaults for rest', () => {
     const config = ConfigSchema.parse({
-      upload: { maxBytes: 104857600 },
+      upload: { emitFormat: 'markdown-image' },
     });
     const resolved = resolveUploadConfig(config.upload, null);
-    expect(resolved.maxBytes).toBe(104857600);
+    expect(resolved.emitFormat).toBe('markdown-image');
     expect(resolved.attachmentFolderPath).toBe('./'); // default applied post-resolve
-    expect(resolved.emitFormat).toBe('wikiembed');
+    expect(resolved.dedup.mode).toBe('same-dir');
   });
 });

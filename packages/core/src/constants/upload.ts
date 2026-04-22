@@ -57,7 +57,6 @@ export type DedupUIMode = 'silent' | 'toast' | 'confirm';
 export interface UploadConfig {
   attachmentFolderPath: string;
   emitFormat: EmitFormat;
-  maxBytes: number;
   dedup: {
     mode: DedupMode;
     ui: DedupUIMode;
@@ -72,10 +71,13 @@ export interface UploadConfig {
 // the server resolves at request time; this constant is only used as a
 // structural fallback when no config is wired (tests + client bootstrap
 // before the first /api/upload-config fetch completes).
+//
+// SPEC §6 FR-5 post-streaming (2026-04-22): `maxBytes` removed. The
+// buffer-to-memory pattern it guarded is gone; streaming uploads are
+// disk-bound only. See reports/streaming-upload-refactor/REPORT.md §D8.
 export const DEFAULT_UPLOAD_CONFIG: UploadConfig = {
   attachmentFolderPath: './',
   emitFormat: 'wikiembed',
-  maxBytes: 25 * 1024 * 1024,
   dedup: { mode: 'same-dir', ui: 'toast' },
   wikiEmbedExtensions: [
     'png',

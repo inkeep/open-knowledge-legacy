@@ -174,10 +174,6 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-// SPEC §6 FR-5 fallback when no `getUploadConfig` is provided. Matches the
-// Zod default in packages/cli/src/config/schema.ts so test harnesses don't
-// have to wire the accessor when they only care about the legacy contract.
-const _DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -356,16 +352,6 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
     if (sha256Hex(buf) === sha) return entry;
   }
   return null;
-}
-
-function _formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
-  if (bytes < 1024) return `${bytes} bytes`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
 }
 
 /**
@@ -3411,11 +3397,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // D-M LOCKED accept-all: every file under upload.maxBytes is accepted.
-    // The magic-byte sniff is only consulted to (a) preserve the SVG
-    // `<img>`-only routing for NFR-3 security and (b) recover an extension
-    // when the upload arrived with a generic clipboard filename. Non-
-    // sniffable bytes are accepted under the client-supplied filename.
+    // D-M LOCKED accept-all: every file is accepted — there's no user-
+    // facing byte cap post-streaming (disk fullness surfaces as 507
+    // instead). The magic-byte sniff is only consulted to (a) preserve
+    // the SVG `<img>`-only routing for NFR-3 security and (b) recover
+    // an extension when the upload arrived with a generic clipboard
+    // filename. Non-sniffable bytes are accepted under the client-
+    // supplied filename.
     //
     // Post-streaming-refactor the sniff reads from tempPath via
     // fileTypeFromFile which only pulls the minimum-required bytes.

@@ -48,17 +48,18 @@ describe('resolveUploadConfig — precedence user > vault > default (US-018)', (
     expect(resolved.emitFormat).toBe('wikiembed');
   });
 
-  test('other 4 fields resolve user → default only (vault cannot supply them)', () => {
-    // maxBytes, dedup, wikiEmbedExtensions are not mapped from .obsidian/app.json.
+  test('remaining fields resolve user → default only (vault cannot supply them)', () => {
+    // `dedup` and `wikiEmbedExtensions` are not mapped from
+    // `.obsidian/app.json` — vault detection only fills
+    // `attachmentFolderPath` and `emitFormat`. Anything else either comes
+    // from user config or falls to the canonical default.
     const resolved = resolveUploadConfig(
       {
-        maxBytes: 104857600,
         dedup: { mode: 'off' },
         wikiEmbedExtensions: ['png', 'pdf'],
       },
       null,
     );
-    expect(resolved.maxBytes).toBe(104857600);
     expect(resolved.dedup.mode).toBe('off');
     expect(resolved.dedup.ui).toBe('toast'); // filled from default
     expect(resolved.wikiEmbedExtensions).toEqual(['png', 'pdf']);

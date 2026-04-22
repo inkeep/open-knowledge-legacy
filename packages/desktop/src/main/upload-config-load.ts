@@ -56,8 +56,15 @@ function loadUserUploadPartial(projectPath: string): PartialUserUploadConfig {
   if (u.emitFormat === 'wikiembed' || u.emitFormat === 'markdown-image') {
     out.emitFormat = u.emitFormat;
   }
-  if (typeof u.maxBytes === 'number' && Number.isInteger(u.maxBytes)) {
-    out.maxBytes = u.maxBytes;
+  // Desktop mirror of the CLI loader deprecation WARN — post-streaming
+  // (2026-04-22) `upload.maxBytes` is removed; legacy configs still carrying
+  // the key parse cleanly here (we silently drop it) but we surface a one-
+  // time note so users can clean up `config.yml`. See
+  // reports/streaming-upload-refactor/REPORT.md §D8.
+  if (u.maxBytes !== undefined) {
+    console.warn(
+      '[desktop] upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
+    );
   }
   const dedup = u.dedup as Record<string, unknown> | undefined;
   if (dedup && typeof dedup === 'object') {
