@@ -24,7 +24,7 @@ export interface KeyringSmokeResult {
   timestamp: string;
 }
 
-export interface RunKeyringSmokeDeps {
+interface RunKeyringSmokeDeps {
   loadKeyring?: () => Promise<typeof import('@napi-rs/keyring')>;
   now?: () => number;
 }

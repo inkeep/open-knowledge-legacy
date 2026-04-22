@@ -67,7 +67,7 @@ export function classifyInputPath(p) {
  * removes the tmp dir.
  * For `.app`: return the path as-is with a no-op cleanup.
  */
-export async function resolveAppPath(inputPath, deps = {}) {
+async function resolveAppPath(inputPath, deps = {}) {
   const runCommand = deps.runCommand ?? defaultRunCommand;
   const mkdtempImpl = deps.mkdtemp ?? mkdtemp;
   const cpImpl = deps.cp ?? cp;
@@ -130,7 +130,7 @@ export async function resolveAppPath(inputPath, deps = {}) {
  * Spawn the app's Electron binary with the required env vars + wait for it
  * to exit (or timeout). Returns `{exitCode, stderr}`.
  */
-export async function spawnAppWithEnv(appPath, outPath, deps = {}) {
+async function spawnAppWithEnv(appPath, outPath, deps = {}) {
   const spawnImpl = deps.spawn ?? spawn;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const killEscalationMs = deps.killEscalationMs ?? KILL_ESCALATION_GRACE_MS;

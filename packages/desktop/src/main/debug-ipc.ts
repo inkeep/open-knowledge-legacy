@@ -37,7 +37,7 @@ interface PendingRequest {
   utility: UtilityLike;
 }
 
-export interface DebugIpcDeps {
+interface DebugIpcDeps {
   /**
    * Resolve the utility process for the renderer that issued the invoke. The
    * main-side handler calls this with the invoke event's `event.sender`

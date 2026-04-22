@@ -21,7 +21,7 @@ export interface DriverUtilityLike {
   on(event: 'exit', listener: () => void): void;
 }
 
-export interface DriverBootSmokeDeps {
+interface DriverBootSmokeDeps {
   fork: (entry: string) => DriverUtilityLike;
   quit: () => void;
   setTimeout: (fn: () => void, ms: number) => void;
