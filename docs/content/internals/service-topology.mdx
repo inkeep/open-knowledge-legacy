@@ -1,8 +1,8 @@
 ---
 title: Service topology
-description: How the Hocuspocus server, file watcher, persistence pipeline, and shadow repo work together per project.
+description: How the Hocuspocus server, file watcher, persistence pipeline, and history repo work together per project.
 ---
-Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, shadow repo, and lockfile pair (`.open-knowledge/{server,ui}.lock`).
+Each Open Knowledge project runs its own pair of sibling processes. There is no global daemon or project registry. Running multiple projects means multiple process pairs on different ports — each fully independent with its own persistence pipeline, file watcher, history repo, and lockfile pair (`.open-knowledge/{server,ui}.lock`).
 
 ## Dual-process lifecycle
 
@@ -25,7 +25,7 @@ In dev (`bun run dev`), a single Vite process serves both surfaces — the produ
   A[createServer] --> B[ContentFilter]
   A --> C[Hocuspocus Server]
   A --> D[File Watcher]
-  A --> E[Shadow Repo]
+  A --> E[History Repo]
   A --> F[HEAD Watcher]
   A --> G[Persistence Extension]
   A --> H[API Extension]
@@ -39,7 +39,7 @@ In dev (`bun run dev`), a single Vite process serves both surfaces — the produ
   S -->|CC1 sync-status| C
 `} />
 
-Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The Shadow Repo and HEAD Watcher handle git integration.
+Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The History Repo and HEAD Watcher handle git integration.
 
 ## Persistence pipeline
 
@@ -66,11 +66,12 @@ The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to
 - Symlink-escape check refuses writes that resolve outside `contentDir`
 - Debounce: 2s quiet, 10s max
 
-### Layer 2: Disk to Git (shadow repo)
+### Layer 2: Disk to Git (history repo)
 
 Scheduled after Layer 1 writes complete to capture the change in version history.
 
-- `commitWip()` to shadow repo
+- `commitWip()` to history repo under the triggering writer-ID (`agent-<connectionId>`, `principal-<UUID>`, or a classified writer like `file-system` / `git-upstream`)
+- Per-writer fan-out: concurrent contributors in one drain produce N commits sharing the same tree SHA with distinct authors
 - Debounce: 30s idle
 
 <Callout type="info" title="Feedback prevention">
@@ -79,22 +80,23 @@ Two mechanisms prevent write loops between the file watcher and persistence. Con
 
 On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then L2 -- to guarantee all pending writes reach disk and git before the process exits. See [Server Lifecycle](/internals/server-lifecycle) for the full shutdown phase sequence.
 
-## Shadow repo
+## History repo
 
-Located at `.git/openknowledge/` (when the project has a `.git/`) or `.openknowledge/` (standalone). The shadow repo provides auto-save history and attribution without touching the project's own git state.
+Located at `<projectRoot>/.open-knowledge/history/` (D55 rename from "shadow repo" + D56 unified state dir — replaces the legacy `.git/openknowledge/` integrated-mode and `.openknowledge/` standalone-mode split). The history repo provides auto-save history and attribution without touching the project's own git state. On first-run post-upgrade, legacy shadow directories are atomically relocated via `rename()` with an `[history-migration]` log entry.
 
 It contains:
 
-- **WIP refs** -- per-writer auto-commit history (`refs/wip/<branch>/<writer-id>`)
-- **Upstream imports** -- records of `git pull`/merge/rebase changes
-- **Branch parking** -- on `git checkout`, the server parks current Y.Doc state to shadow refs and restores it on return
+- **WIP refs** -- per-writer auto-commit history (`refs/wip/<branch>/<writer-id>`). Writer IDs follow a five-way taxonomy: `agent-<connectionId>` (MCP agent session), `<principalId>` (browser principal, where `principalId = principal-<UUID>`), `file-system` / `git-upstream` / `openknowledge-service` (classified writers for non-attributable actions).
+- **Upstream imports** -- records of `git pull`/merge/rebase changes, credited to the `git-upstream` classified writer
+- **Branch parking** -- on `git checkout`, the server parks current Y.Doc state to history refs and restores it on return
 - **Rescue buffers** -- dirty documents from deleted or branch-switched files
+- **Structured commit bodies** -- every commit carries one `ok-actor:` JSON line per contributing actor (principal, agent_session, agent_type, display_name, color_seed, docs); `parseOkActor` / `formatOkActor` in `packages/core/src/history-repo-layout.ts` are the schema helpers
 
 <Callout type="info" title="Isolation guarantee">
-The shadow repo never touches the project's git ref namespace or object store. It is an isolated journal for auto-save and attribution.
+The history repo never touches the project's git ref namespace or object store. It is an isolated journal for auto-save and attribution.
 </Callout>
 
-On startup, a HEAD-drift check compares the stored `last-known-head` SHA against the current project HEAD. If they differ (including the fresh-clone case of null to SHA), `commitUpstreamImport()` records the drift in the shadow repo so offline git operations appear in the timeline.
+On startup, a HEAD-drift check compares the stored `last-known-head` SHA against the current project HEAD. If they differ (including the fresh-clone case of null to SHA), `commitUpstreamImport()` records the drift in the history repo so offline git operations appear in the timeline.
 
 ## SyncEngine
 
@@ -125,7 +127,7 @@ Active channels: `files` (file list changes), `backlinks`, `graph`, and `sync-st
 
 The `reconciledBase` (three-way merge base) is scoped by branch name: `Map<branch, Map<docName, content>>`. When the HEAD watcher detects a branch switch:
 
-1. Current Y.Doc state is parked to shadow refs
+1. Current Y.Doc state is parked to history refs
 2. All open documents reset from the target branch's disk content
 3. Parked WIP from a prior visit is restored via three-way merge
 
@@ -138,7 +140,7 @@ This means switching branches in git and switching branches in the editor are th
 | Process model   | Single Vite process serves both collab + React bundle | Two sibling processes (`ok start` + `ok ui`) coordinated via `server.lock` + `ui.lock` |
 | Collab port     | 5173 (Vite default)                                   | Kernel-allocated, advertised in `server.lock`                                          |
 | UI port         | 5173 (same as collab)                                 | 3000 by default on `ok ui` (or `PORT` env / `--port`)                                  |
-| Git integration | No shadow repo, no HEAD watcher                       | Full shadow repo + HEAD watcher                                                        |
+| Git integration | No history repo, no HEAD watcher                      | Full history repo + HEAD watcher                                                       |
 | File watcher    | Simplified: create/update only                        | Full: create/update/delete/rename/conflict                                             |
 | Content filter  | Basic .md filtering                                   | Full gitignore + config patterns                                                       |
 | Test routes     | Enabled (`/api/test-reset`)                           | Disabled by default                                                                    |

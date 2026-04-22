@@ -70,11 +70,11 @@ An earlier research report (`reports/zero-config-bunx-cli-packaging/REPORT.md` �
       │
       ├─ readUiLock → SIGTERM ui.lock.pid (if alive)
       └─ await destroy()
-           ├─ Phase 1–5 (watchers, sessions, L1, L2, shadow lock)
+           ├─ Phase 1–5 (watchers, sessions, L1, L2, history lock)
            └─ Phase 6: release server.lock  ← LAST, in try/finally
 ```
 
-**Only **`/collab`** WebSocket upgrades count.** DirectConnections opened by the CC1 broadcaster and `AgentSessionManager` are invisible by design (D-017). A stale agent session doesn't keep the server alive overnight — an acceptable trade (NG10) since everything important is already persisted to the shadow repo.
+**Only `/collab` WebSocket upgrades count.** DirectConnections opened by the CC1 broadcaster and `AgentSessionManager` are invisible by design (D-017). A stale agent session doesn't keep the server alive overnight — an acceptable trade (NG10) since everything important is already persisted to the history repo.
 
 ## D-025 safety-net
 

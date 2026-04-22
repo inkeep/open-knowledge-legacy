@@ -2,7 +2,6 @@
 title: GitHub Sync
 description: Clone repos from GitHub, auto-sync changes with your team, and resolve conflicts -- all without touching the terminal.
 ---
-
 Open Knowledge can clone a GitHub repository, keep it in sync with the remote, and surface conflicts when they arise. For non-developers, everything works through the editor UI. Developers also have CLI commands and configuration overrides.
 
 ## Clone a repository
@@ -93,28 +92,28 @@ Both intervals apply +/-15% jitter to prevent thundering-herd effects when multi
 
 ### What gets committed
 
-Auto-commits happen at the same cadence as the shadow repo's Layer 2 persistence (30-second idle debounce). The commit message defaults to `WIP auto-save <ISO timestamp>`. Only files matching your content filter (`.md` and `.mdx` by default) are included in auto-commits.
+Auto-commits happen at the same cadence as the history repo's Layer 2 persistence (30-second idle debounce). The commit message defaults to `WIP auto-save <ISO timestamp>`. Only files matching your content filter (`.md` and `.mdx` by default) are included in auto-commits.
 
 ### Status badge
 
 The editor header shows a sync status badge with these states:
 
-| State | Icon | Meaning |
-|-------|------|---------|
-| Synced | Green check | Up to date with remote |
-| Syncing | Spinner | Fetch, pull, or push in progress |
-| Ahead N | Upload icon | N commits ahead of remote |
-| Behind N | Download icon | N commits behind remote |
-| Conflict | Orange warning | Merge conflict detected -- click to resolve |
-| Offline | Grey cloud | Network unreachable -- changes saved locally |
-| Auth error | Red icon | Token expired or revoked -- sign in again |
-| Disabled | Grey icon | Sync disabled (protected branch or config) |
+| State      | Icon           | Meaning                                      |
+| ---------- | -------------- | -------------------------------------------- |
+| Synced     | Green check    | Up to date with remote                       |
+| Syncing    | Spinner        | Fetch, pull, or push in progress             |
+| Ahead N    | Upload icon    | N commits ahead of remote                    |
+| Behind N   | Download icon  | N commits behind remote                      |
+| Conflict   | Orange warning | Merge conflict detected -- click to resolve  |
+| Offline    | Grey cloud     | Network unreachable -- changes saved locally |
+| Auth error | Red icon       | Token expired or revoked -- sign in again    |
+| Disabled   | Grey icon      | Sync disabled (protected branch or config)   |
 
 Click the badge to see details: last sync time, ahead/behind counts, and action buttons (Retry, Sign in).
 
 ### Offline behavior
 
-When the network is unavailable, edits continue saving to disk and the shadow repo locally. The sync engine retries with exponential backoff (5 minutes after 3 failures, 15 minutes after 5, 60 minutes after 8). When connectivity returns, queued commits push automatically.
+When the network is unavailable, edits continue saving to disk and the history repo locally. The sync engine retries with exponential backoff (5 minutes after 3 failures, 15 minutes after 5, 60 minutes after 8). When connectivity returns, queued commits push automatically.
 
 ### Branch behavior
 
