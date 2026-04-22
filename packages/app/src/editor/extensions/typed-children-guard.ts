@@ -126,13 +126,27 @@ export function shouldRejectTypedChildrenInsertion(
                       // sonner's toast accessing browser-only globals in a
                       // Node test runner) cannot roll back the `dominated`
                       // decision we just made. Side-effect errors are noise
-                      // relative to the filterTransaction invariant.
+                      // relative to the filterTransaction invariant, but the
+                      // WHOLE POINT of the reporter is to surface *why* a
+                      // keystroke vanished — a silent swallow would leave
+                      // prod users with no signal. Emit a structured
+                      // `typed-children-reject-reporter-failure` event
+                      // regardless of NODE_ENV so aggregated telemetry
+                      // catches systemic reporter outages.
                       try {
                         onReject(componentName, insertedNode.type.name);
                       } catch (reporterErr) {
-                        if (process.env.NODE_ENV === 'development') {
-                          console.debug('[TypedChildrenGuard] onReject threw', reporterErr);
-                        }
+                        console.warn(
+                          JSON.stringify({
+                            event: 'typed-children-reject-reporter-failure',
+                            container: componentName,
+                            inserted: insertedNode.type.name,
+                            reason:
+                              reporterErr instanceof Error
+                                ? reporterErr.message
+                                : String(reporterErr),
+                          }),
+                        );
                       }
                     }
                   }

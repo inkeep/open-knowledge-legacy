@@ -43,6 +43,7 @@ import {
 } from '../../editor/extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
 import { getEntryLabel } from '../../editor/selection/entry-label.ts';
+import { DOCUMENT_ROOT_LABEL } from '../../editor/utils/editor-strings.ts';
 
 /** Truncation budget for the `ancestorChain` array only. The synthetic
  *  `Document` anchor is rendered as a sibling in `BreadcrumbContent` and is
@@ -127,9 +128,10 @@ function BreadcrumbContent({
           selection. Dispatching the meta separately from the selection
           would be two applies, and a future plugin inserting an
           interleaving apply could consume the pending origin before the
-          selection change lands. */}
-      {/* TODO(i18n): "Document" is hard-coded English. See parallel TODO
-          on JsxComponentView's groupAriaLabel (same future migration). */}
+          selection change lands.
+          String source: `DOCUMENT_ROOT_LABEL` in
+          `editor/utils/editor-strings.ts` — a future i18n pass swaps the
+          file, not the render site. */}
       <button
         type="button"
         className="opacity-60 hover:opacity-100 hover:text-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
@@ -148,7 +150,7 @@ function BreadcrumbContent({
             .run();
         }}
       >
-        Document
+        {DOCUMENT_ROOT_LABEL}
       </button>
       {visible.map((entry) => {
         if (entry.kind === 'ellipsis') {

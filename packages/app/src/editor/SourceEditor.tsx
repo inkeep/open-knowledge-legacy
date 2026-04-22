@@ -25,12 +25,16 @@ interface SourceEditorProps {
   placeholder?: string;
 }
 
-const themeCompartment = new Compartment();
-const placeholderCompartment = new Compartment();
-
 export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Per-instance Compartments. `createNestedCMExtensions`'s header requires
+  // this shape ("Module-scoped theme singletons cause cross-instance
+  // reconfigure conflicts"). Two concurrent SourceEditor instances can
+  // coexist under React 19 StrictMode double-mount and under the Activity-
+  // pool dual-editor mount pattern — module-scope singletons race.
+  const themeCompartmentRef = useRef(new Compartment());
+  const placeholderCompartmentRef = useRef(new Compartment());
   const { resolvedTheme } = useTheme();
 
   // Update awareness mode to 'source' when SourceEditor mounts
@@ -74,13 +78,13 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
         // agent-flash, theme compartment, line-wrapping. Source mode adds the
         // extras below (source-polish, placeholder, full-height theme).
         ...createNestedCMExtensions({
-          themeCompartment,
+          themeCompartment: themeCompartmentRef.current,
           resolvedTheme,
           ydoc: provider.document,
         }),
         createSourcePolishExtension(),
         sourceClipboard,
-        placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
+        placeholderCompartmentRef.current.of(cmPlaceholder(placeholder ?? '')),
         EditorView.theme({
           '&': {
             height: '100%',
@@ -117,14 +121,16 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+      effects: themeCompartmentRef.current.reconfigure(
+        resolvedTheme === 'dark' ? darkTheme : lightTheme,
+      ),
     });
   }, [resolvedTheme]);
 
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: placeholderCompartment.reconfigure(cmPlaceholder(placeholder ?? '')),
+      effects: placeholderCompartmentRef.current.reconfigure(cmPlaceholder(placeholder ?? '')),
     });
   }, [placeholder]);
 

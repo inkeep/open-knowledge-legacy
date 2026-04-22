@@ -1,53 +1,51 @@
 /**
- * Regression test for extractPrimitiveProps.
+ * Regression tests for `extractPrimitiveProps` (JsxComponentView.tsx).
  *
- * Originally the implementation iterated ONLY the descriptor-declared PropDef
- * entries, dropping any attr not in the registry from the rendered component's
- * props. Example crash: `<InlineTOC items={[...]}>` → fumadocs InlineTOC does
- * `items.map(...)` → `TypeError: Cannot read properties of undefined (reading
- * 'map')` because the `items` attr was silently dropped.
+ * The function's contract:
+ *   - Passes through every declared non-reactnode prop.
+ *   - Excludes prop names the descriptor marked as `reactnode`.
+ *   - Preserves unknown attrs (FR-21 merge symmetry — fumadocs components
+ *     often require attrs we don't declare, e.g. `InlineTOC.items`).
+ *   - Routes every return value through `sanitizeComponentProps` — XSS
+ *     denylist (`dangerouslySetInnerHTML`, `on*` events, React internals),
+ *     URL-scheme allowlist, style sanitization, nested URL traversal.
  *
- * The fix makes the render path symmetric with FR-21's reconstructAttrs merge:
- * ALL keys from `attrs.props` (destructureAttrs stores every attribute there)
- * pass through, and only PropDef entries whose type is 'reactnode' are excluded
- * (those are content holes — handled by NodeViewContent).
+ * Originally the implementation iterated ONLY the descriptor-declared
+ * PropDef entries, dropping any attr not in the registry. Example crash:
+ * `<InlineTOC items={[...]}>` → fumadocs InlineTOC does `items.map(...)`
+ * → `TypeError: Cannot read properties of undefined (reading 'map')`
+ * because the `items` attr was silently dropped.
  */
 import { describe, expect, test } from 'bun:test';
-import type { PropDef } from '@inkeep/open-knowledge-core';
 import { extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
 
+/** Test helper: build a `ReadonlySet<string>` of reactnode-typed prop names.
+ *  (In production the descriptor registry pre-computes this once at build
+ *  time — see `packages/app/src/editor/registry/index.ts`.) */
+function reactNodes(...names: string[]): ReadonlySet<string> {
+  return new Set(names);
+}
+
 describe('extractPrimitiveProps', () => {
-  test('passes through declared props', () => {
-    const descriptorProps: PropDef[] = [
-      { name: 'type', type: 'enum', enumValues: ['info', 'warning'], required: false },
-      { name: 'title', type: 'string', required: false },
-    ];
+  test('passes through declared non-reactnode props', () => {
     const attrs = { props: { type: 'warning', title: 'Heads up' } };
-
-    const result = extractPrimitiveProps(attrs, descriptorProps);
-
+    const result = extractPrimitiveProps(attrs, reactNodes());
     expect(result).toEqual({ type: 'warning', title: 'Heads up' });
   });
 
-  test('excludes reactnode-typed PropDef entries (content hole, not a prop)', () => {
-    const descriptorProps: PropDef[] = [
-      { name: 'title', type: 'string', required: false },
-      { name: 'children', type: 'reactnode', required: true },
-    ];
-    // Shouldn't happen in practice (parser wouldn't put children in props), but
-    // asserting the filter excludes reactnode names if they somehow appear.
+  test('excludes reactnode-typed prop names (content holes are NOT render-time props)', () => {
+    // Shouldn't happen in practice (parser wouldn't put children in props),
+    // but asserting the filter excludes reactnode names if they somehow
+    // appear.
     const attrs = { props: { title: 'Hi', children: 'shouldnt be here' } };
-
-    const result = extractPrimitiveProps(attrs, descriptorProps);
-
+    const result = extractPrimitiveProps(attrs, reactNodes('children'));
     expect(result).toEqual({ title: 'Hi' });
     expect(result).not.toHaveProperty('children');
   });
 
-  test('REGRESSION: undeclared attrs pass through (e.g. InlineTOC items, Mermaid chart, TypeTable type)', () => {
-    // Registry PropDef only declares `children: reactnode`, but the fumadocs
-    // InlineTOC component requires an `items` array or it crashes.
-    const descriptorProps: PropDef[] = [{ name: 'children', type: 'reactnode', required: false }];
+  test('REGRESSION: undeclared attrs pass through (e.g. InlineTOC items, TypeTable type)', () => {
+    // Registry PropDef only declares `children: reactnode`, but fumadocs
+    // InlineTOC requires an `items` array or it crashes.
     const attrs = {
       props: {
         items: [
@@ -56,8 +54,7 @@ describe('extractPrimitiveProps', () => {
         ],
       },
     };
-
-    const result = extractPrimitiveProps(attrs, descriptorProps);
+    const result = extractPrimitiveProps(attrs, reactNodes('children'));
 
     // The undeclared `items` MUST reach the component.
     expect(result).toHaveProperty('items');
@@ -66,13 +63,9 @@ describe('extractPrimitiveProps', () => {
   });
 
   test('REGRESSION: preserves unknown attrs alongside declared ones (FR-21 merge symmetry)', () => {
-    // fumadocs Card PropDef declares title/description but not `color`/`external`.
-    // The render path must NOT drop unknown attrs — matches the serialize-path
-    // reconstructAttrs merge semantics.
-    const descriptorProps: PropDef[] = [
-      { name: 'title', type: 'string', required: false },
-      { name: 'description', type: 'string', required: false },
-    ];
+    // fumadocs Card has `title`/`description`/`color`/`external` attrs; if
+    // the descriptor only declares title+description, color/external must
+    // still reach the rendered component.
     const attrs = {
       props: {
         title: 'Custom Card',
@@ -81,9 +74,7 @@ describe('extractPrimitiveProps', () => {
         external: true,
       },
     };
-
-    const result = extractPrimitiveProps(attrs, descriptorProps);
-
+    const result = extractPrimitiveProps(attrs, reactNodes());
     expect(result).toEqual({
       title: 'Custom Card',
       description: 'With extras',
@@ -93,13 +84,67 @@ describe('extractPrimitiveProps', () => {
   });
 
   test('handles empty props', () => {
-    const result = extractPrimitiveProps({ props: {} }, []);
+    const result = extractPrimitiveProps({ props: {} }, reactNodes());
     expect(result).toEqual({});
   });
 
   test('handles missing props attr', () => {
-    const result = extractPrimitiveProps({}, []);
+    const result = extractPrimitiveProps({}, reactNodes());
     expect(result).toEqual({});
+  });
+
+  // ── Render-layer XSS mitigation contract (sanitizeComponentProps) ──────
+
+  test('XSS: strips javascript: URL from href before it reaches live React', () => {
+    const attrs = { props: { href: 'javascript:alert(1)', title: 'bad' } };
+    const result = extractPrimitiveProps(attrs, reactNodes());
+    expect(result.href).toBe('#');
+    expect(result.title).toBe('bad');
+  });
+
+  test('XSS: drops dangerouslySetInnerHTML entirely', () => {
+    const attrs = {
+      props: {
+        dangerouslySetInnerHTML: { __html: '<img src=x onerror=alert(1)>' },
+        title: 'safe',
+      },
+    };
+    const result = extractPrimitiveProps(attrs, reactNodes());
+    expect(result).not.toHaveProperty('dangerouslySetInnerHTML');
+    expect(result.title).toBe('safe');
+  });
+
+  test('XSS: drops every on* event-handler prop', () => {
+    const attrs = {
+      props: { onClick: 'alert(1)', onError: 'alert(2)', title: 'safe' },
+    };
+    const result = extractPrimitiveProps(attrs, reactNodes());
+    expect(result).not.toHaveProperty('onClick');
+    expect(result).not.toHaveProperty('onError');
+    expect(result.title).toBe('safe');
+  });
+
+  test('XSS: sanitizes nested URLs inside array-of-objects (InlineTOC.items shape)', () => {
+    const attrs = {
+      props: {
+        items: [
+          { title: 'bad', url: 'javascript:alert(1)' },
+          { title: 'good', url: 'https://ok.example.com' },
+        ],
+      },
+    };
+    const result = extractPrimitiveProps(attrs, reactNodes());
+    const items = result.items as Array<{ title: string; url: string }>;
+    expect(items[0].url).toBe('#');
+    expect(items[1].url).toBe('https://ok.example.com');
+  });
+
+  test('XSS: drops style with url(javascript:…)', () => {
+    const attrs = {
+      props: { style: 'background: url(javascript:alert(1)); color: red' },
+    };
+    const result = extractPrimitiveProps(attrs, reactNodes());
+    expect(result.style).toBe('');
   });
 });
 

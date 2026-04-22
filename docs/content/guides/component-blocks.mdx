@@ -1,0 +1,157 @@
+---
+title: Component blocks
+description: Insert, edit, and troubleshoot MDX components (Callout, Cards, Tabs, Steps, …) inside the Open Knowledge editor.
+---
+
+Open Knowledge ships a WYSIWYG editor that renders MDX components as live
+React components. You write your MDX on disk (or via the MCP write tools);
+the editor parses it, renders each component with its real implementation,
+and lets you edit props + children without leaving the visual canvas.
+
+## The slash menu
+
+Type <kbd>/</kbd> at the start of an empty line to open the insertion menu.
+Start typing to filter. Pick an entry with the arrow keys and press
+<kbd>Enter</kbd> to insert.
+
+Every entry inserts a fully-formed MDX block with sensible default props.
+For components with editable props, the settings panel opens automatically
+so you can fill in required fields before you move on.
+
+### Built-in components
+
+The menu is grouped by category. Every built-in is a thin wrapper over the
+[fumadocs-ui](https://fumadocs.dev) component of the same name and renders
+with the real fumadocs styles inside the editor.
+
+**Content**
+
+| Component | Purpose |
+|---|---|
+| `Callout` | Admonition box (`info` / `warning` / `error` / …) |
+| `Card` | Linked card with title, description, icon |
+| `Cards` | Grid of `Card` children |
+| `Steps` | Numbered list of `Step` children |
+| `Step` | A single step inside `Steps` |
+| `Tabs` | Tabbed switcher over `Tab` children |
+| `Tab` | A single tab panel |
+| `Accordions` | Collapsible group of `Accordion` children |
+| `Accordion` | A single collapsible item |
+| `Files` | File-tree layout |
+| `Folder` | Folder row inside `Files` |
+| `File` | Leaf file inside `Files` or `Folder` |
+| `Banner` | Full-width notice strip |
+| `InlineTOC` | Inline table of contents |
+| `TypeTable` | API/type documentation table |
+
+**Media**
+
+| Component | Purpose |
+|---|---|
+| `ImageZoom` | Click-to-zoom image |
+| `Audio` | Audio player |
+
+## Editing props
+
+When a component is selected, a hover chrome bar appears at the top-right
+with four icons:
+
+1. **Move up / Move down** — reorder the component within its parent
+   container (only shown for children of container components — Steps,
+   Cards, Tabs, Accordions, Files).
+2. **Delete** — remove the component (and its children).
+3. **Settings (gear)** — open the floating **PropPanel**.
+
+The PropPanel is auto-generated from the component's TypeScript interface:
+
+- **String props** render as text inputs.
+- **Boolean props** render as toggle switches.
+- **Enum props** render as `<select>` dropdowns with the valid values.
+- **Number props** render as numeric inputs.
+- **React-node props** (children, icon, …) are edited in the canvas, not
+  the panel.
+
+Your edits write to the underlying MDX immediately — storage is the CRDT,
+and every keystroke propagates to other connected clients.
+
+### Keyboard shortcuts
+
+| Action | Shortcut |
+|---|---|
+| Open PropPanel (when a block is NodeSelected) | <kbd>Enter</kbd> or <kbd>Space</kbd> |
+| Close PropPanel and return focus to the block | <kbd>Esc</kbd> |
+| Move selection between blocks | <kbd>↑</kbd> / <kbd>↓</kbd> |
+| Reorder a child inside a container | <kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
+
+## Containers and the "Add child" pill
+
+Container components (Steps, Cards, Tabs, Accordions, Files) show a pill
+at the bottom edge once hovered:
+
+- `Click to add a step` — empty container state.
+- `+ Add Tab` — non-empty container.
+
+Clicking the pill inserts the appropriate child (a new `Step`, `Tab`,
+`Card`, …) and places focus on it so you can type immediately.
+
+A **typed-children guard** prevents you from inserting a paragraph or
+arbitrary block directly inside a container. If you try — for example by
+pasting plain text inside `<Steps>` — the insertion is rejected at the
+PM transaction level and a toast explains why. Use the "Add child" pill,
+or type a new block above/below the container.
+
+## Unregistered and broken components
+
+Open Knowledge takes a **"all user content always visible"** stance
+(Precedent #14). If a component can't be rendered live, it falls through
+to an editable source-code block instead of disappearing.
+
+Two situations trigger the fallback:
+
+1. **Unregistered component name.** The editor doesn't ship a live React
+   renderer for every MDX component in the world. Unknown names (your own
+   project-specific components, imported libraries we don't bundle) are
+   shown as an editable `rawMdxFallback` block — a nested CodeMirror
+   editor containing the raw source. Fix the source; on blur the editor
+   re-parses and, if the source is valid MDX again, replaces the fallback
+   with a live component.
+
+2. **Render errors.** A valid component that throws during React render
+   (bad prop, missing required value, runtime crash) is caught by an
+   error boundary and auto-converted to the same `rawMdxFallback` source
+   editor. The error message is shown in the chrome bar so you can
+   diagnose what needs fixing.
+
+Either way: your MDX bytes are preserved exactly as you authored them.
+The raw source never disappears.
+
+### `<Mermaid />` and deprecated components
+
+Earlier versions shipped non-functional placeholders for `<Mermaid />` and
+`<AudioPlaceholder />`. Those stubs were removed; existing content auto-
+converts to the editable source fallback on first open. Rename
+`<AudioPlaceholder />` to `<Audio />` to pick up the built-in audio-player
+descriptor chrome.
+
+## Authoring via MCP / agents
+
+Agents writing to the document through MCP's `write_document` /
+`edit_document` tools produce MDX exactly as above. Round-trip fidelity
+is byte-exact for pristine content (content that hasn't been edited in
+the WYSIWYG canvas since parse); modified content is re-serialized
+through the structured prop path with `mdxJsxFlowElement` reconstruction.
+
+If an agent writes an unregistered component name, the editor behaves
+exactly as it does for a human-authored unknown tag: the component
+appears as an editable source fallback, the MDX source is preserved,
+and on blur the fallback upgrades back to a live component if the
+source now parses.
+
+## See also
+
+- [Getting started](/docs/guides/getting-started) — install and first
+  project.
+- [MCP integration](/docs/guides/mcp-integration) — how agents author
+  content.
+- [Configuration](/docs/guides/configuration) — what `.open-knowledge/`
+  contains and how path filtering works.

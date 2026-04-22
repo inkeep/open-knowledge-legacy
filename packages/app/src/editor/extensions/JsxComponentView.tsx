@@ -31,6 +31,7 @@ import {
   createChildNode,
   focusInsertedComponent,
 } from '../slash-command/component-items.ts';
+import { formatContainerAriaLabel } from '../utils/editor-strings.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
 import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 
@@ -40,6 +41,12 @@ interface ErrorBoundaryProps {
   onError: (error: Error) => void;
   children: ReactNode;
   resetKey: string;
+  /** Registered descriptor name ('Callout', 'Card', …, or 'wildcard'). */
+  descriptorName: string;
+  /** Raw user-authored component name; may be arbitrary MDX text. Kept in a
+   *  separate field (not a label) so telemetry aggregation does not explode
+   *  cardinality across tenants. */
+  rawComponentName: string;
 }
 
 interface ErrorBoundaryState {
@@ -57,6 +64,13 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
     console.warn(
       JSON.stringify({
         event: 'jsx-render-failure',
+        // `component` is the low-cardinality label suitable for
+        // aggregation — always one of the 17 registered descriptor names
+        // OR the literal string 'wildcard'. The unbounded user-authored
+        // name goes in `rawComponentName` so debugging stays possible
+        // without making it a grouping key.
+        component: this.props.descriptorName,
+        rawComponentName: this.props.rawComponentName,
         error: String(error),
         stack: info.componentStack,
       }),
@@ -104,23 +118,34 @@ export function stableHash(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableHash(v)}`).join(',')}}`;
 }
 
+/**
+ * Extract primitive (non-reactnode) props from PM node attrs.
+ * `reactNodeNames` is the descriptor's pre-computed set of reactnode-typed
+ * prop names — stable per descriptor, cached at registry build time so we
+ * don't re-allocate per render (see `registry/types.ts`).
+ *
+ * Every returned object flows through `sanitizeComponentProps`, which:
+ *   - Strips javascript:/vbscript:/data: URLs from URL-typed props
+ *     (case-insensitive match, covers React camelCase formAction/xlinkHref).
+ *   - Drops dangerouslySetInnerHTML / on* event handlers / React internals.
+ *   - Filters `url(javascript:…)` / `expression(…)` from style strings and
+ *     drops non-string style values (MDX-expression-authored style objects
+ *     bypass the string scanner).
+ *   - Traverses nested URL-shaped keys in arrays / plain objects (bounded).
+ *
+ * Storage (Y.Text, XmlFragment, shadow repo) retains the raw bytes per the
+ * NG4 fidelity contract — only the live render is sanitized.
+ */
 export function extractPrimitiveProps(
   attrs: Record<string, unknown>,
-  descriptorProps: import('@inkeep/open-knowledge-core').PropDef[],
+  reactNodeNames: ReadonlySet<string>,
 ): Record<string, unknown> {
   const propsObj = (attrs.props ?? {}) as Record<string, unknown>;
-  const reactnodeNames = new Set(
-    descriptorProps.filter((p) => p.type === 'reactnode').map((p) => p.name),
-  );
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(propsObj)) {
-    if (reactnodeNames.has(key)) continue;
+    if (reactNodeNames.has(key)) continue;
     result[key] = value;
   }
-  // Render-layer XSS mitigation: strip javascript:/vbscript:/data: URLs from
-  // URL-typed props (href, src, action, ...) before they reach live React.
-  // Storage (Y.Text, XmlFragment, shadow repo) retains the raw bytes per the
-  // NG4 fidelity contract — only the live render is sanitized.
   return sanitizeComponentProps(result);
 }
 
@@ -226,7 +251,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     wasSelected.current = selected;
   }, [selected, hasEditableProps, pos]);
 
-  const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
+  const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.reactNodePropNames);
   // Stable reset key for the ErrorBoundary. `JSON.stringify` on an arbitrary
   // props object produced a string whose content was key-order-sensitive
   // across engines — combined with the post-edit re-serialization that
@@ -301,7 +326,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         console.warn(
           JSON.stringify({
             event: 'jsx-component-auto-convert-failed',
-            component: node.attrs.componentName,
+            // Low-cardinality label for aggregation — always registered
+            // descriptor name or literal 'wildcard'. Raw user text goes in
+            // rawComponentName (see also ComponentErrorBoundary).
+            component: descriptor.name === '*' ? 'wildcard' : descriptor.name,
+            rawComponentName: node.attrs.componentName,
             reason: err instanceof Error ? err.message : String(err),
           }),
         );
@@ -314,16 +343,20 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     };
   }, [needsConversion, node, editor, getPos, descriptor, renderError]);
 
-  // Show placeholder while conversion is pending
+  // Show placeholder while the auto-convert rAF (above) dispatches. This
+  // usually flashes for < 1 frame and is invisible; a slow hot-reload on
+  // a large doc can surface it. Copy is action-oriented ("source editable
+  // below") so even when it does surface, the user reads a meaningful
+  // next step rather than implementation jargon.
   if (needsConversion) {
     const label =
       descriptor.name === '*'
-        ? `Unknown: ${node.attrs.componentName as string}`
-        : `${descriptor.displayName ?? descriptor.name} — render error`;
+        ? `Unknown component: ${node.attrs.componentName as string} — source editable below`
+        : `${descriptor.displayName ?? descriptor.name} — render error, source editable below`;
     return (
       <NodeViewWrapper className="jsx-component-wrapper my-2">
         <div className="text-xs font-mono text-muted-foreground px-2 py-1" contentEditable={false}>
-          {label} — opening source editor...
+          {label}
         </div>
         <NodeViewContent className="component-children" />
       </NodeViewWrapper>
@@ -365,17 +398,16 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // aria-label summarizing content. Screen readers announce on focus/select.
   // See precedent "A11y codified in the selection plugin, not retrofitted
   // per-block" and its consumers (Breadcrumb, SelectionAnnouncer).
-  // TODO(i18n): pluralization is English-only (`+ 's'` heuristic) — this
-  // breaks for irregular plurals (Foot → Foots) and any non-English locale.
-  // When i18n lands, route through `Intl.PluralRules` + a localized message
-  // catalog. The same heuristic appears nowhere else in this layer; do not
-  // copy this pattern.
+  //
+  // Descriptor display text is English (all descriptors ship with
+  // English labels). Pluralization uses locale-neutral "with N items"
+  // shapes that avoid inflecting the descriptor's child name — every
+  // string change goes through the `editor-strings.ts` helpers so a
+  // future i18n pass has a single place to swap.
   const componentLabel = descriptor.displayName ?? descriptor.name;
   const isGroupContainer = Boolean(descriptor.emptyChildName);
   const groupAriaLabel = isGroupContainer
-    ? node.childCount > 0
-      ? `${componentLabel} with ${node.childCount} ${(descriptor.emptyChildName as string).toLowerCase()}${node.childCount === 1 ? '' : 's'}`
-      : `${componentLabel} (empty)`
+    ? formatContainerAriaLabel(componentLabel, descriptor.emptyChildName, node.childCount)
     : undefined;
 
   // WCAG 2.1.1 keyboard-equivalent to the click-to-select path. When the
@@ -400,6 +432,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   return (
     <NodeViewWrapper
       className="jsx-component-wrapper my-2"
+      // Stable test-selector contract, decoupled from `className` (which can
+      // change for visual reasons). Tests that target "every component
+      // wrapper" use `[data-jsx-component]` — do not remove without
+      // updating `packages/app/tests/a11y/component-blocks.e2e.ts` etc.
+      data-jsx-component=""
       data-component-type={descriptor.name.toLowerCase()}
       data-selected={isInnermostSelected ? 'true' : undefined}
       data-has-child-selected={hasChildSelected ? 'true' : undefined}
@@ -618,7 +655,13 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           BubbleMenu, and all PM features for descendants. Instead, a
           filterTransaction plugin (TypedChildrenGuard) rejects unwanted
           insertions at the PM transaction level. */}
-      <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
+      <ComponentErrorBoundary
+        key={resetKey}
+        resetKey={resetKey}
+        onError={setRenderError}
+        descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
+        rawComponentName={(node.attrs.componentName as string) ?? ''}
+      >
         <EditorContextProvider value={editor}>
           <Comp {...primitiveProps}>
             <NodeViewContent

@@ -38,7 +38,11 @@ import { DEV_GATED_WINDOW_WRITERS } from './dev-gate-allowlist';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
-const E2E_DIR = join(__dirname, '..', 'stress');
+const E2E_DIRS = [
+  join(__dirname, '..', 'stress'),
+  join(__dirname, '..', 'visual'),
+  join(__dirname, '..', 'a11y'),
+];
 const APP_SRC_DIR = join(__dirname, '..', '..', 'src');
 
 interface FileLines {
@@ -50,19 +54,36 @@ interface FileLines {
   lines: string[];
 }
 
+/**
+ * Enumerate every `*.e2e.ts` file across the three E2E directories
+ * (`tests/stress`, `tests/visual`, `tests/a11y`). Each STOP rule applies
+ * uniformly — a waitForTimeout in a visual/a11y test is as flaky as one in
+ * stress. Previously scoped to stress/ only; broadened 2026-04-22 per a
+ * review finding that every new visual/a11y test was shipping ~13 banned
+ * `waitForTimeout` calls with no gate.
+ */
 function listE2eFiles(): FileLines[] {
-  const entries = readdirSync(E2E_DIR);
-  return entries
-    .filter((name) => name.endsWith('.e2e.ts'))
-    .map((name) => {
-      const absPath = join(E2E_DIR, name);
+  const all: FileLines[] = [];
+  for (const dir of E2E_DIRS) {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      // Directory may not exist yet (future test suites add one).
+      continue;
+    }
+    for (const name of entries) {
+      if (!name.endsWith('.e2e.ts')) continue;
+      const absPath = join(dir, name);
       const source = readFileSync(absPath, 'utf-8');
-      return {
+      all.push({
         path: relative(REPO_ROOT, absPath),
         absPath,
         lines: source.split('\n'),
-      };
-    });
+      });
+    }
+  }
+  return all;
 }
 
 function listAppSrcTsFiles(): FileLines[] {
@@ -108,7 +129,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     expect(e2eFiles.length).toBeGreaterThan(0);
   });
 
-  test('no page.waitForTimeout( in tests/stress/*.e2e.ts (AC-3)', () => {
+  test('no page.waitForTimeout( in tests/{stress,visual,a11y}/*.e2e.ts (AC-3)', () => {
     const violations = collectMatches(e2eFiles, (line) => line.includes('page.waitForTimeout('));
     if (violations.length > 0) {
       throw new Error(
@@ -117,7 +138,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
-  test("no waitUntil: 'networkidle' in tests/stress/*.e2e.ts (AC-4)", () => {
+  test("no waitUntil: 'networkidle' in tests/{stress,visual,a11y}/*.e2e.ts (AC-4)", () => {
     const violations = collectMatches(e2eFiles, (line) =>
       /waitUntil:\s*['"]networkidle['"]/.test(line),
     );
@@ -128,7 +149,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
-  test('no new Promise + setTimeout busy-wait in tests/stress/*.e2e.ts (D-Q14)', () => {
+  test('no new Promise + setTimeout busy-wait in tests/{stress,visual,a11y}/*.e2e.ts (D-Q14)', () => {
     const pattern = /new Promise\(\s*(\w+)\s*=>\s*setTimeout\(\s*\1\s*,/;
     const violations = collectMatches(e2eFiles, (line) => pattern.test(line));
     if (violations.length > 0) {
@@ -138,7 +159,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
-  test('no page.pause( in tests/stress/*.e2e.ts (D-Q14)', () => {
+  test('no page.pause( in tests/{stress,visual,a11y}/*.e2e.ts (D-Q14)', () => {
     const violations = collectMatches(e2eFiles, (line) => line.includes('page.pause('));
     if (violations.length > 0) {
       throw new Error(
@@ -147,7 +168,7 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
-  test("no test.skip(browserName === 'webkit') in tests/stress/*.e2e.ts (AC-5 ratchet)", () => {
+  test("no test.skip(browserName === 'webkit') in tests/{stress,visual,a11y}/*.e2e.ts (AC-5 ratchet)", () => {
     const pattern = /test\.skip\(\s*browserName\s*===\s*['"]webkit['"]/;
     const violations = collectMatches(e2eFiles, (line) => pattern.test(line));
     if (violations.length > 0) {

@@ -137,8 +137,16 @@ export function createChildNode(childName: string): Record<string, unknown> {
  */
 const pendingAutoOpen = new Set<number>();
 
-function setPendingAutoOpen(pos: number): void {
+export function setPendingAutoOpen(pos: number): void {
   pendingAutoOpen.add(pos);
+}
+
+/**
+ * Internal test-only helper: clear the pending set. Production code should
+ * not call this — `consumeAutoOpen` drains entries as NodeViews mount.
+ */
+export function _resetPendingAutoOpenForTest(): void {
+  pendingAutoOpen.clear();
 }
 
 /**

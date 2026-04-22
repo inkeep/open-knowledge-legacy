@@ -242,6 +242,22 @@ interface FallbackRegion {
  *
  * Only matches UpperCase tag names (JSX / MDX component convention).
  */
+/**
+ * Max bytes the per-tag forward scan for `>` will consume. The outer
+ * `src.matchAll(TAG_START_RE)` loop visits every `<UpperCase` occurrence;
+ * without a bound, a pathological input of N unclosed tags forces each
+ * match to rescan most of the remaining source (O(N^2)). Real MDX tags
+ * are < 1 KB; 32 KB accommodates every legitimate case with headroom and
+ * caps the worst-case cost at O(N * MAX_TAG_SCAN_SPAN) = O(N).
+ *
+ * When the scan hits the bound without finding a terminator, the tag emits
+ * no event — same "safe-coarsening" documented for the unclosed-attribute
+ * case in FR-23. The higher-level fallback still produces a correct
+ * result: surrounding blocks parse normally, the unbounded tag span
+ * collapses to a source-editor fallback region.
+ */
+const MAX_TAG_SCAN_SPAN = 32 * 1024;
+
 export function scanTagEvents(src: string, fences: Array<[number, number]>): TagEvent[] {
   const events: TagEvent[] = [];
   // Match potential tag starts: `<UpperCase` or `</UpperCase`
@@ -254,19 +270,21 @@ export function scanTagEvents(src: string, fences: Array<[number, number]>): Tag
     const isClose = match[1] === '/';
     const name = match[2];
     // Forward-scan from after the tag name to find the terminating `>`
-    // while respecting quote and brace state.
+    // while respecting quote and brace state. Bounded by MAX_TAG_SCAN_SPAN
+    // so adversarial input (N unclosed tags) stays linear overall.
     const scanStart = tagStartPos + match[0].length;
+    const scanEnd = Math.min(src.length, scanStart + MAX_TAG_SCAN_SPAN);
     let inDoubleQuote = false;
     let braceDepth = 0;
     let terminatorPos = -1;
     let isSelfClosing = false;
 
-    for (let i = scanStart; i < src.length; i++) {
+    for (let i = scanStart; i < scanEnd; i++) {
       const ch = src[i];
       if (inDoubleQuote) {
         if (ch === '"') inDoubleQuote = false;
         // Backslash escape inside quotes — skip next char
-        if (ch === '\\' && i + 1 < src.length) i++;
+        if (ch === '\\' && i + 1 < scanEnd) i++;
         continue;
       }
       if (ch === '"') {

@@ -149,7 +149,7 @@ Thirty-two numbered rules govern how work lands in this repo. Code comments cite
 28. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics
 29. **CSS custom-property tokens scoped via `[data-component-type]`** — Per-block-type visual tuning via `--*` overrides, not new class selectors
 30. **Innermost-wins visible chrome via state, not `:has()`** — `data-has-child-selected` propagated by plugin store; beats `:has()` on perf + compat
-31. **Floating UI for selection-anchored overlays** — `useSelectionAnchoredPopover` + `computeSelectionAnchor`; no ad-hoc `position: absolute`
+31. **Floating UI for selection-anchored overlays** — `@floating-ui/dom` with virtual elements derived from PM selection; anchor preference is `view.nodeDOM(pos)` → `posToDOMRect(view, from, to)`. No scaffolded `useSelectionAnchoredPopover` / `computeSelectionAnchor` ships ahead of the first real consumer — extraction happens at that consumer's site. See PRECEDENTS.md §31.
 32. **A11y codified in the selection plugin, not retrofitted per-block** — `role="group"`, `aria-live` announcer, forced-colors / reduced-motion from plugin + descriptor
 
 ### Resolving `bun.lock` merge conflicts

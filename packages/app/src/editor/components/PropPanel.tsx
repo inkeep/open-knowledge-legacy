@@ -47,7 +47,7 @@ export function PropPanel({ props, values, onChange }: PropPanelProps) {
   if (editableProps.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-2 p-3 text-sm">
+    <div data-prop-panel="" className="flex flex-col gap-2 p-3 text-sm">
       {editableProps.map((propDef) => (
         <PropControl
           key={propDef.name}
@@ -60,6 +60,17 @@ export function PropPanel({ props, values, onChange }: PropPanelProps) {
   );
 }
 
+/**
+ * Exhaustive-check sentinel for `PropDef.type`. Adding a new PropDef
+ * variant without extending the switch below produces a compile error
+ * here — exactly the signal we want. (Previously the default branch
+ * returned `null`, so a new variant shipped without any UI surface and
+ * no build-time signal.)
+ */
+function assertUnreachable(x: never): never {
+  throw new Error(`PropPanel: unhandled PropDef type ${JSON.stringify(x)}`);
+}
+
 function PropControl({
   propDef,
   value,
@@ -70,6 +81,11 @@ function PropControl({
   onChange: (value: unknown) => void;
 }) {
   switch (propDef.type) {
+    case 'reactnode':
+      // ReactNode props render as the component's NodeViewContent — no
+      // PropPanel control. Explicit case so the exhaustiveness check
+      // below narrows to `never` when every variant is handled.
+      return null;
     case 'string': {
       const stringId = `prop-${propDef.name}`;
       return (
@@ -154,6 +170,6 @@ function PropControl({
     }
 
     default:
-      return null;
+      return assertUnreachable(propDef);
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Visual regression suite — editor vs docs-site parity for 18 built-ins (M20).
+ * Visual regression suite — editor vs docs-site parity for 17 built-ins (M20).
  *
  * Captures screenshots of each built-in component rendered in the editor and
  * compares against golden baselines. Tolerance: ≤1% pixel delta (accommodates
@@ -28,6 +28,16 @@ async function waitForProvider(page: Page) {
   });
 }
 
+/** Wait for the editor's top-level doc to contain at least one block (seed
+ *  acknowledged) — replaces every `waitForTimeout(500)` after a write. */
+async function waitForDocSeeded(page: Page, minChildCount = 1) {
+  await page.waitForFunction(
+    (n) => (window.__activeEditor?.state.doc.childCount ?? 0) >= n,
+    minChildCount,
+    { timeout: 10_000 },
+  );
+}
+
 /** Write MDX content to the editor via the API */
 async function writeContent(content: string, docName = 'test-doc') {
   const res = await fetch(`${BASE}/api/agent-write-md`, {
@@ -44,21 +54,45 @@ async function setTheme(page: Page, theme: 'dark' | 'light') {
     document.documentElement.classList.toggle('dark', t === 'dark');
     localStorage.setItem('ok-theme-v1', t);
   }, theme);
-  // Wait for potential re-renders
-  await page.waitForTimeout(200);
+  // Condition: the documentElement should carry `.dark` iff theme is dark.
+  await page.waitForFunction(
+    (t) => document.documentElement.classList.contains('dark') === (t === 'dark'),
+    theme,
+    { timeout: 2000 },
+  );
 }
 
 /** Click to select a jsxComponent block by its data-component-name */
 async function selectComponent(page: Page, componentName: string) {
   const component = page.locator(`[data-jsx-component][data-component-name="${componentName}"]`);
   await component.first().click();
-  await page.waitForTimeout(100);
+  // Condition: the clicked wrapper must receive the `data-selected="true"`
+  // attribute. That flips when PM's selection lands on the NodeSelection
+  // and the NodeView re-renders with `selected=true`.
+  await component
+    .first()
+    .waitFor({ state: 'attached' })
+    .catch(() => {});
+  await page.waitForFunction(
+    (name) => {
+      const el = document.querySelector(
+        `[data-jsx-component][data-component-name="${name}"][data-selected="true"]`,
+      );
+      return Boolean(el);
+    },
+    componentName,
+    { timeout: 5_000 },
+  );
 }
 
 /** Deselect by clicking on the editor background */
 async function deselectAll(page: Page) {
   await page.locator('.ProseMirror').click({ position: { x: 10, y: 10 } });
-  await page.waitForTimeout(100);
+  await page.waitForFunction(
+    () => !document.querySelector('[data-jsx-component][data-selected="true"]'),
+    null,
+    { timeout: 2_000 },
+  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -82,7 +116,7 @@ for (const calloutType of calloutTypes) {
       await writeContent(
         `<Callout type="${calloutType}">\n\nThis is a ${calloutType} callout with **bold** and *italic* text.\n\n</Callout>`,
       );
-      await page.waitForTimeout(500);
+      await waitForDocSeeded(page);
       await setTheme(page, theme);
       await deselectAll(page);
 
@@ -106,7 +140,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Card title="Getting Started" href="/docs/start">\n\nLearn how to set up the project.\n\n</Card>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
     await deselectAll(page);
 
@@ -124,7 +158,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Cards>\n\n<Card title="First" href="/a">\n\nFirst card content.\n\n</Card>\n\n<Card title="Second" href="/b">\n\nSecond card content.\n\n</Card>\n\n</Cards>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -141,7 +175,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Steps>\n\n<Step>\n\nInstall dependencies\n\n</Step>\n\n<Step>\n\nConfigure settings\n\n</Step>\n\n<Step>\n\nDeploy\n\n</Step>\n\n</Steps>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -158,7 +192,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Tabs items={["npm", "pnpm"]}>\n\n<Tab value="npm">\n\nnpm install open-knowledge\n\n</Tab>\n\n<Tab value="pnpm">\n\npnpm add open-knowledge\n\n</Tab>\n\n</Tabs>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -175,7 +209,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Accordions>\n\n<Accordion title="First">\n\nFirst accordion content.\n\n</Accordion>\n\n<Accordion title="Second">\n\nSecond accordion content.\n\n</Accordion>\n\n</Accordions>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -192,7 +226,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Files>\n\n<Folder name="src" defaultOpen>\n\n<File name="index.ts" />\n\n<File name="config.ts" />\n\n</Folder>\n\n<File name="package.json" />\n\n</Files>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -209,7 +243,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<Banner title="Notice">\n\nThis is an important announcement.\n\n</Banner>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();
@@ -266,7 +300,8 @@ for (const theme of ['light', 'dark'] as const) {
         '</Banner>',
       ].join('\n'),
     );
-    await page.waitForTimeout(500);
+    // Mixed doc: require at least 5 top-level blocks (heading + 4 components).
+    await waitForDocSeeded(page, 5);
     await setTheme(page, theme);
 
     await expect(page.locator('.ProseMirror')).toHaveScreenshot(`mixed-document-${theme}.png`, {
@@ -282,7 +317,7 @@ for (const theme of ['light', 'dark'] as const) {
     await writeContent(
       '<CustomThing prop="value">\n\nUnregistered component content\n\n</CustomThing>',
     );
-    await page.waitForTimeout(500);
+    await waitForDocSeeded(page);
     await setTheme(page, theme);
 
     const component = page.locator('[data-jsx-component]').first();

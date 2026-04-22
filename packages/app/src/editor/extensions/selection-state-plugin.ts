@@ -11,8 +11,11 @@
  *   - Per-NodeView `$pos.node(depth)` walks to compute ancestor chains.
  *   - Ad-hoc `:has()`-based innermost-wins CSS rules.
  *
- * Read-only over the PM doc. Never dispatches a transaction that mutates the
- * document — bridge invariant (CLAUDE.md SC-INV-1) is preserved.
+ * Read-only over the PM doc: never mutates document content. Meta-only
+ * transactions ARE dispatched (see `scheduleRefresh` below) to flow
+ * drag/selection signalling through PM's standard apply pipeline —
+ * these carry no doc steps and leave the bridge invariant (CLAUDE.md
+ * SC-INV-1) unchanged.
  *
  * Origin classification is event-driven (not tx-heuristic): DOM
  * pointerdown/mousedown → 'pointer'; keydown on nav keys → 'keyboard'; a
@@ -21,8 +24,10 @@
  * discipline of one typed meta key per origin category extends Precedent #1
  * (typed transaction origins).
  *
- * Drag tracking: HTML5 dragstart/dragend on `view.dom` toggles `isDragging`.
- * The CSS layer uses this to suppress the halo mid-drag.
+ * Drag tracking: HTML5 `dragstart` / `dragend` / `drop` on `view.dom`
+ * toggle `isDragging`. The CSS layer uses this to suppress the halo
+ * mid-drag. `drop` is included because a cancelled drag sometimes ends
+ * in a drop without a preceding dragend in current browser behavior.
  *
  * Subscription model: the canonical React integration is
  * `useBlockSelection(editor)` (see `../hooks/use-block-selection.ts`), which
@@ -99,10 +104,10 @@ export interface BlockSelection {
 export const SELECTION_ORIGIN_META_KEY = 'selectionStatePlugin/origin';
 
 /** PM transaction meta key for the plugin's own meta-only refresh
- *  transactions (dragstart/dragend → re-run apply with new isDragging).
- *  Tagged so `apply` can distinguish "we dispatched this to surface a
- *  runtime change" from "the user did something" and not consume
- *  `pendingOrigin` on these passes. */
+ *  transactions (dragstart / dragend / drop → re-run apply with new
+ *  isDragging). Tagged so `apply` can distinguish "we dispatched this
+ *  to surface a runtime change" from "the user did something" and not
+ *  consume `pendingOrigin` on these passes. */
 const SELECTION_REFRESH_META_KEY = 'selectionStatePlugin/refresh';
 
 // ── PluginKey + imperative API ───────────────────────────────────────────
@@ -183,8 +188,12 @@ function toChainEntry(state: EditorState, node: PMNode, pos: number): BlockChain
  * `init` walks the doc to assign every jsxComponent a `b{N}`-style ID
  * synchronously, even before y-prosemirror has built its Y.XmlElement
  * mapping. After init, every jsxComponent in the doc has an entry in the
- * plugin's `posToId` map at all times — the position-derived fallback
- * branch below is **unreachable** in production code.
+ * plugin's `posToId` map at steady state. The position-derived fallback
+ * below is still hit during the init window BEFORE y-prosemirror has
+ * published its binding (and in any future surface that accesses
+ * `getWrapperBridgeId` before BridgeIdPlugin.apply has run) — brief,
+ * but non-zero. Do not rely on the fallback's stability; it's a
+ * best-effort breadcrumb for components that couldn't be keyed yet.
  *
  * **Tests / harness without BridgeIdPlugin:** the fallback returns a
  * `pos-N` synthetic. This path is positional and unstable across edits,

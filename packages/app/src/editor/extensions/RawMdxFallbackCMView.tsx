@@ -151,6 +151,13 @@ export function computeCMSelectionForwarding(opts: {
  *     on some part of the block; preserving the existing fallback
  *     beats churning Y.XmlElement identity for the same parse state
  *     per Precedent #10 on Item-preservation)
+ *   - `parseWithFallback` is contractually never-throws, but
+ *     `schema.nodeFromJSON` CAN throw on future schema-drift edges
+ *     ("Invalid content for node ..."). Such throws are caught here
+ *     and surface as a structured `raw-mdx-upgrade-failure` log event;
+ *     the fallback stays in place so the user can keep editing.
+ *     Silent throws would otherwise escape to CodeMirror's
+ *     updateListener catch and leave the user with no signal.
  *
  * The caller must guard dispatch with `updatingRef` to prevent feedback
  * loops — this function is pure state inspection.
@@ -158,7 +165,18 @@ export function computeCMSelectionForwarding(opts: {
 export function tryParseUpgrade(source: string, schema: Schema): PmNode[] | null {
   const mgr = getSharedMarkdownManager();
   const json = mgr.parseWithFallback(source);
-  const doc = schema.nodeFromJSON(json);
+  let doc: PmNode;
+  try {
+    doc = schema.nodeFromJSON(json);
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        event: 'raw-mdx-upgrade-failure',
+        reason: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return null;
+  }
   if (doc.childCount === 0) return null;
   const blocks: PmNode[] = [];
   for (let i = 0; i < doc.childCount; i++) {

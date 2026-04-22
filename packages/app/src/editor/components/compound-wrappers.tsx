@@ -14,27 +14,88 @@
  *
  * These wrappers pattern-copy the fumadocs visual structure using the same CSS
  * classes (served by the --color-fd-* variable bridge in globals.css) while
- * managing compound state via DOM data-attributes on the PM-owned DOM (parent
- * writes `data-active-tab` on its root; children read it from their closest
- * ancestor). This is the SPEC §9.15.7 R1 Fallback-2 pattern-copy path —
- * chosen because Radix's closure-scoped Contexts cannot be bridged without
- * modifying Radix itself. A full Context Bridge Registry (editor-scoped
- * store + bridgeId PluginState + useSyncExternalStore subscription) was
- * prototyped but not adopted; see evidence/deferred-invariants-and-perf.md
- * for the deletion rationale.
+ * bridging state across NodeView portals via DOM `data-*` attributes on the
+ * PM-owned DOM: the parent writes `data-active-tab` / `data-accordion-open` on
+ * its root, and each child reads its closest ancestor in a `useSyncExternalStore`
+ * subscription (MutationObserver → snapshot). This is the SPEC §9.15.7 R1
+ * Fallback-2 pattern-copy path — chosen because Radix's closure-scoped Contexts
+ * cannot be bridged without modifying Radix itself. A full Context Bridge
+ * Registry (editor-scoped store + bridgeId PluginState + useSyncExternalStore
+ * subscription) was prototyped but not adopted; see
+ * evidence/deferred-invariants-and-perf.md for the deletion rationale.
+ *
+ * **State ownership (React-owned, DOM-reflected).** The parent component owns
+ * the active tab / open accordion item in `useState` and RENDERS the `data-*`
+ * attributes into JSX. Click handlers call `setState`; the DOM reflects React
+ * state, not the other way around. Previous iterations used imperative
+ * `setAttribute` from click handlers — but a subsequent re-render (triggered by
+ * sibling mutations, MutationObserver callbacks, parent re-renders) would
+ * re-derive `isActive` from a STABLE `defaultValue` and snap the DOM back,
+ * clobbering the user's selection. Owning state in React and deriving the
+ * `data-*` attribute from it means every re-render preserves the selection.
  *
  * Leaf components (Callout, Card, Steps, Step, etc.) remain as direct fumadocs-ui
  * imports (full D12 fidelity) — they have no compound context dependency.
+ *
+ * **Re-evaluation trigger.** The pattern-copy approach scales to the two
+ * compound families shipped here (Tabs, Accordions). Re-evaluate extraction
+ * to a Context Bridge Registry primitive (per
+ * `reports/context-bridge-registry-architecture/REPORT.md`) when ANY of:
+ *
+ *   1. A 3rd compound family lands (e.g. Files-as-compound, or a user-
+ *      authored compound component).
+ *   2. NG13 "user-authored compound descriptors" unblocks and we need
+ *      a generic context-bridge path for arbitrary React Context providers.
+ *   3. The DOM `data-*` contract below grows to > 4 keys or crosses more
+ *      than 2 NodeView portal boundaries.
+ *
+ * Today: 2 families × 2 shared attrs (`data-active-tab`,
+ * `data-accordion-open`) × 1 portal boundary. Adding a third family is
+ * ~150 LoC of copy-paste against this file; evaluating the Context Bridge
+ * primitive at that point is worth it.
  */
 
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+
+// ─── DOM-attr subscription primitive ──────────────────────────────────────────
+// `useSyncExternalStore` over a MutationObserver lets a child NodeView react to
+// a DOM `data-*` attribute set by an ancestor without prop drilling (which is
+// blocked by the portal boundary). Reads are snapshot-stable between events
+// so React Compiler's equality memo works unchanged.
+
+function useAncestorAttr(
+  elementRef: React.RefObject<HTMLElement | null>,
+  ancestorSelector: string,
+  attrName: string,
+): string | null {
+  // React Compiler memoizes these function identities automatically — no
+  // `useCallback` wrapper required. `useSyncExternalStore` relies on
+  // identity-stability to avoid resubscribing on every render; the
+  // compiler provides that without explicit memo hooks.
+  const subscribe = (notify: () => void) => {
+    const el = elementRef.current;
+    if (!el) return () => {};
+    const ancestor = el.closest(ancestorSelector);
+    if (!ancestor) return () => {};
+    const observer = new MutationObserver(notify);
+    observer.observe(ancestor, { attributes: true, attributeFilter: [attrName] });
+    return () => observer.disconnect();
+  };
+  const getSnapshot = () => {
+    const el = elementRef.current;
+    if (!el) return null;
+    return el.closest(ancestorSelector)?.getAttribute(attrName) ?? null;
+  };
+  // getServerSnapshot is required by useSyncExternalStore's API shape even
+  // though the editor doesn't run under SSR today — hydration-mismatch class
+  // bugs would otherwise wait in ambush when/if SSR lands.
+  return useSyncExternalStore(subscribe, getSnapshot, () => null);
+}
 
 // ─── EditorTabs ───────────────────────────────────────────────────────────────
-// Parent wrapper for <Tabs> blocks. Manages active tab state and renders the
-// trigger bar. Children are rendered via NodeViewContent (TipTap portal).
-// Active tab value is communicated to children via CSS data attributes on the
-// PM DOM — child Tab NodeViews read `data-active-tab` from their closest
-// ancestor `.editor-tabs-root`.
+// Parent wrapper for <Tabs> blocks. Owns active-tab state in React (not DOM).
+// Children render as sibling portals and subscribe to `data-active-tab` via the
+// useAncestorAttr hook.
 
 export function EditorTabs({
   items,
@@ -82,25 +143,28 @@ export function EditorTabs({
   }, []);
 
   const tabItems = derivedItems.length > 0 ? derivedItems : (items ?? []);
-  const defaultValue = escapeValue(tabItems[defaultIndex] ?? tabItems[0] ?? '');
 
-  // Activate the default tab panel on mount
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || !defaultValue) return;
-    for (const panel of root.querySelectorAll('.editor-tab-content')) {
-      panel.setAttribute(
-        'data-state',
-        panel.getAttribute('data-value') === defaultValue ? 'active' : 'inactive',
-      );
-    }
-  }, [defaultValue]);
+  // Controlled active-tab state. `initialActive` is derived from `defaultIndex`
+  // once at mount; subsequent tab additions/removals DO NOT snap the active
+  // tab back to the default — React preserves whatever the user selected.
+  // `activeValue === null` means "fall back to initial default," applied in
+  // `resolvedActive` below so a cleared-and-re-rendered derivedItems set can
+  // still produce a valid active tab.
+  const [activeValue, setActiveValue] = useState<string | null>(null);
+  const initialDefault = escapeValue(tabItems[defaultIndex] ?? tabItems[0] ?? '');
+  // If the user explicitly selected a tab AND that tab is still in the list,
+  // use it. Otherwise fall back to initialDefault (pointing at the current
+  // first / defaultIndex tab).
+  const resolvedActive =
+    activeValue !== null && tabItems.some((t) => escapeValue(t) === activeValue)
+      ? activeValue
+      : initialDefault;
 
   return (
     <div
       ref={rootRef}
       className="editor-tabs-root flex flex-col rounded-xl border bg-fd-secondary my-4"
-      data-active-tab={defaultValue}
+      data-active-tab={resolvedActive}
     >
       {/* Tab trigger bar — chrome, not user content. `contentEditable={false}`
           tells PM this subtree isn't editable; `onMouseDown stopPropagation`
@@ -120,10 +184,13 @@ export function EditorTabs({
             const value = escapeValue(item);
             const triggerId = `editor-tab-trigger-${value}`;
             const panelId = `editor-tab-panel-${value}`;
-            const isActive = value === defaultValue;
+            const isActive = value === resolvedActive;
             return (
+              // React-Compiler-safe: `key` keyed on the derived `value` so
+              // duplicate-label tabs don't collide (previous `key={item}` was
+              // a bug when two tabs had the same raw label).
               <button
-                key={item}
+                key={value}
                 type="button"
                 id={triggerId}
                 role="tab"
@@ -145,36 +212,22 @@ export function EditorTabs({
                     return;
                   }
                   e.preventDefault();
-                  const triggers = e.currentTarget
-                    .closest('[role="tablist"]')
-                    ?.querySelectorAll<HTMLButtonElement>('.editor-tab-trigger');
-                  if (!triggers || triggers.length === 0) return;
                   let targetIdx = idx;
                   if (e.key === 'ArrowLeft')
-                    targetIdx = (idx - 1 + triggers.length) % triggers.length;
-                  else if (e.key === 'ArrowRight') targetIdx = (idx + 1) % triggers.length;
+                    targetIdx = (idx - 1 + tabItems.length) % tabItems.length;
+                  else if (e.key === 'ArrowRight') targetIdx = (idx + 1) % tabItems.length;
                   else if (e.key === 'Home') targetIdx = 0;
-                  else if (e.key === 'End') targetIdx = triggers.length - 1;
-                  triggers[targetIdx]?.focus();
-                  triggers[targetIdx]?.click();
+                  else if (e.key === 'End') targetIdx = tabItems.length - 1;
+                  const targetValue = escapeValue(tabItems[targetIdx] ?? '');
+                  setActiveValue(targetValue);
+                  // Move focus to the newly-active trigger.
+                  const tablist = e.currentTarget.closest('[role="tablist"]');
+                  const nextTrigger = tablist?.querySelector<HTMLButtonElement>(
+                    `.editor-tab-trigger[data-value="${CSS.escape(targetValue)}"]`,
+                  );
+                  nextTrigger?.focus();
                 }}
-                onClick={(e) => {
-                  const root = e.currentTarget.closest('.editor-tabs-root');
-                  if (!root) return;
-                  root.setAttribute('data-active-tab', value);
-                  for (const trigger of root.querySelectorAll<HTMLElement>('.editor-tab-trigger')) {
-                    const active = trigger.getAttribute('data-value') === value;
-                    trigger.setAttribute('data-state', active ? 'active' : 'inactive');
-                    trigger.setAttribute('aria-selected', String(active));
-                    trigger.setAttribute('tabindex', active ? '0' : '-1');
-                  }
-                  for (const panel of root.querySelectorAll('.editor-tab-content')) {
-                    panel.setAttribute(
-                      'data-state',
-                      panel.getAttribute('data-value') === value ? 'active' : 'inactive',
-                    );
-                  }
-                }}
+                onClick={() => setActiveValue(value)}
               >
                 {item}
               </button>
@@ -190,24 +243,33 @@ export function EditorTabs({
 }
 
 // ─── EditorTab ────────────────────────────────────────────────────────────────
-// Child wrapper for <Tab> blocks. Reads active state from parent DOM.
-// Inactive panels use data-[state=inactive]:hidden (display:none) — this is a
-// documented exemption from Precedent #26: standard tab UX hides inactive panels;
-// content is accessible by clicking the tab trigger, not permanently hidden.
+// Child wrapper for <Tab> blocks. Subscribes to the parent's `data-active-tab`
+// attr via useAncestorAttr and derives `data-state` from React state rather
+// than imperative DOM mutation. Inactive panels use `data-[state=inactive]:hidden`
+// (display:none) — this is a documented exemption from Precedent #26: standard
+// tab UX hides inactive panels; content is accessible by clicking the tab
+// trigger, not permanently hidden.
 
 export function EditorTab({ value, children }: { value?: string; children?: ReactNode }) {
   const escaped = value ? escapeValue(value) : '';
   const panelId = escaped ? `editor-tab-panel-${escaped}` : undefined;
   const triggerId = escaped ? `editor-tab-trigger-${escaped}` : undefined;
+  const panelRef = useRef<HTMLDivElement>(null);
+  const activeTab = useAncestorAttr(panelRef, '.editor-tabs-root', 'data-active-tab');
+  // Default to 'inactive' so SSR / first-paint doesn't briefly show every
+  // panel. The parent's mount effect will have written `data-active-tab`
+  // before the child's first paint.
+  const state = activeTab !== null && activeTab === escaped ? 'active' : 'inactive';
 
   return (
     <div
+      ref={panelRef}
       id={panelId}
       role="tabpanel"
       aria-labelledby={triggerId}
       className="editor-tab-content p-4 text-[0.9375rem] bg-fd-background rounded-xl prose-no-margin data-[state=inactive]:hidden"
       data-value={escaped}
-      data-state="inactive"
+      data-state={state}
     >
       {children}
     </div>
@@ -215,7 +277,13 @@ export function EditorTab({ value, children }: { value?: string; children?: Reac
 }
 
 // ─── EditorAccordions ─────────────────────────────────────────────────────────
-// Parent wrapper for <Accordions> blocks.
+// Parent wrapper for <Accordions> blocks. Owns single-item state in React so
+// that `type="single"` accordions can only have one item open at a time. In
+// `type="multiple"` mode each child manages its own open state (the default
+// local accordion behavior) — the parent's `data-accordion-open` attr stays
+// empty so children fall back to their local toggle logic.
+
+const ACCORDIONS_ROOT_CLASS = 'editor-accordions-root';
 
 export function EditorAccordions({
   type = 'single',
@@ -224,37 +292,80 @@ export function EditorAccordions({
   type?: 'single' | 'multiple';
   children?: ReactNode;
 }) {
+  // `openId` is the stable `useId` of the child whose panel is currently open
+  // in single-mode. Null means "none open." In multiple-mode this stays null
+  // and children self-toggle.
+  const [openId, setOpenId] = useState<string | null>(null);
+
   return (
-    <div
-      className="editor-accordions-root flex flex-col rounded-lg border bg-fd-card text-fd-card-foreground my-4 divide-y divide-fd-border"
-      data-accordion-type={type}
-    >
-      {children}
-    </div>
+    <AccordionsCtx.Provider value={{ type, openId, setOpenId }}>
+      <div
+        className={`${ACCORDIONS_ROOT_CLASS} flex flex-col rounded-lg border bg-fd-card text-fd-card-foreground my-4 divide-y divide-fd-border`}
+        data-accordion-type={type}
+        data-accordion-open={openId ?? ''}
+      >
+        {children}
+      </div>
+    </AccordionsCtx.Provider>
   );
 }
+
+// React Context crosses the NodeView portal boundary within this module
+// because we own both sides (the wrapper and the child). Radix's module-
+// private Context is what the Fallback-2 path avoided; a local Context whose
+// Provider and Consumer are both defined here is fine — the portal boundary
+// only blocks contexts whose Provider lives in a different module.
+import { createContext, use } from 'react';
+
+interface AccordionsCtxShape {
+  type: 'single' | 'multiple';
+  openId: string | null;
+  setOpenId: (id: string | null) => void;
+}
+
+const AccordionsCtx = createContext<AccordionsCtxShape | null>(null);
 
 // ─── EditorAccordion ──────────────────────────────────────────────────────────
 // Child wrapper for <Accordion> (AccordionItem) blocks.
 //
-// Uses `useState` for the open/closed flag (keeps React semantics in sync with
-// the `data-state` attribute read by CSS) and React 19's `useId` to bridge the
-// trigger button and content panel with `aria-controls` / `aria-labelledby` —
-// the minimum WAI-ARIA contract for an accordion pattern so screen readers can
-// announce expanded/collapsed state correctly. React Compiler disallows
-// reading `ref.current` during render, so `useId` is the correct primitive
-// here rather than a `useRef` + module counter.
+// State coordination (Finding 3 fix): in `type="single"` mode the PARENT holds
+// `openId`. The child reads `ctx.openId === myId` to decide if it's open; the
+// click handler calls `ctx.setOpenId(myId | null)` to toggle. This means
+// opening one item AUTOMATICALLY closes its siblings via React re-render —
+// no `setAttribute` on sibling DOM, no stale React state.
+//
+// `type="multiple"` mode falls back to a local `useState(true)` so each item
+// can be opened/closed independently (matching Radix's multiple-mode semantics).
+//
+// React 19's `useId` bridges the trigger button and content panel with
+// `aria-controls` / `aria-labelledby` — the minimum WAI-ARIA contract for an
+// accordion pattern.
 
 export function EditorAccordion({ title, children }: { title?: string; children?: ReactNode }) {
-  const [open, setOpen] = useState(true);
-  const itemRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
   const triggerId = `${baseId}-trigger`;
   const contentId = `${baseId}-content`;
+  const ctx = use(AccordionsCtx);
+
+  // Local state used ONLY in multiple-mode or when the item is rendered
+  // outside an EditorAccordions wrapper. In single-mode, parent `openId`
+  // is the source of truth.
+  const [localOpen, setLocalOpen] = useState(true);
+
+  const isSingle = ctx?.type === 'single';
+  const open = isSingle ? ctx.openId === baseId : localOpen;
   const state = open ? 'open' : 'closed';
 
+  const toggle = () => {
+    if (isSingle) {
+      ctx.setOpenId(open ? null : baseId);
+    } else {
+      setLocalOpen((v) => !v);
+    }
+  };
+
   return (
-    <div ref={itemRef} className="editor-accordion-item" data-state={state}>
+    <div className="editor-accordion-item" data-state={state}>
       <h3 className="flex">
         <button
           type="button"
@@ -263,29 +374,7 @@ export function EditorAccordion({ title, children }: { title?: string; children?
           aria-controls={contentId}
           className="flex flex-1 items-center gap-2 p-4 text-start text-sm font-medium transition-all [&[data-state=open]>svg]:rotate-180"
           data-state={state}
-          onClick={() => {
-            const next = !open;
-            // For single-type parents, close other items. The sibling state
-            // is still tracked via data-state on the DOM (each child has its
-            // own useState hook, but since we only need the parent to enforce
-            // single-selection, DOM read is sufficient — this mirrors how
-            // fumadocs-ui's Radix-backed accordion coordinates).
-            const root = itemRef.current?.closest('.editor-accordions-root');
-            if (next && root?.getAttribute('data-accordion-type') === 'single') {
-              for (const other of root.querySelectorAll('.editor-accordion-item')) {
-                if (other === itemRef.current) continue;
-                other.setAttribute('data-state', 'closed');
-                const otherBtn = other.querySelector('button');
-                if (otherBtn) {
-                  otherBtn.setAttribute('data-state', 'closed');
-                  otherBtn.setAttribute('aria-expanded', 'false');
-                }
-                const otherContent = other.querySelector('.editor-accordion-content');
-                if (otherContent) otherContent.setAttribute('data-state', 'closed');
-              }
-            }
-            setOpen(next);
-          }}
+          onClick={toggle}
         >
           <span className="flex-1">{title ?? 'Accordion'}</span>
           <svg

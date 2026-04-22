@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { sanitizeComponentProps, sanitizeUrlValue, URL_PROP_NAMES } from './sanitize-url';
+import {
+  isDangerousPropName,
+  isUrlPropName,
+  sanitizeComponentProps,
+  sanitizeUrlValue,
+  URL_PROP_NAMES,
+} from './sanitize-url';
 
 describe('sanitizeUrlValue', () => {
   test('passes http/https through unchanged', () => {
@@ -59,7 +65,67 @@ describe('sanitizeUrlValue', () => {
   });
 });
 
-describe('sanitizeComponentProps', () => {
+describe('isDangerousPropName', () => {
+  test('rejects dangerouslySetInnerHTML (camelCase, lowercase, kebab)', () => {
+    expect(isDangerousPropName('dangerouslySetInnerHTML')).toBe(true);
+    expect(isDangerousPropName('dangerouslysetinnerhtml')).toBe(true);
+    expect(isDangerousPropName('DANGEROUSLYSETINNERHTML')).toBe(true);
+  });
+
+  test('rejects every on* event handler prop name', () => {
+    for (const n of ['onClick', 'onMouseDown', 'onFocus', 'onerror', 'onLoad', 'ONDRAG']) {
+      expect(isDangerousPropName(n)).toBe(true);
+    }
+  });
+
+  test('rejects React internals', () => {
+    expect(isDangerousPropName('ref')).toBe(true);
+    expect(isDangerousPropName('key')).toBe(true);
+    expect(isDangerousPropName('defaultValue')).toBe(true);
+    expect(isDangerousPropName('defaultChecked')).toBe(true);
+  });
+
+  test('accepts regular prop names', () => {
+    expect(isDangerousPropName('title')).toBe(false);
+    expect(isDangerousPropName('className')).toBe(false);
+    expect(isDangerousPropName('on')).toBe(false); // bare 'on' is not an event handler
+    expect(isDangerousPropName('href')).toBe(false);
+  });
+
+  test('denies on*-prefix names defensively (both React camelCase and HTML lowercase)', () => {
+    // Both React camelCase (onClick) and HTML lowercase (onclick) event
+    // handlers are XSS gadgets. We block every on*-prefixed name ≥ 3 chars
+    // rather than try to enumerate every valid event name; legitimate props
+    // that happen to start with literal "on" (e.g. "one") are rejected as
+    // well. None of the 17 built-in descriptors use such names, and a
+    // descriptor author can rename the prop if they hit this.
+    expect(isDangerousPropName('onclick')).toBe(true); // lowercase HTML form
+    expect(isDangerousPropName('onfoo')).toBe(true); // unknown on* name
+    expect(isDangerousPropName('one')).toBe(true); // false positive, accepted
+  });
+});
+
+describe('isUrlPropName', () => {
+  test('matches camelCase React form of URL attrs', () => {
+    expect(isUrlPropName('formAction')).toBe(true);
+    expect(isUrlPropName('xlinkHref')).toBe(true);
+    expect(isUrlPropName('xlinkActuate')).toBe(true);
+  });
+
+  test('matches lowercase form', () => {
+    expect(isUrlPropName('href')).toBe(true);
+    expect(isUrlPropName('src')).toBe(true);
+    expect(isUrlPropName('action')).toBe(true);
+    expect(isUrlPropName('formaction')).toBe(true);
+  });
+
+  test('rejects non-URL props', () => {
+    expect(isUrlPropName('title')).toBe(false);
+    expect(isUrlPropName('className')).toBe(false);
+  });
+});
+
+describe('sanitizeComponentProps — URL-scheme filtering', () => {
   test('rewrites only URL-typed props', () => {
     const input = {
       href: 'javascript:alert(1)',
@@ -90,5 +156,130 @@ describe('sanitizeComponentProps', () => {
     for (const name of URL_PROP_NAMES) {
       expect(output[name]).toBe('#');
     }
+  });
+
+  test('filters camelCase formAction (case-insensitive match)', () => {
+    const output = sanitizeComponentProps({ formAction: 'javascript:alert(1)' });
+    expect(output.formAction).toBe('#');
+  });
+
+  test('filters SVG xlinkHref', () => {
+    const output = sanitizeComponentProps({ xlinkHref: 'javascript:alert(1)' });
+    expect(output.xlinkHref).toBe('#');
+  });
+});
+
+describe('sanitizeComponentProps — dangerous prop denylist', () => {
+  test('drops dangerouslySetInnerHTML entirely (XSS gadget)', () => {
+    const input = {
+      dangerouslySetInnerHTML: { __html: '<img src=x onerror=alert(1)>' },
+      title: 'safe',
+    };
+    const output = sanitizeComponentProps(input);
+    expect(output.dangerouslySetInnerHTML).toBeUndefined();
+    expect(Object.hasOwn(output, 'dangerouslySetInnerHTML')).toBe(false);
+    expect(output.title).toBe('safe');
+  });
+
+  test('drops onClick / onError / onMouseDown', () => {
+    const input = {
+      onClick: 'alert(1)',
+      onError: () => {
+        /* ignore */
+      },
+      onMouseDown: 'alert(2)',
+      title: 'safe',
+    };
+    const output = sanitizeComponentProps(input);
+    expect(output.onClick).toBeUndefined();
+    expect(output.onError).toBeUndefined();
+    expect(output.onMouseDown).toBeUndefined();
+    expect(output.title).toBe('safe');
+  });
+
+  test('drops React internals (ref/key/defaultValue)', () => {
+    const output = sanitizeComponentProps({
+      ref: { current: null },
+      key: 'stable-id',
+      defaultValue: 'seed',
+      title: 'safe',
+    });
+    expect(Object.hasOwn(output, 'ref')).toBe(false);
+    expect(Object.hasOwn(output, 'key')).toBe(false);
+    expect(Object.hasOwn(output, 'defaultValue')).toBe(false);
+    expect(output.title).toBe('safe');
+  });
+
+  test('accepts props whose names start with "on" but are not event handlers', () => {
+    // 2-char names don't match the on* guard (requires length >= 3).
+    const output = sanitizeComponentProps({ on: true, title: 'safe' });
+    expect(output.on).toBe(true);
+    expect(output.title).toBe('safe');
+  });
+});
+
+describe('sanitizeComponentProps — style handling', () => {
+  test('passes safe style strings through', () => {
+    const output = sanitizeComponentProps({ style: 'color: red; padding: 4px' });
+    expect(output.style).toBe('color: red; padding: 4px');
+  });
+
+  test('drops style string with javascript: url()', () => {
+    const output = sanitizeComponentProps({
+      style: 'background: url(javascript:alert(1))',
+    });
+    expect(output.style).toBe('');
+  });
+
+  test('drops style string with expression() (legacy IE gadget)', () => {
+    const output = sanitizeComponentProps({
+      style: 'width: expression(alert(1))',
+    });
+    expect(output.style).toBe('');
+  });
+
+  test('drops object / non-string style values', () => {
+    const output = sanitizeComponentProps({
+      style: { background: 'url(javascript:alert(1))' },
+    });
+    expect(Object.hasOwn(output, 'style')).toBe(false);
+  });
+});
+
+describe('sanitizeComponentProps — nested URL traversal', () => {
+  test('sanitizes URLs inside nested array of objects (InlineTOC.items shape)', () => {
+    const input = {
+      items: [
+        { url: 'javascript:alert(1)', title: 'bad' },
+        { url: 'https://ok.example.com', title: 'good' },
+      ],
+    };
+    const output = sanitizeComponentProps(input) as {
+      items: Array<{ url: string; title: string }>;
+    };
+    expect(output.items[0].url).toBe('#');
+    expect(output.items[1].url).toBe('https://ok.example.com');
+  });
+
+  test('sanitizes URLs inside nested object', () => {
+    const input = {
+      meta: { href: 'vbscript:alert(1)', label: 'x' },
+    };
+    const output = sanitizeComponentProps(input) as {
+      meta: { href: string; label: string };
+    };
+    expect(output.meta.href).toBe('#');
+    expect(output.meta.label).toBe('x');
+  });
+
+  test('leaves deeply nested URL alone past MAX_NESTED_DEPTH', () => {
+    // Depth > MAX_NESTED_DEPTH is preserved as-is. Not a correctness
+    // concern — legitimate MDX props don't have 5-deep URL nesting, and
+    // the bound prevents pathological inputs from exploding the
+    // sanitizer cost. Documented in the module header.
+    const deep = { a: { b: { c: { d: { e: { url: 'javascript:alert(1)' } } } } } };
+    const output = sanitizeComponentProps(deep) as typeof deep;
+    // The URL at depth 5 is deeper than MAX_NESTED_DEPTH (4); pass-through.
+    expect(output.a.b.c.d.e.url).toBe('javascript:alert(1)');
   });
 });

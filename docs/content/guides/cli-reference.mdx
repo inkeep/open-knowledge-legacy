@@ -33,7 +33,12 @@ npx @inkeep/open-knowledge              # equivalent
 | `--port <port>` | Server port (overrides config) |
 | `--host <host>` | Bind address (overrides config) |
 | `--open` | Open the editor in your default browser |
-| `--content-dir <path>` | Content directory to serve |
+| `--no-init` | Skip auto-scaffolding of `.open-knowledge/` on first start |
+
+The content directory comes from your workspace's `.open-knowledge/config.yml`
+(or `~/.open-knowledge/config.yml` at user level) or the current working
+directory resolved via `--cwd`. Override at runtime with `--cwd <path>` or
+by running `open-knowledge start` from inside the target directory.
 
 The server binds to `localhost:3000` by default. Only one server can run per content directory -- a second attempt fails with a lock collision error.
 

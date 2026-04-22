@@ -82,29 +82,45 @@ function getYMapping(state: EditorState): Map<Y.AbstractType<unknown>, unknown> 
 }
 
 /**
- * Find the Y.XmlElement backing a PM node at a given position
- * by searching the y-prosemirror binding's mapping.
+ * Build a reverse index once per apply: PM.Node → Y.XmlElement. Callers
+ * pass this to `findYElementForPos` instead of re-scanning the mapping
+ * per descendant (the previous shape was O(mapping) per jsxComponent
+ * node, O(N²) on MDX-heavy docs).
+ *
+ * Duck-type check uses y-js `XmlElement` structural identity (nodeName +
+ * getAttribute) rather than `instanceof` to avoid pulling a value-import
+ * of the whole `yjs` module into this file — only `import type` is in
+ * scope at the top, and switching to a value import would mildly affect
+ * bundle dedup (y-prosemirror / y-protocols / y-codemirror.next share
+ * the same Yjs instance via the hoisted top-level y-js dep, not a
+ * per-extension one).
  */
-function findYElementForPos(
+function buildPmNodeToYElementIndex(
   state: EditorState,
-  _pos: number,
-  node: import('@tiptap/pm/model').Node,
-): Y.XmlElement | null {
+): Map<import('@tiptap/pm/model').Node, Y.XmlElement> | null {
   const mapping = getYMapping(state);
   if (!mapping) return null;
-
-  // The binding's mapping maps Y.AbstractType → PM.Node|PM.Node[].
-  // We need the reverse: find a Y.XmlElement whose mapped PM.Node
-  // matches our target node at the target position.
+  const out = new Map<import('@tiptap/pm/model').Node, Y.XmlElement>();
   for (const [yType, pmNode] of mapping) {
-    if (pmNode === node) {
-      // Verify it's an XmlElement (not XmlText or XmlFragment)
-      if ('nodeName' in yType && typeof (yType as Y.XmlElement).getAttribute === 'function') {
-        return yType as Y.XmlElement;
-      }
+    if (!pmNode) continue;
+    if ('nodeName' in yType && typeof (yType as Y.XmlElement).getAttribute === 'function') {
+      // One Y.XmlElement maps to exactly one PM.Node; the reverse is
+      // also true in y-prosemirror's binding. If a duplicate key shows
+      // up (shouldn't happen in practice), last-wins — the latest
+      // binding wins the reverse lookup.
+      out.set(pmNode as import('@tiptap/pm/model').Node, yType as Y.XmlElement);
     }
   }
-  return null;
+  return out;
+}
+
+/** O(1) lookup via the reverse index. */
+function findYElementForPosIndexed(
+  index: Map<import('@tiptap/pm/model').Node, Y.XmlElement> | null,
+  node: import('@tiptap/pm/model').Node,
+): Y.XmlElement | null {
+  if (!index) return null;
+  return index.get(node) ?? null;
 }
 
 export const BridgeIdPlugin = Extension.create({
@@ -130,10 +146,14 @@ export const BridgeIdPlugin = Extension.create({
               counter: 0,
             };
 
-            // Initial assignment for any jsxComponent nodes already in the doc
+            // Initial assignment for any jsxComponent nodes already in the doc.
+            // Build the PM.Node → Y.XmlElement reverse index ONCE per apply and
+            // share it across descendants (O(N) total) instead of re-scanning
+            // the mapping per descendant (O(N²) on MDX-heavy docs).
+            const initIndex = buildPmNodeToYElementIndex(state);
             state.doc.descendants((node, pos) => {
               if (node.type.name !== 'jsxComponent') return;
-              const yEl = findYElementForPos(state, pos, node);
+              const yEl = findYElementForPosIndexed(initIndex, node);
               if (yEl) {
                 const id = `b${++initial.counter}`;
                 initial.yElementToId.set(yEl, id);
@@ -164,16 +184,19 @@ export const BridgeIdPlugin = Extension.create({
               return { ...prev, posToId: newPosToId };
             }
 
-            // Doc changed — rebuild posToId from Y.XmlElement identity
+            // Doc changed — rebuild posToId from Y.XmlElement identity.
+            // Single reverse-index build per apply, reused for every
+            // descendant lookup below (see `buildPmNodeToYElementIndex`).
             const newPosToId = new Map<number, string>();
             let { counter } = prev;
             const { yElementToId } = prev;
+            const applyIndex = buildPmNodeToYElementIndex(newState);
 
             newState.doc.descendants((node, pos) => {
               if (node.type.name !== 'jsxComponent') return;
 
               // Try to find the backing Y.XmlElement
-              const yEl = findYElementForPos(newState, pos, node);
+              const yEl = findYElementForPosIndexed(applyIndex, node);
               if (yEl) {
                 const existing = yElementToId.get(yEl);
                 if (existing) {

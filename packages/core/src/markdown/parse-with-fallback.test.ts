@@ -143,13 +143,16 @@ describe('parseWithFallback (R6)', () => {
     expect(getParseHealth().parseFallback.wholeDoc).toBeGreaterThanOrEqual(1);
   });
 
-  test('(m3) findEnclosingPairedTag: surrounding headings preserved when mid-doc fallback fires', () => {
-    // Reviewer's concern: findFallbackRegion correctly bounds the failing
+  test('(m3) enumerateFallbackRegions: surrounding headings preserved when mid-doc fallback fires', () => {
+    // Reviewer's concern: the mid-doc fallback correctly bounds the failing
     // region so headings before + after remain structured. Under agnostic
     // mode the error-producing construct is tag-mismatch (not unclosed tag,
-    // which agnostic-mode tokenizer tolerates as prose). This exercises the
-    // same findEnclosingPairedTag path — it locates the open tag to set
-    // region.start and walks forward for the close.
+    // which agnostic-mode tokenizer tolerates as prose). This exercises
+    // the current single-pass `enumerateFallbackRegions` path — it
+    // identifies the `<Foo>…</Bar>` span as an unmatched-open region;
+    // `findFallbackRegion` then selects it as the innermost-containing
+    // region for the error offset. (Previously implemented as a
+    // `findEnclosingPairedTag` helper deleted in US-001.)
     const src = '# Before\n\nsome text\n\n<Foo>content</Bar>\n\n# After\n\nmore\n';
     const result = mdManager.parseWithFallback(src);
     const types = (result.content as { type: string }[]).map((n) => n.type);

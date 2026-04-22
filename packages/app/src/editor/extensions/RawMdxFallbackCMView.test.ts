@@ -542,4 +542,34 @@ describe('tryParseUpgrade', () => {
     // PM's code-block-like node (may be named codeBlock, codeBlockHighlighted, etc.)
     expect(result?.[0].type.name).toMatch(/code/i);
   });
+
+  test('schema.nodeFromJSON throw → returns null and logs structured event', () => {
+    // Regression (PR review 2026-04-22): `schema.nodeFromJSON` CAN throw on
+    // schema-drift edges ("Invalid content for node ..."). Previously the
+    // throw escaped tryParseUpgrade and was swallowed by CodeMirror's
+    // updateListener catch — user blurred, saw no change, had no signal.
+    // The helper now catches, logs `raw-mdx-upgrade-failure`, returns null
+    // (preserving the existing fallback so the user can keep editing).
+    const throwingSchema = {
+      nodeFromJSON(_json: unknown): never {
+        throw new RangeError("Invalid content for node 'paragraph'");
+      },
+    } as unknown as typeof upgradeSchema;
+
+    const originalWarn = console.warn;
+    const warnCalls: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnCalls.push(args.map((a) => String(a)).join(' '));
+    };
+    try {
+      const result = tryParseUpgrade('# Heading\n\nhello', throwingSchema);
+      expect(result).toBeNull();
+      expect(warnCalls.length).toBeGreaterThan(0);
+      const event = warnCalls.find((c) => c.includes('raw-mdx-upgrade-failure'));
+      expect(event).toBeDefined();
+      expect(event).toContain('Invalid content for node');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });
