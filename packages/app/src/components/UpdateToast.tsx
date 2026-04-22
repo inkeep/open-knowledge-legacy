@@ -30,6 +30,18 @@ export const TOAST_B_ACTION = "See what's new";
 export const TOAST_C_BODY =
   'This app may not be receiving updates. Visit inkeep.com/open-knowledge/download to install a fresh copy.';
 export const TOAST_C_ACTION = 'Open download page';
+/**
+ * Fallback toast shown when `bridge.update.relaunchNow()` IPC rejects
+ * synchronously — wrong packaging, missing staging dir, Squirrel.Mac
+ * throwing. Without this surface, the original Toast A dismisses (sonner
+ * closes on action click) and the user stares at an unchanged app with no
+ * feedback. Review Pass 4 Major #3 — surface the failure via a secondary
+ * error toast so the user has a recovery path ("please restart manually").
+ * `shell.openExternal` is NOT wrapped because its only callers pass URLs
+ * hardcoded in main (releaseUrlFor, STUCK_HINT_DOWNLOAD_URL) which are
+ * trusted inputs that pass the D47 allowlist by construction.
+ */
+export const TOAST_A_ERROR_BODY = 'Relaunch failed — please restart manually';
 
 /**
  * Toast B body copy for a given version — `"Updated to v${version} — see what's new"`.
@@ -56,8 +68,23 @@ export function toastBBody(version: string): string {
  */
 export type ToastFn = (body: string, opts: ToastOpts) => void;
 
+/**
+ * Sonner error-toast variant — used for the Major #3 relaunch-failed
+ * surface. Decoupled from `ToastFn` so tests can assert which variant was
+ * called (normal vs error). Production wires both to sonner functions.
+ */
+export type ToastErrorFn = (body: string, opts: { id: string; duration?: number }) => void;
+
 export interface ToastOpts {
   duration: number;
+  /**
+   * D11 explicitly permits the "built-in dismiss button" — sonner renders
+   * this when `closeButton: true` is passed. Without it, a `duration:
+   * Infinity` toast has no obvious user-dismissal affordance (swipe
+   * exists but is undiscoverable). Review Pass 4 Major #6 scope: add
+   * dismiss affordance without changing the SPEC-locked copy.
+   */
+  closeButton: boolean;
   id: string;
   action: {
     label: string;
@@ -69,19 +96,46 @@ export interface ToastOpts {
  * Pure subscription logic. Attach the three update subscribers on the given
  * bridge + return a single unsubscribe closure that detaches all of them.
  * Testable without a React renderer or sonner — accepts a toast fn stub.
+ *
+ * Review Pass 4 Major #3: the Toast A "Relaunch now" onClick now awaits
+ * `bridge.update.relaunchNow()` and surfaces an error toast on rejection so
+ * the user has a recovery path when the main-side `quitAndInstall()` throws
+ * (wrong packaging, missing staging dir). `shell.openExternal` calls stay
+ * as fire-and-forget — their URLs are hardcoded in main and pass the D47
+ * allowlist by construction, so rejection is not a realistic failure mode.
  */
-export function attachUpdateSubscribers(bridge: OkDesktopBridge, toast: ToastFn): () => void {
+export function attachUpdateSubscribers(
+  bridge: OkDesktopBridge,
+  toast: ToastFn,
+  toastError: ToastErrorFn = () => {},
+): () => void {
   const unsubscribers: Array<() => void> = [];
 
   unsubscribers.push(
     bridge.onUpdateDownloaded(({ version }) => {
       toast(TOAST_A_BODY, {
         duration: Number.POSITIVE_INFINITY,
+        closeButton: true,
         id: `update-downloaded-${version}`,
         action: {
           label: TOAST_A_ACTION,
           onClick: () => {
-            void bridge.update.relaunchNow();
+            // Await the IPC so a synchronous throw (or a promise rejection
+            // in the IPC transport) is catchable. Without this, `void
+            // bridge.update.relaunchNow()` silently discards the rejection
+            // and the user sees no feedback. Major #3 — surface the
+            // failure via `toastError` with a retry-friendly id so the
+            // user can try again or close the app manually.
+            (async () => {
+              try {
+                await bridge.update.relaunchNow();
+              } catch {
+                toastError(TOAST_A_ERROR_BODY, {
+                  id: `relaunch-error-${version}`,
+                  duration: Number.POSITIVE_INFINITY,
+                });
+              }
+            })();
           },
         },
       });
@@ -92,6 +146,7 @@ export function attachUpdateSubscribers(bridge: OkDesktopBridge, toast: ToastFn)
     bridge.onWhatsNew(({ version, releaseUrl }) => {
       toast(toastBBody(version), {
         duration: Number.POSITIVE_INFINITY,
+        closeButton: true,
         id: `whats-new-${version}`,
         action: {
           label: TOAST_B_ACTION,
@@ -107,6 +162,7 @@ export function attachUpdateSubscribers(bridge: OkDesktopBridge, toast: ToastFn)
     bridge.onUpdateStuckHint(({ downloadUrl }) => {
       toast(TOAST_C_BODY, {
         duration: Number.POSITIVE_INFINITY,
+        closeButton: true,
         id: 'update-stuck-hint',
         action: {
           label: TOAST_C_ACTION,
@@ -133,9 +189,15 @@ export function UpdateToast(): null {
   useEffect(() => {
     const bridge = window.okDesktop;
     if (!bridge) return;
-    return attachUpdateSubscribers(bridge, (body, opts) => {
-      sonnerToast(body, opts);
-    });
+    return attachUpdateSubscribers(
+      bridge,
+      (body, opts) => {
+        sonnerToast(body, opts);
+      },
+      (body, opts) => {
+        sonnerToast.error(body, opts);
+      },
+    );
   }, []);
 
   return null;

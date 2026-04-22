@@ -21,6 +21,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import {
+  bootAutoUpdater,
   type DispatchKind,
   type IpcMainLike,
   isClassifiedUpdaterError,
@@ -818,5 +819,336 @@ describe('single-window dispatch (Finding #1 guard)', () => {
     // Even though no window received the toast, the state gate must still
     // arm so the event doesn't re-fire repeatedly once a window opens.
     expect(state.versionPendingInstall).toBe('0.3.3');
+  });
+});
+
+// ————————————————————————————————————————————————————————
+// Review Pass 4 Critical #1: markCheckSucceeded routes through persistSafely
+//
+// The peer sites all gate on persistSafely; this site used to bypass it and
+// `writeState` throws on disk-save failure (see main/index.ts's rollback
+// pattern — the throw is how persistSafely's catch registers the failure).
+// An uncaught throw inside `update-available` / `update-not-available`
+// propagates out of electron-updater's `emit()` and breaks the check
+// pipeline before `autoDownload` can trigger.
+// ————————————————————————————————————————————————————————
+
+describe('markCheckSucceeded routes through persistSafely (Critical #1)', () => {
+  test('update-available: writeState throws → caught, no rethrow', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = emptyState();
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      logger,
+    });
+    // Emitting update-available MUST NOT propagate the writeState throw
+    // out to the caller. electron-updater's emit is synchronous — a
+    // throwing listener breaks the check pipeline.
+    expect(() => updater.emit('update-available', { version: '0.3.2' })).not.toThrow();
+    // persistSafely logged the failure at error level.
+    expect(logger.error).toHaveBeenCalled();
+    // lastSuccessfulCheckAt stays null — the write failed.
+    expect(state.lastSuccessfulCheckAt).toBeNull();
+  });
+
+  test('update-not-available: writeState throws → caught, no rethrow', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = emptyState();
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('disk full');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+    expect(() => updater.emit('update-not-available', { version: '0.3.1' })).not.toThrow();
+    expect(state.lastSuccessfulCheckAt).toBeNull();
+  });
+});
+
+// ————————————————————————————————————————————————————————
+// Review Pass 4 Major #1: Toast B persist-before-emit + renderer-mount race
+// ————————————————————————————————————————————————————————
+
+describe('Toast B persist-before-emit + whenRendererReady (Major #1)', () => {
+  test('persist failure on lastSeenVersion advance → no Toast B broadcast', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = { ...emptyState(), lastSeenVersion: '0.3.0' };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+    // Persist failed → no Toast B.
+    const whatsNew = captured.filter((c) => c.channel === 'ok:update:whats-new');
+    expect(whatsNew).toHaveLength(0);
+    // lastSeenVersion stays stale since the writeState rollback pattern
+    // (on the production main/index.ts side) reverts on failure.
+    expect(state.lastSeenVersion).toBe('0.3.0');
+  });
+
+  test('whenRendererReady defers Toast B until scheduler fires', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    let state: AppState = { ...emptyState(), lastSeenVersion: '0.3.0' };
+    let deferredFn: (() => void) | null = null;
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: (next) => {
+        state = next;
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      whenRendererReady: (fn) => {
+        deferredFn = fn;
+      },
+      clock,
+      now: () => new Date(),
+    });
+    // State advances immediately (persist-before-emit), but broadcast is queued.
+    expect(state.lastSeenVersion).toBe('0.3.1');
+    const beforeFire = captured.filter((c) => c.channel === 'ok:update:whats-new');
+    expect(beforeFire).toHaveLength(0);
+    expect(deferredFn).not.toBeNull();
+    // Simulate did-finish-load firing.
+    deferredFn?.();
+    const afterFire = captured.filter((c) => c.channel === 'ok:update:whats-new');
+    expect(afterFire).toHaveLength(1);
+  });
+
+  test('no whenRendererReady → immediate fire (pre-fix behavior for tests)', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    let state: AppState = { ...emptyState(), lastSeenVersion: '0.3.0' };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: (next) => {
+        state = next;
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+    });
+    const whatsNew = captured.filter((c) => c.channel === 'ok:update:whats-new');
+    expect(whatsNew).toHaveLength(1);
+  });
+});
+
+// ————————————————————————————————————————————————————————
+// Review Pass 4 Major #2: relaunch-now idempotent under double-invoke
+// ————————————————————————————————————————————————————————
+
+describe('relaunch-now idempotency (Major #2)', () => {
+  test('second invocation sees cleared versionPendingInstall → no second quitAndInstall', () => {
+    const { rig } = makeRig({ versionPendingInstall: '0.3.2' });
+    rig.ipc.invoke('ok:update:relaunch-now');
+    // Simulate rapid double-click — sonner does not debounce action buttons.
+    rig.ipc.invoke('ok:update:relaunch-now');
+    expect(rig.updater.quitAndInstall).toHaveBeenCalledTimes(1);
+    // State is cleared after first invocation.
+    expect(rig.state.versionPendingInstall).toBeNull();
+  });
+
+  test('persistSafely failure → no quitAndInstall call (better to retry)', () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = { ...emptyState(), versionPendingInstall: '0.3.2' };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: () => {
+        throw new Error('EACCES');
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      logger: {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        debug: mock(() => {}),
+      },
+    });
+    ipc.invoke('ok:update:relaunch-now');
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    // State stays pending since persist failed — user can click again.
+    expect(state.versionPendingInstall).toBe('0.3.2');
+  });
+});
+
+// ————————————————————————————————————————————————————————
+// Review Pass 4 Major #5: bootAutoUpdater catch-path coverage
+// ————————————————————————————————————————————————————————
+
+describe('bootAutoUpdater catch-path (Major #5)', () => {
+  test('dynamic-import failure → returns null + logs error, no throw', async () => {
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    const state: AppState = emptyState();
+    // Simulate the node_modules/electron-updater corruption path.
+    const handle = await bootAutoUpdater(
+      () => Promise.reject(new Error('Cannot find module electron-updater')),
+      {
+        ipcMain: makeFakeIpc(),
+        readState: () => state,
+        writeState: () => {},
+        getPrimaryWindow: () => primaryWindow,
+        getAppVersion: () => '0.3.1',
+        isPackaged: true,
+        clock: makeFakeClock(),
+        now: () => new Date(),
+        logger,
+      },
+    );
+    expect(handle).toBeNull();
+    expect(logger.error).toHaveBeenCalled();
+    // Error log includes the failure message for triage.
+    const errorCall = logger.error.mock.calls[0];
+    expect(errorCall?.[1]).toMatchObject({
+      message: expect.stringContaining('Cannot find module'),
+    });
+  });
+
+  test('successful import → returns a real handle with destroy', async () => {
+    const fakeUpdater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    const primaryWindow = makeFakeWindow(captured);
+    let state: AppState = emptyState();
+    const handle = await bootAutoUpdater(() => Promise.resolve({ autoUpdater: fakeUpdater }), {
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: (next) => {
+        state = next;
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+    });
+    expect(handle).not.toBeNull();
+    expect(typeof handle?.destroy).toBe('function');
+    handle?.destroy();
+    // Clean teardown — no throw.
+    expect(clock.clearInterval).toHaveBeenCalled;
+  });
+
+  test('startAutoUpdater synchronous throw during wire-up is caught', async () => {
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    // A fake updater whose `.on(...)` throws simulates an API-shape drift
+    // inside startAutoUpdater's wire-up (future electron-updater major
+    // version bumps that rename event contracts).
+    const hostileUpdater = {
+      autoDownload: false,
+      autoInstallOnAppQuit: false,
+      channel: null,
+      allowPrerelease: false,
+      allowDowngrade: false,
+      on: () => {
+        throw new Error('API drift — event contract changed');
+      },
+      off: () => hostileUpdater as unknown as UpdaterLike,
+      checkForUpdatesAndNotify: () => Promise.resolve(undefined),
+      quitAndInstall: () => {},
+    } as unknown as UpdaterLike;
+    const handle = await bootAutoUpdater(() => Promise.resolve({ autoUpdater: hostileUpdater }), {
+      ipcMain: makeFakeIpc(),
+      readState: () => emptyState(),
+      writeState: () => {},
+      getPrimaryWindow: () => null,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock: makeFakeClock(),
+      now: () => new Date(),
+      logger,
+    });
+    expect(handle).toBeNull();
+    expect(logger.error).toHaveBeenCalled();
   });
 });

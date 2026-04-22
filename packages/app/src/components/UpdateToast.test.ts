@@ -17,6 +17,7 @@ import {
   attachUpdateSubscribers,
   TOAST_A_ACTION,
   TOAST_A_BODY,
+  TOAST_A_ERROR_BODY,
   TOAST_B_ACTION,
   TOAST_C_ACTION,
   TOAST_C_BODY,
@@ -133,6 +134,7 @@ describe('Toast A — ok:update:downloaded', () => {
     const [body, opts] = toast.mock.calls[0] as [string, ToastOpts];
     expect(body).toBe(TOAST_A_BODY);
     expect(opts.duration).toBe(Number.POSITIVE_INFINITY);
+    expect(opts.closeButton).toBe(true);
     expect(opts.id).toBe('update-downloaded-0.1.1');
     expect(opts.action.label).toBe(TOAST_A_ACTION);
   });
@@ -145,6 +147,47 @@ describe('Toast A — ok:update:downloaded', () => {
     const opts = toast.mock.calls[0]?.[1] as ToastOpts;
     opts.action.onClick();
     expect(bridge.update.relaunchNow).toHaveBeenCalledTimes(1);
+  });
+
+  test('Review Pass 4 Major #3: relaunchNow rejection → error toast', async () => {
+    const bridge = makeFakeBridge();
+    // Wire relaunchNow to reject synchronously (wrong packaging, missing
+    // staging dir) — tests that the Major #3 error surface fires.
+    bridge.update.relaunchNow = mock(() => Promise.reject(new Error('quitAndInstall failed')));
+    const toast = mock<(body: string, opts: ToastOpts) => void>(() => {});
+    const toastError = mock<(body: string, opts: { id: string; duration?: number }) => void>(
+      () => {},
+    );
+    attachUpdateSubscribers(castBridge(bridge), toast, toastError);
+    bridge._downloaded?.({ version: '0.1.1' });
+    const opts = toast.mock.calls[0]?.[1] as ToastOpts;
+    opts.action.onClick();
+    // Yield microtask for the async catch to fire.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    const [errBody, errOpts] = toastError.mock.calls[0] as [
+      string,
+      { id: string; duration?: number },
+    ];
+    expect(errBody).toBe(TOAST_A_ERROR_BODY);
+    expect(errOpts.id).toBe('relaunch-error-0.1.1');
+  });
+
+  test('Review Pass 4 Major #3: relaunchNow success → no error toast', async () => {
+    const bridge = makeFakeBridge();
+    const toast = mock<(body: string, opts: ToastOpts) => void>(() => {});
+    const toastError = mock<(body: string, opts: { id: string; duration?: number }) => void>(
+      () => {},
+    );
+    attachUpdateSubscribers(castBridge(bridge), toast, toastError);
+    bridge._downloaded?.({ version: '0.1.1' });
+    const opts = toast.mock.calls[0]?.[1] as ToastOpts;
+    opts.action.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bridge.update.relaunchNow).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   test('separate versions produce distinct toast ids (sonner idempotency)', () => {
@@ -183,6 +226,7 @@ describe('Toast B — ok:update:whats-new', () => {
     const [body, opts] = toast.mock.calls[0] as [string, ToastOpts];
     expect(body).toBe("Updated to v0.3.1 — see what's new");
     expect(opts.duration).toBe(Number.POSITIVE_INFINITY);
+    expect(opts.closeButton).toBe(true);
     expect(opts.id).toBe('whats-new-0.3.1');
     expect(opts.action.label).toBe(TOAST_B_ACTION);
     opts.action.onClick();
@@ -205,6 +249,7 @@ describe('Toast C — ok:update:stuck-hint', () => {
     const [body, opts] = toast.mock.calls[0] as [string, ToastOpts];
     expect(body).toBe(TOAST_C_BODY);
     expect(opts.duration).toBe(Number.POSITIVE_INFINITY);
+    expect(opts.closeButton).toBe(true);
     expect(opts.id).toBe('update-stuck-hint');
     expect(opts.action.label).toBe(TOAST_C_ACTION);
     opts.action.onClick();

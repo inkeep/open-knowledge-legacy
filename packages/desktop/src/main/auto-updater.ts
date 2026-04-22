@@ -107,6 +107,23 @@ export interface StartAutoUpdaterOpts {
   isPackaged: boolean;
   /** True when `OK_UPDATER_FORCE_DEV=1` — lets Tier-2 smoke harness opt in. */
   forceDevBypass?: boolean;
+  /**
+   * Optional scheduler for events that might fire before the renderer
+   * finishes mounting its subscribers. Only Toast B (first-launch-post-
+   * update) is affected — `startAutoUpdater` runs from `app.whenReady()`
+   * and dispatches Toast B synchronously, which races the renderer's
+   * React mount of `<UpdateToast/>`. Electron drops `webContents.send`
+   * messages that arrive before the renderer has attached its listener
+   * (the docs call out this race for `send` but not `handle`). Production
+   * wires this to `win.webContents.once('did-finish-load', fn)` on the
+   * primary window so Toast B lands after the renderer is listening.
+   * Tests can pass `undefined` (or an immediate-fire scheduler) and get
+   * the pre-fix behavior. Toast A + Toast C don't need the deferral —
+   * they fire off subsequent electron-updater events (update-downloaded,
+   * error), which by definition arrive long after the renderer mount.
+   * Fixes Review Pass 4 Major #1 (renderer-mount race).
+   */
+  whenRendererReady?: (fn: () => void) => void;
   clock?: Clock;
   now?: () => Date;
   onDispatch?: (kind: DispatchKind) => void;
@@ -182,6 +199,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     getAppVersion,
     isPackaged,
     forceDevBypass = false,
+    whenRendererReady,
     clock = DEFAULT_CLOCK,
     now = () => new Date(),
     onDispatch,
@@ -266,14 +284,32 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
    * Mark a successful check outcome — advances `lastSuccessfulCheckAt` and
    * resets `stuckHintShown` so the Toast C gate can re-arm if the update
    * pipeline breaks again after a repaired window. D12.
+   *
+   * Routes through `persistSafely` (same discipline as every other mutation
+   * site in this module). `update-available` / `update-not-available` are
+   * emitted synchronously from electron-updater's promise-chain inside
+   * `doCheckForUpdates()` (AppUpdater.js:401-429) — a thrown writeState
+   * propagates out of the emitter and breaks the check pipeline before
+   * `autoDownload` can trigger. Catching the throw keeps the updater event
+   * loop alive even when `saveAppState` fails mid-session (EACCES, disk
+   * full), logs the failure at `error` level, and lets the next event
+   * retry. Skipping `onDispatch('check-success')` on failure is intentional
+   * — the observability surface mirrors the state: "success was not
+   * recorded." Fixes Review Pass 4 Critical #1.
    */
   const markCheckSucceeded = (): void => {
     const state = readState();
-    writeState({
-      ...state,
-      lastSuccessfulCheckAt: now().toISOString(),
-      stuckHintShown: false,
-    });
+    if (
+      !persistSafely(
+        {
+          ...state,
+          lastSuccessfulCheckAt: now().toISOString(),
+          stuckHintShown: false,
+        },
+        'check-success',
+      )
+    )
+      return;
     onDispatch?.('check-success');
   };
 
@@ -371,6 +407,19 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       logger.warn('relaunch-now invoked without versionPendingInstall — ignoring');
       return undefined;
     }
+    // Double-invoke guard (Review Pass 4 Major #2): clear the state gate
+    // BEFORE calling `quitAndInstall()` so a second IPC fire (rapid
+    // double-click on Toast A's "Relaunch now" — sonner doesn't debounce
+    // the action button) sees `pending === null` and short-circuits.
+    // `autoUpdater.quitAndInstall()` is not documented as idempotent on
+    // Squirrel.Mac; observed outcomes range from no-op to "update staging
+    // is interrupted and the app relaunches at the old version" (the J7a
+    // failure mode AC15 is specifically designed to prevent). If the
+    // persist fails, skip the call entirely — better to leave the toast
+    // visible and let the user click again (with a healthy disk) than to
+    // fire a non-idempotent operation on unreliable state.
+    if (!persistSafely({ ...readState(), versionPendingInstall: null }, 'relaunch-now'))
+      return undefined;
     logger.info('relaunch-now invoked — calling autoUpdater.quitAndInstall', { pending });
     onDispatch?.('relaunch-now');
     updater.quitAndInstall();
@@ -383,23 +432,45 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   const currentVersion = getAppVersion();
   const state = readState();
-  if (state.lastSeenVersion !== null && state.lastSeenVersion !== currentVersion) {
-    broadcast('ok:update:whats-new', {
-      version: currentVersion,
-      releaseUrl: releaseUrlFor(currentVersion),
-    });
-    logger.info('whats-new dispatched Toast B', {
-      from: state.lastSeenVersion,
-      to: currentVersion,
-    });
-    onDispatch?.('whats-new-toast-b');
-  }
-  // Always advance lastSeenVersion so the toast fires at most once per
-  // transition (fresh-install case: null → current, silent; no toast). Boot
-  // is synchronous — the `state` captured above is still current; no need to
-  // re-read before spreading.
-  if (state.lastSeenVersion !== currentVersion) {
-    persistSafely({ ...state, lastSeenVersion: currentVersion }, 'lastSeenVersion-advance');
+  const isVersionTransition =
+    state.lastSeenVersion !== null && state.lastSeenVersion !== currentVersion;
+  const needsStateAdvance = state.lastSeenVersion !== currentVersion;
+
+  // Persist-before-emit (Review Pass 4 Major #1 part A) — advance
+  // `lastSeenVersion` BEFORE any broadcast so a disk-write failure cannot
+  // leave Toast B un-armed-with-broadcast-already-sent (which would re-fire
+  // on every boot). Peer sites (Toast A, Toast C) use this same order.
+  // `lastSeenVersion === null` (fresh install) still advances silently —
+  // no broadcast, just seed the baseline for future transitions.
+  if (needsStateAdvance) {
+    const advanced = persistSafely(
+      { ...state, lastSeenVersion: currentVersion },
+      'lastSeenVersion-advance',
+    );
+    if (advanced && isVersionTransition) {
+      // Toast B broadcast — deferred via `whenRendererReady` when provided
+      // (Review Pass 4 Major #1 part B: renderer-mount race). `startAutoUpdater`
+      // runs from `app.whenReady()`, which fires BEFORE the first window's
+      // renderer has mounted `<UpdateToast/>` and attached its preload-side
+      // listener via the bridge subscription method. A synchronous
+      // `webContents.send` at this point is dropped. Production passes a
+      // scheduler that waits for `did-finish-load` on the primary window;
+      // tests that don't care inject `undefined` and get the pre-fix
+      // immediate-fire behavior.
+      const fireToastB = (): void => {
+        broadcast('ok:update:whats-new', {
+          version: currentVersion,
+          releaseUrl: releaseUrlFor(currentVersion),
+        });
+        logger.info('whats-new dispatched Toast B', {
+          from: state.lastSeenVersion,
+          to: currentVersion,
+        });
+        onDispatch?.('whats-new-toast-b');
+      };
+      if (whenRendererReady) whenRendererReady(fireToastB);
+      else fireToastB();
+    }
   }
 
   // ————————————————————————————————————————————————————————
@@ -454,6 +525,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
         clock.clearInterval(intervalHandle);
         intervalHandle = null;
       }
+      // Note: listeners detached per-event below.
       // Detach each listener under its own try/catch — a single `updater.off`
       // throw must not leave the remaining subscribers wired. electron-
       // updater extends Node's EventEmitter so `off` is unlikely to throw,
@@ -484,4 +556,34 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       logger.info('destroyed');
     },
   };
+}
+
+/**
+ * Catch-path-tested wrapper around the dynamic `electron-updater` import +
+ * `startAutoUpdater` call. Review Pass 4 Major #5: a failed dynamic import
+ * (bundling drift, corrupt node_modules, future Electron upgrade that
+ * desyncs electron-updater) must not crash the boot or leave the app
+ * silently un-updateable with no user-facing or log signal. This helper
+ * centralizes the try/catch contract so `main/index.ts` boot code stays
+ * one line AND the catch branch is reachable from a `bun test` harness
+ * without an Electron runtime.
+ *
+ * Tests pass a throwing `importUpdater` + a captured logger; production
+ * passes `() => import('electron-updater')`.
+ */
+export async function bootAutoUpdater(
+  importUpdater: () => Promise<{ autoUpdater: UpdaterLike }>,
+  opts: Omit<StartAutoUpdaterOpts, 'updater'>,
+): Promise<StartAutoUpdaterHandle | null> {
+  const logger = opts.logger ?? DEFAULT_LOGGER;
+  try {
+    const { autoUpdater } = await importUpdater();
+    return startAutoUpdater({ updater: autoUpdater, ...opts });
+  } catch (err) {
+    logger.error('auto-updater boot failed — app will run without updates this session', {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return null;
+  }
 }
