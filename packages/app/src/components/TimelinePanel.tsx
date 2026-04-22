@@ -384,7 +384,7 @@ export function TimelinePanel({
         showCloseButton
       >
         <SheetHeader className="border-b px-4 py-3 pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pr-10">
             <SheetTitle className="text-sm">Timeline</SheetTitle>
             {selectedSha && (
               <Button
