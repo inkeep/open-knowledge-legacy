@@ -26,6 +26,7 @@ import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import type { EditorModeValue } from '@/editor/use-editor-mode';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { useWorkspace } from '@/lib/use-workspace';
@@ -78,7 +79,7 @@ function isRenameResponse(v: unknown): v is RenameResponse {
 
 interface EditorHeaderProps {
   editorMode: EditorMode;
-  onModeChange: (mode: 'wysiwyg' | 'source') => void;
+  onModeChange: (mode: EditorModeValue) => void;
   onTimelineToggle: () => void;
   onSaveVersion: () => void;
   saving: boolean;

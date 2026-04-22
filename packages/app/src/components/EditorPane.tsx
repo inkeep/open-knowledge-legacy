@@ -4,7 +4,11 @@ import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
-import { useEditorMode } from '@/editor/use-editor-mode';
+import {
+  type EditorModeValue,
+  shouldApplyPersistedMode,
+  useEditorMode,
+} from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
@@ -19,8 +23,13 @@ import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePane
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
  * Replaces the prior `isSourceMode: boolean` + `previewEntry: TimelineEntry | null`
  * two-boolean encoding. Booleans don't scale past 2 states.
+ *
+ * Derives from `EditorModeValue` (the persistable subset) + `'diff'` — so the
+ * "diff is the only non-persistable mode" invariant is enforced structurally
+ * by the compiler. Adding a new persistable mode updates `EDITOR_MODE_VALUES`
+ * in `use-editor-mode.ts` and this type follows automatically.
  */
-export type EditorMode = 'wysiwyg' | 'source' | 'diff';
+export type EditorMode = EditorModeValue | 'diff';
 
 export function EditorPane() {
   // Persisted preference (localStorage, cross-window focus-based sync via
@@ -54,7 +63,7 @@ export function EditorPane() {
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
-  const modeBeforeDiffRef = useRef<'wysiwyg' | 'source'>('wysiwyg');
+  const modeBeforeDiffRef = useRef<EditorModeValue>('wysiwyg');
 
   const syncStatus = useGitSyncStatus();
 
@@ -73,7 +82,10 @@ export function EditorPane() {
       setEditorMode(modeBeforeDiffRef.current);
     } else {
       if (editorMode !== 'diff') {
-        modeBeforeDiffRef.current = editorMode === 'source' ? 'source' : 'wysiwyg';
+        // editorMode is narrowed to EditorModeValue here (the 'diff' branch
+        // excluded); direct assignment works since modeBeforeDiffRef is typed
+        // as EditorModeValue too.
+        modeBeforeDiffRef.current = editorMode;
       }
       setPreviewEntry(entry);
       setEditorMode('diff');
@@ -132,7 +144,7 @@ export function EditorPane() {
     }
   }, [syncStatus?.state, syncStatus?.hasRemote]);
 
-  function handleModeChange(mode: 'wysiwyg' | 'source') {
+  function handleModeChange(mode: EditorModeValue) {
     setEditorMode(mode);
     // User-initiated change — persist globally. Tool-driven flips (e.g.
     // RAW_MDX_NAV_EVENT → source) are session-only and deliberately do NOT
@@ -146,9 +158,13 @@ export function EditorPane() {
   // defer the application so the existing "restore to session pre-diff mode
   // on exit" UX still runs cleanly via `modeBeforeDiffRef`. Dep array is
   // intentionally `[persistedMode]` alone; reading `editorMode` via ref
-  // decouples the guard from the dep array (SPEC §7.4 R1, audit H1).
+  // decouples the guard from the dep array (SPEC §7.4 R1, audit H1). The
+  // 'diff'-guard decision lives in `shouldApplyPersistedMode()` so the
+  // invariant is unit-tested as a pure function — adding `editorMode` to
+  // this dep array reintroduces the H1 race; the pure helper alone cannot
+  // catch that regression, but it guards the guard's own correctness.
   useEffect(() => {
-    if (editorModeRef.current === 'diff') return;
+    if (!shouldApplyPersistedMode(editorModeRef.current)) return;
     setEditorMode(persistedMode);
   }, [persistedMode]);
 

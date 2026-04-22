@@ -49,14 +49,18 @@ async function expectWysiwygMounted(page: Page, timeout = 10_000): Promise<void>
 }
 
 /**
+ * Simulate a user returning focus to this tab — `page.bringToFront()`
+ * followed by an explicit window `focus` dispatch. Use when a test needs to
+ * trigger the `useEditorMode` hook's focus-based re-read of localStorage;
+ * do NOT use for plain tab-switching where no focus-based behavior is under
+ * test (T3 line 134 is an example — we just want the click to land on
+ * page A; the focus-based sync there is exercised explicitly on page B).
+ *
  * In headless Chromium (Playwright's default), `page.bringToFront()`
- * activates the tab but does not always dispatch the window `focus`
- * event that our hook's cross-window sync listener depends on. Emulate
- * the event explicitly so tests remain deterministic regardless of
- * headless focus-dispatch quirks. This is the same pattern used for
- * cross-tab focus sync tests in other projects (Chromium bug history:
- * crbug/1250169 family). The production path dispatches focus
- * naturally when a user clicks / alt-tabs to the window.
+ * activates the tab but does not reliably dispatch the window `focus`
+ * event. Emulating the event explicitly keeps the test deterministic
+ * regardless of headless focus-dispatch behavior. Production users
+ * naturally dispatch `focus` when they click or alt-tab into the window.
  */
 async function simulateFocusReturn(page: Page): Promise<void> {
   await page.bringToFront();
@@ -324,42 +328,65 @@ test.describe('editor-mode-persistence — SPEC §8.3', () => {
     expect(globalAfterLoad).toBe('wysiwyg');
   });
 
-  // ── T7: rapid external-write bursts don't break interactivity ────────
-  test('T7: rapid external-write bursts leave editor interactive', async ({ page, api }) => {
+  // ── T7: rapid external-write + focus-event churn leaves editor interactive
+  //
+  // SPEC §13 R7 describes "Programmatic localStorage.setItem bursts from a
+  // misbehaving browser extension cause state churn." The failure mode that
+  // matters is: under many rapid persisted-mode changes INTERLEAVED with
+  // focus returns, React's state-update pipeline + the functional-update
+  // form must keep the editor responsive (no state-update storms, no
+  // re-render loops, no dropped user interactions).
+  //
+  // A pure write-only burst is insulated by the focus-gated design (the
+  // hook doesn't listen to `storage`), so it would be a no-op regression
+  // guard. Interleaving focus events every ~20 writes exercises the actual
+  // state-churn path: hook re-reads storage, functional-update form either
+  // short-circuits (equal) or schedules a re-render.
+  test('T7: rapid external-write + focus churn leaves editor interactive', async ({
+    page,
+    api,
+  }) => {
     const docName = `test-emp-t7-${randomUUID().slice(0, 8)}`;
     await api.createPage(`${docName}.md`);
     await page.goto(`/#/${docName}`);
     await waitForProvider(page);
     await expectWysiwygMounted(page);
 
-    // Fire 100 rapid writes in ~200ms from a non-React path. The hook's
-    // focus-based re-check means these bursts don't reach live state
-    // until the window regains focus (which we never do during the
-    // burst). React's auto-batching + the functional-update form should
-    // keep the editor responsive.
-    const finalPersistedMode = await page.evaluate(async (key) => {
+    // Fire 100 rapid localStorage writes interleaved with focus dispatches
+    // every 20 iterations. Every dispatch triggers the hook's focus listener
+    // → readPersistedMode → functional-update setMode. The final focus
+    // dispatch lands *after* the last write so the rendered mode must
+    // converge on the final localStorage value.
+    const { finalPersistedMode, iterations } = await page.evaluate(async (key) => {
       const start = Date.now();
       let i = 0;
-      while (Date.now() - start < 200 && i < 100) {
+      while (Date.now() - start < 300 && i < 100) {
         localStorage.setItem(key, i % 2 === 0 ? 'source' : 'wysiwyg');
+        if (i > 0 && i % 20 === 0) window.dispatchEvent(new Event('focus'));
         i++;
       }
-      return localStorage.getItem(key);
+      // Final focus dispatch AFTER the last write — forces the hook to
+      // read the terminal localStorage value and update state.
+      window.dispatchEvent(new Event('focus'));
+      return { finalPersistedMode: localStorage.getItem(key), iterations: i };
     }, STORAGE_KEY);
+
+    expect(iterations).toBeGreaterThan(10);
     expect(finalPersistedMode === 'source' || finalPersistedMode === 'wysiwyg').toBe(true);
 
-    // Spec §8.3 T7 assertion: rendered mode does not diverge from the
-    // final localStorage value. Because the burst happened WITHOUT focus
-    // return, the hook has NOT applied any of the writes yet — so the
-    // rendered mode is whatever the user last clicked (WYSIWYG from
-    // mount). The final localStorage value is the last burst write.
-    // Divergence is legitimate here (focus-gated by design); the
-    // assertion is that the editor remains interactive despite the
-    // burst — which the subsequent toggle round-trip proves.
-    await expectWysiwygMounted(page);
+    // Rendered mode converges on the final localStorage value because the
+    // final focus dispatch fired after the last write. This is the real
+    // state-churn assertion: the pipeline settled deterministically, not
+    // a tautology about the first-paint mode.
+    if (finalPersistedMode === 'source') {
+      await expectSourceMounted(page);
+    } else {
+      await expectWysiwygMounted(page);
+    }
 
-    // Editor is still interactive — toggle via UI clicks still works.
-    // Click Visual (a no-op if already WYSIWYG) then Source then back.
+    // Editor is still interactive — UI-driven toggle round-trip still
+    // works cleanly. If churn had broken React's commit pipeline, the
+    // toggle would time out or not register.
     await visualToggle(page).click();
     await expectWysiwygMounted(page);
     await sourceToggle(page).click();
@@ -368,6 +395,55 @@ test.describe('editor-mode-persistence — SPEC §8.3', () => {
     // Final UI-driven write overwrites the burst's final value.
     const finalStored = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
     expect(finalStored).toBe('source');
+  });
+
+  // ── T9: RAW_MDX_NAV_EVENT (tool-forced source flip) stays session-only ─
+  //
+  // SPEC §7.5 + FR-6 invariant: tool-driven source flips (dispatched via
+  // `RAW_MDX_NAV_EVENT` when a user clicks a broken MDX fallback node)
+  // change the session-local editor mode but MUST NOT persist to
+  // localStorage — the flip is system-forced, not user intent, and
+  // persisting it would silently overwrite the user's global preference.
+  //
+  // Guards against a DRY-minded future refactor that merges
+  // `handleModeChange` and the RAW_MDX_NAV handler through one helper (a
+  // reasonable instinct). The code comment at EditorPane.tsx:131-134
+  // documents the asymmetry; this test enforces it.
+  test('T9: RAW_MDX_NAV_EVENT flips source mode WITHOUT persisting (FR-6 / §7.5)', async ({
+    page,
+    api,
+  }) => {
+    const docName = `test-emp-t9-${randomUUID().slice(0, 8)}`;
+    await api.createPage(`${docName}.md`);
+    await page.goto(`/#/${docName}`);
+    await waitForProvider(page);
+    await expectWysiwygMounted(page);
+
+    // localStorage starts empty — user is a first-time visitor.
+    const preFlipStored = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
+    expect(preFlipStored).toBe(null);
+
+    // Dispatch the tool-forced event. `RAW_MDX_NAV_EVENT` is the same
+    // string constant as `packages/app/src/editor/extensions/raw-mdx-nav-event.ts`
+    // — inlined here to avoid importing app-src into the Playwright runner.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('raw-mdx-nav', { detail: { offset: 0 } }));
+    });
+
+    // Session flips to Source via `setEditorMode('source')`.
+    await expectSourceMounted(page);
+
+    // localStorage is UNCHANGED — the tool flip did not persist.
+    const postFlipStored = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
+    expect(postFlipStored).toBe(null);
+
+    // Reload the page — on a fresh mount, the tool's session-only flip is
+    // gone and the editor returns to the default WYSIWYG (not Source).
+    // This is the load-bearing assertion: persisting a tool flip would
+    // make Source stick across reloads.
+    await page.reload();
+    await waitForProvider(page);
+    await expectWysiwygMounted(page);
   });
 
   // ── T8: FOUC — window global set before first paint, Source DOM on ───

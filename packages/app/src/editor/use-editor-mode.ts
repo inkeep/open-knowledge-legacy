@@ -22,7 +22,14 @@ import { useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'ok-editor-mode-v1';
 
-export type EditorModeValue = 'wysiwyg' | 'source';
+/**
+ * Single source of truth for the persistable editor-mode value set. Derive
+ * `EditorModeValue` and the `isEditorModeValue` guard from this constant so a
+ * future mode addition updates the type and the guard atomically.
+ */
+export const EDITOR_MODE_VALUES = ['wysiwyg', 'source'] as const;
+
+export type EditorModeValue = (typeof EDITOR_MODE_VALUES)[number];
 
 const DEFAULT_MODE: EditorModeValue = 'wysiwyg';
 
@@ -30,32 +37,42 @@ declare global {
   interface Window {
     /**
      * Set by the FOUC-prevention inline script in `packages/app/index.html`
-     * before React mounts. Exactly `'wysiwyg' | 'source'` on a valid path;
-     * may be `undefined` in non-browser test harnesses. Read once by
-     * `readInitialMode()` and never mutated.
+     * before React mounts. The inline script is untyped, so the value here is
+     * untrusted — readers MUST validate via `isEditorModeValue()` before use.
+     * Typed as `unknown` (not `EditorModeValue`) so the compiler compels that
+     * validation at every read site.
      */
-    __OK_EDITOR_MODE__?: EditorModeValue;
+    __OK_EDITOR_MODE__?: unknown;
   }
 }
 
 /** Type guard — exported for unit testing. */
 export function isEditorModeValue(raw: unknown): raw is EditorModeValue {
-  return raw === 'wysiwyg' || raw === 'source';
+  return (EDITOR_MODE_VALUES as readonly unknown[]).includes(raw);
 }
 
 /**
  * Read the persisted mode directly from storage. Returns the default on miss,
  * invalid value, or storage access throw. Pure + injectable — exported for
  * unit testing.
+ *
+ * On a structurally invalid persisted value (SPEC FR-8: prior-version schema
+ * violation or manual localStorage tampering), logs a single bracket-prefix
+ * `console.warn` so "my preference doesn't persist" reports are diagnosable.
+ * The storage-throw branch stays silent — it fires on every focus return in
+ * privacy mode and would generate per-focus log spam.
  */
 export function readPersistedMode(
   storage: Pick<Storage, 'getItem'> = localStorage,
 ): EditorModeValue {
   try {
     const raw = storage.getItem(STORAGE_KEY);
+    if (raw === null) return DEFAULT_MODE;
     if (isEditorModeValue(raw)) return raw;
+    console.warn('[editor-mode] invalid persisted value, falling back to default', { raw });
   } catch {
-    // Privacy mode / quota / serialization — fall through to default.
+    // Privacy mode / quota / serialization — stay silent to avoid per-focus
+    // spam; only the invalid-value branch above logs (FR-8 "Warning logged").
   }
   return DEFAULT_MODE;
 }
@@ -74,6 +91,26 @@ export function readInitialMode(
   const preloaded = win.__OK_EDITOR_MODE__;
   if (isEditorModeValue(preloaded)) return preloaded;
   return readPersistedMode(storage);
+}
+
+/**
+ * Decide whether a cross-window persisted-mode change should be applied to
+ * the session-local editorMode. The rule: apply unless the session is
+ * currently in diff mode — diff is ephemeral and its exit path must restore
+ * the session pre-diff mode via `modeBeforeDiffRef`, NOT be overridden by a
+ * concurrent cross-window flip (audit-surfaced H1 race; SPEC §7.4 R1).
+ *
+ * Accepting `current` as a string (not just the `EditorMode` type) lets the
+ * `EditorPane` sync effect call this with `editorModeRef.current` without
+ * importing the `EditorMode` type into this module (which would create a
+ * circular dependency). Any string the effect might hold is valid input; the
+ * function's job is the 'diff' short-circuit.
+ *
+ * Pure — exported for unit testing (see `use-editor-mode.test.ts` describe
+ * block 'shouldApplyPersistedMode — H1 guard').
+ */
+export function shouldApplyPersistedMode(current: string): boolean {
+  return current !== 'diff';
 }
 
 /**
