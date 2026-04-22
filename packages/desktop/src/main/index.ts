@@ -43,7 +43,7 @@ import {
 } from './ipc-handlers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
-import { checkOutboundUrl } from './shell-allowlist.ts';
+import { handleShellOpenExternal } from './shell-allowlist.ts';
 import {
   type AppState,
   addRecentProject,
@@ -332,12 +332,11 @@ function registerIpcHandlers() {
     return promptForFolder(dialog);
   });
 
+  const shellOpenExternal = handleShellOpenExternal({
+    openExternal: (url) => shell.openExternal(url),
+  });
   handle('ok:shell:open-external', async (_event, url) => {
-    const check = checkOutboundUrl(url);
-    if (!check.ok) {
-      throw new Error(`shell.openExternal blocked: ${check.reason}`);
-    }
-    await shell.openExternal(url);
+    await shellOpenExternal(url);
     return undefined;
   });
 

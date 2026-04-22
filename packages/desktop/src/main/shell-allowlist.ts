@@ -69,3 +69,24 @@ export function checkOutboundUrl(url: string): AllowlistResult {
   }
   return { ok: true };
 }
+
+/**
+ * Pure shell.openExternal bridge-handler factory. Separated from `index.ts`'s
+ * IPC wiring so the check-and-delegate contract can be unit-tested without an
+ * Electron runtime (D47).
+ *
+ * Returns an async handler that throws on disallowed schemes and calls
+ * `openExternal` on allowed ones. `index.ts` wraps this in the `ok:shell:
+ * open-external` IPC handler.
+ */
+export function handleShellOpenExternal(deps: {
+  openExternal: (url: string) => Promise<void>;
+}): (url: string) => Promise<void> {
+  return async (url: string) => {
+    const check = checkOutboundUrl(url);
+    if (!check.ok) {
+      throw new Error(`shell.openExternal blocked: ${check.reason}`);
+    }
+    await deps.openExternal(url);
+  };
+}
