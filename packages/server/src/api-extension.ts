@@ -3512,40 +3512,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * /api/upload-image is a one-release deprecation shim (D-G). It forwards
-   * to handleUploadImage, logs a deprecation notice once per process, and
-   * emits an RFC 9745 `Deprecation:` header + RFC 5988 `Link:
-   * rel="successor-version"` pointer on every response so external
-   * integrators that never read stdout still see the migration signal
-   * programmatically. RFC 8594's `Sunset:` header is deliberately NOT
-   * emitted (see body comment).
-   */
-  let deprecationLogged = false;
-  async function handleUploadImageDeprecated(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!deprecationLogged) {
-      console.warn(
-        '[upload] /api/upload-image is deprecated; clients should POST to /api/upload. Removal target: next minor release of @inkeep/open-knowledge-server.',
-      );
-      deprecationLogged = true;
-    }
-    // RFC 9745 `Deprecation: true` signals "migrate now." RFC 8594
-    // `Sunset:` (a dated header) is intentionally NOT emitted — the
-    // removal target is "next minor," which is release-train-bound
-    // rather than date-bound; we don't commit a date we can't keep.
-    // `Link: rel="successor-version"` (RFC 5988) is the canonical
-    // pointer external integrators consume to discover the replacement
-    // endpoint programmatically.
-    if (typeof res.setHeader === 'function') {
-      res.setHeader('Deprecation', 'true');
-      res.setHeader('Link', '</api/upload>; rel="successor-version"');
-    }
-    return handleUploadImage(req, res);
-  }
-
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
   // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
 
@@ -4667,9 +4633,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload': handleUploadImage,
-    // SPEC §6 FR-8 / D-G: one-release deprecation shim. Clients should
-    // migrate to /api/upload; this entry is removed in the next minor.
-    '/api/upload-image': handleUploadImageDeprecated,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
@@ -4713,7 +4676,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // loopback Host header. /api/workspace enforces this inline already.
   const MUTATING_ROUTES: ReadonlySet<string> = new Set([
     '/api/upload',
-    '/api/upload-image',
     '/api/create-page',
     '/api/rename',
     '/api/rename-path',

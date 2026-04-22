@@ -242,7 +242,6 @@ Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](.
 | Method | Path                 | Purpose |
 | ------ | -------------------- | ------- |
 | POST   | `/api/upload`        | Upload an asset (multipart). Response: `{ok, src, deduped}` on 200; `{ok:false, error:'max-bytes', attemptedBytes, maxBytes, message}` on 413. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
-| POST   | `/api/upload-image`  | One-release deprecation shim (D-G). Forwards to `/api/upload`; logs a single per-process deprecation notice. Removed in the next minor. |
 | GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `maxBytes`. |
 
 ### Accept-all (D-M LOCKED)

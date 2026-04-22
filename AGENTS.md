@@ -286,7 +286,6 @@ Full spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/202
 **Endpoints:**
 
 - `POST /api/upload` — primary upload handler (`handleUploadImage` in `api-extension.ts`). Multipart body via busboy. Accept-all under D-M: every file under `upload.maxBytes` is accepted; `file-type` magic-byte sniff is consulted only to (a) preserve SVG `<img>`-only routing for NFR-3 and (b) recover a file extension when the client filename is a generic clipboard name. Non-sniffable bytes are accepted under the client-supplied filename. Response: `{ ok: true, src: '<basename>', path: '<contentDir-relative>', deduped: boolean }` on success, `413 { error: 'max-bytes', attemptedBytes, maxBytes, message }` when the body exceeds the configured limit (kebab-case — matches the other `*-error` codes in this handler). `src` is the basename the server wrote; `path` is the contentDir-relative location (reflects `upload.attachmentFolderPath` — critical for clients that need to emit correct relative refs when the operator configured a non-default attachment folder). Dedup runs BEFORE filename synthesis so identical bytes return the existing path; `deduped: true` triggers the client's dedup toast (D-B).
-- `POST /api/upload-image` — one-release deprecation shim (D-G). Forwards to the same handler, logs a single per-process deprecation notice. Removed in the next minor.
 - `GET /api/upload-config` — returns the resolved `upload.*` subtree (`UploadConfig` shape from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches this once on first upload to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` without hardcoding defaults in the bundle.
 
 **Accept-all posture (D-M).** There is no MIME allowlist gate in the upload handler. Type-based rejection was removed alongside D-A's refutation on 2026-04-21 — every editor in the Obsidian class accepts all file drops. Only `upload.maxBytes` rejects, with a byte-size-specific message naming both the attempted size and the configured limit (SPEC P1.3).
@@ -340,7 +339,6 @@ The paired-write marker `context.paired: true` on `MANAGED_RENAME_ORIGIN` ensure
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
 | GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
 | POST   | `/api/upload`                 | Upload an asset (multipart). Response: `{ok, src, deduped}`. Accept-all under D-M; only `upload.maxBytes` rejects. |
-| POST   | `/api/upload-image`           | Deprecation shim for `/api/upload` (D-G one-release window; removed next minor). |
 | GET    | `/api/upload-config`          | Resolved `upload.*` subtree for client emit-dispatch (`emitFormat`, `wikiEmbedExtensions`, `dedup.ui`, `maxBytes`). |
 
 ### Key files

@@ -231,7 +231,7 @@ describe('handleUploadImage', () => {
     const formData = new FormData();
     formData.append('parentDocName', parentDocName);
     formData.append('file', new Blob([file]), filename);
-    return fetch(`http://localhost:${port}/api/upload-image`, {
+    return fetch(`http://localhost:${port}/api/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -249,7 +249,7 @@ describe('handleUploadImage', () => {
   test('rejects missing parentDocName', async () => {
     const formData = new FormData();
     formData.append('file', new Blob([createPngBuffer()]), 'test.png');
-    const res = await fetch(`http://localhost:${port}/api/upload-image`, {
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -381,16 +381,6 @@ describe('handleUploadImage', () => {
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(body.src).toBe('data.csv');
     expect(existsSync(join(contentDir, 'docs', 'data.csv'))).toBe(true);
-  });
-
-  test('FR-8 deprecation shim: /api/upload-image still works', async () => {
-    // The old endpoint forwards to the same handler — clients already in
-    // the field continue to function during the one-release shim window.
-    const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
-    expect(body.deduped).toBe(false);
-    expect(body.src).toBe('screenshot.png');
   });
 
   test('NFR-3: SVG extension-fallback preserved — sniff returns image/svg+xml', async () => {
