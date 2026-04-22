@@ -16,7 +16,6 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
-
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -41,6 +40,18 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
+export {
+  buildClaudeAiWebUrl,
+  composePrompt,
+  type DocContext,
+  type HandoffFailureReason,
+  type HandoffOutcome,
+  type HandoffPayload,
+  type HandoffTarget,
+  type InstallState,
+  type TargetData,
+} from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,
