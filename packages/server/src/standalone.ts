@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { Extension } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -13,7 +14,12 @@ import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
-import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import {
+  type HeadWatcherHandle,
+  readBranchFromHead,
+  resolveGitDir,
+  startHeadWatcher,
+} from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
@@ -39,9 +45,11 @@ import {
   setReconciledBase,
   switchReconciledBaseScope,
 } from './persistence.ts';
+import { loadPrincipal } from './principal.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -49,6 +57,7 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  SERVICE_WRITER,
   type ShadowHandle,
   type ShadowRef,
   saveInMemoryCheckpoint,
@@ -132,6 +141,24 @@ export interface ServerInstance {
   readonly syncEngine: SyncEngine | null;
 }
 
+/**
+ * Transaction origin for park-snapshot reads (US-017, D39).
+ *
+ * Wrapping each serializeDoc() call inside doc.transact(..., PARK_SNAPSHOT_ORIGIN)
+ * ensures Y.js serializes the snapshot capture atomically against concurrent
+ * in-flight transactions. skipStoreHooks: false — the transact is read-only
+ * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
+ * concurrent observer somehow fires, it short-circuits symmetrically (D39).
+ */
+export const PARK_SNAPSHOT_ORIGIN = (() => {
+  const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
+  return Object.freeze({
+    source: 'local' as const,
+    skipStoreHooks: false,
+    context: ctx,
+  }) satisfies PairedWriteOrigin;
+})();
+
 export function createServer(options: ServerOptions): ServerInstance {
   const {
     contentDir,
@@ -172,6 +199,8 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  // Mutable principal holder — populated in initAsync (D50, US-024)
+  let loadedPrincipal: Principal | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -197,6 +226,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      getPrincipal: () => loadedPrincipal,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -217,6 +247,65 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
+    // D50 / US-024: Browser tabs supply { principalId, tabSessionId } via token.
+    // onAuthenticate parses the JSON token and hoists identity into connection
+    // context so persistence.resolveWriterFromOrigin sees source:'connection'
+    // with ctx.principalId set. Missing or invalid tokens are silently ignored
+    // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
+    // like test harness and MCP never send tokens).
+    //
+    // Post-QA review fix (principalId-token-unverified, Consider):
+    // The token is unauthenticated — a rogue browser tab (or a page that
+    // discovers the localhost port + passes the Origin allowlist) could claim
+    // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
+    // when the claim matches the server's loaded principal, and ignore the
+    // claim otherwise (falling back to SERVICE_WRITER via resolveWriterFromOrigin).
+    // This closes attribution-forgery on the single-user loopback deployment
+    // without requiring a signed token. When multi-principal support is ever
+    // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
+    const principalAuthExtension: Extension = {
+      async onAuthenticate(payload) {
+        try {
+          const tokenStr = payload.token;
+          if (!tokenStr) return;
+          const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
+          const ctx = payload.context as Record<string, unknown>;
+          if (typeof parsed.principalId === 'string') {
+            // Pin to loaded principal when the claim matches; ignore on mismatch.
+            if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
+              ctx.principalId = loadedPrincipal.id;
+            } else if (loadedPrincipal) {
+              // Claim doesn't match — log at warn and omit principalId so the
+              // write falls through to SERVICE_WRITER. Preserves observability
+              // without letting the claim through.
+              console.warn(
+                JSON.stringify({
+                  event: 'principal-token-mismatch',
+                  claimed: parsed.principalId,
+                  loaded: loadedPrincipal.id,
+                }),
+              );
+            }
+            // When loadedPrincipal is null (not yet loaded), accept the claim
+            // — the async load is best-effort and browser writes need a writer
+            // ID even in the brief pre-load window. Classified writer fallback
+            // happens via resolveWriterFromOrigin when loaded fields aren't
+            // available for display-name lookup.
+            else {
+              ctx.principalId = parsed.principalId;
+            }
+          }
+          if (typeof parsed.tabSessionId === 'string') {
+            ctx.tabSessionId = parsed.tabSessionId;
+          }
+          ctx.kind = 'human';
+        } catch {
+          // Invalid/missing token — connection proceeds without principal context
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(principalAuthExtension);
+
     const apiExtension = createApiExtension({
       hocuspocus,
       sessionManager,
@@ -235,6 +324,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
       projectDir,
+      getPrincipal: () => loadedPrincipal,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -870,21 +960,32 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
+    // Load (or create) the principal record — non-blocking best-effort (D50, US-024)
+    try {
+      loadedPrincipal = await loadPrincipal(contentDir);
+      log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
+    } catch (e) {
+      log.warn(
+        { err: e },
+        '[server] principal load failed — browser writes will use SERVICE_WRITER',
+      );
+    }
+
     // Auto-initialize shadow repo if not provided
     if (!shadowRef.current) {
       try {
         shadowRef.current = await initShadowRepo(projectDir);
         log.info(
           { gitDir: shadowRef.current.gitDir },
-          `[server] shadow repo initialized at ${shadowRef.current.gitDir}`,
+          `[server] history repo initialized at ${shadowRef.current.gitDir}`,
         );
       } catch (e) {
-        log.error({ err: e }, '[server] shadow repo init failed');
+        log.error({ err: e }, '[server] history repo init failed');
         degraded.push('shadow-repo');
       }
     }
 
-    // Verify shadow repo integrity — reinit only on structural corruption, not transient errors
+    // Verify history repo integrity — reinit only on structural corruption, not transient errors
     if (shadowRef.current) {
       try {
         const sg = shadowGit(shadowRef.current);
@@ -892,16 +993,16 @@ export function createServer(options: ServerOptions): ServerInstance {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
-          log.warn({}, '[server] shadow repo appears corrupted — reinitializing');
+          log.warn({}, '[server] history repo appears corrupted — reinitializing');
           try {
             shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
-            log.error({ err: e2 }, '[server] shadow repo reinit failed');
+            log.error({ err: e2 }, '[server] history repo reinit failed');
             shadowRef.current = undefined;
             if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
-          log.error({ err: e }, '[server] shadow repo check failed (transient?)');
+          log.error({ err: e }, '[server] history repo check failed (transient?)');
         }
       }
     }
@@ -1029,25 +1130,46 @@ export function createServer(options: ServerOptions): ServerInstance {
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
 
+          // Gate new L1/L2 writes BEFORE the park loop so any onStoreDocument
+          // calls that fire during the async parkBranch are blocked (D39).
+          setBatchInProgress(true);
+
           // Park current branch's Y.Doc state to shadow refs
           if (shadowRef.current) {
             const currentBranch = getActiveBranch();
+            // Read new branch from HEAD (already updated by git at onBatchBegin time)
+            // so the park subject can carry both ends of the switch (D39, D53).
+            const gitDir = resolveGitDir(projectDir);
+            const newBranch = gitDir
+              ? (readBranchFromHead(gitDir) ?? currentBranch)
+              : currentBranch;
             const docs: ParkableDoc[] = [];
-            for (const [docName] of hocuspocus.documents) {
+            for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName)) continue;
-              const markdown = serializeDoc(docName);
+              // Wrap in doc.transact so Y.js serializes snapshot capture atomically
+              // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
+              let markdown: string | null = null;
+              document.transact(() => {
+                markdown = serializeDoc(docName);
+              }, PARK_SNAPSHOT_ORIGIN);
               if (markdown === null) continue;
               const diskSnapshot = getReconciledBase(docName) ?? markdown;
               docs.push({ docName, markdown, diskSnapshot });
             }
             if (docs.length > 0) {
               try {
-                const sha = await parkBranch(shadowRef.current, currentBranch, 'server', docs);
+                const sha = await parkBranch(
+                  shadowRef.current,
+                  currentBranch,
+                  SERVICE_WRITER.id,
+                  docs,
+                  newBranch,
+                );
                 if (sha) {
                   incrementPark();
                   log.info(
                     { count: docs.length, branch: currentBranch, sha: sha.slice(0, 8) },
-                    `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
+                    `[history] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
                   );
                 }
               } catch (e) {
@@ -1055,8 +1177,6 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
             }
           }
-
-          setBatchInProgress(true);
         },
         // onBatchEnd — dispatch on BatchKind
         async (info) => {
@@ -1164,7 +1284,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const parked = await readParkedState(
                     shadowRef.current,
                     newBranch,
-                    'server',
+                    SERVICE_WRITER.id,
                     docName,
                   );
                   if (!parked) continue;
@@ -1261,7 +1381,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   newHead: info.newHead.slice(0, 8),
                   sha: sha.slice(0, 8),
                 },
-                `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
+                `[history] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );
             } catch (e) {
               log.error({ err: e }, '[shadow] upstream-import failed');

@@ -66,6 +66,8 @@ packages/core/tests/perf/results.*.json
 .open-knowledge/sync-state.json
 .open-knowledge/server.lock
 .open-knowledge/cache/
+# Per-machine principal identity (US-005 / D9 / B1) — never commit.
+.open-knowledge/principal.json
 
 # Legacy shadow-repo path (pre-#244 rename to .git/open-knowledge/). Some
 # boot paths still create this directory; it's per-workspace runtime state

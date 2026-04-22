@@ -2,7 +2,7 @@
 
 Companion to `AGENTS.md`. These are patterns that ALL work in the repo should follow. Established during the collaboration-capabilities audit (`stories/collaboration-capabilities-audit/STORY.md §13`), greenfield directive first committed 2026-04-13.
 
-Twenty-three numbered precedents. **Numbers are stable** — code comments across the codebase cite them as `precedent #N` (\~50 sites). When adding a new precedent, append at the next number; never renumber. Sub-letter addressing (e.g. `#11(a)`, `#13(b)`, `#19(d)`) is part of the reference contract and is preserved verbatim.
+Twenty-seven numbered precedents. **Numbers are stable** — code comments across the codebase cite them as `precedent #N` (~50 sites). When adding a new precedent, append at the next number; never renumber. Sub-letter addressing (e.g. `#11(a)`, `#13(b)`, `#19(d)`) is part of the reference contract and is preserved verbatim.
 
 See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
 
@@ -115,9 +115,56 @@ See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
 
     **Reference.** `packages/app/src/server/hocuspocus-plugin.ts` (dev path) + `packages/cli/src/commands/start.ts` (production path) — both sites apply the filter at their `socket.on('error', …)` and `ws.on('error', …)` listeners. Research: `reports/e2e-isolation-and-broadcaster-lifecycle/REPORT.md` Track B + evidence files b1-b5.
 
-## Perf + V2 editor architecture (precedents 24–25)
+## Actor identity & attribution (precedents 24, 25)
 
-24. **Perf instrumentation as first-class.** Every new React surface that (a) suspends on async data, (b) spans a mode/state transition, (c) is on a perceived-perf critical path, or (d) runs in an Activity-mount subtree, MUST wrap in `<ProfilerBoundary name="...">` and emit `mark('ok/<subsystem>/<event>', ...)` at its transition boundaries using the helpers at `packages/app/src/lib/perf/`. Chrome DevTools Extensibility-API tracks use the `ok/<subsystem>/<event>` namespace. Reproduction scripts for user-facing perf symptoms live in `packages/app/tests/perf/scenarios/`, never in `/tmp`.
+24. **Per-session actor identity at the CRDT origin layer.** Every Y.Doc transaction that originates from an identifiable actor passes a per-session frozen `LocalTransactionOrigin` object created at session birth, not a shared module-level constant. Three sub-principles:
+
+    (a) **`extractAgentIdentity` is the canonical server-side identity boundary.** All mutating POST handlers call `extractAgentIdentity(body)` at their entry before any Y.Doc mutation. It is the single point that resolves an HTTP request body to `{agentId, agentName, colorSeed, clientName}`. New mutating handlers MUST call it; GET-only handlers and `test-reset` are on an explicit allowlist. The meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` asserts this at PR tier.
+
+    (b) **Per-session frozen `LocalTransactionOrigin` — object-identity-unique and deep-frozen.** Each call to `AgentSessionManager.getSession(docName, agentId)` creates one `LocalTransactionOrigin` object via `createSessionOrigin` with `context.paired: true`, `context.session_id`, `context.origin: 'agent-write'`. Both `context` and the outer object are `Object.freeze`'d (D23 — deep-freeze; a shallow freeze allows `context` mutation which breaks the UM `trackedOrigins` Set-identity match). Object identity is used as the UM tracking key — a reconstructed object with the same shape is NOT equivalent.
+
+    (c) **`session.dc.document.transact(fn, session.origin)` is the only legal agent write form.** Never call `session.dc.transact(fn)` (which omits the origin) or pass the legacy shared `AGENT_WRITE_ORIGIN` constant to per-session writes. `dc.transact(fn)` routes the write to `openknowledge-service` at the L2 drain (persistence misattribution) AND silently skips the session UM stack (Set-identity miss → no undo tracking). Tests for concurrent `getSession` calls producing exactly one `openDirectConnection` invocation (D30) enforce this at the session layer.
+
+    **How to apply.** When adding a new agent write path: (1) call `extractAgentIdentity(body)` at handler entry; (2) call `sessionManager.getSession(docName, agentId)` to get a `SessionRecord`; (3) wrap all Y.Doc mutations in `session.dc.document.transact(fn, session.origin)`. The fuzzer op set must also be extended per precedent #13(d) when the new path is a distinct write surface. Spec: `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` (F1, D2, D32, FR-1, FR-5).
+
+    **Reference.** `packages/server/src/agent-sessions.ts:createSessionOrigin` (per-session frozen origin), `packages/server/src/api-extension.ts:extractAgentIdentity` (canonical identity boundary, line ~1028), `packages/app/tests/integration/attribution-sweep-coverage.test.ts` (meta-test enforcement).
+
+25. **Classified writer IDs + subject-prefix action encoding in the shadow repo.** Every commit to the shadow bare-git-repo (`<projectRoot>/.git/open-knowledge/`) has a writer ID and a subject-prefix that together make `git log refs/wip/<branch>/` legible per actor and per action without parsing commit bodies.
+
+    (a) **Writer-ID taxonomy** (`parseWriterId` + `WRITER_ID_RE` in `packages/core/src/shadow-repo-layout.ts`):
+
+    | Writer ID | Classification | Who emits |
+    |---|---|---|
+    | `agent-<connectionId>` | `'agent'` | MCP agent session via `AgentSessionManager` |
+    | `principal-<UUID>` | `'principal'` | Human browser session (D50) |
+    | `file-system` | `'classified-file-system'` | `applyExternalChange` — disk-originated writes |
+    | `git-upstream` | `'classified-git-upstream'` | HEAD-move commit imports |
+    | `openknowledge-service` | `'classified-openknowledge-service'` | Park serialization, service fallback |
+    | `server`, `human-<*>`, `upstream` | `'unknown'` | Legacy pre-spec — swept by US-018 on first upgrade |
+
+    Classified writers (`file-system`, `git-upstream`, `openknowledge-service`) are never GC'd regardless of age (D54). Session writers (`agent-*`, `principal-*`) are GC'd after 30 days of inactivity. `'unknown'` refs are preserved by the GC (defensive) but deleted by the first-run allowlist sweep on upgrade.
+
+    (b) **Subject-prefix scheme** (`format*Subject` helpers in `shadow-repo-layout.ts`, D53):
+
+    | Prefix | When emitted | Target field |
+    |---|---|---|
+    | `wip:` | Auto-save L2 drain | list of doc paths |
+    | `checkpoint:` | Save-version user message | user-supplied message |
+    | `reconcile:` | File-watcher external-change | doc path |
+    | `import:` | HEAD-move upstream import | `<N> commits from <remote/branch>` |
+    | `park:` | Branch-switch park | `<old-branch> -> <new-branch>` |
+    | `rollback:` | Rollback to prior version | `<docName> to <short-sha>` |
+    | `rename:` | Rename op | `<old-path> -> <new-path>` |
+
+    (c) **`ok-actor:` JSON body.** Every history commit carries one or more structured `ok-actor:` JSON lines (FR-8, D13, D53). `parseOkActor` + `formatOkActor` in `shadow-repo-layout.ts` are the canonical schema helpers. Shape: `{v:1, principal, agent_session, agent_type, client_name, client_version, label, display_name, color_seed, docs[]}`. Parsers MUST reject `v!==1` and missing `principal` field; writers MUST include all fields even when `null`.
+
+    **How to apply.** When adding a new commit-emitting path: (1) use the appropriate `format*Subject` helper for the subject line; (2) call `formatOkActor(entry)` and append to the commit body; (3) choose the correct `WriterIdentity` constant (`FILE_SYSTEM_WRITER`, `GIT_UPSTREAM_WRITER`, `SERVICE_WRITER` from `packages/server/src/shadow-repo.ts`) or derive from `session.agentId` for attributable paths. The writer classification determines GC behavior — do not use `openknowledge-service` for attributable actions.
+
+    **Reference.** `packages/core/src/shadow-repo-layout.ts` (`parseWriterId`, `WRITER_ID_RE`, subject-prefix format helpers, `parseOkActor`/`formatOkActor`), `packages/server/src/shadow-repo.ts` (writer identity constants, `commitWip`, `buildWipTree`, `commitWipFromTree`), `packages/server/src/shadow-branch-gc.ts` (30-day TTL per session writer). Spec: `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` (D7, D8, D13, D34, D53, FR-7, FR-13).
+
+## Perf + V2 editor architecture (precedents 26–27)
+
+26. **Perf instrumentation as first-class.** Every new React surface that (a) suspends on async data, (b) spans a mode/state transition, (c) is on a perceived-perf critical path, or (d) runs in an Activity-mount subtree, MUST wrap in `<ProfilerBoundary name="...">` and emit `mark('ok/<subsystem>/<event>', ...)` at its transition boundaries using the helpers at `packages/app/src/lib/perf/`. Chrome DevTools Extensibility-API tracks use the `ok/<subsystem>/<event>` namespace. Reproduction scripts for user-facing perf symptoms live in `packages/app/tests/perf/scenarios/`, never in `/tmp`.
 
     **Emission primitives.** `mark(name, props?)` wraps `performance.measure` with the Chrome DevTools Extensibility API detail shape — production-safe (prod builds keep the `performance.measure` call; the dev-only `window.__ok_perf` collector is tree-shaken via `!import.meta.env?.PROD`). `<ProfilerBoundary name="...">` wraps React's `<Profiler>` and routes `onRender` through `mark('ok/render/<name>', {phase, actualDuration, baseDuration})` — no-op in production React builds. `initWebVitals()` is dev-only gated (F7 in the SPEC) and emits INP/LCP/CLS/FCP under `ok/vitals/*`.
 
@@ -133,7 +180,7 @@ See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
 
     **Cross-references.** Precedent #18 (hybrid Activity + Suspense + `use(promise)`) — S2/S3 are direct consequences of its pre-mount-both pattern; the defer-mount STOP rule above is the per-doc-size exception. Precedent #11 (minimize CRDT mutation) — informs S4's debounced invalidation design (TYPING\_DEFER\_MS = 300 ms matches `OUTLINE_INVALIDATE_DEBOUNCE_MS`). Research: `reports/perf-profiling-landscape-2026/` (10-dimension 3P survey). Spec: `specs/2026-04-19-perf-diagnostic-toolkit/`.
 
-25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20).** Eight coordinated primitives make cold-load + warm-switch + per-instance React portal cost bounded for large documents. Sub-rules (a)-(c) are the load-bearing primitives; (d)-(h) are the supporting mechanisms that wire the primitives to the existing chip / mode-toggle / pre-warm surfaces. Sub-rule (h) is the most normative MUST-rule — every future chip-style mark extension follows its plugin contract verbatim:
+27. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20).** Eight coordinated primitives make cold-load + warm-switch + per-instance React portal cost bounded for large documents. Sub-rules (a)-(c) are the load-bearing primitives; (d)-(h) are the supporting mechanisms that wire the primitives to the existing chip / mode-toggle / pre-warm surfaces. Sub-rule (h) is the most normative MUST-rule — every future chip-style mark extension follows its plugin contract verbatim:
 
     (a) **Module-level editor cache via raw `view.dom` reparent.** `packages/app/src/editor/editor-cache.ts` exports symmetric `mount{Tiptap,Cm}Editor({docName, container, factory})` / `park{Tiptap,Cm}Editor(entry)` / `evict{Tiptap,Cm}Editor(docName)` over a `Map<docName, Entry>`. `park` detaches `view.dom` into a lazy parking node WITHOUT destroying; `evict` is the ONLY path that calls `editor.destroy()`. Path verified by Phase 1.0 probe (`specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/evidence/tiptap-reparent-probe.md` §3) — TipTap's `Editor.mount/unmount` API is BLOCKED by `@tiptap/extension-drag-handle@4.x`'s closure-captured `editor` ref hitting TipTap's throwing proxy during re-create. Cross-refs: precedents #18(g) (CM6 reparent contract), #18(h) (TipTap fallback via raw reparent), #18(i) (provider connect/disconnect cap on cached-hidden editors).
 
@@ -195,4 +242,3 @@ See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
     **When to apply.** Any future editor surface that pre-mounts or Activity-mounts MUST route through `mount{Tiptap,Cm}Editor` — direct `useEditor` or `new EditorView` on cached surfaces is forbidden post-V2. Any new chip / mark / NodeView that would have used `ReactMarkViewRenderer` for 50+ instances MUST use InteractionLayer + plain-DOM chips following the sub-rule (h) 3-plugin wire-up. Any future fallback-render or MCP-preview consumer SHOULD use `mdastToReact` from `packages/core` with their own factory (the walker is environment-agnostic).
 
     **Reference.** V2 spec: `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/SPEC.md`. Phase 1.0 probe: `evidence/tiptap-reparent-probe.md`. CM6 contract: `evidence/cm6-reparent-contract.md`.
-

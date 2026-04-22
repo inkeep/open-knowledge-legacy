@@ -59,7 +59,7 @@ function formatShadowHistory(entries: ShadowCommit[] | null): string {
     const who =
       e.writerClassification === 'agent'
         ? `agent: ${e.writerName}`
-        : e.writerClassification === 'human'
+        : e.writerClassification === 'principal'
           ? `human: ${e.writerName}`
           : `${e.writerClassification}: ${e.writerName}`;
     const hash = e.hash.slice(0, 7);

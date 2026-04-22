@@ -289,7 +289,7 @@ ${Object.entries(TOOL_DESCRIPTIONS)
 async function detectHocuspocus(serverUrl: string, log: McpLogger): Promise<boolean> {
   try {
     const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-    const res = await fetch(`${httpUrl}/api/agent-undo-status`, {
+    const res = await fetch(`${httpUrl}/api/document`, {
       signal: AbortSignal.timeout(2000),
     });
     return res.ok;
@@ -444,6 +444,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },
+    connectionId: `agent-${connectionId}`,
     logger: logger.child('keepalive'),
   });
 

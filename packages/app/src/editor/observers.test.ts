@@ -335,7 +335,7 @@ describe('Agent write origin and activity map', () => {
   test('activity map entries coexist with content writes in same transaction', async () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
-    const activityMap = doc.getMap('activity');
+    const activityMap = doc.getMap('agent-flash');
 
     // Track that both changes arrive in a single transaction
     let transactionCount = 0;

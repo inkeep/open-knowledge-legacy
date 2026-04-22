@@ -408,7 +408,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   //   3. `document` events: 'agent-flash' (start) and 'agent-flash-end' (complete)
   useEffect(() => {
     if (!editor) return;
-    const activityMap = provider.document.getMap('activity');
+    const activityMap = provider.document.getMap('agent-flash');
     let lastSeenTimestamp = Date.now();
     let lastFlashTime = 0;
     let pendingTimeout: number | null = null;

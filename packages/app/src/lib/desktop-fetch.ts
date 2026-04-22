@@ -20,9 +20,9 @@
  * Web / CLI distribution: `window.okDesktop` is undefined → `installDesktopFetchRewrite`
  * is a no-op; relative fetches hit the same-origin Vite/CLI server as before.
  *
- * CORS: the Hocuspocus API extension sets `Access-Control-Allow-Origin: *`
- * for `/api/*` requests (safe because the server binds 127.0.0.1 only —
- * remote origins can't reach it), plus preflight handling for OPTIONS. The
+ * CORS: the Hocuspocus API extension allows loopback Origins (localhost/127.x.x.x/[::1])
+ * and the opaque `"null"` origin (file:// packaged Electron per Fetch spec §4.3). The
+ * allowed Origin is reflected verbatim in ACAO; all other Origins receive a 403. The
  * rewriter itself only changes the URL, not headers or body.
  */
 

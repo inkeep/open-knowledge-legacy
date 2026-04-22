@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   agentPatch,
+  agentUndo,
   agentWriteMd,
   awaitBacklinkIndexed,
   awaitFileWatcherIndexed,
@@ -81,6 +82,24 @@ describe('agent-focus wiring — L1 integration', () => {
     const focusMap = server.instance.agentFocusBroadcaster.getFocusMap();
     expect(focusMap['claude-1'].currentDoc).toBe(docName);
     expect(focusMap['claude-1'].writeKind).toBe('edit');
+  });
+
+  test('POST /api/agent-undo publishes focus with writeKind=undo (US-025, D43)', async () => {
+    const docName = `focus-undo-${crypto.randomUUID().slice(0, 8)}`;
+    const rawId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+    const connectionId = `agent-${rawId}`;
+
+    // Write to create a session under connectionId
+    await agentWriteMd(server.port, '# original', { docName, position: 'replace', agentId: rawId });
+    await wait(50);
+
+    // Undo — this fires agentFocusBroadcaster.setFocus with writeKind='undo'
+    await agentUndo(server.port, { docName, connectionId });
+
+    const focusMap = server.instance.agentFocusBroadcaster.getFocusMap();
+    expect(focusMap[connectionId]).toBeDefined();
+    expect(focusMap[connectionId].currentDoc).toBe(docName);
+    expect(focusMap[connectionId].writeKind).toBe('undo');
   });
 
   test('successive writes advance ts — latest-wins ready', async () => {

@@ -121,7 +121,7 @@ export type PairedWriteOrigin = LocalTransactionOrigin & {
  * whose proximate cause is a duplicated `M0-alpha echo` line that a later
  * agent-patch `indexOf('alpha')` locks onto instead of the intended target.
  */
-const isPairedWriteOrigin = (origin: unknown): boolean => {
+export const isPairedWriteOrigin = (origin: unknown): boolean => {
   if (origin == null || typeof origin !== 'object') return false;
   const ctx = (origin as { context?: { paired?: boolean } }).context;
   return ctx?.paired === true;
