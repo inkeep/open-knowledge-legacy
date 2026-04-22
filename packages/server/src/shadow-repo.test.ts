@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('initShadowRepo', () => {
-  test('creates shadow at .git/openknowledge/ when project .git/ exists', async () => {
+  test('creates shadow at .git/open-knowledge/ when project .git/ exists', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -43,7 +43,7 @@ describe('initShadowRepo', () => {
 
     const shadow = await initShadowRepo(projectRoot);
 
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/openknowledge'));
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/open-knowledge'));
     expect(shadow.workTree).toBe(projectRoot);
     expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
 
@@ -56,7 +56,7 @@ describe('initShadowRepo', () => {
     expect(userName).toBe('openknowledge');
   });
 
-  test('does not modify .gitignore in integrated mode', async () => {
+  test('does not modify .gitignore', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -68,20 +68,6 @@ describe('initShadowRepo', () => {
     await initShadowRepo(projectRoot);
 
     expect(existsSync(resolve(projectRoot, '.gitignore'))).toBe(false);
-  });
-
-  test('creates shadow at .openknowledge/ when no project .git/ exists (standalone)', async () => {
-    const projectRoot = resolve(tmpDir, 'standalone');
-    mkdirSync(projectRoot, { recursive: true });
-
-    const shadow = await initShadowRepo(projectRoot);
-
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.openknowledge'));
-    expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
-
-    // Verify .gitignore was created with .openknowledge/
-    const gitignore = readFileSync(resolve(projectRoot, '.gitignore'), 'utf-8');
-    expect(gitignore).toContain('.openknowledge/');
   });
 
   test('is idempotent — second call does not error', async () => {
@@ -98,6 +84,68 @@ describe('initShadowRepo', () => {
 
     expect(shadow1.gitDir).toBe(shadow2.gitDir);
     expect(existsSync(resolve(shadow2.gitDir, 'HEAD'))).toBe(true);
+  });
+
+  test('R9 rename shim: legacy .git/openknowledge/ is renamed to .git/open-knowledge/', async () => {
+    const projectRoot = resolve(tmpDir, 'legacy');
+    mkdirSync(projectRoot, { recursive: true });
+
+    // Seed a legacy integrated-mode shadow at .git/openknowledge/
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    const legacyDir = resolve(projectRoot, '.git/openknowledge');
+    mkdirSync(legacyDir, { recursive: true });
+    await git.raw('init', '--bare', legacyDir);
+    const sg = simpleGit({ timeout: { block: 30_000 } }).env({ GIT_DIR: legacyDir });
+    await sg.raw('config', '--unset', 'core.bare');
+    await sg.raw('config', 'core.worktree', projectRoot);
+    // Leave a sentinel so we can assert the rename carried all content intact
+    writeFileSync(resolve(legacyDir, 'SENTINEL'), 'migrated');
+
+    const shadow = await initShadowRepo(projectRoot);
+
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/open-knowledge'));
+    expect(existsSync(legacyDir)).toBe(false);
+    expect(existsSync(resolve(projectRoot, '.git/open-knowledge/SENTINEL'))).toBe(true);
+    expect(existsSync(resolve(projectRoot, '.git/open-knowledge/HEAD'))).toBe(true);
+  });
+
+  test('R9 defensive: both legacy and new shadow present — no rename, warning logged', async () => {
+    const projectRoot = resolve(tmpDir, 'both-present');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    // Seed BOTH locations so the shim hits the defensive branch
+    const legacyDir = resolve(projectRoot, '.git/openknowledge');
+    const newDir = resolve(projectRoot, '.git/open-knowledge');
+    mkdirSync(legacyDir, { recursive: true });
+    mkdirSync(newDir, { recursive: true });
+    writeFileSync(resolve(legacyDir, 'LEGACY_SENTINEL'), 'legacy');
+    writeFileSync(resolve(newDir, 'NEW_SENTINEL'), 'new');
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await initShadowRepo(projectRoot);
+
+      // Neither dir was removed
+      expect(existsSync(resolve(legacyDir, 'LEGACY_SENTINEL'))).toBe(true);
+      expect(existsSync(resolve(newDir, 'NEW_SENTINEL'))).toBe(true);
+
+      // Warning was emitted
+      const warnings = warnSpy.mock.calls.map((call) => String(call[0] ?? ''));
+      expect(warnings.some((w) => w.includes('[shadow-repo] unexpected legacy + new shadow'))).toBe(
+        true,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -496,75 +544,6 @@ describe('saveVersion', () => {
     const parentLine = (await sg.raw('log', '-1', '--format=%P', result2.checkpointRef)).trim();
     const parents = parentLine.split(' ').filter(Boolean);
     expect(parents).toContain(checkpoint1Sha);
-  });
-});
-
-describe('saveVersion — standalone mode', () => {
-  let standaloneRoot: string;
-  let shadow: ShadowHandle;
-  let contentDir: string;
-
-  const human: WriterIdentity = {
-    id: 'human-nick',
-    name: 'Nick Gomez',
-    email: 'nick@example.com',
-  };
-
-  beforeEach(async () => {
-    // Standalone: no project .git/ repo
-    standaloneRoot = resolve(tmpDir, 'standalone');
-    contentDir = resolve(standaloneRoot, 'content/docs');
-    mkdirSync(contentDir, { recursive: true });
-
-    shadow = await initShadowRepo(standaloneRoot);
-  });
-
-  test('creates shadow checkpoint', async () => {
-    writeFileSync(resolve(contentDir, 'intro.md'), '# Standalone\n');
-    await commitWip(shadow, human, 'content/docs', 'WIP: standalone edit');
-
-    const result = await saveVersion(shadow, 'content/docs', [human]);
-
-    // Shadow checkpoint ref exists and is valid
-    const sg = shadowGit(shadow);
-    const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
-    expect(checkpointSha).toHaveLength(40);
-
-    expect(result.checkpointRef).toContain(checkpointSha);
-    expect(result.checkpointRef).toMatch(/^refs\/checkpoints\/main\//);
-
-    // Checkpoint tree contains the content
-    const tree = (await sg.raw('ls-tree', '-r', '--name-only', result.checkpointRef)).trim();
-    expect(tree).toContain('content/docs/intro.md');
-  });
-
-  test('WIP refs are reset after Save Version', async () => {
-    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
-    await commitWip(shadow, human, 'content/docs', 'WIP: edit');
-
-    await saveVersion(shadow, 'content/docs', [human]);
-
-    const sg = shadowGit(shadow);
-    let wipExists = true;
-    try {
-      await sg.raw('rev-parse', 'refs/wip/main/human-nick');
-    } catch {
-      wipExists = false;
-    }
-    expect(wipExists).toBe(false);
-  });
-
-  test('checkpoint ref is named after shadow commit SHA', async () => {
-    writeFileSync(resolve(contentDir, 'intro.md'), '# Standalone ref naming\n');
-    await commitWip(shadow, human, 'content/docs', 'WIP: ref naming test');
-
-    const result = await saveVersion(shadow, 'content/docs', [human]);
-
-    const sg = shadowGit(shadow);
-    const actualSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
-
-    // The ref name must end with the shadow commit's own SHA
-    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${actualSha}`);
   });
 });
 

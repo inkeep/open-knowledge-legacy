@@ -4,17 +4,19 @@
  * Does two things:
  *   1. Scaffolds `.open-knowledge/` in the current directory via initContent()
  *      (same logic the MCP server's init flow used to call — now factored out).
- *   2. Writes MCP server entries for `open-knowledge` into each selected
- *      editor's config file, preserving any existing entries. Idempotent: skips
- *      if an `open-knowledge` entry is already present, unless `--force`.
+ *   2. Writes Open Knowledge MCP server entries into each selected editor's
+ *      config file, preserving any existing entries. Idempotent: skips when
+ *      the target entry already matches; if an existing entry differs, reports
+ *      that drift and tells the user to re-run with `--force`.
  *
- * Supports Claude Code, Cursor, VS Code, Codex, and Windsurf. When run interactively
- * (TTY) without `--editor`, prompts the user to select which editors to
- * configure. When `--editor` is passed or stdin is not a TTY, uses the flag
- * value directly (defaults to `claude`).
+ * Supports Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and Codex.
+ * When run interactively (TTY) without `--editor`, prompts the user to select
+ * which editors to configure. When `--editor` is passed or stdin is not a TTY,
+ * uses the flag value directly (defaults to `claude`).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { ensureProjectGit, ProjectGitInitError } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
@@ -31,6 +33,8 @@ import {
   EDITOR_TARGETS,
   type EditorId,
   type EditorMcpTarget,
+  type McpInstallOptions,
+  resolveDevCliDistPath,
   resolveEditorTargets,
 } from './editors.ts';
 
@@ -112,33 +116,37 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 interface EditorMcpResult {
   editorId: EditorId;
   label: string;
-  action: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  action:
+    | 'written'
+    | 'skipped-existing'
+    | 'skipped-conflict'
+    | 'overwritten'
+    | 'skipped-flag'
+    | 'failed';
   configPath: string;
+  serverName: string;
   error?: string;
-  /** Server key under which the entry was written / matched (defaults to MCP_SERVER_NAME). */
-  serverKey?: string;
-  /**
-   * Set when auto-disambiguation fired (global-scope targets only): the default
-   * key that conflicted with an existing entry bound to a different `--cwd`.
-   */
-  disambiguatedFrom?: string;
-  /**
-   * Set when a legacy entry was rewritten to the project-qualified form
-   * (Windsurf only — Claude Desktop has no legacy state). Carries the old key
-   * so the formatter can emit a migration line.
-   */
-  migratedFromKey?: string;
+}
+
+interface LegacyProjectConfigResult {
+  editorId: EditorId;
+  label: string;
+  path: string;
 }
 
 interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
   force?: boolean;
+  /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
+  devMcp?: boolean;
   editors?: EditorId[];
   /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
-  /** Override home directory (test-only, for Windsurf global path). */
+  /** Override home directory (test-only, for global editor config paths). */
   home?: string;
+  /** Override the current CLI entry path (test-only; used by --dev-mcp). */
+  cliEntryPath?: string;
 }
 
 interface InitCommandResult {
@@ -146,14 +154,24 @@ interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
+  /** Legacy project-local MCP configs left in place after global init. */
+  legacyProjectConfigs: LegacyProjectConfigResult[];
   /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
   rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
   launchJson?: LaunchJsonResult;
+  /** `true` if `ensureProjectGit` ran `git init` during this invocation (SPEC R2 / D9). */
+  didGitInit: boolean;
   // Backward-compat fields (derived from the Claude entry or first editor):
-  mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  mcpAction:
+    | 'written'
+    | 'skipped-existing'
+    | 'skipped-conflict'
+    | 'overwritten'
+    | 'skipped-flag'
+    | 'failed';
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
@@ -226,17 +244,35 @@ function diffLaunchEntry(
  * - File exists, no OK  → merge the entry into configurations
  * - File exists, has OK → skip (unless force)
  */
-function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
+function scaffoldLaunchJson(
+  cwd: string,
+  force: boolean,
+  installOptions: McpInstallOptions = {},
+): LaunchJsonResult {
   const configPath = join(cwd, '.claude', 'launch.json');
-  const entry = {
-    name: LAUNCH_CONFIG_NAME,
-    runtimeExecutable: 'npx',
-    // Use the fully-qualified package name so `npx` resolves against the npm
-    // registry on a cold cache. `open-knowledge` alone is a bin name that only
-    // works if the package is already installed (local or global).
-    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
-    port: 3000,
-  };
+  const allowModeOverwrite = installOptions.mode === 'dev';
+  const entry: {
+    name: string;
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+  } =
+    installOptions.mode === 'dev'
+      ? {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'node',
+          runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
+          port: 3000,
+        }
+      : {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'npx',
+          // Use the fully-qualified package name so `npx` resolves against the npm
+          // registry on a cold cache. `open-knowledge` alone is a bin name that only
+          // works if the package is already installed (local or global).
+          runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+          port: 3000,
+        };
 
   try {
     if (!existsSync(configPath)) {
@@ -261,9 +297,12 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
       const existingEntry = configs[existingIdx] as Record<string, unknown>;
       const staleFields = diffLaunchEntry(existingEntry, entry);
       if (staleFields.length > 0) {
-        return { action: 'skipped-stale', configPath, staleFields };
+        if (!allowModeOverwrite) {
+          return { action: 'skipped-stale', configPath, staleFields };
+        }
+      } else {
+        return { action: 'skipped-existing', configPath };
       }
-      return { action: 'skipped-existing', configPath };
     }
 
     if (existingIdx >= 0) {
@@ -296,8 +335,10 @@ function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
   force: boolean,
+  installOptions: McpInstallOptions,
   home?: string,
 ): EditorMcpResult {
+  const serverName = target.serverName(cwd);
   let configPath: string;
   try {
     configPath = target.configPath(cwd, home);
@@ -307,6 +348,7 @@ function writeEditorMcpConfig(
       label: target.label,
       action: 'failed',
       configPath: '',
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -320,61 +362,60 @@ function writeEditorMcpConfig(
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
+  const existing = servers[serverName];
+  const allowModeOverwrite = installOptions.mode === 'dev';
+  let targetEntry: Record<string, unknown>;
 
-  // Per-target key resolution. Project-scoped targets omit `resolveServerKey`,
-  // so we fall back to the legacy `MCP_SERVER_NAME` literal — preserves the
-  // existing behavior for claude/cursor/vscode (D6 LOCKED).
-  let resolved: {
-    key: string;
-    existingEntry: unknown | undefined;
-    disambiguatedFrom?: string;
-    migratedFromKey?: string;
-  };
   try {
-    resolved = target.resolveServerKey?.(servers, cwd) ?? {
-      key: MCP_SERVER_NAME,
-      existingEntry: servers[MCP_SERVER_NAME],
-    };
+    if (existing !== undefined && !force) {
+      if (isObject(existing) && target.isCompatible(existing, cwd, installOptions)) {
+        return {
+          editorId: target.id,
+          label: target.label,
+          action: 'skipped-existing',
+          configPath,
+          serverName,
+        };
+      }
+
+      if (!allowModeOverwrite) {
+        return {
+          editorId: target.id,
+          label: target.label,
+          action: 'skipped-conflict',
+          configPath,
+          serverName,
+        };
+      }
+    }
+
+    targetEntry =
+      isObject(existing) && (force || allowModeOverwrite)
+        ? target.mergeManagedFields(existing, cwd, installOptions)
+        : target.buildEntry(cwd, installOptions);
   } catch (err) {
     return {
       editorId: target.id,
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
-  const { key, existingEntry, disambiguatedFrom, migratedFromKey } = resolved;
-
-  // A migrated legacy entry is always rewritten — no `--force` required (D17 LOCKED).
-  // Otherwise, an entry already at the resolved key short-circuits unless --force.
-  if (existingEntry !== undefined && !force && migratedFromKey === undefined) {
-    return {
-      editorId: target.id,
-      label: target.label,
-      action: 'skipped-existing',
-      configPath,
-      serverKey: key,
-    };
-  }
-
-  // Strip the legacy key so the file ends with exactly one open-knowledge entry
-  // for this project (no `open-knowledge` + `open-knowledge-<slug>` duplicate).
-  const nextServers: Record<string, unknown> = { ...servers };
-  if (migratedFromKey !== undefined && migratedFromKey !== key) {
-    delete nextServers[migratedFromKey];
-  }
-  nextServers[key] = target.buildEntry(cwd);
-
   const nextConfig: Record<string, unknown> = {
     ...config,
-    [target.topLevelKey]: nextServers,
+    [target.topLevelKey]: {
+      ...servers,
+      [serverName]: targetEntry,
+    },
   };
 
   try {
@@ -389,27 +430,30 @@ function writeEditorMcpConfig(
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
-  // Disambiguated writes land under a fresh suffix key — `written` (not overwritten),
-  // even though `disambiguatedFrom` is set.
-  const action: EditorMcpResult['action'] =
-    migratedFromKey !== undefined
-      ? 'overwritten'
-      : existingEntry !== undefined
-        ? 'overwritten'
-        : 'written';
-
   return {
     editorId: target.id,
     label: target.label,
-    action,
+    action: existing !== undefined ? 'overwritten' : 'written',
     configPath,
-    serverKey: key,
-    ...(disambiguatedFrom !== undefined ? { disambiguatedFrom } : {}),
-    ...(migratedFromKey !== undefined ? { migratedFromKey } : {}),
+    serverName,
+  };
+}
+
+function collectLegacyProjectConfig(
+  target: EditorMcpTarget,
+  cwd: string,
+): LegacyProjectConfigResult | undefined {
+  const legacyPath = target.legacyProjectConfigPath?.(cwd);
+  if (!legacyPath || !existsSync(legacyPath)) return undefined;
+  return {
+    editorId: target.id,
+    label: target.label,
+    path: legacyPath,
   };
 }
 
@@ -417,20 +461,31 @@ function writeEditorMcpConfig(
 // Core init logic
 // ---------------------------------------------------------------------------
 
-export function runInit(options: InitCommandOptions = {}): InitCommandResult {
+export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
+  const installOptions: McpInstallOptions = {
+    mode: options.devMcp ? 'dev' : 'published',
+    cliEntryPath: options.cliEntryPath,
+  };
+
+  // 0. Ensure the project has a `.git/` (SPEC D9 — `ok init` is the explicit
+  // "set this project up" verb, so it does the heavier side-effect too).
+  // Propagates `ProjectGitInitError` on git-missing — caller exits non-zero.
+  const gitResult = await ensureProjectGit(cwd);
 
   // 1. Scaffold .open-knowledge/
   let contentResult: ReturnType<typeof initContent>;
   try {
     contentResult = initContent(cwd);
   } catch (err) {
-    const fallbackPath = join(cwd, '.mcp.json');
+    const fallbackPath = EDITOR_TARGETS.claude.configPath(cwd, options.home);
     return {
       contentCreated: [],
       contentSkipped: [],
       editors: [],
+      legacyProjectConfigs: [],
       rootInstructions: [],
+      didGitInit: gitResult.didInit,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -448,26 +503,34 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
       try {
         configPath = target.configPath(cwd, options.home);
       } catch {
-        // Unsupported-platform throw (e.g. Claude Desktop on Linux) — surface
-        // an empty path; --no-mcp explicitly means "don't write" so the path
-        // is informational only.
+        // Unsupported-platform target (e.g. Claude Desktop on Linux) — --no-mcp
+        // explicitly means "don't write", so the path is informational only.
       }
       editorResults.push({
         editorId: target.id,
         label: target.label,
         action: 'skipped-flag',
         configPath,
+        serverName: target.serverName(cwd),
       });
       continue;
     }
-    editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
+    editorResults.push(
+      writeEditorMcpConfig(target, cwd, options.force ?? false, installOptions, options.home),
+    );
   }
+  const legacyProjectConfigs =
+    options.mcp === false
+      ? []
+      : targets
+          .map((target) => collectLegacyProjectConfig(target, cwd))
+          .filter((result): result is LegacyProjectConfigResult => result !== undefined);
 
   // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
   const hasClaude = editorIds.includes('claude');
   const launchJson =
     hasClaude && options.mcp !== false
-      ? scaffoldLaunchJson(cwd, options.force ?? false)
+      ? scaffoldLaunchJson(cwd, options.force ?? false, installOptions)
       : undefined;
 
   // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
@@ -484,15 +547,17 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
       action: 'skipped-flag' as const,
-      configPath: join(cwd, '.mcp.json'),
+      configPath: EDITOR_TARGETS.claude.configPath(cwd, options.home),
     };
 
   return {
     contentCreated: contentResult.created,
     contentSkipped: contentResult.skipped,
     editors: editorResults,
+    legacyProjectConfigs,
     rootInstructions,
     launchJson,
+    didGitInit: gitResult.didInit,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -504,39 +569,17 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Look up the `--cwd` value for a server key by re-reading its config file.
- * Returns `undefined` if the config can't be read or the key/entry/args don't
- * match the expected shape. Used only by the format layer to emit the
- * disambiguation conflict hint; never throws.
- */
-function findCwdForKey(editor: EditorMcpResult, key: string): string | undefined {
-  try {
-    const raw = readFileSync(editor.configPath, 'utf-8').trim();
-    if (raw === '') return undefined;
-    const parsed = JSON.parse(raw);
-    if (!isObject(parsed)) return undefined;
-    // All currently-supported editors use `mcpServers`. VS Code uses `servers`
-    // but is project-scoped (no disambiguation path).
-    const servers = parsed.mcpServers;
-    if (!isObject(servers)) return undefined;
-    const entry = servers[key];
-    if (!isObject(entry)) return undefined;
-    const args = entry.args;
-    if (!Array.isArray(args)) return undefined;
-    const i = args.indexOf('--cwd');
-    if (i < 0 || i === args.length - 1) return undefined;
-    const value = args[i + 1];
-    return typeof value === 'string' ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * Format a user-facing summary of an init run.
  */
 export function formatInitResult(result: InitCommandResult, cwd: string): string {
   const lines: string[] = [];
+
+  // Auto-git-init disclosure (SPEC R5 / D9) — surfaced when ensureProjectGit
+  // ran `git init` during this invocation. Silent when the project already
+  // had `.git/`.
+  if (result.didGitInit) {
+    lines.push(`Initialized git repo at ${cwd}/.git/ (default branch: main)`);
+  }
 
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
@@ -573,53 +616,35 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         const displayPath = editor.configPath.startsWith(cwd)
           ? relative(cwd, editor.configPath)
           : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
+        const serverNameNote =
+          editor.serverName === MCP_SERVER_NAME ? '' : ` (${editor.serverName})`;
         const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
-
-        // Claude Desktop does not hot-reload MCP config — surface a restart hint
-        // on successful writes only. Windsurf hot-reloads (A5) so no hint.
         const restartHint =
           editor.editorId === 'claude-desktop' &&
           (editor.action === 'written' || editor.action === 'overwritten')
             ? ' — quit and relaunch Claude Desktop to activate'
             : '';
-
         switch (editor.action) {
           case 'written':
-            lines.push(`  ${editor.label}${pad}${displayPath}  registered${restartHint}`);
-            // Auto-disambiguation fired: surface the conflicting key + the
-            // path it's registered to so the user understands why they got
-            // a `-2` suffix instead of the plain slug.
-            if (editor.disambiguatedFrom !== undefined) {
-              const conflictCwd = findCwdForKey(editor, editor.disambiguatedFrom);
-              const hint = conflictCwd
-                ? `(${editor.disambiguatedFrom} is already registered for ${conflictCwd})`
-                : `(${editor.disambiguatedFrom} is already registered for a different project)`;
-              lines.push(`  ${' '.repeat(editor.label.length)}${pad}${hint}`);
-            }
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
+            );
             break;
           case 'overwritten':
-            if (editor.migratedFromKey !== undefined) {
-              // Windsurf legacy migration — replace the stock "(--force)" label
-              // with the longer form that names both keys.
-              lines.push(
-                `  ${editor.label}${pad}${displayPath}  overwritten — migrated legacy ${editor.migratedFromKey} → ${editor.serverKey ?? ''}${restartHint}`,
-              );
-            } else {
-              lines.push(
-                `  ${editor.label}${pad}${displayPath}  overwritten (--force)${restartHint}`,
-              );
-            }
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
+            );
             break;
-          case 'skipped-existing': {
-            // Global-scope targets match by `--cwd`, so the matched key may be
-            // a user-chosen suffix (e.g. `open-knowledge-bim-tools`). Surface
-            // it in parens when it's not the default `open-knowledge` key.
-            const matchedKey = editor.serverKey;
-            const keyAnnotation =
-              matchedKey !== undefined && matchedKey !== MCP_SERVER_NAME ? ` (${matchedKey})` : '';
-            lines.push(`  ${editor.label}${pad}${displayPath}  already configured${keyAnnotation}`);
+          case 'skipped-existing':
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  already configured${serverNameNote}`,
+            );
             break;
-          }
+          case 'skipped-conflict':
+            lines.push(
+              `  ${editor.label}${pad}${displayPath}  managed MCP fields differ from current defaults${serverNameNote}; re-run with --force to update`,
+            );
+            break;
           case 'failed':
             lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
             break;
@@ -634,6 +659,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('');
       lines.push('For failed editors, add the MCP server entry manually. See:');
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
+    }
+
+    if (result.legacyProjectConfigs.length > 0) {
+      lines.push('');
+      lines.push('Legacy project MCP configs detected:');
+      for (const legacy of result.legacyProjectConfigs) {
+        lines.push(`  ${legacy.label}  ${relative(cwd, legacy.path)}`);
+      }
+      lines.push(
+        '  These project-local files may override the new global config. Remove them if you want fully user-scoped MCP setup in this project.',
+      );
     }
 
     // Claude Code launch.json summary
@@ -733,17 +769,6 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-/**
- * Map a user-typed editor token to its canonical `EditorId`. Accepts the
- * canonical IDs directly and `claude_desktop` as an underscore-variant alias
- * for `claude-desktop`. Anything else passes through unchanged so
- * `resolveEditorTargets` can produce the authoritative "Unknown editor(s): …"
- * error with the full valid list.
- *
- * A bare `desktop` alias was initially supported but removed before v1 to
- * avoid ambiguity if a future `vscode-desktop` / `cursor-desktop` target is
- * added. `claude_desktop` is unambiguous by virtue of the `claude_` prefix.
- */
 function normalizeEditorToken(token: string): EditorId {
   switch (token) {
     case 'claude_desktop':
@@ -759,18 +784,16 @@ export function parseEditorFlag(value: string): EditorId[] {
     .split(',')
     .map((s) => s.trim())
     .map(normalizeEditorToken);
-  // Validate — resolveEditorTargets throws on unknown IDs.
+  // Validate — resolveEditorTargets throws on unknown IDs
   resolveEditorTargets(ids);
   return ids;
 }
 
 /**
- * Detect every editor whose MCP config directory already exists. The parent
- * directory of each editor's `configPath` is the probe location so an empty
- * editor install (no `mcp.json` yet) still counts as detected. Covers both
- * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
- * Code `.vscode/`, Codex `.codex/config.toml`) and Windsurf's user-global
- * `~/.codeium/windsurf/`.
+ * Detect every editor whose global config surface already exists. Each target
+ * can override the probe path when the config file itself is a poor signal
+ * (for example Claude Code writes `~/.claude.json`, but installation is better
+ * inferred from the presence of `~/.claude/`).
  *
  * Used by the Commander action to default to all detected editors in both
  * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
@@ -780,14 +803,13 @@ export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
   const detected: EditorId[] = [];
   for (const id of ALL_EDITOR_IDS) {
     const target = EDITOR_TARGETS[id];
-    let configPath: string;
+    let probePath: string;
     try {
-      configPath = target.configPath(cwd, home);
+      probePath = target.detectPath?.(cwd, home) ?? dirname(target.configPath(cwd, home));
     } catch {
-      // Unsupported platform (e.g. Claude Desktop on Linux) — skip detection.
       continue;
     }
-    if (existsSync(dirname(configPath))) {
+    if (existsSync(probePath)) {
       detected.push(id);
     }
   }
@@ -803,10 +825,14 @@ export function initCommand(): Command {
     .option('--no-mcp', `Scaffold the ${OK_DIR}/ directory but do not touch MCP config`)
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
+      '--dev-mcp',
+      'Register a local dev MCP entry using node + packages/cli/dist/cli.mjs with debug logging',
+    )
+    .option(
       '--editor <editors>',
       `Target editor(s): ${ALL_EDITOR_IDS.join(', ')}, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)`,
     )
-    .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
+    .action(async (opts: { mcp?: boolean; force?: boolean; devMcp?: boolean; editor?: string }) => {
       const cwd = process.cwd();
 
       let editors: EditorId[];
@@ -822,9 +848,9 @@ export function initCommand(): Command {
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
         // Interactive prompt — pre-select every detected editor regardless of
-        // scope. Empty detection set shows all five unselected alongside a
-        // hint (D-019) so the user can still pick manually or cancel and use
-        // --editor.
+        // scope. Empty detection set shows every supported editor unselected
+        // alongside a hint (D-019) so the user can still pick manually or
+        // cancel and use --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
 
         const detected = new Set(detectInstalledEditors(cwd));
@@ -836,26 +862,23 @@ export function initCommand(): Command {
 
         const editorChoices = ALL_EDITOR_IDS.flatMap((id) => {
           const target = EDITOR_TARGETS[id];
-          let hint: string;
           try {
-            hint =
+            const configPath = target.configPath(cwd);
+            const hint =
               target.scope === 'global'
-                ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
-                : relative(cwd, target.configPath(cwd));
+                ? configPath.replace(/^\/Users\/[^/]+/, '~')
+                : relative(cwd, configPath);
+            return [
+              {
+                value: id,
+                label: target.label,
+                hint,
+                initialValue: detected.has(id),
+              },
+            ];
           } catch {
-            // Unsupported-platform target (e.g. Claude Desktop on Linux) —
-            // omit the entry entirely so the user can't pick something that
-            // would later throw on write.
             return [];
           }
-          return [
-            {
-              value: id,
-              label: target.label,
-              hint,
-              initialValue: detected.has(id),
-            },
-          ];
         });
 
         const selected = await multiselect({
@@ -883,12 +906,26 @@ export function initCommand(): Command {
         }
       }
 
-      const result = runInit({
-        cwd,
-        mcp: opts.mcp,
-        force: opts.force,
-        editors,
-      });
+      let result: InitCommandResult;
+      try {
+        result = await runInit({
+          cwd,
+          mcp: opts.mcp,
+          force: opts.force,
+          devMcp: opts.devMcp,
+          editors,
+        });
+      } catch (err) {
+        if (err instanceof ProjectGitInitError) {
+          process.stderr.write(
+            "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.\n",
+          );
+          if (err.stderr) process.stderr.write(`${err.stderr.trim()}\n`);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
 
       try {
         const { previewContent } = await import('../content/preview.ts');

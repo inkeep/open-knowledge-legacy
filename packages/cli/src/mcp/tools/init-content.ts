@@ -7,11 +7,17 @@
  * agent's native tools, not through the MCP server. The server only provides
  * the instructions.
  */
+import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type PreviewUrlDeps, resolveUiInfo } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { textPlusStructured } from './shared.ts';
+import {
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 function buildBody(contentDir: string): string {
   return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
@@ -34,7 +40,7 @@ open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client so the server picks up the new config.
+That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into your selected editors' MCP config files (user-scoped by default). It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client so the server picks up the new config.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 
@@ -133,11 +139,20 @@ interface InitContentDeps extends PreviewUrlDeps {}
  * (no docName list) so it has no per-row previewUrl — only the ui block.
  */
 export function register(server: ServerInstance, deps: InitContentDeps): void {
-  server.tool('init-content', DESCRIPTION, async () => {
-    const body = buildBody(deps.config.content.dir);
-    const cwd = await deps.resolveCwd();
-    const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-    const ui = resolveUiInfo({ config: deps.config, lockDir });
-    return textPlusStructured(body, { ui });
-  });
+  server.tool(
+    'init-content',
+    DESCRIPTION,
+    {
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { cwd?: string } = {}) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, config } = context;
+      const body = buildBody(config.content.dir);
+      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const ui = resolveUiInfo({ config, lockDir });
+      return textPlusStructured(body, { ui });
+    },
+  );
 }

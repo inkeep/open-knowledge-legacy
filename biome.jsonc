@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.11/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
     "enabled": true,
@@ -33,6 +33,10 @@
               "react": {
                 "importNames": ["useCallback", "useMemo", "memo"],
                 "message": "The highlighted React API is flagged.\nWe use the React Compiler, which automatically memoizes where needed.\nIn 99% of cases, manual memoization is unnecessary."
+              },
+              "@tiptap/y-tiptap": {
+                "importNames": ["yXmlFragmentToProsemirrorJSON"],
+                "message": "Use `yXmlFragmentToProseMirrorRootNode` instead"
               }
             },
             "patterns": [

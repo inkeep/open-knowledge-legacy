@@ -8,10 +8,15 @@
  * articles via the `consolidate` tool only when decisions solidify.
  */
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textPlusStructured } from './shared.ts';
+import {
+  type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
   return `Research this topic and write provisional findings inside the project content directory. Research is **provisional, not canonical** — it captures findings, trade-offs, and open questions at a point in time. Promoting to canonical articles is a deliberate later step (via the \`consolidate\` tool).
@@ -183,7 +188,12 @@ export const DESCRIPTION = [
   '- A decision needs structured analysis grounded in external sources',
 ].join('\n');
 
-export function register(server: ServerInstance, config: Config): void {
+interface ResearchDeps {
+  config: ConfigOrResolver;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: ResearchDeps): void {
   // previewUrl is null per FR-2.1: research is a workflow primer keyed on a
   // `topic` — the target research doc's path is chosen by the agent during the
   // prompt's Step 4. There is no single canonical document to preview at call
@@ -191,8 +201,16 @@ export function register(server: ServerInstance, config: Config): void {
   server.tool(
     'research',
     DESCRIPTION,
-    { topic: z.string().describe('The topic, question, or anchor URL to research') },
-    (args: { topic: string }) =>
-      textPlusStructured(buildBody(args.topic, config.content.dir), { previewUrl: null }),
+    {
+      topic: z.string().describe('The topic, question, or anchor URL to research'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { topic: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
+        previewUrl: null,
+      });
+    },
   );
 }

@@ -50,6 +50,7 @@ export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
   onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
+  onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
   dialog: {
     openFolder(): Promise<string | null>;
     createFolder(): Promise<string | null>;

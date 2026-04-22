@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -25,6 +26,7 @@ interface BacklinksPayload {
 
 interface GetBacklinksDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetBacklinksDeps): void {
@@ -33,9 +35,17 @@ export function register(server: ServerInstance, deps: GetBacklinksDeps): void {
     DESCRIPTION,
     {
       docName: z.string().describe('Target page docName'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: { docName: string; cwd?: string }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -46,7 +56,7 @@ export function register(server: ServerInstance, deps: GetBacklinksDeps): void {
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...rest } = result;
       const data = rest as BacklinksPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       const backlinks = (data.backlinks ?? []).map((row) => {
         const source = typeof row.source === 'string' ? row.source : null;
         const resolved = source ? resolve(source) : null;
@@ -56,7 +66,7 @@ export function register(server: ServerInstance, deps: GetBacklinksDeps): void {
           ...(resolved ? { previewUrlSource: resolved.source } : {}),
         };
       });
-      const structured = { ...data, backlinks, ui };
+      const structured = { ...data, backlinks, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

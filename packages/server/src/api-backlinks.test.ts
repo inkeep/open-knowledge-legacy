@@ -41,6 +41,7 @@ async function callRoute(
   url: string,
   fileIndex: ReadonlyMap<string, FileIndexEntry>,
   backlinkIndex?: BacklinkIndex,
+  options?: { method?: string; enableTestRoutes?: boolean },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {} as never,
@@ -48,8 +49,9 @@ async function callRoute(
     contentDir,
     getFileIndex: () => fileIndex,
     backlinkIndex,
+    enableTestRoutes: options?.enableTestRoutes,
   });
-  const req = makeReq(url);
+  const req = makeReq(url, options?.method ?? 'GET');
   const { res, captured } = makeRes();
   await (
     ext as {
@@ -440,6 +442,97 @@ describe('graph endpoints', () => {
         ok: false,
         error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
       });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('POST /api/test-rescan-backlinks', () => {
+  test('rebuilds the backlink index from disk when enableTestRoutes=true', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-rescan-api-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      // Simulate the "dropped create event" case: files are on disk but the
+      // backlink index hasn't observed them yet (no rebuildFromDisk / no
+      // file-watcher dispatch).
+      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n\nLinks to [[beta]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nBody.\n', 'utf-8');
+
+      const fileIndex = new Map<string, FileIndexEntry>();
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+      // Intentionally do NOT call rebuildFromDisk — mirrors the dropped-event state.
+      expect(backlinkIndex.getBacklinks('beta')).toEqual([]);
+
+      const rescanResp = await callRoute(
+        contentDir,
+        '/api/test-rescan-backlinks',
+        fileIndex,
+        backlinkIndex,
+        {
+          method: 'POST',
+          enableTestRoutes: true,
+        },
+      );
+      expect(rescanResp.status).toBe(200);
+      expect(JSON.parse(rescanResp.body)).toEqual({ ok: true });
+
+      // Backlink index now reflects disk state.
+      const backlinks = backlinkIndex.getBacklinks('beta');
+      expect(backlinks.map((b) => b.source)).toEqual(['alpha']);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('returns 404 when enableTestRoutes is not set (default)', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-rescan-gate-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      const fileIndex = new Map<string, FileIndexEntry>();
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+
+      const resp = await callRoute(
+        contentDir,
+        '/api/test-rescan-backlinks',
+        fileIndex,
+        backlinkIndex,
+        {
+          method: 'POST',
+        },
+      );
+      // Unregistered route → falls through past the onRequest handler → captured
+      // status remains 0 since writeHead was never called on the mock.
+      expect(resp.status).toBe(0);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('405s on non-POST methods', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-rescan-method-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      const fileIndex = new Map<string, FileIndexEntry>();
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+
+      const resp = await callRoute(
+        contentDir,
+        '/api/test-rescan-backlinks',
+        fileIndex,
+        backlinkIndex,
+        {
+          method: 'GET',
+          enableTestRoutes: true,
+        },
+      );
+      expect(resp.status).toBe(405);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

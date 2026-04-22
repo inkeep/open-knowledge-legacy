@@ -194,3 +194,98 @@ User requested an audit after the three rounds of Path C additions. Nested audit
 **Confirmed claims (per cumulative audit — held across all three rounds):** Linear registry count 19 (binary-verified); `claude://` absent from Linear bundle (exhaustive negative search); Computer Use Apple-Events entitlement verified at `codex-26415-probe.md:391-400`; Codex 26.415 URL parser same 7 branches + same 3 params in `$9`; plugin install is IPC+CLI only; App Intents still absent; MentionUri 12 variants (Rust enum verbatim); 4 CLI-invoked tools in Linear registry (narrow headline count — Amp, Claude Code, Codex CLI, OpenCode); double-encoding for Cursor/Copilot/Windsurf; Replit uses lz-string compression; 2K default / 8K for Cursor+Copilot URL length caps; binary-search truncator with visible footer; server-side GraphQL `{{context}}` resolution; ACP JSON-RPC over stdio (stable); Rust crate 1.28M crates.io downloads; `zed://agent?prompt=` via PR #47959; `ExternalSourcePrompt` newtype sanitization (Rust source verbatim); Mintlify 14-identifier schema consistent across files; `prompts-chat` 28 platforms consistent; all 14 evidence files accurately referenced.
 
 Report state after resolution: ship-ready for downstream consumption (spec, design discussion, product decision). Full audit-findings file preserved at [audit-findings-round3.md](audit-findings-round3.md).
+
+---
+
+## 2026-04-18 (Path C round 4 — project/folder scoping on launch)
+
+**Update type:** Additive
+**Why this pass happened:** Direct user question — "is there a way to launch these apps so they open in a specific folder/project?" Follow-up to the round-3 close-out.
+
+### Scope (delta only)
+
+Single dimension added: workspace/folder scoping on launch, cutting across three orthogonal primitives:
+1. Launch Services folder handler (`open -a <App> <folder>` via `public.folder` in `CFBundleDocumentTypes`)
+2. CLI positional path arg (`<cli> /path`)
+3. URL scheme workspace parameter
+
+Coverage extended for all 5 primary apps (Claude, Codex, Cursor, ChatGPT, Perplexity) plus Zed, Windsurf, VS Code as already-covered secondary targets.
+
+### What changed (current-state)
+
+- REPORT.md:
+  - New **Addendum E** inserted between Addendum D and References — primitive matrix, canonical combo patterns per app, implications for OK
+  - New Exec Summary bullet capturing the "three-primitive problem + Claude's hidden folder handler" finding
+  - References section extended with the new evidence file
+- Evidence:
+  - Added `evidence/project-scoping-on-launch.md` (new) — primary-source plutil dumps + CLI help captures + cross-refs to prior evidence; documents the 5 findings (E1–E5) plus 9 negative searches + 5 gaps
+
+### Notes on confidence / contradictions
+
+- **Headline new finding (E1):** Claude Desktop registers `public.folder` as `Editor` in `CFBundleDocumentTypes`. Not captured in the baseline D1 evidence pass (baseline focused on `CFBundleURLTypes`). The `app.asar` cross-check confirms Claude Desktop has internal workspace-handling state (`userSelectedFolders`, `cwd`, `workspacePath`, `dispatchTrustedCodeWorkspaces` session fields). CONFIRMED via direct `plutil -extract` + asar grep on 2026-04-18.
+- **Headline non-finding:** The `claude://` URL scheme still has no path/workspace parameter even with the folder-handler registration. The two surfaces (chat URL vs workspace folder-open) are architecturally separate — no URL-compose way to open Claude Desktop in workspace X with prompt Y.
+- **Codex remains singular** for single-URL workspace+prompt atomic handoff. Re-confirmed against 26.415 probe (Finding E3 cross-references `codex-26415-probe.md`).
+- **Two inferred (not confirmed) gaps:** Zed + Windsurf `public.folder` registration — both apps are not installed locally. CLI behavior strongly implies both register the handler, but Info.plist verification is pending. Flagged in E1's "NOT FOUND" section.
+
+### Open questions / gaps
+
+- Zed Info.plist — not probed; CLI behavior implies `public.folder` registration but unverified
+- Windsurf Info.plist — same gap
+- End-to-end observation of `open -a Claude.app /repo` behavior — registration confirmed but runtime routing (to Cowork vs blank vs settings) not dogfooded
+- Codex `originUrl=` acceptance of HTTPS vs SSH git URL forms — undifferentiated in prior evidence
+- Whether Claude Desktop may add `claude://claude.ai/code?path=<abs>` in the future to bridge the two surfaces — worth monitoring across releases
+
+**No audit run for this round.** Scope is narrow, evidence is primary-source-heavy (plutil output, CLI help text, documented docs quotes), synthesis light. An audit pass would catch any cross-evidence inconsistencies but the additive nature + primary-source grounding makes a dedicated audit lower-value for this round.
+
+---
+
+## 2026-04-21 (Path C round 5 — live-testing corrections: Claude atomic combo + Cursor encoding empirics)
+
+**Update type:** Corrective (three specific claims were wrong) + additive (one new evidence file).
+**Why this pass happened:** Direct user session — fired candidate URLs against the installed Claude.app / Codex.app / Cursor.app on macOS, watched the apps settle, observed verbatim composer/modal text, and reported back. Primary-source-strongest evidence class: live-tested behavior against production binaries, not static code probes.
+
+### What changed (current-state)
+
+**Three findings corrected:**
+
+1. **Claude Desktop has atomic single-URL prompt + folder + file** via previously-missed `claude://cowork/new?q=&folder=&file=` and `claude://code/new?q=&folder=&file=` host routes. Round 4's initial Addendum E claimed "only Codex has this capability"; that was wrong. The original `claude-desktop-deep-links.md` evidence file enumerated only the `claude://claude.ai/*` branch of the URL router and missed the sibling host-enum branches (`Jb.Cowork`, `Jb.Code` in the minified bundle — same enum as the `Tx` host enum from Finding 2, different minifier pass). The `Cowork` branch dispatches via IPC (`dispatchOnCoworkFromMain({prompt, selectedDirectories, selectedFiles, prefillOnly: true, source: "external"})`) to the Cowork tab; the `Code` branch navigates the webview to `/epitaxy?...` and fires `desktop_code_deeplink_received` analytics. Both accept repeatable `folder=` + repeatable `file=`. Live-verified by firing candidate URLs and reading back composer state + attached files + tab location.
+
+2. **Claude Desktop's `public.folder` handler routes specifically to the Cowork tab** (previously an "open question" in Round 4's gap list). The `CjA` function in the bundle handles Electron's `open-file` event and calls the same `dispatchOnCoworkFromMain` IPC as the `claude://cowork/new` URL route, just without a prompt. Live-verified by running `open -a Claude.app /path` with multiple repos and confirming Cowork is always the landing tab.
+
+3. **Cursor's `text=` URL param decoder does two decode passes with error recovery on the second pass** (previously summarized as "double-encoding is the robust choice; single may break for `%` in prompts" — the reality is more nuanced). Live-tested with both single- and double-encoded prompts containing literal `%` characters (`50% off`, `100% Pure`); BOTH rendered cleanly. The single-encoding-breaks scenario is narrower than anticipated: it only silently corrupts when the user's prompt contains substrings that happen to look like valid URL escapes (`%41` → `A`, `%E2%80%94` → em-dash bytes, etc.). Double-encoding avoids this entirely.
+
+**One new evidence file added:**
+
+- `evidence/cursor-encoding-empirics.md` (new, ~200 lines) — 2026-04-21 live-testing protocol + findings; characterization of the decoder's two-pass-with-error-recovery behavior; silent-corruption edge-case taxonomy; window-targeting via `&workspace=<basename>` safety-net; `mode=agent` propagation verified; 5-rule canonical Cursor URL-builder recipe (R1–R5)
+
+**Evidence files updated:**
+
+- `evidence/claude-desktop-deep-links.md` — Findings 8–12 appended (each with confidence labels, verbatim bundle code, live-test observations). Finding 8: `claude://cowork/new` route with verbatim switch case. Finding 9: `claude://code/new` route with verbatim switch case + `/epitaxy` webview-nav semantics. Finding 10: `CjA` folder-drop handler as the `public.folder` LS back-end. Finding 11: `public.folder` Info.plist registration. Finding 12: sidebar-mode enum (`chat | code | task | epitaxy | operon`) + session-route shape. Correction on Finding 6's "no CLI-to-Desktop prompt-seeding bridge" framing — accurate for the `claude-code-desktop` navigation route but missed the separate `cowork/code` prompt-seeding host-routes. Added a summary table of all atomic-handoff URLs per target tab.
+
+- `evidence/project-scoping-on-launch.md` — Finding E3 heading changed from "only Codex has one" to "Codex and Claude (updated 2026-04-21)"; Finding E3 body rewritten to enumerate Claude's capability alongside Codex's with a per-capability comparison table (Claude has multi-folder + file attachments + tab routing; Codex has git-origin resolution). Finding E4 Claude subsection ("surfaces don't unify") replaced with the correct atomic-combo patterns. Summary matrix Claude row flipped from 1 ✅ column to 3 ✅ columns. Negative searches section updated: retracted "`claude://` URL with `path=` / `workspace=` param — not in enum" (only the `td` path enum was searched; the `Tx`/`Jb` host enum has the routes). Added new negative searches: Cursor's whole URL surface has zero folder-open routes; `open -a Codex.app /path` silently drops the path. Gaps list: resolved #3 (Claude folder-drop routing — confirmed Cowork) and #5 (Claude workspace URL-seeding — confirmed via `cowork/new` + `code/new`); added new gaps #6 (`QqA` prompt-length cap extraction), #7 (trust-dialog behavior for untrusted folders), #8 (file-only-no-folder scope semantics).
+
+- `REPORT.md` — Exec Summary bullet for Addendum E rewritten; heading changed to "Path C rounds 4 + 5"; Round 5 correction callout added at top of addendum; primitive coverage matrix Claude row updated; headline-discoveries list expanded from 1 to 5 points (adding: Codex `public.folder` absence consequence, Cursor's URL-surface has no folder-open route, Cursor decoder two-pass error-recovery); canonical combo patterns block updated with the new Claude atomic URLs; References section extended with the new `cursor-encoding-empirics.md` entry and updated description of `project-scoping-on-launch.md`. Report frontmatter `updatedAt: 2026-04-21`.
+
+### Notes on confidence / contradictions
+
+- **All three corrected findings are at the strongest confidence class available** — live-tested against production binaries with the user reading back observed UI state. Stronger than static binary probes (which can miss code paths, as happened in Round 4) and stronger than extrapolation from source files.
+
+- **The original Round 4 framing was internally consistent** — the evidence file, the matrix, and the exec summary bullet all said the same thing ("Claude has no atomic combo"). The issue was upstream: the `claude-desktop-deep-links.md` binary probe only enumerated the `td` *path* enum and didn't inspect the `Tx`/`Jb` *host* enum's branches. So the whole downstream analysis inherited the gap. Round 5's correction walks back the claim at every site it appears.
+
+- **Cursor's double-encoding rule survives the correction with a sharper reason.** Round 3's `linear-ai-deeplinks-extraction.md` said Linear production uses `encodeURIComponent(encodeURIComponent(x))` for Cursor / Copilot / Windsurf. Round 5's live test confirms the mechanism: the decoder does two passes with error recovery. Single-encoding happens to work for most prompts because the second pass' error-recovery path falls back to the first-decode result. But the silent-corruption class (prompts containing valid-escape-looking substrings) means double-encoding remains the robust rule. Linear's production shape is right; the reasoning got sharpened.
+
+- **No contradictions introduced across existing addenda A–D.** The corrections are contained to Addendum E + the two specific evidence files + the one new evidence file. Addenda A (extended editors), B (Codex 26.415 + superapp), C (Linear missed prior art), D (Linear binary-extraction / Codex 26.415 probe / Zed MentionUri-ACP) are unchanged.
+
+### Open questions / gaps (consolidating from updated gap lists)
+
+- **`QqA` prompt-length cap** — extract the numeric value from the Claude bundle so OK's URL builder knows the truncation point.
+- **Trust-dialog behavior for untrusted folders in Claude** — dogfood with a folder not in `localAgentModeTrustedFolders` to see the first-use UX.
+- **File-only scope in Claude** — `claude://cowork/new?q=&file=<abs>` without `folder=` — scopes to just the file, to the parent directory, or something else? Not tested in this pass.
+- **Cursor's silent-corruption edge case live-reproduction** — Round 5 inferred the mechanism from clean-result behavior; firing a prompt with a literal `%41` or em-dash to directly observe the corruption would close the inference gap.
+- **Zed + Windsurf `public.folder` Info.plist probes** — unchanged from Round 4; still inferred, not confirmed.
+
+### Cross-cutting observation from this round
+
+The gap between "static binary probe" and "live behavioral test" matters more than previously weighted. Round 4's Addendum E — based on careful binary inspection + Info.plist probes + CLI help captures — still missed a capability that a 30-second live-test round revealed in the first hour. **For high-leverage findings that shape downstream product decisions (like OK's "Open in app" dropdown UX), live testing should be a Round 1 step, not a gap follow-up in a later round.** This doesn't lower confidence in the Round 3–4 findings (which were CONFIRMED via primary-source bundle extraction); it does mean future rounds on similar topics should budget for "fire candidate invocations against the real app and watch" as a first-class evidence-capture method.
+
+**No audit run for this round.** Three surgical corrections + one new evidence file + consistent updates across addendum E; synthesis is light and every correction is backed by live-verification ground truth. An audit would catch any remaining cross-evidence drift but the high-coverage re-write of the Claude subsections + the new evidence file's primary-source grounding make a dedicated audit lower-value at this point. If the report feeds a spec with non-trivial decision stakes downstream, running `/audit` over the cumulative synthesis (including all five addenda) would be the time to do it.

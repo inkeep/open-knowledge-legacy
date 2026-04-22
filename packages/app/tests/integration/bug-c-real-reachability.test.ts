@@ -18,7 +18,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
 import {
@@ -47,7 +47,7 @@ function applyMarkdownToFragment(doc: Y.Doc, fragment: Y.XmlFragment, md: string
 
 /** Serialize XmlFragment → markdown string. */
 function serializeFrag(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /**

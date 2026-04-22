@@ -177,40 +177,33 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
   });
 
-  test('prefers integrated mode when project has its own .git/', () => {
+  test('always resolves to <projectRoot>/.git/open-knowledge/', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.git/open-knowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/open-knowledge'));
+  });
+
+  test('never returns legacy .git/openknowledge/ path (single-mode layout)', () => {
     const project = resolve(tmp, 'project');
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('falls back to standalone mode when no project .git/ exists', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.openknowledge'));
-  });
-
-  test('prefers integrated over standalone when both exist', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('returns null when .git/openknowledge exists but HEAD is missing', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
+    // Legacy path is ignored — getShadowRepoPath reads through resolveShadowDir
+    // which always returns .git/open-knowledge/. The R9 rename shim in
+    // initShadowRepo handles the on-disk migration at server start.
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
-  test('returns null when the shadow dir is a file (not a directory)', () => {
+  test('never returns .openknowledge/ (standalone path deleted)', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(project, { recursive: true });
-    writeFileSync(resolve(project, '.git'), 'not a dir');
-    // Neither integrated nor standalone exists
+    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('returns null when .git/open-knowledge exists but HEAD is missing', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
   });
 });

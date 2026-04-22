@@ -32,6 +32,7 @@ import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
+import { HelpPopover } from './HelpPopover';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -667,6 +668,7 @@ export function EditorHeader({
         />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
+        <HelpPopover />
         <ThemeToggle />
       </div>
     </header>

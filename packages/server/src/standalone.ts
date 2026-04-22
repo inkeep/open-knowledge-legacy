@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
@@ -68,9 +68,10 @@ export interface ServerOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use and must never be
+   * exposed in production. Enable only in tests.
    */
   enableTestRoutes?: boolean;
   /** Shadow repo handle — passed to persistence. */
@@ -265,7 +266,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     const document = hocuspocus.documents.get(docName);
     if (!document) return null;
     const xmlFragment = document.getXmlFragment('default');
-    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
     const metaMap = document.getMap('metadata');
     const fm = metaMap.get('frontmatter');

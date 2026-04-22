@@ -45,24 +45,17 @@ packages/app/test-results/
 playwright-report/
 blob-report/
 
-# Open Knowledge shadow repo — bare git repo at `.openknowledge/` in standalone
-# mode (no project `.git/`) or at `.git/openknowledge/` in integrated mode.
-# Standalone mode MUST be gitignored at the project root: the shadow repo
-# contains binary pack objects, per-writer WIP refs naming pid/hostname/
-# worktreeRoot, and a lock file with the developer's absolute path. Integrated
-# mode is inside `.git/` which git already ignores. See `packages/server/src/
-# shadow-repo.ts` and CLAUDE.md "Shadow repo & branch runtime".
-.openknowledge/
-
 # Editor workspace files
 .vscode/
+.mcp.json
+.cursor/mcp.json
+.claude/launch.json
 
 # Benchmark harness output — per-run artifacts, published as CI artifacts.
 # Baselines live in specs/.../evidence/perf-baseline-measured.md instead.
 packages/core/tests/perf/results.*.json
 
 /test-doc.md
-.openknowledge/
 
 # Open Knowledge per-machine runtime state — tokens never live here, but
 # sync state, server locks, and derived caches are local-only.

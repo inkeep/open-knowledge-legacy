@@ -134,4 +134,61 @@ describe('buildGetPreviewUrlResult', () => {
       expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
     }
   });
+
+  test('supports per-cwd config resolvers', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const seenCwds: string[] = [];
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd,
+        config: async (cwd) => {
+          seenCwds.push(cwd ?? '');
+          return {
+            ...BASE_CONFIG,
+            content: { ...BASE_CONFIG.content, include: ['docs/**/*.md'] },
+          };
+        },
+      },
+    );
+
+    expect(seenCwds).toEqual([tmpDir]);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
+
+  test('uses explicit cwd when the client cannot provide a default root', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test', cwd: tmpDir },
+      {
+        resolveCwd: async (explicit?: string) => {
+          if (!explicit) throw new Error('explicit cwd required');
+          return explicit;
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
+
+  test('returns resolveCwd failures as tool errors', async () => {
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd: async () => {
+          throw new Error('No client roots');
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome).toEqual({ ok: false, error: 'No client roots' });
+  });
 });

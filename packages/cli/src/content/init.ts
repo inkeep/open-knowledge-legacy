@@ -79,7 +79,7 @@ This directory was scaffolded by running \`open-knowledge init\` (or \`npx @inke
 
 1. Creates \`${OK_DIR}/\` (config-only — no content subdirs)
 2. Writes \`AGENTS.md\`, \`.gitignore\`, and \`config.yml\`
-3. Registers the Open Knowledge MCP server in \`.mcp.json\` at the repo root
+3. Registers the Open Knowledge MCP server in your selected editors' MCP config files (user-scoped by default)
 
 If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`open-knowledge init\` from a terminal.
 
@@ -93,7 +93,7 @@ If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`o
 - **Writes** via \`write_document\` / \`edit_document\` — route through the server so shadow-repo attribution (agent vs human) is captured
 - **Graph queries** via \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`
 
-These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, etc.). \`open-knowledge init\` registers the MCP server in every editor's config for you — Claude Desktop and Windsurf use project-qualified keys like \`open-knowledge-<project>\` so one config file can serve multiple projects on the same machine. Claude Desktop requires a full quit + relaunch to pick up new MCP servers; Windsurf hot-reloads.
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, etc.). \`open-knowledge init\` registers a single global \`open-knowledge\` entry in each selected editor's config, and the server resolves the active project per tool call from explicit \`cwd\` values or client-reported workspace roots. Claude Desktop requires a full quit + relaunch to pick up new MCP servers; other clients may need a new session or editor restart if they are already open.
 `;
 
 const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
@@ -205,7 +205,7 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **\`${OK_DIR}/
 
 **Default mental model (no jargon):** unless this project narrowed \`content.include\`, **every \`.md\` and \`.mdx\` under \`content.dir\`** is an Open Knowledge document — including under \`specs/\`, \`reports/\`, \`docs/\`, etc. If \`content.include\` is non-default, read \`config.yml\` once per turn so you do not mis-classify paths.
 
-**STOP — your host's built-in file tools on in-scope \`.md\` / \`.mdx\`.** When this workspace has Open Knowledge MCP configured (for example via root \`.mcp.json\`), you **must not** reach for native tools on in-scope markdown. Same failure mode as native \`Edit\` on them: no frontmatter, no backlinks, no shadow-repo activity, no recent-edit signal. The ban is broader than just \`Read\` / \`Grep\` / \`Glob\` — it names every common rationalization:
+**STOP — your host's built-in file tools on in-scope \`.md\` / \`.mdx\`.** When this workspace has Open Knowledge MCP configured (for example via a user-scoped editor config such as \`~/.claude.json\` or \`~/.cursor/mcp.json\`), you **must not** reach for native tools on in-scope markdown. Same failure mode as native \`Edit\` on them: no frontmatter, no backlinks, no shadow-repo activity, no recent-edit signal. The ban is broader than just \`Read\` / \`Grep\` / \`Glob\` — it names every common rationalization:
 
 - **Native \`Read\` / \`Grep\` / \`Glob\` on in-scope \`.md\` / \`.mdx\`** — the original case.
 - **\`Bash ls\` / \`Bash find\` / \`Bash cat\` on dirs containing in-scope markdown** — use \`exec("ls …")\` / \`exec("find … -name '*.md'")\` / \`exec("cat …")\` instead. Native returns bare names; \`exec\` returns frontmatter, backlink counts, and recent-activity per child.
