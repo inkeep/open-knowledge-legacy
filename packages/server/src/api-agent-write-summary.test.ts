@@ -5,11 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
-import {
-  AGENT_WRITE_ORIGIN,
-  AgentSessionManager,
-  applyAgentMarkdownWrite,
-} from './agent-sessions.ts';
+import { AgentSessionManager, applyAgentMarkdownWrite } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { clearContributors, formatContributors } from './contributor-tracker.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
@@ -333,11 +329,12 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
 
   describe('/api/agent-patch', () => {
     test('404 "not found" does NOT increment counters or fire contributor', async () => {
-      // Seed a doc first
-      const dc = await sessionManager.getSession('test-doc');
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, '# H\n', 'replace');
-      }, AGENT_WRITE_ORIGIN);
+      // Seed a doc first — post-foundation getSession returns a SessionRecord
+      // wrapping the DirectConnection + per-session origin (D2 / precedent #24).
+      const session = await sessionManager.getSession('test-doc');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, '# H\n', 'replace');
+      }, session.origin);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
@@ -355,10 +352,10 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
     });
 
     test('successful patch with summary records it and responds with truncatedFrom when truncated', async () => {
-      const dc = await sessionManager.getSession('test-doc');
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, 'old text\n', 'replace');
-      }, AGENT_WRITE_ORIGIN);
+      const session = await sessionManager.getSession('test-doc');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, 'old text\n', 'replace');
+      }, session.origin);
 
       const longSummary = 'y'.repeat(100);
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {

@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  COMMIT_SUBJECT_MAX_LEN,
+  composeCommitSubject,
   formatCheckpointBodyLine,
   formatCheckpointSubject,
   formatImportSubject,
@@ -558,5 +560,64 @@ describe('Subject-prefix format helpers (D53, FR-13)', () => {
     ];
     const prefixes = subjects.map((s) => s.split(':')[0]);
     expect(new Set(prefixes).size).toBe(subjects.length);
+  });
+});
+
+// Agent-write-summaries FR14 — subject-line projection of `ContributorEntry.summaries`
+describe('composeCommitSubject (FR14 — change-notes in commit subject)', () => {
+  test('zero summaries → base subject unchanged', () => {
+    expect(composeCommitSubject('wip: notes.md', [])).toBe('wip: notes.md');
+  });
+
+  test('single short summary → appended with em-dash separator', () => {
+    expect(composeCommitSubject('wip: notes.md', ['added auth design'])).toBe(
+      'wip: notes.md — added auth design',
+    );
+  });
+
+  test('single summary fits exactly at 72 chars → no truncation', () => {
+    const base = 'wip: a.md';
+    const summary = 'x'.repeat(COMMIT_SUBJECT_MAX_LEN - base.length - ' — '.length);
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.endsWith(summary)).toBe(true);
+  });
+
+  test('single oversize summary → trailing ellipsis, base preserved', () => {
+    const base = 'wip: notes.md';
+    const summary =
+      'this is a very long change-note that goes on and on well past seventy-two characters total';
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.startsWith('wip: notes.md — ')).toBe(true);
+    expect(subject.endsWith('…')).toBe(true);
+  });
+
+  test('two summaries → N-edits suffix, summaries live in the body (not subject)', () => {
+    expect(composeCommitSubject('wip: notes.md', ['first', 'second'])).toBe(
+      'wip: notes.md (2 edits)',
+    );
+  });
+
+  test('three summaries → accurate N-edits count', () => {
+    expect(composeCommitSubject('wip: a.md', ['a', 'b', 'c'])).toBe('wip: a.md (3 edits)');
+  });
+
+  test('works with non-wip subject prefixes (rename:, rollback:, reconcile:)', () => {
+    expect(composeCommitSubject('rename: a.md -> b.md', ['clarifying scope'])).toBe(
+      'rename: a.md -> b.md — clarifying scope',
+    );
+    expect(composeCommitSubject('rollback: doc.md to abc1234', ['reverting deletion'])).toBe(
+      'rollback: doc.md to abc1234 — reverting deletion',
+    );
+    expect(composeCommitSubject('reconcile: doc.md', ['merged conflicting edits'])).toBe(
+      'reconcile: doc.md — merged conflicting edits',
+    );
+  });
+
+  test('base already over 72 chars → defensive slice, summary dropped', () => {
+    const base = `wip: ${'a'.repeat(70)}`;
+    const subject = composeCommitSubject(base, ['ignored summary']);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
   });
 });

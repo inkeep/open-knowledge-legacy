@@ -425,6 +425,52 @@ export function formatImportSubject(oldHead: string | null, newHead: string): st
     : `import: initial at ${newHead.slice(0, 8)}`;
 }
 
+// ─── Change-note subject composition (FR14 + D53 addendum) ───────────────────
+//
+// Landing per-writer summaries on the COMMIT SUBJECT line (not just the
+// `ok-contributors:` body) is what turns `git log --oneline refs/wip/main/agent-*`
+// from a wall of `wip: notes.md` duplicates into a scannable team-history feed.
+// The body still carries the full summary array for the TimelinePanel render —
+// this helper is the git-log-shaped projection.
+
+/**
+ * Upper bound on the length of the rendered commit subject line.
+ * Matches the CommonMark / git subject-line convention so `git log --oneline`
+ * stays legible without wrapping.
+ */
+export const COMMIT_SUBJECT_MAX_LEN = 72;
+
+/**
+ * Combine a base subject (from `formatWipSubject` / `formatReconcileSubject` / etc.
+ * or a `ContributorEntry.subjectOverride`) with agent-supplied change-notes,
+ * producing a single subject line capped at `COMMIT_SUBJECT_MAX_LEN`.
+ *
+ * Rules:
+ *  - 0 summaries → base subject unchanged (pre-feature byte-identity).
+ *  - 1 summary → `<base> — <summary>` truncated with a trailing U+2026
+ *    ellipsis when over budget; the `<base>` portion is never truncated.
+ *  - ≥2 summaries → `<base> (N edits)`. The bullets live in the body
+ *    (`ok-contributors.summaries`) and in the TimelinePanel UI — the
+ *    subject only carries the count so `git log --oneline` stays one line.
+ *
+ * Truncation preserves the base, separator, and suffix so the `grep`-friendly
+ * target stays intact even for very short terminal widths. Matches the
+ * `normalizeSummary` API-boundary truncation in `agent-write-summary.ts` by
+ * using the same single-codepoint `…` rather than three ASCII dots.
+ */
+export function composeCommitSubject(base: string, summaries: readonly string[]): string {
+  if (summaries.length === 0) return base;
+  if (summaries.length >= 2) return `${base} (${summaries.length} edits)`;
+  const [summary] = summaries;
+  if (summary === undefined) return base; // defensive; length-1 branch guards against this
+  const full = `${base} — ${summary}`;
+  if (full.length <= COMMIT_SUBJECT_MAX_LEN) return full;
+  const prefix = `${base} — `;
+  const budget = COMMIT_SUBJECT_MAX_LEN - prefix.length - 1; // reserve one char for the ellipsis
+  if (budget <= 0) return full.slice(0, COMMIT_SUBJECT_MAX_LEN); // base already over budget — defensive slice
+  return `${prefix}${summary.slice(0, budget)}…`;
+}
+
 /**
  * Classify a writer id using the documented prefix convention. Unknown
  * prefixes (legacy commits, external git operations) classify as 'unknown'

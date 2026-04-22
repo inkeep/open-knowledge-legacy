@@ -13,6 +13,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
+  composeCommitSubject,
   formatOkActor,
   formatWipSubject,
   type OkActorEntry,
@@ -347,14 +348,33 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           color_seed: entry.colorSeed,
           docs,
         };
-        const contributorLine = `ok-contributors: ${JSON.stringify({
+        // agent-write-summaries D23 + FR14: emit summaries on the
+        // `ok-contributors:` JSON line only when the writer supplied at least
+        // one (legacy byte-identity for summary-less writes). The array is
+        // ordered by call time inside the drain window.
+        const summaries = [...entry.summaries];
+        const contributorPayload: {
+          v: 1;
+          id: string;
+          name: string;
+          colorSeed: string;
+          docs: string[];
+          summaries?: string[];
+        } = {
           v: 1,
           id: writerId,
           name: entry.displayName,
           colorSeed: entry.colorSeed,
           docs,
-        })}`;
-        const subject = entry.subjectOverride ?? formatWipSubject(docs);
+        };
+        if (summaries.length > 0) contributorPayload.summaries = summaries;
+        const contributorLine = `ok-contributors: ${JSON.stringify(contributorPayload)}`;
+        const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
+        // FR14 — project summaries onto the subject line too. Single-summary
+        // writes embed the summary inline (`wip: notes.md — added auth`);
+        // multi-summary drains get `(N edits)` + the bullets in the body.
+        // Zero summaries → baseSubject unchanged (pre-spec byte-identity).
+        const subject = composeCommitSubject(baseSubject, summaries);
         const writerMessage = `${subject}\n\n${contributorLine}\n${formatOkActor(actorEntry)}`;
         try {
           const sha = await commitWipFromTree(shadow, writer, treeSha, writerMessage, branch);

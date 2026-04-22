@@ -64,10 +64,28 @@ describe('summaries round-trip: accumulator → shadow commit → timeline query
       'agent-claude',
       'Claude',
       'seed-1',
+      undefined,
+      undefined,
       'Fixed token-refresh race',
     );
-    recordContributor('content/foo', 'agent-claude', 'Claude', 'seed-1', 'Added unit test');
-    recordContributor('content/foo', 'agent-claude', 'Claude', 'seed-1', 'Tightened docstring');
+    recordContributor(
+      'content/foo',
+      'agent-claude',
+      'Claude',
+      'seed-1',
+      undefined,
+      undefined,
+      'Added unit test',
+    );
+    recordContributor(
+      'content/foo',
+      'agent-claude',
+      'Claude',
+      'seed-1',
+      undefined,
+      undefined,
+      'Tightened docstring',
+    );
 
     // Drain like persistence.ts's commitToWipRef would.
     const snapshot = swapContributors();
@@ -130,9 +148,33 @@ describe('summaries round-trip: accumulator → shadow commit → timeline query
     const contentDir = resolve(project, 'content');
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
-    recordContributor('content/foo', 'agent-alice', 'Alice', 'seed-a', 'Cleaned up intro');
-    recordContributor('content/foo', 'agent-bob', 'Bob', 'seed-b', 'Fixed footer link');
-    recordContributor('content/foo', 'agent-alice', 'Alice', 'seed-a', 'Added example');
+    recordContributor(
+      'content/foo',
+      'agent-alice',
+      'Alice',
+      'seed-a',
+      undefined,
+      undefined,
+      'Cleaned up intro',
+    );
+    recordContributor(
+      'content/foo',
+      'agent-bob',
+      'Bob',
+      'seed-b',
+      undefined,
+      undefined,
+      'Fixed footer link',
+    );
+    recordContributor(
+      'content/foo',
+      'agent-alice',
+      'Alice',
+      'seed-a',
+      undefined,
+      undefined,
+      'Added example',
+    );
 
     const snapshot = swapContributors();
     const contributorLines = formatContributorsFrom(snapshot);
@@ -159,7 +201,15 @@ describe('summaries round-trip: accumulator → shadow commit → timeline query
     const contentDir = resolve(project, 'content');
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
-    recordContributor('content/foo', 'agent-a', 'A', 'seed-a', 'With summary');
+    recordContributor(
+      'content/foo',
+      'agent-a',
+      'A',
+      'seed-a',
+      undefined,
+      undefined,
+      'With summary',
+    );
     recordContributor('content/foo', 'agent-b', 'B', 'seed-b'); // no summary
 
     const snapshot = swapContributors();
