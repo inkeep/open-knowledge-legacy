@@ -102,6 +102,11 @@ export interface BootServerOptions
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
   /** Injectable logger. Defaults to `getLogger('boot')`. */
   log?: PinoLogger;
+  /**
+   * Grace period (ms) before keepalive-close triggers session cleanup. Default 30 000.
+   * Integration tests pass a small value (e.g. 100) for fast teardown.
+   */
+  keepaliveGraceMs?: number;
 }
 
 export interface BootedServer {
@@ -228,6 +233,17 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     log.error({ err }, 'WebSocketServer error');
   });
 
+  // Grace period before keepalive-close triggers session cleanup (D28).
+  const KEEPALIVE_GRACE_MS = opts.keepaliveGraceMs ?? 10_000;
+  // connectionId → pending grace timer handle
+  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // In-flight grace-timer callbacks so destroy() can await them rather than
+  // racing against the sessionManager / agentFocusBroadcaster teardown.
+  const keepaliveGraceInflight = new Set<Promise<void>>();
+  // Set when destroy() runs so any callback that fired just before the timer
+  // was cleared can short-circuit instead of touching disposed resources.
+  let shuttingDown = false;
+
   httpServer.on('upgrade', (req, socket, head) => {
     // D-034 — MCP keep-alive channel (see CLI start.ts for full rationale).
     if (req.url?.startsWith('/collab/keepalive')) {
@@ -236,6 +252,25 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
+        // D27: parse connectionId from URL query params.
+        let connectionId: string | undefined;
+        try {
+          const searchParams = new URL(req.url ?? '', 'http://localhost').searchParams;
+          connectionId = searchParams.get('connectionId') ?? undefined;
+        } catch {
+          // malformed URL — treat as no connectionId
+        }
+
+        // D28: if reconnecting within grace period, cancel the timer.
+        if (connectionId) {
+          const existing = keepaliveGraceTimers.get(connectionId);
+          if (existing !== undefined) {
+            clearTimeout(existing);
+            keepaliveGraceTimers.delete(connectionId);
+            log.info({ connectionId }, '[keepalive] reconnect during grace — timer cancelled');
+          }
+        }
+
         const pingTimer = setInterval(() => {
           try {
             ws.ping();
@@ -244,7 +279,40 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
           }
         }, 30_000);
         pingTimer.unref?.();
-        ws.on('close', () => clearInterval(pingTimer));
+        ws.on('close', () => {
+          clearInterval(pingTimer);
+          if (!connectionId) return;
+          // D28: start grace timer.
+          const timer = setTimeout(() => {
+            keepaliveGraceTimers.delete(connectionId as string);
+            // If destroy() already ran, skip — the sessionManager and
+            // agentFocusBroadcaster may be mid-teardown and calling into them
+            // would race (TOCTOU: timer fires between destroy's clearTimeout
+            // loop and the Hocuspocus teardown awaiting completion).
+            if (shuttingDown) return;
+            const work = (async () => {
+              log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
+              try {
+                await serverInstance.sessionManager.closeAllForAgent(connectionId as string);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
+              }
+              try {
+                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId as string);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] clearFocus failed');
+              }
+            })();
+            keepaliveGraceInflight.add(work);
+            work.finally(() => keepaliveGraceInflight.delete(work));
+          }, KEEPALIVE_GRACE_MS);
+          timer.unref?.();
+          keepaliveGraceTimers.set(connectionId, timer);
+          log.info(
+            { connectionId, graceMs: KEEPALIVE_GRACE_MS },
+            '[keepalive] disconnected — grace timer started',
+          );
+        });
         ws.on('error', (err: NodeJS.ErrnoException) => {
           if (!handleCollabSocketError(err)) {
             log.error({ err }, 'MCP keepalive WS error');
@@ -334,7 +402,20 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
+    shuttingDown = true;
     idleHandle?.detach();
+    // Cancel any pending keepalive-grace timers so they don't fire against a
+    // disposed sessionManager / agentFocusBroadcaster after destroy returns.
+    for (const timer of keepaliveGraceTimers.values()) {
+      clearTimeout(timer);
+    }
+    keepaliveGraceTimers.clear();
+    // A grace-timer callback may have fired between our clearTimeout loop and
+    // now — the async work is already in keepaliveGraceInflight. Await it so
+    // Hocuspocus teardown doesn't race with an in-flight closeAllForAgent.
+    if (keepaliveGraceInflight.size > 0) {
+      await Promise.allSettled([...keepaliveGraceInflight]);
+    }
     await new Promise<void>((resolveClose) => {
       httpServer.close(() => resolveClose());
     });

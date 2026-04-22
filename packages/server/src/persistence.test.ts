@@ -14,7 +14,8 @@ import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { contentHash, isSelfWrite, registerWrite } from './file-watcher';
-import { isWithinContentDir, safeContentPath } from './persistence';
+import { isWithinContentDir, resolveWriterFromOrigin, safeContentPath } from './persistence';
+import { FILE_SYSTEM_WRITER, GIT_UPSTREAM_WRITER, SERVICE_WRITER } from './shadow-repo';
 
 describe('safeContentPath', () => {
   const contentDir = '/app/content';
@@ -208,5 +209,155 @@ describe('symlink-safe atomic write', () => {
     const hash = contentHash(markdown);
     expect(isSelfWrite(targetPath, hash)).toBe(true);
     expect(isSelfWrite(linkPath, hash)).toBe(false);
+  });
+});
+
+// ─── US-013: resolveWriterFromOrigin (D31, D32, FR-16) ───────────────────────
+
+describe('resolveWriterFromOrigin', () => {
+  test('local origin with session_id → agent-<sessionId> writer', () => {
+    const origin = {
+      source: 'local',
+      skipStoreHooks: false,
+      context: { origin: 'agent-write', paired: true, session_id: 'conn-abc123' },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).not.toBeNull();
+    expect(writer?.id).toBe('agent-conn-abc123');
+    expect(writer?.email).toBe('agent-conn-abc123@openknowledge.local');
+  });
+
+  test('local undo origin with session_id → agent-<sessionId> writer', () => {
+    const origin = {
+      source: 'local',
+      skipStoreHooks: false,
+      context: { origin: 'agent-undo', paired: true, session_id: 'conn-xyz789' },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer?.id).toBe('agent-conn-xyz789');
+  });
+
+  test('local file-watcher origin → FILE_SYSTEM_WRITER', () => {
+    const origin = {
+      source: 'local',
+      skipStoreHooks: true,
+      context: { origin: 'file-watcher', paired: true },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).toEqual(FILE_SYSTEM_WRITER);
+  });
+
+  test('local upstream-import origin → GIT_UPSTREAM_WRITER', () => {
+    const origin = {
+      source: 'local',
+      context: { origin: 'upstream-import' },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).toEqual(GIT_UPSTREAM_WRITER);
+  });
+
+  test('local rollback-apply origin (no session_id) → SERVICE_WRITER', () => {
+    const origin = {
+      source: 'local',
+      skipStoreHooks: false,
+      context: { origin: 'rollback-apply', paired: true },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).toEqual(SERVICE_WRITER);
+  });
+
+  test('connection origin with principalId → principal writer', () => {
+    const principalId = 'principal-6f3a9c8b-4e2d-49f1-ac3a-7e8d12c9a0b3';
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId } },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).not.toBeNull();
+    expect(writer?.id).toBe(principalId);
+    expect(writer?.email).toBe(`${principalId}@openknowledge.local`);
+  });
+
+  test('connection origin without principalId → SERVICE_WRITER', () => {
+    const origin = { source: 'connection', connection: { context: {} } };
+    const writer = resolveWriterFromOrigin(origin);
+    expect(writer).toEqual(SERVICE_WRITER);
+  });
+
+  test('null origin → null', () => {
+    expect(resolveWriterFromOrigin(null)).toBeNull();
+  });
+
+  test('undefined origin → null', () => {
+    expect(resolveWriterFromOrigin(undefined)).toBeNull();
+  });
+
+  test('non-object origin → null', () => {
+    expect(resolveWriterFromOrigin('string-origin')).toBeNull();
+  });
+
+  test('local origin with no context → null', () => {
+    expect(resolveWriterFromOrigin({ source: 'local' })).toBeNull();
+  });
+
+  test('session_id takes precedence over context.origin in local origin', () => {
+    const origin = {
+      source: 'local',
+      context: { origin: 'agent-write', session_id: 'conn-priority' },
+    };
+    const writer = resolveWriterFromOrigin(origin);
+    // session_id path wins over classified-origin path
+    expect(writer?.id).toBe('agent-conn-priority');
+  });
+
+  test('connection origin matching loaded principal → uses real display_name/email', () => {
+    // Post-QA review fix — Minor 1 (principal-display-name-stub).
+    // When ctx.principalId matches loadedPrincipal.id, resolveWriterFromOrigin
+    // must emit the real git-config display_name/email instead of "Local User".
+    const principalId = 'principal-abc-123';
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId } },
+    };
+    const loaded = {
+      id: principalId,
+      display_name: 'Alice Smith',
+      display_email: 'alice@example.com',
+      source: 'git-config' as const,
+      created_at: '2026-04-22T00:00:00.000Z',
+    };
+    const writer = resolveWriterFromOrigin(origin, () => loaded);
+    expect(writer?.id).toBe(principalId);
+    expect(writer?.name).toBe('Alice Smith');
+    expect(writer?.email).toBe('alice@example.com');
+  });
+
+  test('connection origin with mismatched principalId → stub fallback', () => {
+    // Claim doesn't match loaded principal — emit stub so the caller can see
+    // the attribution fell through (the onAuthenticate pin prevents this in
+    // practice, but resolveWriterFromOrigin should still be safe if reached).
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId: 'principal-different' } },
+    };
+    const loaded = {
+      id: 'principal-loaded',
+      display_name: 'Alice',
+      display_email: 'alice@example.com',
+      source: 'git-config' as const,
+      created_at: '2026-04-22T00:00:00.000Z',
+    };
+    const writer = resolveWriterFromOrigin(origin, () => loaded);
+    expect(writer?.id).toBe('principal-different');
+    expect(writer?.name).toBe('Local User');
+  });
+
+  test('connection origin with getPrincipal returning null → stub fallback', () => {
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId: 'principal-abc' } },
+    };
+    const writer = resolveWriterFromOrigin(origin, () => null);
+    expect(writer?.name).toBe('Local User');
   });
 });

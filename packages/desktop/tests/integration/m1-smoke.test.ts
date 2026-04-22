@@ -272,4 +272,104 @@ describe('M1 smoke', () => {
       );
     }
   });
+
+  test('M1 invariant: KeyringSmokeResult shape drift catcher (M5)', async () => {
+    // Walks the `KeyringSmokeResult` (desktop utility source), and
+    // `OkKeyringSmokeResult` (core + app mirror) interfaces and asserts the
+    // three copies declare the SAME field-name set. Field names carry the
+    // contract — drift (e.g., a future contributor adds `attempts?: number`
+    // to one copy only) fails this test and surfaces which file is missing
+    // what. Complements the `OkDesktopBridge` drift catcher above; both
+    // shapes cross the preload boundary and renaming either triplicates risk.
+    const desktopSmokeSrcPath = join(__dirname, '..', '..', 'src', 'utility', 'keyring-smoke.ts');
+    const corePath = join(__dirname, '..', '..', '..', 'core', 'src', 'desktop-bridge.ts');
+    const appPath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'app',
+      'src',
+      'lib',
+      'desktop-bridge-types.ts',
+    );
+    const { readFileSync } = await import('node:fs');
+
+    /**
+     * Extract the top-level field names from a named interface declaration.
+     * Same brace-depth walk as `extractBridgeMembers` above, parameterised
+     * over the interface name so one helper covers the `KeyringSmokeResult`
+     * and `OkKeyringSmokeResult` variants.
+     */
+    const extractInterfaceFields = (src: string, interfaceName: string): Set<string> => {
+      const names = new Set<string>();
+      const lines = src.split('\n');
+      const declRegex = new RegExp(`interface\\s+${interfaceName}\\s*\\{`);
+      let inInterface = false;
+      let depth = 0;
+      for (const line of lines) {
+        if (!inInterface) {
+          if (declRegex.test(line)) {
+            inInterface = true;
+            depth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+          }
+          continue;
+        }
+        const opens = (line.match(/\{/g) ?? []).length;
+        const closes = (line.match(/\}/g) ?? []).length;
+        if (depth === 1) {
+          const trimmed = line.trim();
+          const memberMatch = trimmed.match(/^(?:readonly\s+)?(\w+)\s*[:?]/);
+          if (memberMatch?.[1]) names.add(memberMatch[1]);
+        }
+        depth += opens - closes;
+        if (depth === 0) break;
+      }
+      return names;
+    };
+
+    const desktopFields = extractInterfaceFields(
+      readFileSync(desktopSmokeSrcPath, 'utf-8'),
+      'KeyringSmokeResult',
+    );
+    const coreFields = extractInterfaceFields(
+      readFileSync(corePath, 'utf-8'),
+      'OkKeyringSmokeResult',
+    );
+    const appFields = extractInterfaceFields(
+      readFileSync(appPath, 'utf-8'),
+      'OkKeyringSmokeResult',
+    );
+
+    // Guardrail — all three extractions must find fields.
+    expect(desktopFields.size).toBeGreaterThan(0);
+    expect(coreFields.size).toBeGreaterThan(0);
+    expect(appFields.size).toBeGreaterThan(0);
+
+    const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
+    const desktopMinusCore = diff(desktopFields, coreFields);
+    const coreMinusDesktop = diff(coreFields, desktopFields);
+    const desktopMinusApp = diff(desktopFields, appFields);
+    const appMinusDesktop = diff(appFields, desktopFields);
+
+    if (
+      desktopMinusCore.length +
+        coreMinusDesktop.length +
+        desktopMinusApp.length +
+        appMinusDesktop.length >
+      0
+    ) {
+      throw new Error(
+        [
+          'KeyringSmokeResult / OkKeyringSmokeResult shape drift across the three copies:',
+          `  desktop has but core missing:  [${desktopMinusCore.join(', ')}]`,
+          `  core has but desktop missing:  [${coreMinusDesktop.join(', ')}]`,
+          `  desktop has but app missing:   [${desktopMinusApp.join(', ')}]`,
+          `  app has but desktop missing:   [${appMinusDesktop.join(', ')}]`,
+          '',
+          'Fix: update the missing files so all three copies agree on the field set.',
+        ].join('\n'),
+      );
+    }
+  });
 });

@@ -119,7 +119,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Twenty-five numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across \~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Twenty-seven numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -144,8 +144,10 @@ Twenty-five numbered rules govern how work lands in this repo. Code comments cit
 21. **Ancestor-priority for auto-revealing tree-state derivations** — Auto-reveal + user-toggle merge shape
 22. **Shell-script conventions for repo tooling** — Six sub-rules for bash library code
 23. **Async socket errors at the boundary** — Classify EPIPE/ECONNRESET at upgrade; no userspace pre-filter
-24. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
-25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
+24. **Per-session actor identity at the CRDT origin layer** — Each session creates a frozen `LocalTransactionOrigin`; `extractAgentIdentity` is the canonical entry point; `session.dc.document.transact(fn, session.origin)` is mandatory
+25. **Classified writer IDs + subject-prefix action encoding** — Shadow refs keyed by `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`; commit subjects prefixed `wip:`, `checkpoint:`, `reconcile:`, etc.
+26. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
+27. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -175,7 +177,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
-- `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/types/awareness.ts` — AwarenessState, AwarenessUser, AgentFlashEntry (renamed from `ActivityEntry` per D57), AgentFocusEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
 - `src/desktop-bridge.ts` — `OkDesktopBridge` interface — canonical shape of the Electron `window.okDesktop` surface. Documentation anchor; desktop's runtime consumer is a duplicated copy in `packages/desktop/src/shared/bridge-contract.ts` (see Package: desktop for why the duplication is deliberate)
@@ -190,10 +192,10 @@ Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, sh
 
 ```
 Hocuspocus Server
-├── Persistence Extension (CRDT → markdown → disk → shadow git)
+├── Persistence Extension (CRDT → markdown → disk → history git)
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Server Observer Extension (server-authoritative cross-CRDT sync — precedent #14)
-├── Agent Sessions (DirectConnection + UndoManager per agent)
+├── Agent Sessions (DirectConnection + per-session UndoManager per (docName, agentId))
 ├── Content Filter (gitignore + config exclude/include filtering)
 ├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
@@ -223,13 +225,35 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 
 ### Shadow repo & branch runtime
 
-The shadow repo is a bare git repo at `<projectRoot>/.git/open-knowledge/`. It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store. Projects that lack `.git/` are auto-init'd by `ensureProjectGit` (SPEC 2026-04-21-shadow-repo-single-mode R2 / D12) before any shadow op runs — this is a fail-fast entrypoint, not a degraded-mode fallback. Legacy `.git/openknowledge/` shadows from pre-spec installs are silently renamed in place on first run (R9 shim in `initShadowRepo`).
+The shadow repo is a bare git repo at `<projectRoot>/.git/open-knowledge/` (SPEC 2026-04-21-shadow-repo-single-mode). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store. Projects that lack `.git/` are auto-init'd by `ensureProjectGit` (R2 / D12) before any shadow op runs — this is a fail-fast entrypoint, not a degraded-mode fallback. Legacy `.git/openknowledge/` shadows from pre-spec installs are silently renamed in place on first run (R9 shim in `initShadowRepo`).
 
 **Branch-scoped state:** `reconciledBase` (the three-way merge base) is `Map<branch, Map<docName, string>>`. On branch switch, the active scope switches to the target branch's map. WIP refs are namespaced as `refs/wip/<branch>/<writer-id>`.
 
-**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to shadow refs via `parkBranch()`. On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+**Writer-ID taxonomy (D7, D8, D34, precedent #25).** Every history commit is authored by exactly one classified writer ID. Five categories:
 
-**Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
+| Writer ID | Display name | Email | Source |
+|---|---|---|---|
+| `agent-<connectionId>` | `<agent_type_display> (<short-id>)` e.g. `Claude (a4f2)` | `agent-<connectionId>@openknowledge.local` | MCP subprocess session |
+| `<principalId>` (= `principal-<UUID>`) | `<principal.display_name>` | `<principal.display_email>` | Browser principal (D34 — `human-` prefix dropped) |
+| `file-system` | `File System` | `file-system@openknowledge.local` | Direct disk edit reconciled via file-watcher |
+| `git-upstream` | `Git (upstream)` | `git@openknowledge.local` | Project-repo HEAD-move import |
+| `openknowledge-service` | `Open Knowledge (service)` | `service@openknowledge.local` | Service-level fallback (park snapshots, migrations) |
+
+Subject-prefix action encoding (FR-13, D53): `wip:`, `checkpoint:`, `reconcile:`, `import:`, `park:`, `rollback:`, `rename:` — each commit subject starts with one of these and includes the target doc path / short SHA for `git log` legibility. See `packages/core/src/shadow-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor`.
+
+**Structured `ok-actor:` commit body (FR-8, D13).** Every history commit body includes one `ok-actor:` JSON line per contributing actor:
+
+```
+ok-actor: {"v":1,"principal":"principal-6f3a...","agent_session":"conn-abc","agent_type":"claude","client_name":"claude-code","client_version":"1.5.2","label":null,"display_name":"Claude (a4f2)","color_seed":"claude-code","docs":["notes.md"]}
+```
+
+Parsed by `parseOkActor` in `shadow-repo-layout.ts`; renders back to the Timeline UI.
+
+**L2 drain per-writer fan-out (FR-7, D38).** At the persistence L2 debounce, `contributor-tracker.swapContributors()` drains a snapshot, the loop emits one `commitWip(history, writer, ...)` per distinct writer. All per-writer commits in the same drain share the same tree SHA but have distinct commit SHAs + distinct author/committer/body. Per-writer failure restores only that writer's entries via `restoreContributorEntry()` (no global all-or-nothing).
+
+**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to history refs via `parkBranch()` under the `openknowledge-service` writer (D58 — per-session park deferred). On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+
+**Writer lock:** Only one active writer instance may mutate a given history root. The lock file at `<historyDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
 
 ### `bootServer` — canonical HTTP-wrapping entry point
 
@@ -257,7 +281,7 @@ One `createServer()` instance at a time per content directory. The lock file at 
 
 `bun run dev` (Vite plugin) and `open-knowledge start` share this lock, so running both against the same content directory fails the second invocation fast. Different content directories are unaffected.
 
-**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
+**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release history lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
 
 ### Symlinks
 
@@ -287,11 +311,9 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/agent-write`            | Agent write via Y.Text                                                                                                                                              |
 | POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                                                                                                            |
 | POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated                                                                                                    |
-| POST   | `/api/agent-undo`             | Undo last agent edit (agent-write origin only)                                                                                                                      |
-| POST   | `/api/agent-redo`             | Redo last undone agent edit                                                                                                                                         |
-| GET    | `/api/agent-undo-status`      | Check canUndo/canRedo                                                                                                                                               |
+| POST   | `/api/agent-undo`             | Per-session Y.UndoManager undo; body `{ connectionId, scope: 'last' \| 'session' }` (FR-4, V0-14)                                                                    |
 | POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                                                                                                              |
-| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                                                                                                              |
+| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint (FR-9: Co-Authored-By trailers, principal author)                                                            |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park)                                                                                           |
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)                                                                                                    |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)                                                                                                 |
@@ -302,20 +324,25 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 ### Key files
 
 - `src/standalone.ts` — `createServer()` factory; wires HEAD watcher callbacks (park on BatchBegin, reconcile/restore on BatchEnd)
-- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
+- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating; `onStoreDocument` destructures `lastTransactionOrigin` + `lastContext` and routes the commit to the matching session's writer-ID at L2 drain (FR-16)
 - `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
 - `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
 - `src/server-lock.ts` — `acquireServerLock()` / `updateServerLockPort()` / `readServerLock()` / `releaseServerLock()` + `ServerLockCollisionError`. One server per contentDir; advertises real port for MCP discovery
 - `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock and server-lock
 - `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
-- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
+- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection, per-writer TTL (30d for session writers, never for classified writers per D54; FR-18)
+- `src/contributor-tracker.ts` — per-doc contributor snapshot drained at L2 debounce; broadened first-arg semantics from "agentId" to "writerId" so `applyExternalChange` records `file-system` writer without a new function (D41)
+- `src/principal.ts` — `loadOrCreatePrincipal(contentDir)` — stable-UUID + git-config display for the browser-principal identity (FR-10, D9); persists to `.open-knowledge/principal.json`
+- `src/activity-log.ts` — bounded `Y.Map('agent-effects')` ring-buffer (50 entries per doc, oldest-by-timestamp eviction; D49, FR-11). Captures `YTextEvent.delta` per agent transact inside the paired-write drain — no server-side store, no CC1, no REST
+- `src/agent-sessions.ts` — `AgentSessionManager` class; `getSession(docName, agentId, identity)` creates per-session `LocalTransactionOrigin` + per-session `Y.UndoManager` scoped across `[Y.Text('source'), Y.Map('metadata'), Y.Map('agent-flash')]` with `trackedOrigins = new Set([session.origin])` + `ignoreRemoteMapChanges: true` (D3, D25); `applyAgentMarkdownWrite`; `applyAgentUndo(session, scope)` under `session.undoOrigin` (per-session, distinct from `session.origin`; V0-14, precedent #10, #24); `closeAllForAgent(connectionId)` is the teardown primitive wired to keepalive-WS close (boot.ts:263) with 30s grace (D28)
+- `src/agent-focus.ts` — AgentFocus push-nav broadcaster keyed by session; `AgentFocusEntry.writeKind` extends to `'write' | 'edit' | 'undo' | 'rollback-apply' | null` (D43)
+- `src/git-identity-sanitize.ts` — shared `sanitizeGitIdentity()` utility; strips `<>`, CRLF, trims + slices to 128 chars (D36). Applied at `extractAgentIdentity` + principal.json → WriterIdentity boundaries
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
-- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
-- `src/agent-sessions.ts` — `AgentSessionManager` class
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin; records `file-system` classified writer via `contributor-tracker` (D41, FR-6)
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, metrics, and installed-agents endpoints
+- `src/api-extension.ts` — HTTP API; `extractAgentIdentity(body)` is the canonical identity boundary every mutating POST handler calls at entry before any Y.Doc mutation (FR-5, D42, precedent #24). Includes save-version, rescue buffer, link-graph, agent-undo, metrics, and installed-agents endpoints. Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and asserts every POST handler calls `extractAgentIdentity` or is on the explicit allowlist.
 - `src/handoff-api.ts` — `GET /api/installed-agents` handler + per-OS install probes (`osascript` / `reg query` / `xdg-mime`) + per-scheme 60 s cache with in-flight dedup. Web-host parity for the Electron `ok:shell:detect-protocol` IPC
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
@@ -372,7 +399,8 @@ Y.Doc
 ├── Y.XmlFragment('default')  ← TipTap binds here
 ├── Y.Text('source')          ← CodeMirror binds here via y-codemirror.next
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution side-channel
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57 rename of legacy 'activity')
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49; 50 entries total per doc)
 
 Cross-CRDT sync (server-authoritative — precedent #14):
   Server Observer A: XmlFragment → Y.Text  (origin: OBSERVER_SYNC_ORIGIN)
@@ -415,9 +443,9 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 ### Presence & awareness
 
 - Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
-- Agent activity flash via Y.Map('activity') → CSS @keyframes
-- Per-origin undo via server-side UndoManager
-- Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
+- Agent activity flash via `Y.Map('agent-flash')` → CSS @keyframes (D57 rename of legacy `Y.Map('activity')`)
+- Per-session undo via per-session `Y.UndoManager` (precedent #24, D3, D25). `session.um.undo()` reverts only that session's last transaction; cross-session undo is scoped by `trackedOrigins = new Set([session.origin])` identity match
+- Agent writes use `session.dc.document.transact(fn, session.origin)` (precedent #24, D32) — never `session.dc.transact(fn)` (covered by STOP rule in §Known Pitfalls)
 - Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
 
 ### Theming
@@ -478,7 +506,7 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 
 ## Package: desktop
 
-Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 + M2 signed-DMG scaffolding + M3 auto-update scaffolding + M4 `openknowledge://` URL scheme shipped** (M2: fuses flip, afterSign notarize+staple+verify, electron-builder hook wiring, `workflow_dispatch` CI; M3: `electron-updater@6.8.4` main-process module, 4 AppState fields, 3 IPC events + 1 request, `UpdateToast` renderer, release-event-triggered `desktop-release.yml`; M4: `openknowledge://` URL-scheme deep-linking end-to-end on macOS — parser, queue-then-flush handler, `OK_ELECTRON_PROTOCOL_HOST=1` utility-fork injection, MCP preview-URL branch, renderer hash listener, warm-start Playwright smoke). M2 end-state DOD (Universal DMG green end-to-end under real Apple creds) is blocked on the bun-workspace universal-merge SHA-parity gap — see [`specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md`](specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md) §6. M3 end-state DOD (AC15 install-on-quit round-trip + AC16 J7a kill-mid-download retry smoke) is creds-gated on M2 publishing a signed DMG — see [`specs/2026-04-21-m3-electron-updater/SPEC.md`](specs/2026-04-21-m3-electron-updater/SPEC.md). M4 spec at [`specs/2026-04-21-m4-url-scheme/SPEC.md`](specs/2026-04-21-m4-url-scheme/SPEC.md) + [`packages/desktop/README.md`](packages/desktop/README.md) §Deep linking. Keyring Device Flow, MCP first-launch wiring, CLI-on-PATH menu item remain deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 (M5–M7) for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
+Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 + M2 signed-DMG scaffolding + M3 auto-update scaffolding + M4 `openknowledge://` URL scheme + M5 keyring packaged-E2E verification layer shipped** (M2: fuses flip, afterSign notarize+staple+verify, electron-builder hook wiring, `workflow_dispatch` CI; M3: `electron-updater@6.8.4` main-process module, 4 AppState fields, 3 IPC events + 1 request, `UpdateToast` renderer, release-event-triggered `desktop-release.yml`; M4: `openknowledge://` URL-scheme deep-linking end-to-end on macOS — parser, queue-then-flush handler, `OK_ELECTRON_PROTOCOL_HOST=1` utility-fork injection, MCP preview-URL branch, renderer hash listener, warm-start Playwright smoke; M5: utility-process `runKeyringSmoke`, main↔utility debug IPC relay with correlation-ID Map, boot-time auto-smoke mode, unsigned-DMG driver script, 11-step signed runbook — AC1–AC3 + AC8–AC10 green; AC4–AC7 creds-gated on Apple Developer credentials per [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md)). M2 end-state DOD (Universal DMG green end-to-end under real Apple creds) is blocked on the bun-workspace universal-merge SHA-parity gap — see [`specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md`](specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md) §6. M3 end-state DOD (AC15 install-on-quit round-trip + AC16 J7a kill-mid-download retry smoke) is creds-gated on M2 publishing a signed DMG — see [`specs/2026-04-21-m3-electron-updater/SPEC.md`](specs/2026-04-21-m3-electron-updater/SPEC.md). M4 spec at [`specs/2026-04-21-m4-url-scheme/SPEC.md`](specs/2026-04-21-m4-url-scheme/SPEC.md) + [`packages/desktop/README.md`](packages/desktop/README.md) §Deep linking. MCP first-launch wiring and CLI-on-PATH menu item (M6) + Windows/Linux parity (M7) remain deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
 
 ### Process model
 
@@ -487,25 +515,45 @@ One editor BrowserWindow ↔ one `utilityProcess.fork` ↔ one `createServer` �
 ### Key files
 
 - `packages/desktop/src/main/index.ts` — app lifecycle, single-instance lock, menu bar, `runClean` on boot
-- `packages/desktop/src/main/window-manager.ts` — `createProjectWindow` spawns BrowserWindow + utility, tracks `Map<BrowserWindow, ProjectContext>`, collision dispatch
+- `packages/desktop/src/main/window-manager.ts` — `createProjectWindow` spawns BrowserWindow + utility, tracks `Map<BrowserWindow, ProjectContext>`, collision dispatch, routes `ok:debug:keyring-smoke` to the per-window utility
 - `packages/desktop/src/main/navigator-window.ts` — `createNavigatorWindow` persistent launcher
 - `packages/desktop/src/main/state-store.ts` — electron-store wrapper for recents + window bounds (Zod-validated, corrupt-file recovery)
 - `packages/desktop/src/main/shell-allowlist.ts` — `shell.openExternal` scheme allowlist (D47 + Open-in-Agent: `https | http | mailto | openknowledge | claude | codex | cursor`); `handleShellOpenExternal({ openExternal })` factory is pure + unit-testable (M4 US-008). Drift-detector test in `tests/main/shell-allowlist.test.ts` imports `KNOWN_TARGETS` and fails if a target's scheme is missing from `ALLOWED_SCHEMES`.
 - `packages/desktop/src/main/ipc-handlers.ts` — pure injectable handlers for three Open-in-Agent channels: `detectProtocol` (macOS+Windows `getApplicationInfoForProtocol`, Linux `xdg-mime` fallback, 2 s timeout), `spawnCursor` (resolves binary via Electron's info-for-protocol path → `which cursor` fallback → argv spawn with `shell:false`), `recordHandoff` (append-only JSONL writer to `~/.open-knowledge/stats.jsonl`)
 - `packages/desktop/src/main/url-scheme.ts` — M4: `parseOpenKnowledgeUrl` (pure, exported for unit tests) + `registerProtocolHandler({ app, focusWindowForProject, openProject, sendDeepLink, getAnyReadyWindow, ... })` implements the VS Code queue-then-flush pattern (10 × 500 ms retries) so macOS cold-start Apple Events are never lost. Dev-mode branch calls `setAsDefaultProtocolClient('openknowledge')`. Called synchronously at top of `main/index.ts`, BEFORE `whenReady` (electron/electron#32600).
 - `packages/desktop/src/main/utility-fork-env.ts` — M4: `buildUtilityForkEnv()` injects `OK_ELECTRON_PROTOCOL_HOST=1` into every `utilityProcess.fork({ env })` call. This is the flag the CLI's `preview-url.ts` reads to emit `openknowledge://` URLs instead of HTTP for MCP tool responses. CLI / bunx never set the flag.
-- `packages/desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('okDesktop', ...)` with preload-side listener wrappers (electron/electron#33328); includes `onDeepLink` subscriber (M4)
-- `packages/desktop/src/utility/server-entry.ts` — `bootServer({ attachUiSibling: false, idleShutdownMs: null })` + IPC handshake + macOS poll-based parent-death detection (D49)
-- `packages/desktop/src/shared/{ipc-channels,ipc-events,ipc-handler,ipc-invoke}.ts` — typed IPC channel map (D14 hand-rolled, no tRPC); `ok:deep-link` event channel added for M4
-- `packages/desktop/src/shared/bridge-contract.ts` — desktop-local copy of `OkDesktopBridge` (canonical shape in `@inkeep/open-knowledge-core/src/desktop-bridge.ts` — duplication is deliberate; see README); includes `onDeepLink` after M4
+- `packages/desktop/src/main/debug-ipc.ts` — M5 main↔utility debug IPC relay; correlation-ID `Map<id, {resolve,reject,timer}>` with a default 10 s timeout and clean-on-resolve teardown. Substrate for renderer-facing `ok:debug:keyring-smoke` round-trip; only wired up when the runtime gate allows it (dev mode OR `OK_DEBUG_KEYRING_SMOKE=1` in the launching env).
+- `packages/desktop/src/main/driver-boot-smoke.ts` — M5 main-side bridge to the utility auto-smoke. `runDriverBootSmoke({ fork, quit, setTimeout })` short-circuits `app.whenReady()` on the strict conjunctive env gate (`OK_DEBUG_KEYRING_SMOKE='1' && OK_DEBUG_KEYRING_SMOKE_EXIT='1'`) — forks a standalone utility and quits on child exit. Load-bearing for AC8: without it, the packaged-DMG driver can never reach the utility auto-smoke because main opens Navigator on fresh install.
+- `packages/desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('okDesktop', ...)` with preload-side listener wrappers (electron/electron#33328); includes `onDeepLink` subscriber (M4) and exposes the optional `debug?: { keyringSmoke() }` namespace only when the M5 runtime gate allows.
+- `packages/desktop/src/utility/server-entry.ts` — `bootServer({ attachUiSibling: false, idleShutdownMs: null })` + IPC handshake + macOS poll-based parent-death detection (D49) + M5 debug-request dispatcher (`{ kind: 'debug-request' }`) + boot-time keyring auto-smoke gated on `OK_DEBUG_KEYRING_SMOKE` (writes `KeyringSmokeResult` JSON to `OK_DEBUG_KEYRING_SMOKE_OUT`; exits 0 post-write when `OK_DEBUG_KEYRING_SMOKE_EXIT=1`)
+- `packages/desktop/src/utility/keyring-smoke.ts` — M5 `runKeyringSmoke(deps?)` primitive. Namespace-scoped round-trip (`open-knowledge-smoke` / `test-user`) via `@napi-rs/keyring`, cleans up via `deletePassword` on success. `deps` injection enables unit coverage of the YAML-fallback branch without touching the production substrate (SPEC §9 SCOPE lock). Returns `KeyringSmokeResult = { ok, backend, durationMs, timestamp, error? }`.
+- `packages/desktop/src/shared/{ipc-channels,ipc-events,ipc-handler,ipc-invoke}.ts` — typed IPC channel map (D14 hand-rolled, no tRPC); `ok:deep-link` event channel added for M4; M5 added `ok:debug:keyring-smoke` to `RequestChannels`.
+- `packages/desktop/src/shared/bridge-contract.ts` — desktop-local copy of `OkDesktopBridge` (canonical shape in `@inkeep/open-knowledge-core/src/desktop-bridge.ts` — duplication is deliberate; see README); includes `onDeepLink` after M4; M5 added the optional `debug?: { keyringSmoke(): Promise<KeyringSmokeResult> }` namespace.
 - `packages/app/src/components/NavigatorApp.tsx` — React component rendered when `window.okDesktop?.config.mode === 'navigator'`
 - `packages/app/src/lib/use-collab-url.ts` — short-circuits on `window.okDesktop?.config.collabUrl` before the `/api/config` poll path
 - `packages/app/src/lib/install-deep-link-listener.ts` — M4: module-init subscriber wired in `main.tsx` before React mount; on `ok:deep-link` events, sets `window.location.hash = '#/' + encodeURIComponent(doc)` so the existing hash-route listener opens the target doc. No-op in web/CLI (`window.okDesktop` undefined).
+- `packages/app/src/lib/desktop-bridge-types.ts` — M5: app-side mirror of the bridge shape (same deliberate duplication as `packages/desktop/src/shared/bridge-contract.ts`; `OkKeyringSmokeResult` type surfaces here for renderer consumers)
 - `packages/cli/src/mcp/tools/preview-url.ts` — M4: highest-precedence `electron-protocol` source emits `openknowledge://open?project=<realpath>&doc=<docName>` when `OK_ELECTRON_PROTOCOL_HOST=1` + `ctx.contentDir` resolvable; falls through to env/lock/config otherwise
+- `scripts/verify-keyring-in-packaged-dmg.mjs` — M5 driver for creds-free pre-flight. Accepts an `.app` or `.dmg`, launches the packaged app with the `OK_DEBUG_KEYRING_SMOKE*` env triplet, parses the `KeyringSmokeResult` JSON, exits `0` on ok / `1` on smoke failure / `2` on boot timeout / `3` on pre-smoke crash.
+- `packages/desktop/tests/smoke/keyring-e2e.md` — M5 11-step creds-gated manual runbook for AC4–AC7 (signed-DMG CFBundleDisplayName prompt, relaunch persistence, v0.1.0→v0.1.1 upgrade persistence, `log show` caller-attribution)
 
 ### IPC discipline (D19)
 
 Never call `ipcMain.handle` / `ipcRenderer.invoke` directly. Use `createHandler` / `createInvoker` from `packages/desktop/src/shared/ipc-*.ts`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` fails lint on violations. Allowlist (wrapper implementations themselves): `src/shared/ipc-handler.ts`, `src/shared/ipc-invoke.ts`, `src/preload/index.ts`.
+
+### Debug IPC + keyring smoke (M5)
+
+The `window.okDesktop.debug?.keyringSmoke()` surface is the only renderer-facing debug primitive and it is **gated at preload time**. The gate is `!app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1'` — in normal packaged runs, `window.okDesktop.debug` is `undefined`, and a typo like `window.okDesktop.debug.keyringSmoke()` surfaces at TypeScript compile time, not at runtime. The renderer→main→utility relay lives in `packages/desktop/src/main/debug-ipc.ts` (correlation-ID `Map<id, {resolve,reject,timer}>` with a 5 s default timeout; `clearTimeout` fires on both resolve and timeout paths so the Map stays bounded).
+
+Three env vars drive boot-time auto-smoke for the creds-free DMG verification path (used by `scripts/verify-keyring-in-packaged-dmg.mjs`):
+
+| Env var | Effect |
+|---|---|
+| `OK_DEBUG_KEYRING_SMOKE=1` | Utility runs `runKeyringSmoke()` at boot, before the `init` IPC handshake. Also opens the renderer-facing `debug` bridge. |
+| `OK_DEBUG_KEYRING_SMOKE_OUT=<path>` | Writes the `KeyringSmokeResult` JSON to `<path>` (driver reads it). Both `runKeyringSmoke` and the debug-IPC dispatcher respect it. |
+| `OK_DEBUG_KEYRING_SMOKE_EXIT=1` | After the result is written, the utility exits `0` immediately. Lets the driver distinguish "pre-smoke crash" (exit without file) from "smoke ok" (exit with file). |
+
+The smoke key is namespace-scoped (`open-knowledge-smoke` / `test-user`) so it never collides with production tokens (`open-knowledge` / `<github-host>`). `runKeyringSmoke` wipes the smoke entry via `deletePassword` on success.
 
 ### Running locally
 
@@ -515,6 +563,7 @@ bun run --filter=@inkeep/open-knowledge-desktop dev        # macOS, opens Naviga
 bun run build:desktop                                     # electron-vite build (no DMG)
 bun run --cwd packages/desktop build:mac:unsigned         # Local unsigned DMG smoke (see packages/desktop/README.md §M2)
 bun run --cwd packages/desktop build:mac                  # Signed + notarized DMG (requires CSC_LINK + APPLE_* creds)
+node scripts/verify-keyring-in-packaged-dmg.mjs <app|dmg>  # M5 creds-free smoke against a packaged build (exit 0/1/2/3)
 ```
 
 ## CRDT Bridge Architecture
@@ -531,7 +580,8 @@ Y.Doc
 │  Client observers: baseline tracking only (cross-CRDT write paths deleted)
 │
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
 ```
 
 ### Three invariants
@@ -542,13 +592,13 @@ Y.Doc
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
-| Write Surface             | → Y.Text                                                             | → XmlFragment                     | → Disk               |
-| ------------------------- | -------------------------------------------------------------------- | --------------------------------- | -------------------- |
-| W1: WYSIWYG (XmlFragment) | Server Observer A                                                    | (direct)                          | Persistence debounce |
-| W2: Source (Y.Text)       | (direct)                                                             | Server Observer B                 | Persistence debounce |
-| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket)                      | applyAgentMarkdownWrite on server | Persistence debounce |
-| W4: Disk (file watcher)   | applyExternalChange                                                  | applyExternalChange               | (direct)             |
-| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14)            | Persistence debounce |
+| Write Surface             | → Y.Text                                                                | → XmlFragment                     | → Disk               |
+| ------------------------- | ----------------------------------------------------------------------- | --------------------------------- | -------------------- |
+| W1: WYSIWYG (XmlFragment) | Server Observer A                                                       | (direct)                          | Persistence debounce |
+| W2: Source (Y.Text)       | (direct)                                                                | Server Observer B                 | Persistence debounce |
+| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket)                         | applyAgentMarkdownWrite on server | Persistence debounce |
+| W4: Disk (file watcher)   | applyExternalChange                                                     | applyExternalChange               | (direct)             |
+| W5: Agent Undo            | applyAgentUndo (per-session, XmlFragment-authoritative — precedent #10) | applyAgentUndo on server          | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -594,7 +644,7 @@ Y.Doc
 - File: `packages/server/src/agent-sessions.ts`
 - **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
 - Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyFastDiff` (character-level DMP `diff_main`; minimal mutation, preserves non-agent Y.Text Items and their origins). See `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` for the reference implementation.
-- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
+- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. Both `applyAgentMarkdownWrite` and the landed `applyAgentUndo` follow this template; any new agent write surface must too (see the agent-undo contract STOP rule below and `evidence/bug-d-mechanism.md`).
 
 ### Origin-guard truth table
 
@@ -687,7 +737,7 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 
 - `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
 - `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
-- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
+- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — unskipped with V0-14 landed (FR-10); covers the post-undo XmlFragment-authoritative rebuild under concurrent user typing.
 
 **Mutation validation gates (server-authoritative bridge, US-012):**
 
@@ -805,7 +855,8 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** Do NOT call `session.dc.transact(fn)` in server-side agent code. Always use `session.dc.document.transact(fn, session.origin)` instead — the per-session frozen origin object must be passed explicitly so every Y.Doc transaction is attributed to the correct session (precedent #24, D32). Calling `dc.transact(fn)` omits the origin, causing persistence to route the write to `openknowledge-service` instead of the triggering session's writer ref, and breaking per-session undo (the UndoManager's `trackedOrigins` Set-identity match finds no match and silently skips the transaction).
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` + `applyAgentUndo` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Any future handler that mutates the Y.Doc on an agent's behalf must follow the same template — see `evidence/bug-d-mechanism.md` for the reference.
 - **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
@@ -814,16 +865,14 @@ No environment variables must be set by hand for any of these scenarios.
 - **STOP:** Do NOT remove or widen the typed paired-write marker (`LocalTransactionOrigin.context.paired`). Any new origin that atomically mutates BOTH Y.XmlFragment and Y.Text in a single `doc.transact(..., ORIGIN)` block MUST declare `context.paired: true` so Observer A + Observer B both short-circuit symmetrically (precedent #1 extension; bridge-correctness SPEC §6 R0). Adding such an origin without the marker re-surfaces the observer-layer amplification class that US-001/US-002 regression-tests T8/T9/T10 guard against.
 - **STOP:** Do not add Y.js observers, CRDT-update handlers, or awareness listeners inside an `<Activity>` subtree without accounting for hidden-mode CPU cost. Y.js observers are NOT React effects and do NOT pause when Activity flips to `hidden` — a hidden Activity entry with a live provider still processes every remote-peer update at full cost. If the cost matters (multi-client collaboration, large docs, remote Hocuspocus), bound the Activity-mount count explicitly via an `ACTIVITY_MOUNT_LIMIT`-style derivation (precedent #18(c); reference: `EditorActivityPool.computeActivityMountList`). For truly per-document observers, prefer wiring them off the pool (which is bounded independently) rather than off the editor component's mount lifecycle.
 - **STOP:** Do not replace the hybrid render tree (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) with a pure key-based remount pattern (e.g. `<Editor key={activeDocName} />`). The hybrid is load-bearing for the flash-free content-continuity UX delivered by SPEC G1-G2-G5 and precedent #18(b). If you need to add a new write surface, wrap it in its own `DocumentBoundary` (Suspense-ready) rather than short-circuiting the tree. See `packages/app/src/components/EditorArea.tsx` for the canonical shape.
-- **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
+- **STOP (agent-undo contract, landed V0-14 / US-009):** `applyAgentUndo(session, scope)` in `packages/server/src/agent-sessions.ts` is the only sanctioned server-side undo write surface. It must continue to satisfy all of the following — any regression reverts the attribution + bridge invariants that US-009 locks in:
+  1. **XmlFragment-authoritative composition** from `applyAgentMarkdownWrite` (precedent #10, #12). After `session.um.undo()`, Y.Text holds the post-undo state — parse → `updateYFragment` → mirror via `applyFastDiff`. Never rebuild XmlFragment from raw Y.Text (Bug-A/Bug-D anti-pattern).
+  2. **Fires under the per-session `session.undoOrigin`** (a `PairedWriteOrigin` with `context.origin: 'agent-undo'` and `paired: true`), distinct from `session.origin` (`'agent-write'`) and `OBSERVER_SYNC_ORIGIN`. Observer A/B short-circuit on `isPairedWriteOrigin` structural check. Per-session UM's `captureTransaction: tr => tr.origin !== session.undoOrigin` keeps undo-of-undo off the stack (D21 defense-in-depth).
+  3. **Fuzzer coverage** — `bridge-convergence.fuzz.test.ts` carries an `agent-undo` op kind + `WRITE_SURFACE_TO_OP_KIND` surface entry (FR-17, NFR-3). The conversion PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`) is the PR-blocking gate for conversion-class regressions — the fuzz suite is ad-hoc as of 2026-04-19 (`specs/2026-04-19-ci-signal-quality/`).
+  4. **No client-side cross-CRDT write paths** — precedent #14. Mutation G enforces the deletion; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
+  5. **Event-loop serialization** — `applyAgentUndo` runs as a single `doc.transact()` block; the observer fires are `setTimeout` callbacks on the same loop. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
 
-  1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
-  2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
-  3. **Extend the FR-17 fuzzer op set** (`packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) with an `agent-undo` op kind AND extend the conversion PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`) with a matching chain if the new surface traverses any of the conversion functions covered there. The D18 coverage gate (precedent #13(d)) fails `bun run measure:fuzz` until the fuzzer op is added; the fidelity PBT update is what makes the signal fire at PR tier. Both are required — the fuzzer sidesteps automated CI enforcement as of 2026-04-19 (`specs/2026-04-19-ci-signal-quality/`), so the fidelity PBT is the PR-blocking gate for conversion-class regressions.
-  4. **Do NOT re-add client-side cross-CRDT write paths** — even if convenient for client-side undo UX. Mutation G enforces that the deletion is load-bearing; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
-  5. **Depend on the event-loop serialization guarantee** from the server-authoritative spec §7a + A7 — `applyAgentUndo` runs as a synchronous `doc.transact()` block with the subsequent observer fires as `setTimeout` callbacks. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
-  6. **Unskip** `packages/app/tests/integration/bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` (skip-guarded per FR-10).
-
-  Reference template: `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` (lines 68-113). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`.
+  Reference implementation: `packages/server/src/agent-sessions.ts:applyAgentUndo` (paired with `applyAgentMarkdownWrite`). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`, `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` §8.4.
 
 ### WARN rules
 
@@ -1051,7 +1100,7 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Source code and everything else** (`.ts`, `.py`, `package.json`, …): native `Read` / `Grep` / `Glob`.
 
-**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow repo.
+**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
 

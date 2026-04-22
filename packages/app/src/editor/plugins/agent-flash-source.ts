@@ -1,7 +1,7 @@
 /**
  * Agent Flash Plugin — Source (CodeMirror)
  *
- * Observes Y.Map('activity') for new agent write entries and highlights
+ * Observes Y.Map('agent-flash') for new agent write entries and highlights
  * affected lines with a CSS animation (agent-flash class).
  *
  * Uses CodeMirror StateField + StateEffect pattern for flash decorations.
@@ -64,7 +64,7 @@ const flashField = StateField.define<DecorationSet>({
  * Creates a CodeMirror extension that flashes lines when agent activity is detected.
  */
 export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
-  const activityMap = doc.getMap('activity');
+  const activityMap = doc.getMap('agent-flash');
 
   const flashViewPlugin = ViewPlugin.define((view) => {
     let lastFlashTime = 0;

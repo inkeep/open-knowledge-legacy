@@ -361,6 +361,70 @@ describe('WindowManager', () => {
     expect(wm.getContextForBrowserWindow(stranger)).toBeUndefined();
   });
 
+  test('onUtilityMessage (when wired) receives post-init utility messages', async () => {
+    const observed: unknown[] = [];
+    env.deps.onUtilityMessage = (msg) => observed.push(msg);
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/post-init-listener' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52100, apiOrigin: 'http://localhost:52100' });
+    await p;
+
+    // Post-init message routes to the wired listener.
+    env.utilities[0]?.fire({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'cid-42',
+      result: { ok: true, backend: 'keyring', durationMs: 9, timestamp: '2026-04-21T00:00:00Z' },
+    });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'cid-42',
+    });
+  });
+
+  test('onUtilityMessage is not attached when not provided (no-op for back-compat)', async () => {
+    delete env.deps.onUtilityMessage;
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-listener' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52101, apiOrigin: 'http://localhost:52101' });
+    await p;
+    // Firing a debug result should not throw even without a listener wired.
+    expect(() =>
+      env.utilities[0]?.fire({
+        type: 'debug-keyring-smoke-result',
+        correlationId: 'x',
+        result: {},
+      }),
+    ).not.toThrow();
+  });
+
+  test('onUtilityExit (when wired) is invoked on utility exit with the utility ref', async () => {
+    const observed: unknown[] = [];
+    env.deps.onUtilityExit = (utility) => observed.push(utility);
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52200, apiOrigin: 'http://localhost:52200' });
+    await p;
+
+    const utilityRef = env.utilities[0];
+    env.utilities[0]?.fireExit(0);
+
+    expect(observed).toHaveLength(1);
+    // Identity match: consumer (debug-ipc) will use this to select pending
+    // entries for cleanup via ===.
+    expect(observed[0]).toBe(utilityRef);
+  });
+
+  test('onUtilityExit is not attached when not provided (no-op for back-compat)', async () => {
+    delete env.deps.onUtilityExit;
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52201, apiOrigin: 'http://localhost:52201' });
+    await p;
+    // Firing exit should not throw even without a listener wired.
+    expect(() => env.utilities[0]?.fireExit(1)).not.toThrow();
+  });
+
   // Attach-mode tests — D44 case (b) revised: when a live same-host server
   // already holds the lock (a running `ok start` CLI, another Electron
   // instance, etc.), reuse it instead of fighting over the lock.

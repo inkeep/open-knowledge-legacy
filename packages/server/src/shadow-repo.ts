@@ -14,15 +14,22 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
+  formatCheckpointSubject,
+  formatImportSubject,
+  formatOkActor,
+  formatParkSubject,
+  type OkActorEntry,
   type ParsedCheckpoint,
   parseCheckpoint,
+  parseWriterId,
   resolveShadowDir,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
+import { incrementShadowMigrationLegacyRefsDeleted } from './metrics.ts';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -102,10 +109,19 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
     await sg.raw('config', 'user.email', 'noreply@openknowledge.local');
   }
 
+  // NFR-6 / D35: allowlist-based sweep of legacy WIP refs on every start.
+  // Idempotent — no-op once all legacy refs are gone.
+  const handle: ShadowHandle = { gitDir: shadowDir, workTree: projectRoot };
+  await sweepLegacyShadowRefs(handle);
+
+  // Sweep orphaned temp-index files left behind by crashed `buildWipTree`
+  // calls from a prior process. Idempotent — no-op on a clean shutdown.
+  sweepOrphanedTmpIndexFiles(handle);
+
   // Acquire exclusive writer lock
   acquireLock(shadowDir, projectRoot);
 
-  return { gitDir: shadowDir, workTree: projectRoot };
+  return handle;
 }
 
 /**
@@ -114,6 +130,77 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
  */
 export function destroyShadowRepo(shadow: ShadowHandle): void {
   releaseLock(shadow.gitDir);
+}
+
+/**
+ * Allowlist-based sweep of legacy WIP refs (NFR-6, D35, US-018).
+ *
+ * Enumerates refs/wip/*\/\* and deletes ONLY refs whose writer-ID segment
+ * matches the known-legacy patterns: exact `server`, prefix `human-`, exact
+ * `upstream`. New-taxonomy refs (agent-*, principal-*, file-system,
+ * git-upstream, openknowledge-service) are preserved unchanged.
+ *
+ * Idempotent: running twice is a no-op once legacy refs are gone.
+ */
+export async function sweepLegacyShadowRefs(shadow: ShadowHandle): Promise<number> {
+  const sg = shadowGit(shadow);
+  let allRefs: string[];
+  try {
+    const raw = await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip');
+    allRefs = raw
+      .trim()
+      .split('\n')
+      .filter((r) => r.length > 0);
+  } catch {
+    // No refs yet (fresh repo) — nothing to sweep
+    return 0;
+  }
+
+  const toDelete: string[] = [];
+  const breakdown: Record<string, number> = { server: 0, 'human-': 0, upstream: 0 };
+
+  for (const refname of allRefs) {
+    // refs/wip/<branch>/<writerId>
+    const parts = refname.split('/');
+    if (parts.length < 4) continue;
+    const writerId = parts.slice(3).join('/');
+
+    // Only delete refs that parseWriterId classifies as 'unknown' AND match
+    // the known-legacy allowlist. This is deliberately narrow — we never
+    // delete a ref we can't positively identify as legacy (D35).
+    const classification = parseWriterId(writerId).classification;
+    if (classification !== 'unknown') continue;
+
+    if (writerId === 'server') {
+      toDelete.push(refname);
+      breakdown.server++;
+    } else if (writerId.startsWith('human-')) {
+      toDelete.push(refname);
+      breakdown['human-']++;
+    } else if (writerId === 'upstream') {
+      toDelete.push(refname);
+      breakdown.upstream++;
+    }
+    // All other 'unknown' refs are preserved (defensive)
+  }
+
+  if (toDelete.length === 0) return 0;
+
+  for (const ref of toDelete) {
+    try {
+      await sg.raw('update-ref', '-d', ref);
+    } catch (e) {
+      console.warn(`[shadow-migration] failed to delete legacy ref ${ref}:`, e);
+    }
+  }
+
+  const deleted = toDelete.length;
+  incrementShadowMigrationLegacyRefsDeleted(deleted);
+  console.warn(
+    `[shadow-migration] deleted ${deleted} legacy refs: server=${breakdown.server} human-=${breakdown['human-']} upstream=${breakdown.upstream}`,
+  );
+
+  return deleted;
 }
 
 // ─── WIP commits ─────────────────────────────────────────────────────────────
@@ -205,13 +292,134 @@ export async function commitWip(
   }
 }
 
+// ─── Per-writer fan-out helpers (US-014, FR-7) ───────────────────────────────
+
+/**
+ * Stage the content directory and return a git tree SHA.
+ * Used by the per-writer L2 fan-out so all writers share the same tree.
+ * Uses a fresh index (no seeding from any ref) so the tree reflects
+ * current filesystem state of contentRoot.
+ */
+/**
+ * Sweep orphaned `index-wip-fanout-*` files left in the shadow gitDir by a
+ * crashed `buildWipTree` call from a prior process. Each entry is a transient
+ * index scratch file; the owning process is always gone by the time we run
+ * (initShadowRepo acquires an exclusive writer lock immediately after), so
+ * unconditional deletion is safe.
+ */
+export function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
+  let deleted = 0;
+  try {
+    for (const name of readdirSync(shadow.gitDir)) {
+      if (!name.startsWith('index-wip-fanout-')) continue;
+      try {
+        rmSync(resolve(shadow.gitDir, name));
+        deleted++;
+      } catch {
+        // best effort — next startup will retry
+      }
+    }
+  } catch {
+    // gitDir missing or unreadable — initShadowRepo will catch the real error
+  }
+  return deleted;
+}
+
+export async function buildWipTree(shadow: ShadowHandle, contentRoot: string): Promise<string> {
+  const tmpIndex = resolve(shadow.gitDir, `index-wip-fanout-${randomUUID()}`);
+  const sg = shadowGit(shadow);
+  const gitPathspec = contentRoot || '.';
+
+  try {
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_WORK_TREE: shadow.workTree,
+        GIT_INDEX_FILE: tmpIndex,
+      })
+      .raw('add', gitPathspec);
+    return (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+}
+
+/**
+ * Create a commit from a pre-built tree SHA and advance the per-writer WIP ref.
+ * All per-writer commits in one fan-out cycle share the same treeSha.
+ */
+export async function commitWipFromTree(
+  shadow: ShadowHandle,
+  writer: WriterIdentity,
+  treeSha: string,
+  message: string,
+  branch = 'main',
+): Promise<string> {
+  const ref = `refs/wip/${branch}/${writer.id}`;
+  const sg = shadowGit(shadow);
+
+  let parentSha: string | null = null;
+  try {
+    parentSha = (await sg.raw('rev-parse', ref)).trim();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+      console.error(`[shadow-repo] Unexpected error resolving ${ref}:`, e);
+      throw e;
+    }
+  }
+
+  const args = ['commit-tree', treeSha, '-m', message];
+  if (parentSha) args.push('-p', parentSha);
+
+  const commitSha = (
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_AUTHOR_NAME: writer.name,
+        GIT_AUTHOR_EMAIL: writer.email,
+        GIT_COMMITTER_NAME: 'openknowledge',
+        GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+      })
+      .raw(...args)
+  ).trim();
+
+  await sg.raw('update-ref', ref, commitSha);
+  return commitSha;
+}
+
+// ─── D34 classified writer-identity constants ─────────────────────────────────
+
+/** Non-attributable file-system writes (disk changes, reconciliation). */
+export const FILE_SYSTEM_WRITER: WriterIdentity = {
+  id: 'file-system',
+  name: 'File System',
+  email: 'file-system@openknowledge.local',
+};
+
+/** Non-attributable upstream git-pull imports. */
+export const GIT_UPSTREAM_WRITER: WriterIdentity = {
+  id: 'git-upstream',
+  name: 'Git (upstream)',
+  email: 'git@openknowledge.local',
+};
+
+/** Non-attributable internal service bookkeeping. */
+export const SERVICE_WRITER: WriterIdentity = {
+  id: 'openknowledge-service',
+  name: 'Open Knowledge (service)',
+  email: 'service@openknowledge.local',
+};
+
 // ─── Upstream import ─────────────────────────────────────────────────────────
 
-const UPSTREAM_WRITER: WriterIdentity = {
-  id: 'upstream',
-  name: 'upstream',
-  email: 'noreply@openknowledge.local',
-};
+const UPSTREAM_WRITER: WriterIdentity = GIT_UPSTREAM_WRITER;
 
 /**
  * Record an upstream-import commit in the shadow.
@@ -228,10 +436,20 @@ export async function commitUpstreamImport(
   newHead: string,
   branch = 'main',
 ): Promise<string> {
-  const message = oldHead
-    ? `upstream: import from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
-    : `upstream: initial import at ${newHead.slice(0, 8)}`;
-
+  const subject = formatImportSubject(oldHead, newHead);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: UPSTREAM_WRITER.name,
+    color_seed: UPSTREAM_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
@@ -254,11 +472,7 @@ export interface SafetyCheckpointParams {
   context: Record<string, unknown>;
 }
 
-const SAFETY_WRITER: WriterIdentity = {
-  id: 'openknowledge-server',
-  name: 'openknowledge-server',
-  email: 'noreply@openknowledge.local',
-};
+const SAFETY_WRITER: WriterIdentity = SERVICE_WRITER;
 
 export async function safetyCheckpoint(
   shadow: ShadowHandle,
@@ -266,7 +480,20 @@ export async function safetyCheckpoint(
   params: SafetyCheckpointParams,
   branch = 'main',
 ): Promise<string> {
-  const message = `safety-checkpoint: pre-${params.action}`;
+  const subject = formatCheckpointSubject(`pre-${params.action}`);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: SAFETY_WRITER.name,
+    color_seed: SAFETY_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, SAFETY_WRITER, contentRoot, message, branch);
 }
 
@@ -715,14 +942,15 @@ export interface ParkableDoc {
 export async function parkBranch(
   shadow: ShadowHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   documents: ParkableDoc[],
+  newBranch?: string,
 ): Promise<string | null> {
   if (documents.length === 0) return null;
 
   const sg = shadowGit(shadow);
   const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   const tmpBlobFile = resolve(shadow.gitDir, 'tmp-park-blob');
   try {
@@ -763,12 +991,20 @@ export async function parkBranch(
       // No prior WIP on this branch for this session
     }
 
-    const args = [
-      'commit-tree',
-      treeSha,
-      '-m',
-      `park: branch context at ${new Date().toISOString()}`,
-    ];
+    const parkActorEntry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: documents.map((d) => d.docName),
+    };
+    const parkMessage = `${formatParkSubject(branch, newBranch ?? branch)}\n\n${formatOkActor(parkActorEntry)}`;
+    const args = ['commit-tree', treeSha, '-m', parkMessage];
     if (parentSha) args.push('-p', parentSha);
 
     const commitSha = (
@@ -806,11 +1042,11 @@ export async function parkBranch(
 export async function readParkedState(
   shadow: ShadowHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   docName: string,
 ): Promise<{ markdown: string; diskSnapshot: string } | null> {
   const sg = shadowGit(shadow);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   // Check if ref exists — expected to be missing on first visit to a branch
   let refSha: string;
@@ -876,7 +1112,7 @@ export async function saveVersion(
     // Collect ALL writer WIP refs + upstream ref as checkpoint parents
     // (preserves all per-writer chains across the checkpoint boundary)
     const shadowParentShas: string[] = [];
-    for (const w of [...writers, { id: 'upstream' }]) {
+    for (const w of [...writers, GIT_UPSTREAM_WRITER]) {
       try {
         const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
         shadowParentShas.push(sha);
@@ -907,7 +1143,20 @@ export async function saveVersion(
       }
     }
 
-    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', 'checkpoint: Checkpoint version'];
+    const checkpointActorEntry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: [],
+    };
+    const checkpointMessage = `${formatCheckpointSubject('Checkpoint version')}\n\n${formatOkActor(checkpointActorEntry)}`;
+    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', checkpointMessage];
     for (const p of uniqueParents) {
       checkpointArgs.push('-p', p);
     }
@@ -938,7 +1187,7 @@ export async function saveVersion(
     }
     // Also reset upstream WIP for this branch
     try {
-      await sg.raw('update-ref', '-d', `refs/wip/${branch}/upstream`);
+      await sg.raw('update-ref', '-d', `refs/wip/${branch}/${GIT_UPSTREAM_WRITER.id}`);
     } catch {
       // may not exist
     }
