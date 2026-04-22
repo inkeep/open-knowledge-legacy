@@ -444,6 +444,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },
+    connectionId: `agent-${connectionId}`,
     logger: logger.child('keepalive'),
   });
 
