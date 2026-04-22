@@ -25,7 +25,7 @@ let _effectCounter = 0;
  * not the bridge-coupled Y.Text/Y.XmlFragment pair — server observers must NOT
  * short-circuit on this origin (isPairedWriteOrigin returns false).
  */
-export const EFFECT_CAPTURE_ORIGIN: LocalTransactionOrigin = Object.freeze({
+const EFFECT_CAPTURE_ORIGIN: LocalTransactionOrigin = Object.freeze({
   source: 'local',
   skipStoreHooks: true,
   context: Object.freeze({ origin: 'effect-capture', paired: false }),

@@ -41,7 +41,7 @@ import { useInstalledAgents } from './useInstalledAgents';
 
 export { successToastForWebFallback };
 
-export interface OpenInAgentMenuProps {
+interface OpenInAgentMenuProps {
   /** Active doc context. When `null`, the trigger renders disabled (nothing
    *  to dispatch). Surfaces own the docContext + projectDir + docPath. */
   readonly input: HandoffDispatchInput | null;
