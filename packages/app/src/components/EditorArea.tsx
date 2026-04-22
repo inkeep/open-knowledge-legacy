@@ -1,7 +1,7 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
@@ -38,6 +38,20 @@ export function EditorArea(props: EditorAreaProps) {
 function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  // Shell-snap decoupling: `activeDocName` updates urgently across the tree
+  // (sidebar aria-current, header title, tab panels — all read the urgent
+  // value via `useDocumentContext`). The editor subtree, however, pays a
+  // heavy render cost on nav to mark-heavy / oversize docs — TipTap's
+  // create-view + per-mark reconciliation can block the main thread for
+  // 1-3s on docs above `BYTES_CACHE_THRESHOLD` (which refuse V2 cache
+  // admission, forcing a fresh `new Editor()` on every warm visit).
+  // Wrapping with `useDeferredValue` lets React commit the shell render
+  // first (aria-current + header snap to the new doc) and defer the
+  // editor-subtree re-render to a low-priority pass, letting the browser
+  // paint the updated shell before the editor mount cost begins. See
+  // `docs-open.e2e.ts` F0 for the regression test that pinned the budget
+  // at 250ms shell-snap.
+  const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
@@ -249,7 +263,13 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
       <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
         <EditorActivityPool
-          activeDocName={activeDocName}
+          // Fall back to the urgent `activeDocName` when the deferred
+          // value is still null (initial load, before the first
+          // deferred-commit pass populates it). The outer guard at
+          // line 173 already short-circuits with skeleton/empty-state
+          // when `activeDocName` itself is null, so we can assert
+          // non-null here.
+          activeDocName={deferredActiveDocName ?? activeDocName}
           isSourceMode={isSourceMode}
           editorPlaceholder={editorPlaceholder}
           previousDocName={previousDocName ?? undefined}

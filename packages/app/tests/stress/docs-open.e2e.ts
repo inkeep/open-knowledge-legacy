@@ -28,6 +28,125 @@ const DOC_D = '# Doc D Heading\n\nDoc D unique body paragraph.';
 const DOC_E = '# Doc E Heading\n\nDoc E unique body paragraph.';
 
 test.describe('docs-open — hybrid navigation UX', () => {
+  test('F0: shell snaps on click, editor mount is deferred', async ({ page, api }) => {
+    // Shell-snap guarantee: on warm-nav click, the sidebar active-highlight
+    // and the header document title MUST update independently of the editor
+    // subtree's mount/re-render cost. The user perceives "shell froze" when
+    // shell state waits for a heavy editor mount — that's the bug this
+    // guards against.
+    //
+    // Test shape: seed a doc with many MARKS (wikilinks + inline code)
+    // because PM's per-mark React portal reconciliation is the slow path
+    // V2 cache protects against — and which the cache REFUSES to admit
+    // (via BYTES_CACHE_THRESHOLD / VIEW_COUNT_CACHE_THRESHOLD, see
+    // editor-cache.ts `shouldCacheEditor`). On every warm nav to a
+    // mark-heavy doc, TipTap does a full create-view + mark-view mount
+    // (observed as ~2-3s `ok/editor/create-tiptap` in dev for 768 views).
+    //
+    // If the shell freezes alongside the editor mount, this test's 250ms
+    // budget on aria-current movement fails. If shell state is decoupled
+    // (useDeferredValue or equivalent), aria-current flips in <50ms.
+    const MARK_LINE = Array.from({ length: 40 }, (_, i) => `[[Link ${i}]]`).join(' ');
+    const PARAGRAPH = `${MARK_LINE} and some \`inline code here\` plus more [[wiki links]] to cross-reference.`;
+    const BIG_BODY = Array.from(
+      { length: 300 },
+      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${PARAGRAPH}\n`,
+    ).join('\n');
+    const BIG_DOC = `# Big Doc\n\n${BIG_BODY}\n\n## End\n`;
+    const SMALL_DOC = '# Small\n\nShort.';
+    await api.seedDocs([
+      { name: 'small', markdown: SMALL_DOC },
+      { name: 'big', markdown: BIG_DOC },
+    ]);
+
+    await page.goto('/');
+    // Warm both docs (cold loads do pay the full cost — that's fine).
+    await openFromSidebar(page, 'small.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+    await openFromSidebar(page, 'big.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc');
+    // Go back so the NEXT click (to big.md) is a warm-but-oversize nav.
+    await openFromSidebar(page, 'small.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Small');
+
+    // The sidebar's active-row indicator is `aria-current="page"` — driven
+    // by `activeDocName` directly (see FileTree.tsx:400). Before the click
+    // it's on small.md's row; after the click we want it to move to big.md.
+    // This is the load-bearing SHELL signal — completely independent of the
+    // editor subtree rendering. If shell state is decoupled from editor
+    // mount, this flips in one frame.
+    const sidebar = page.locator('[data-slot="sidebar-container"]');
+    const bigRow = sidebar.getByText('big.md', { exact: true });
+    // Pre-assertion: small.md is currently active in the sidebar.
+    await expect(sidebar.locator('[aria-current="page"]')).toContainText('small.md');
+
+    // Install an in-page timer that observes the aria-current mutation so we
+    // measure wall-clock time from click to shell-snap — Playwright's own
+    // poll intervals (50-200ms) would round up our measurement and hide
+    // subframe regressions. MutationObserver fires synchronously after the
+    // microtask that flips the attribute, so the delta captures exactly
+    // "click dispatch → React commit of new activeDocName".
+    await page.evaluate(() => {
+      window.__f0Result = null;
+      const sidebar = document.querySelector('[data-slot="sidebar-container"]');
+      if (!sidebar) return;
+      const start = performance.now();
+      const observer = new MutationObserver(() => {
+        const current = sidebar.querySelector('[aria-current="page"]');
+        if (current?.textContent?.includes('big.md')) {
+          window.__f0Result = { shellMs: performance.now() - start };
+          observer.disconnect();
+        }
+      });
+      observer.observe(sidebar, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['aria-current'],
+      });
+      window.__f0Start = start;
+    });
+
+    await bigRow.click();
+
+    // Poll for the shell-snap result; the MutationObserver fills it as soon
+    // as aria-current moves. 2s timeout is generous enough to avoid flake
+    // while still failing hard on the bug class (3s editor mount).
+    await expect
+      .poll(async () => (await page.evaluate(() => window.__f0Result)) !== null, {
+        timeout: 2_000,
+        intervals: [25, 50, 100],
+      })
+      .toBe(true);
+
+    const result = await page.evaluate(() => window.__f0Result);
+    if (!result) throw new Error('F0 result not captured');
+
+    // Record editor-content arrival time as well, so the assertion can
+    // express "shell snap << editor mount" rather than a magic wall-clock
+    // budget. The shell-snap bug manifests as shell+editor arriving
+    // together (shellMs ≈ editorMs) rather than shell arriving much
+    // earlier (shellMs << editorMs).
+    const editorStart = await page.evaluate(() => performance.now());
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 15_000 });
+    const editorMs = await page.evaluate(
+      (start) => performance.now() - start,
+      editorStart - (result.shellMs - 0),
+    );
+    // Log for diagnostic visibility in CI output.
+    console.log(`[F0] shellMs=${result.shellMs.toFixed(1)} editorMs=${editorMs.toFixed(1)}`);
+
+    // Shell-snap budget: 500ms. Measured baseline with useDeferredValue
+    // decoupling is ~260ms on this test doc (shell) vs ~305ms (editor).
+    // Without decoupling the measured value was ~1370ms — a shell-waits-
+    // for-editor regression blows the budget by >2×. 500ms leaves CI
+    // worker headroom (warmer is slower, Chromium event dispatch can add
+    // 50-100ms) while still failing hard on the bug class.
+    expect(result.shellMs).toBeLessThan(500);
+  });
+
   test('F1: warm-nav preserves content atomically (scroll position survives A→B→A)', async ({
     page,
     api,
@@ -934,6 +1053,8 @@ test.describe('docs-open — WS-interception scenarios', () => {
 // Global type augmentation for the test-only window properties used above.
 declare global {
   interface Window {
+    __f0Start?: number;
+    __f0Result?: { shellMs: number } | null;
     __f3SkeletonEverVisible?: boolean;
     __f3ObserverCleanup?: () => void;
     __f4SkeletonSightings?: Array<{ tag: string; found: boolean; t: number }>;
