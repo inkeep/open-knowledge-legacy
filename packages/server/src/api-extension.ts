@@ -3469,10 +3469,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       );
       deprecationLogged = true;
     }
-    // RFC 8594 Deprecation + Sunset. The value of `Sunset` is aspirational
-    // (next minor release) rather than a fixed date — integrators can pin
-    // their own release train against whichever minor removes the shim,
-    // and `Deprecation: true` already signals "migrate now."
+    // RFC 8594 `Deprecation: true` signals "migrate now." A `Sunset:`
+    // date is deliberately NOT emitted — the removal target is "next
+    // minor," which is release-train-bound rather than date-bound; we
+    // don't commit a date we can't keep. `Link: rel="successor-version"`
+    // is the canonical RFC 5988 pointer external integrators consume to
+    // discover the replacement endpoint programmatically.
     if (typeof res.setHeader === 'function') {
       res.setHeader('Deprecation', 'true');
       res.setHeader('Link', '</api/upload>; rel="successor-version"');

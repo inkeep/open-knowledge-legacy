@@ -332,14 +332,32 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
       } catch (err) {
         log.warn({ err }, '[bootServer.destroy] closeAllConnections failed');
       }
-      await Promise.race([
-        new Promise<void>((resolveClose) => httpServer.close(() => resolveClose())),
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('httpServer.close timeout after 10s')), 10_000),
-        ),
-      ]).catch((err) => {
-        log.warn({ err }, '[bootServer.destroy] httpServer.close did not complete within timeout');
-      });
+      // Capture the race-timer handle so we can cancel it on the happy
+      // path. Without this, a `close()` that resolves before 10 s leaves
+      // the `setTimeout` handle pending in the event loop — timers are
+      // ref'd by default, which keeps Node alive and defeats the
+      // "release everything ASAP" contract destroy() is meant to uphold.
+      // Symptom surfaces under tests that spin up+tear down bootServer
+      // rapidly, or in the Electron utility's shutdown path.
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          new Promise<void>((resolveClose) => httpServer.close(() => resolveClose())),
+          new Promise<void>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('httpServer.close timeout after 10s')),
+              10_000,
+            );
+          }),
+        ]).catch((err) => {
+          log.warn(
+            { err },
+            '[bootServer.destroy] httpServer.close did not complete within timeout',
+          );
+        });
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
     } finally {
       await destroyHocuspocus();
     }
