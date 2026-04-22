@@ -1,0 +1,70 @@
+---
+title: Open in Agent Desktop
+description: One-click handoff from the Open Knowledge editor to Claude Cowork, Claude Code, OpenAI Codex Desktop, or Cursor via URL schemes.
+---
+
+"Open in Agent Desktop" hands the doc you're reading off to your AI agent of choice in one click. Open Knowledge composes a minimal prompt (the doc's path + an MCP hint), dispatches it through the OS's URL-scheme handler, and the target agent's desktop app foregrounds with the prompt pre-filled and the project folder scoped.
+
+## Supported targets
+
+| Target         | Host                 | URL scheme | Folder scoping          | Doc attachment |
+| -------------- | -------------------- | ---------- | ----------------------- | -------------- |
+| Claude Cowork  | Electron + web       | `claude://cowork/new` | yes (`folder=`) | yes (`file=`)  |
+| Claude Code    | Electron + web       | `claude://code/new`   | yes (`folder=`) | see note below |
+| Codex Desktop  | Electron + web       | `codex://new`         | yes (`path=`)   | agent resolves |
+| Cursor         | Electron only        | `cursor://` (two-step)| yes (spawn + `workspace=`) | agent resolves |
+
+Cursor is disabled on the web host (`open-knowledge start` in a browser) because its handoff requires spawning `cursor <folder>` as a local step 1 before the prompt URL fires, which is only wired up in the Electron app.
+
+<Callout type="info" title="Claude Code file attachment">
+Claude Code accepts `file=` in its URL and Open Knowledge emits it for forward compatibility, but the Epitaxy webview's composition path may not surface the attachment in the composer UI on every version of Claude Desktop. The folder scope + prompt pre-fill always apply.
+</Callout>
+
+## Where to find it
+
+Three surfaces mount the same dropdown — every path routes through one dispatch entry point, so behavior is identical wherever you trigger it.
+
+- **Editor header** — click the "Open in…" button in the action strip while viewing a doc.
+- **Command palette** — open with your palette shortcut and search "Open in" to see one entry per target.
+- **Sidebar right-click** — right-click any `.md` file in the file tree and choose "Open in…" from the submenu. This works on any doc, not just the active one.
+
+## Install prerequisites
+
+Each row is disabled until the target's desktop app is installed on the machine. Hovering a disabled row shows an "Install …" link to the vendor's download page.
+
+| Target                          | Install page                                         |
+| ------------------------------- | ---------------------------------------------------- |
+| Claude Cowork / Claude Code     | [claude.com/download](https://claude.com/download)   |
+| OpenAI Codex Desktop            | [openai.com/codex](https://openai.com/codex)         |
+| Cursor                          | [cursor.com](https://cursor.com/)                    |
+
+Install detection happens at boot and refreshes asynchronously when you open the dropdown — if you install a target app while Open Knowledge is running, the row flips live without a restart.
+
+## Claude.app fallback
+
+Both Claude rows expose a secondary "Open in claude.ai →" affordance inside the disabled-state tooltip. Clicking it opens `https://claude.ai/new?q=<prompt>` in your default browser — the prompt pre-fills in the web UI without requiring Claude Desktop.
+
+<Callout type="warn" title="Data-egress note">
+The claude.ai fallback sends the composed prompt (which includes your doc's relative path) to Anthropic via the URL query string. For wiki pages containing confidential content, use the desktop targets instead — those dispatch via OS scheme handlers and don't traverse Anthropic's servers at dispatch time.
+</Callout>
+
+## What the agent receives
+
+Open Knowledge composes a deliberately minimal prompt so the agent can use its own context tools once the workspace is loaded:
+
+> Open Knowledge doc: `<relative-path>`. Use the open-knowledge MCP tool for backlinks and related context.
+
+The path lets the agent open the doc directly via its native attachment (Claude's `file=`, Codex's `path=`, Cursor's `workspace=`); the MCP hint nudges the agent to use the [[mcp-integration|Open Knowledge MCP server]] when it's configured. If MCP isn't registered in the target agent's config, the agent falls back to its native file-read tools — the handoff still works.
+
+## Host parity
+
+The feature ships with the same three mount points and the same four rows on both hosts:
+
+- **Electron desktop app** (`packages/desktop`): dispatch goes through IPC channels to `shell.openExternal` for URL schemes and to a dedicated `ok:shell:spawn-cursor` channel for Cursor step 1. All four targets are supported.
+- **Web build** (`open-knowledge start`): dispatch goes through an anchor-click in the browser. Claude Cowork, Claude Code, and Codex all work in the local-use-case (server + browser + target agent on the same machine). Cursor is always disabled on web.
+
+The feature assumes the server, browser, and target agents are all on the same machine. Cross-machine `ok start` deployments (server on workstation A, browser on laptop B) are out of scope — the install detection probes the server's machine, not the browser's.
+
+## Feedback
+
+Each dispatch renders a toast — success ("Opened in Claude Cowork.") or failure ("Couldn't reach Cursor — try again?") — and appends one JSONL line to `~/.open-knowledge/stats.jsonl` for local diagnostics. Nothing is sent over the network.
