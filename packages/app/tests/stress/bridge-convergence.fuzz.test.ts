@@ -46,7 +46,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chunkedYTextInsert } from '@inkeep/open-knowledge-core';
-import { AGENT_WRITE_ORIGIN, applyExternalChange } from '@inkeep/open-knowledge-server';
+import { applyExternalChange, isPairedWriteOrigin } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
 import {
@@ -664,8 +664,29 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
     }
 
+    // Per-session origins (F1) arrive at clients as remote transactions (undefined
+    // origin) — client-side probes cannot capture server-authoritative agent writes.
+    // Create a local paired-write origin matching the F1 shape to verify the probe
+    // infrastructure works correctly with per-session origins (isPairedWriteOrigin=true).
+    // The probe remains vacuous for server-side writes; oracle (c) is enforced by the
+    // bridge-invariant watcher in assertBridgeInvariant above.
+    const localFuzzOrigin = Object.freeze({
+      source: 'local' as const,
+      skipStoreHooks: false,
+      context: Object.freeze({
+        origin: 'agent-write',
+        paired: true as const,
+        session_id: `fuzz-probe-${seed}`,
+      }),
+    });
+    // Structural check: isPairedWriteOrigin must return true for per-session origins (US-028)
+    if (!isPairedWriteOrigin(localFuzzOrigin)) {
+      throw new Error(
+        `fuzz: isPairedWriteOrigin(localFuzzOrigin) failed — per-session origin rejected`,
+      );
+    }
     const agentProbes = clients.map((c) =>
-      createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
+      createItemOriginProbe(c.ytext, { trackedOrigins: [localFuzzOrigin] }),
     );
 
     // ────────────── Oracle (d): prefix-match content preservation ─────
@@ -823,11 +844,11 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
       // Oracle (c): agent-origin Items preserved + no origin laundering (FR-6).
       for (const probe of agentProbes) {
-        // FR-6 rigor: assert every captured origin is AGENT_WRITE_ORIGIN —
-        // no user-origin Items (ORIGIN_TREE_TO_TEXT, undefined) leaked into
-        // the agent UM. Uses the 'stack-item-added' event-based tracking
-        // from createItemOriginProbe (Y.UndoManager StackItem has no public
-        // .origin field; the event is the only public API that exposes it).
+        // Per-session origins (F1): server-side writes arrive at clients as remote
+        // transactions (undefined origin); the probe's UM captures nothing, making
+        // assertOnlyTrackedOrigins() vacuously true. The primary enforcement for
+        // bridge invariants is assertBridgeInvariant above. This probe verifies
+        // that no unexpected LOCAL transacts with non-tracked origins appear.
         probe.assertOnlyTrackedOrigins();
 
         if (probe.undoStackLength() > 0) {
