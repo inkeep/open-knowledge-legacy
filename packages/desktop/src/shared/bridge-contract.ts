@@ -82,6 +82,12 @@ export interface OkDesktopBridge {
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `ok:deep-link` — fired when an `openknowledge://` URL routed
+   * to this window (M4). Renderer updates `location.hash` to open the target
+   * doc via the existing hash-route listener.
+   */
+  onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   dialog: {
     openFolder(): Promise<string | null>;

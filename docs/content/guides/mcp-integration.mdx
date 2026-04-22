@@ -80,9 +80,10 @@ Every docName-producing MCP tool emits a `previewUrl` in its `structuredContent`
 
 Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for details):
 
-1. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
-2. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
-3. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+1. `openknowledge://` URL scheme — emitted when the server detects it is running inside the Open Knowledge desktop app (via `OK_ELECTRON_PROTOCOL_HOST=1`, which the desktop main process injects at utility-fork time). The resulting URL is `openknowledge://open?project=<realpath>&doc=<docName>` and routes through the desktop's main-process URL handler to the correct project window. CLI / `bunx` servers never set the flag, so they fall through to the HTTP sources below.
+2. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
+3. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
+4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 
