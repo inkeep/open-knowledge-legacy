@@ -224,7 +224,7 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
             content: [
               {
                 type: 'wikiLinkEmbed',
-                attrs: { target, alias: null, anchor: null, resolved: false },
+                attrs: { target, alias: null, anchor: null },
               },
             ],
           },

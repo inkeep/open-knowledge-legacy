@@ -1,14 +1,31 @@
 /**
- * WikiLinkEmbed PM node — companion to wikiLink for the `![[file.ext]]`
- * asset-embed construct (SPEC §6 FR-3c / D-I / D-F).
+ * WikiLinkEmbed PM node — client-insert-only intermediate for the
+ * `![[file.ext]]` asset-embed construct (SPEC §6 FR-3c / D-I / D-F).
  *
- * Storage is attrs-only: target + anchor + alias. The basename index
- * (server-side) resolves target → disk path at render time; the PM
- * layer never carries a pre-resolved `src`. That keeps parse/serialize
- * pure and defers extension-based dispatch (image vs video vs opaque)
- * to the renderer — Phase 2's typed component nodes (Video/Audio/
- * PDFViewer) swap in behind the same storage shape without any content
- * migration (D-F read-time promotion).
+ * **Lifecycle:**
+ *   1. User drops a file. `pickInsertShape(filename)` decides whether to
+ *      emit a PM `wikiLinkEmbed` node (renderable extension in the
+ *      `wikiEmbedExtensions` allowlist + `emitFormat='wikiembed'`).
+ *   2. TipTap renders this node via the `renderHTML` below — image
+ *      extensions become `<img>`, non-image wikiembed extensions become
+ *      clickable `<a>` (P0 plain-link fallback; Phase 2 typed-component-
+ *      nodes spec will promote to Video/Audio/PDFViewer per D-F read-time
+ *      promotion).
+ *   3. On save, `nodeHandlers.wikiLinkEmbed` (in `markdown/index.ts`)
+ *      serializes the node back to `![[name.ext]]` mdast.
+ *   4. On next doc reload, server-side Observer B parses Y.Text through
+ *      `mdManager.parseWithFallback` — `handlers.wikiLinkEmbed` dispatches
+ *      by extension to PM `image` (image-ext) or PM link-marked text
+ *      (non-image wikiembed). Server-side mdast→PM NEVER emits a PM
+ *      `wikiLinkEmbed` node post-round-trip (US-013).
+ *
+ * So this node is transient — it exists between drop and next round-trip.
+ * Without it, the client would need to synthesize a PM image / link-
+ * marked text at drop time, duplicating the handler dispatch logic.
+ *
+ * Attrs are serialized into DOM via `data-*` so TipTap's `parseHTML` can
+ * round-trip through a re-mount. No `resolved` flag — the render path
+ * dispatches on extension alone.
  */
 import { Node } from '@tiptap/core';
 import { normalizeNullableString } from './wiki-link.ts';
@@ -17,44 +34,18 @@ export interface WikiLinkEmbedAttrs {
   target: string;
   alias: string | null;
   anchor: string | null;
-  /** Set by the server-side renderer when the basename index finds a match. */
-  resolved: boolean;
 }
 
-const WIKI_LINK_EMBED_PATTERN = /^!\[\[([^[\]|#]+?)(?:#([^\]|]+?))?(?:\|([^\]]+?))?\]\]/;
+const WIKI_LINK_EMBED_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
 
-export function parseWikiLinkEmbed(src: string): {
-  type: 'wikilink-embed';
-  raw: string;
-  target: string;
-  alias: string | null;
-  anchor: string | null;
-} | null {
-  const match = src.match(WIKI_LINK_EMBED_PATTERN);
-  if (!match) return null;
-  const target = match[1]?.trim() ?? '';
-  if (!target) return null;
-  return {
-    type: 'wikilink-embed',
-    raw: match[0],
-    target,
-    anchor: normalizeNullableString(match[2]),
-    alias: normalizeNullableString(match[3]),
-  };
+function extensionOf(target: string): string {
+  const basename = target.split('/').pop() ?? target;
+  const idx = basename.lastIndexOf('.');
+  if (idx < 0 || idx === basename.length - 1) return '';
+  return basename.slice(idx + 1).toLowerCase();
 }
 
-export function renderWikiLinkEmbed(
-  attrs: Pick<WikiLinkEmbedAttrs, 'target' | 'alias' | 'anchor'>,
-): string {
-  let out = `![[${attrs.target}`;
-  if (attrs.anchor) out += `#${attrs.anchor}`;
-  if (attrs.alias) out += `|${attrs.alias}`;
-  return `${out}]]`;
-}
-
-export function getWikiLinkEmbedLabel(
-  attrs: Pick<WikiLinkEmbedAttrs, 'target' | 'alias' | 'anchor'>,
-): string {
+function labelFor(attrs: Pick<WikiLinkEmbedAttrs, 'target' | 'alias' | 'anchor'>): string {
   if (attrs.alias) return attrs.alias;
   return attrs.anchor ? `${attrs.target}#${attrs.anchor}` : attrs.target;
 }
@@ -71,7 +62,6 @@ export const WikiLinkEmbed = Node.create({
       target: { default: '' },
       alias: { default: null },
       anchor: { default: null },
-      resolved: { default: false },
     };
   },
 
@@ -85,7 +75,6 @@ export const WikiLinkEmbed = Node.create({
             target: node.getAttribute('data-target') || '',
             alias: normalizeNullableString(node.getAttribute('data-alias')),
             anchor: normalizeNullableString(node.getAttribute('data-anchor')),
-            resolved: node.getAttribute('data-resolved') === 'true',
           };
         },
       },
@@ -96,18 +85,39 @@ export const WikiLinkEmbed = Node.create({
     const target = String(node.attrs.target ?? '');
     const alias = normalizeNullableString(node.attrs.alias);
     const anchor = normalizeNullableString(node.attrs.anchor);
-    const resolved = node.attrs.resolved === true;
+    const ext = extensionOf(target);
+
+    // Image extension → inline <img>. sirv serves the asset via relative
+    // path resolution against the current doc's URL.
+    if (WIKI_LINK_EMBED_IMAGE_EXTS.has(ext)) {
+      return [
+        'img',
+        {
+          ...HTMLAttributes,
+          'data-wiki-embed': '',
+          'data-target': target,
+          'data-alias': alias ?? '',
+          'data-anchor': anchor ?? '',
+          src: target,
+          alt: alias ?? target,
+        },
+      ];
+    }
+
+    // Non-image or opaque → clickable link. Phase 2 will promote the
+    // non-image typed extensions (pdf/mp4/mp3/…) to dedicated NodeViews
+    // (Video/Audio/PDFViewer) at render time — storage shape unchanged.
     return [
-      'span',
+      'a',
       {
         ...HTMLAttributes,
         'data-wiki-embed': '',
         'data-target': target,
         'data-alias': alias ?? '',
         'data-anchor': anchor ?? '',
-        'data-resolved': resolved ? 'true' : 'false',
+        href: anchor ? `${target}#${anchor}` : target,
       },
-      getWikiLinkEmbedLabel({ target, alias, anchor }),
+      labelFor({ target, alias, anchor }),
     ];
   },
 });

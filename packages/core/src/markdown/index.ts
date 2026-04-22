@@ -736,12 +736,11 @@ function buildMdastToPmHandlers(
 
       // Defensive fallback only hit if the schema somehow lacks both
       // `image` node and `link` mark — not reachable under
-      // sharedExtensions. Preserve the pre-US-013 behavior for safety.
+      // sharedExtensions.
       return n.wikiLinkEmbed.createAndFill({
         target,
         alias,
         anchor,
-        resolved: false,
       });
     };
   }

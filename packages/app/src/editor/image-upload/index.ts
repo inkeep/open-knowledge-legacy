@@ -290,7 +290,7 @@ export async function uploadAndInsert(
       showError(editor, uploadId);
       return;
     }
-    tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null, resolved: true }));
+    tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null }));
   } else if (shape.kind === 'image') {
     const imageNode = state.schema.nodes.image;
     if (!imageNode) {
