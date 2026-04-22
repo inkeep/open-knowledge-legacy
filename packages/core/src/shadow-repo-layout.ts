@@ -129,6 +129,16 @@ export interface ShadowContributor {
   /** Color seed for deterministic color assignment — matches presence bar color. */
   colorSeed?: string;
   docs: string[];
+  /**
+   * Flat per-contributor array of agent-provided summaries, oldest first.
+   * Additive field (spec D9/D23) — legacy commits lack it entirely and parse
+   * with `summaries: undefined`. Per D27, malformed values (non-array, or
+   * array with non-string elements) drop just this field and leave the rest
+   * of the contributor entry intact — a deliberate divergence from the
+   * whole-entry-skip convention used for other optional fields, because
+   * decorative loss (no bullets) is preferable to attribution loss.
+   */
+  summaries?: string[];
 }
 
 const OK_CONTRIBUTORS_PREFIX = 'ok-contributors: ';
@@ -161,6 +171,17 @@ export function parseContributors(body: string): ShadowContributor[] {
         (!('colorSeed' in parsed) ||
           typeof (parsed as Record<string, unknown>).colorSeed === 'string')
       ) {
+        // D27: malformed `summaries` drops just the field; the contributor
+        // entry still parses. Decorative loss (no bullets) beats attribution
+        // loss (missing contributor). Deliberate divergence from the
+        // whole-entry-skip convention applied to other optional fields.
+        const raw = parsed as Record<string, unknown>;
+        if ('summaries' in raw) {
+          const s = raw.summaries;
+          if (!Array.isArray(s) || !s.every((x) => typeof x === 'string')) {
+            delete raw.summaries;
+          }
+        }
         contributors.push(parsed as ShadowContributor);
       }
     } catch {

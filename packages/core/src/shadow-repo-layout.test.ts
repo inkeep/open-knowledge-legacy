@@ -120,6 +120,51 @@ describe('parseContributors', () => {
     const body = '\nok-contributors: {"id":"agent-a","name":"A","docs":["a",1,"b"]}';
     expect(parseContributors(body)).toEqual([]);
   });
+
+  // D23/D27 coverage — `summaries?: string[]` is additive; malformed values
+  // drop JUST the field (deliberate divergence from whole-entry-skip).
+  test('legacy commit (no summaries field) parses with summaries undefined', () => {
+    const body = '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toBeUndefined();
+  });
+
+  test('parses summaries when present as empty array', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":[]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toEqual([]);
+  });
+
+  test('parses summaries when present as populated array', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":["Fixed typo","Added example"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toEqual(['Fixed typo', 'Added example']);
+  });
+
+  test('D27 divergence: summaries not an array → drop field, contributor still parses', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":"not-an-array"}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('agent-a');
+    expect(result[0]?.name).toBe('Claude');
+    expect(result[0]?.docs).toEqual(['foo.md']);
+    expect(result[0]?.summaries).toBeUndefined();
+  });
+
+  test('D27 divergence: summaries contains non-string element → drop field, contributor still parses', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":["ok",42,"also-ok"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('agent-a');
+    expect(result[0]?.summaries).toBeUndefined();
+  });
 });
 
 describe('parseWriterId (D34 taxonomy)', () => {
