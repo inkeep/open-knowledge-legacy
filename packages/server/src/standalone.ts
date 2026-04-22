@@ -325,8 +325,6 @@ export function createServer(options: ServerOptions): ServerInstance {
       case 'asset-create':
       case 'asset-delete':
         return event.relativePath;
-      case 'asset-rename':
-        return event.newRelativePath;
       default:
         return event.docName;
     }
@@ -582,11 +580,6 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
         case 'asset-delete': {
           basenameIndex.remove(event.relativePath);
-          signalChannel('files');
-          break;
-        }
-        case 'asset-rename': {
-          basenameIndex.rename(event.oldRelativePath, event.newRelativePath);
           signalChannel('files');
           break;
         }

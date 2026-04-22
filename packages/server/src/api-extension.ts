@@ -26,7 +26,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
-  ALLOWED_IMAGE_MIME_TYPES,
   ASSET_EXTENSIONS,
   applyFastDiff,
   createCodeFenceTracker,
@@ -172,11 +171,6 @@ const MAX_BODY_BYTES = 1_048_576; // 1 MB
 // Zod default in packages/cli/src/config/schema.ts so test harnesses don't
 // have to wire the accessor when they only care about the legacy contract.
 const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-// Retained for the SVG extension-fallback at NFR-3 — see handleUploadImage.
-// `ALLOWED_IMAGE_MIME_TYPES` is the hard-coded reference set; D-M removed
-// the runtime allowlist gate at the upload boundary.
-const _LEGACY_IMAGE_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
-void _LEGACY_IMAGE_MIME_TYPES;
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 

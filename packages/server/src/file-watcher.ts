@@ -57,18 +57,14 @@ export type MarkdownDiskEvent =
 
 // SPEC §6 FR-6 / D-H Option A. Asset events carry contentDir-relative
 // paths instead of docNames — assets aren't documents in the CRDT layer.
-// No content payload (binary) and no rename detection by hash (Finder
-// rename surfaces as delete+create; basename index is idempotent on add).
+// No content payload (binary) and no rename detection — Finder renames
+// surface as delete+create pair, and the basename index is idempotent
+// under add/remove so the end state matches. Rename-via-inode-pairing
+// was scoped out to keep hot-path binary handling simple (would require
+// hashing to correlate delete+create pairs).
 export type AssetDiskEvent =
   | { kind: 'asset-create'; path: string; relativePath: string }
-  | { kind: 'asset-delete'; path: string; relativePath: string }
-  | {
-      kind: 'asset-rename';
-      oldPath: string;
-      newPath: string;
-      oldRelativePath: string;
-      newRelativePath: string;
-    };
+  | { kind: 'asset-delete'; path: string; relativePath: string };
 
 export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
 
@@ -584,11 +580,7 @@ function seedLastKnownHashes(
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
   // Asset events are tracked by the basename index in standalone.ts, not by
   // the docName-keyed file index — short-circuit here.
-  if (
-    event.kind === 'asset-create' ||
-    event.kind === 'asset-delete' ||
-    event.kind === 'asset-rename'
-  ) {
+  if (event.kind === 'asset-create' || event.kind === 'asset-delete') {
     return;
   }
   const docName = event.kind === 'rename' ? event.newDocName : event.docName;
