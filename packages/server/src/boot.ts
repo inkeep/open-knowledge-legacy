@@ -28,7 +28,7 @@ import type { Server as HttpServer } from 'node:http';
 // the `AGENT_ID_RE` validator — both concerns are one contract.
 export { toBroadcasterKey } from './agent-id.ts';
 
-import { validateAgentId } from './agent-id.ts';
+import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
@@ -305,9 +305,15 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         // beats the 5s filter. No-op if connectionId is null (legacy MCP
         // client that doesn't pass connectionId — TTL-only path still works
         // the same way).
+        //
+        // `toBroadcasterKey(connectionId)` translates the raw URL-carried id
+        // to the `agent-<id>` map key used by the HTTP write handlers (via
+        // `extractAgentIdentity`). Without this translation bumpPresenceTs
+        // would no-op because no entry exists under the raw key — see the
+        // STOP rule in AGENTS.md "the `agent-` prefix convention".
         const tsRefreshTimer = connectionId
           ? setInterval(() => {
-              agentPresenceBroadcaster?.bumpPresenceTs(connectionId);
+              agentPresenceBroadcaster?.bumpPresenceTs(toBroadcasterKey(connectionId));
             }, 3_000)
           : null;
         tsRefreshTimer?.unref?.();
@@ -338,7 +344,12 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
                 log.error({ err, connectionId }, '[keepalive] clearFocus failed');
               }
               try {
-                agentPresenceBroadcaster?.clearPresence(connectionId);
+                // `toBroadcasterKey(connectionId)` matches the `agent-<id>`
+                // map key written by HTTP handlers via `extractAgentIdentity`
+                // — without this translation clearPresence no-ops because
+                // the raw URL id never matches the stored entry. See the
+                // STOP rule in AGENTS.md "the `agent-` prefix convention".
+                agentPresenceBroadcaster?.clearPresence(toBroadcasterKey(connectionId));
               } catch (err) {
                 log.error({ err, connectionId }, '[keepalive] clearPresence failed');
               }

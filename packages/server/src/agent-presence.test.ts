@@ -377,18 +377,20 @@ describe('AgentPresenceBroadcaster', () => {
     // above prove the pattern IS race-safe.
     //
     // The expected-match count is DISCOVERED from the source — counting
-    // `applyAgentMarkdownWrite(` call sites — rather than hardcoded at 3.
-    // That's the load-bearing signal of an "agent write handler": every
-    // handler that calls applyAgentMarkdownWrite must wrap it in the same
-    // try/finally + setPresence('writing') shape. `extractAgentIdentity`
-    // call sites are too broad — post-D42 identity threading, it's also
-    // called by admin handlers (rollback, create-page, rename, save-version)
-    // that don't produce a live presence badge.
+    // `applyAgentMarkdownWrite(` + `applyAgentUndo(` call sites — rather
+    // than hardcoded. That's the load-bearing signal of an "agent write
+    // handler": every handler that dispatches an agent-origin CRDT mutation
+    // must wrap it in the same try/finally + setPresence('writing') shape.
+    // `extractAgentIdentity` call sites are too broad — post-D42 identity
+    // threading, it's also called by admin handlers (rollback, create-page,
+    // rename, save-version) that don't produce a live presence badge.
     //
     // If you are reading this because this test just failed:
-    //   - If a NEW handler was added that calls applyAgentMarkdownWrite:
-    //     copy the setPresence/touchMode wiring from `handleAgentWriteMd`
-    //     (the canonical pattern).
+    //   - If a NEW handler was added that calls applyAgentMarkdownWrite
+    //     or applyAgentUndo: copy the setPresence/touchMode wiring from
+    //     `handleAgentWriteMd` (the canonical pattern).
+    //   - If a NEW composer is added (e.g. applyAgentRedo), extend the
+    //     discovery regex below to include it.
     //   - If an EXISTING handler was reformatted: the regexes tolerate
     //     whitespace, but structural tokens are load-bearing. Do NOT
     //     loosen the regex to pass — the invariant it guards (Bug-B-style
@@ -396,14 +398,12 @@ describe('AgentPresenceBroadcaster', () => {
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
     const src = readFileSync(resolve(dir, 'api-extension.ts'), 'utf-8');
 
-    // Discover agent-write handlers via `applyAgentMarkdownWrite(` call
-    // sites (the import line starts with `  applyAgentMarkdownWrite,` with
-    // no `(`, so it's naturally excluded). If a future write handler
-    // dispatches via a different composer (e.g. applyAgentUndo), update
-    // this pattern alongside it.
-    const handlerCallSites = src.match(/applyAgentMarkdownWrite\(/g) ?? [];
+    // Discover agent-write handlers via `applyAgentMarkdownWrite(` +
+    // `applyAgentUndo(` call sites (the import lines start with
+    // `  applyAgent…,` with no `(`, so they're naturally excluded).
+    const handlerCallSites = src.match(/apply(?:AgentMarkdownWrite|AgentUndo)\(/g) ?? [];
     const expectedCount = handlerCallSites.length;
-    expect(expectedCount).toBeGreaterThanOrEqual(3); // known baseline
+    expect(expectedCount).toBeGreaterThanOrEqual(4); // 3 write + 1 undo
 
     // Each handler's try block must open with icon/color derivation
     // immediately followed by setPresence(mode:'writing'). Arbitrary

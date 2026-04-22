@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket as WsClient } from 'ws';
+import { toBroadcasterKey } from './agent-id.ts';
 import { type BootedServer, bootServer } from './boot.ts';
 
 async function wait(ms: number): Promise<void> {
@@ -91,9 +92,15 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     const { booted } = s;
     const broadcaster = booted.serverInstance.agentPresenceBroadcaster;
     const connectionId = 'test-agent-close';
+    // Seed under the broadcaster-map key (`agent-<connectionId>`), matching
+    // how HTTP write handlers store entries via `extractAgentIdentity` →
+    // `toBroadcasterKey`. Seeding under the raw URL id would match the bug,
+    // not the production flow — see AGENTS.md STOP rule on the `agent-`
+    // prefix convention.
+    const presenceKey = toBroadcasterKey(connectionId);
 
     // Seed the presence entry — something for the WS-close handler to clear.
-    broadcaster.setPresence(connectionId, {
+    broadcaster.setPresence(presenceKey, {
       displayName: 'Claude',
       icon: 'claude',
       color: '#D97757',
@@ -101,7 +108,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
       mode: 'idle',
       ts: Date.now(),
     });
-    expect(broadcaster.getPresenceMap()[connectionId]).toBeDefined();
+    expect(broadcaster.getPresenceMap()[presenceKey]).toBeDefined();
 
     // Open a real WS to the keepalive endpoint with the matching connectionId.
     const ws = new WsClient(
@@ -119,11 +126,11 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     // Budget: graceMs (100) + async close + clearPresence dispatch.
     const finalMap = await poll(
       () => broadcaster.getPresenceMap(),
-      (map) => !(connectionId in map),
+      (map) => !(presenceKey in map),
       1000,
       10,
     );
-    expect(finalMap[connectionId]).toBeUndefined();
+    expect(finalMap[presenceKey]).toBeUndefined();
   });
 
   test('reconnect within the grace window cancels the timer (no premature clear)', async () => {
@@ -132,8 +139,9 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     const { booted } = s;
     const broadcaster = booted.serverInstance.agentPresenceBroadcaster;
     const connectionId = 'reconnect-agent';
+    const presenceKey = toBroadcasterKey(connectionId);
 
-    broadcaster.setPresence(connectionId, {
+    broadcaster.setPresence(presenceKey, {
       displayName: 'Claude',
       icon: 'claude',
       color: '#D97757',
@@ -165,7 +173,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     // Wait past the original grace window. Presence must still be present
     // because the reconnect cancelled the timer.
     await wait(300);
-    expect(broadcaster.getPresenceMap()[connectionId]).toBeDefined();
+    expect(broadcaster.getPresenceMap()[presenceKey]).toBeDefined();
 
     ws2.close();
   });
@@ -177,8 +185,8 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     const broadcaster = booted.serverInstance.agentPresenceBroadcaster;
 
     // Seed an entry so we can confirm it's NOT cleared by the no-id close.
-    const survivingAgent = 'survivor';
-    broadcaster.setPresence(survivingAgent, {
+    const survivingAgentKey = toBroadcasterKey('survivor');
+    broadcaster.setPresence(survivingAgentKey, {
       displayName: 'Cursor',
       icon: 'cursor',
       color: '#888',
@@ -195,7 +203,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     ws.close();
     // Give the server a moment past the grace window to confirm no fire.
     await wait(200);
-    expect(broadcaster.getPresenceMap()[survivingAgent]).toBeDefined();
+    expect(broadcaster.getPresenceMap()[survivingAgentKey]).toBeDefined();
   });
 
   test('keepalive ts-refresh timer keeps entry ts fresh during agent idle (≥ 3s)', async () => {
@@ -210,6 +218,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     const { booted } = s;
     const broadcaster = booted.serverInstance.agentPresenceBroadcaster;
     const connectionId = 'test-agent-idle-refresh';
+    const presenceKey = toBroadcasterKey(connectionId);
 
     const ws = new WsClient(
       `ws://localhost:${booted.port}/collab/keepalive?pid=${process.pid}&connectionId=${connectionId}`,
@@ -221,7 +230,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
 
     // Seed a presence entry with ts=now (simulating a recent agent write).
     const initialTs = Date.now();
-    broadcaster.setPresence(connectionId, {
+    broadcaster.setPresence(presenceKey, {
       displayName: 'Claude',
       icon: 'claude',
       color: '#D97757',
@@ -235,7 +244,7 @@ describe('keepalive WS close → grace timer → clearPresence (US-004)', () => 
     // otherwise-idle entry (no agent writes during this window).
     await wait(3_400);
 
-    const bumped = broadcaster.getPresenceMap()[connectionId];
+    const bumped = broadcaster.getPresenceMap()[presenceKey];
     expect(bumped).toBeDefined();
     expect(bumped?.ts).toBeGreaterThan(initialTs);
     // Mode is preserved — bumpPresenceTs does NOT flip writing→idle.

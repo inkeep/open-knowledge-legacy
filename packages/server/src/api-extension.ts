@@ -2056,7 +2056,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // FR-5, D42: extract identity from body so shadow-repo attribution threads through
       // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
       // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      const { agentName, colorSeed, clientName, clientVersion, label } = extractAgentIdentity(body);
+      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
+      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
 
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
@@ -2088,11 +2091,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
       // instead of the per-doc awareness — the per-doc awareness has ONE
-      // shared clientID across N concurrent agents and would stomp.
-      {
+      // shared clientID across N concurrent agents and would stomp. The
+      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
+      // so the keepalive-WS close handler's cleanup path finds the entry.
+      //
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and the undo
+      // transact flips the badge back to idle rather than wedging it on 'writing'.
+      let undone = false;
+      try {
         const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? connectionId);
-        agentPresenceBroadcaster?.setPresence(connectionId, {
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
           displayName: agentName,
           icon,
           color,
@@ -2100,9 +2110,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-      }
-      let undone = false;
-      try {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
@@ -2121,7 +2128,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
         }
       } finally {
-        agentPresenceBroadcaster?.touchMode(connectionId, 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (undone) {
