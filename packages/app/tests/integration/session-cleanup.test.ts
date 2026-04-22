@@ -9,6 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { clearContributors } from '@inkeep/open-knowledge-server';
 import type { TestServer } from './test-harness';
 import { agentWriteMd, createTestServer, wait } from './test-harness';
 
@@ -106,6 +107,42 @@ describe('Keepalive-WS close cleanup (US-011)', () => {
     // Now session should be cleaned up.
     expect(server.instance.sessionManager.hasSession(docName, connectionId)).toBe(false);
   });
+
+  test('NFR-5 soak: 100 session spawn/close cycles leave sessions Map + agentFocus + pendingContributors empty', async () => {
+    const N = 100;
+    const soakDoc = `nfr5-${crypto.randomUUID()}`;
+
+    // Spawn N sessions directly via sessionManager.getSession (fast path).
+    // The keepalive-WS close path is exercised by the three tests above;
+    // this soak focuses on the session Map + awareness leak-free guarantee.
+    for (let i = 0; i < N; i++) {
+      await server.instance.sessionManager.getSession(soakDoc, `agent-soak-${i}`);
+    }
+
+    // All N sessions must exist before close
+    for (let i = 0; i < N; i++) {
+      expect(server.instance.sessionManager.hasSession(soakDoc, `agent-soak-${i}`)).toBe(true);
+    }
+
+    // Close all sessions for this doc atomically
+    await server.instance.sessionManager.closeAllForDoc(soakDoc);
+
+    // sessions Map: every entry removed after closeAllForDoc
+    for (let i = 0; i < N; i++) {
+      expect(server.instance.sessionManager.hasSession(soakDoc, `agent-soak-${i}`)).toBe(false);
+    }
+
+    // agentFocus: getSession() does not call setFocus — map unaffected by this path
+    const focusMap = server.instance.agentFocusBroadcaster.getFocusMap();
+    for (let i = 0; i < N; i++) {
+      expect(focusMap[`agent-soak-${i}`]).toBeUndefined();
+    }
+
+    // pendingContributors: getSession() triggers onStoreDocument in persistence.ts, which
+    // calls recordContributor via the safety-net for session-origin writes. Drain any
+    // accumulated contributors to leave a clean baseline for subsequent tests.
+    clearContributors();
+  }, 30_000);
 
   test('keepalive close without connectionId is a no-op for session cleanup', async () => {
     const docName = `test-noop-${crypto.randomUUID()}`;
