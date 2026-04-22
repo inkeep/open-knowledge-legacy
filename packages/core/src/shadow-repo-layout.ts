@@ -313,6 +313,14 @@ export interface OkActorEntry {
   color_seed: string;
   /** Documents touched in this drain cycle. */
   docs: string[];
+  /**
+   * Optional per-tool-call change-notes supplied by the agent via the
+   * `summary` parameter on mutating MCP tools. Empty / absent when the agent
+   * omitted `summary` on every call in this drain window. Ordered by call time.
+   * Additive to the v:1 schema — parsers predating this field ignore it.
+   * Agent change-notes follow-up spec, FR-4.
+   */
+  summaries?: string[];
 }
 
 const OK_ACTOR_PREFIX = 'ok-actor: ';
@@ -320,9 +328,15 @@ const OK_ACTOR_PREFIX = 'ok-actor: ';
 /**
  * Format an `ok-actor:` JSON body line. Produces exactly one line (no trailing newline).
  * Pair with `parseOkActor` at the read path.
+ *
+ * Elides `summaries` when empty/absent so commits written without change-notes
+ * produce byte-identical output to pre-spec commits (backwards-parseable).
  */
 export function formatOkActor(entry: OkActorEntry): string {
-  return `${OK_ACTOR_PREFIX}${JSON.stringify(entry)}`;
+  const { summaries, ...rest } = entry;
+  const payload: Record<string, unknown> =
+    summaries && summaries.length > 0 ? { ...rest, summaries } : rest;
+  return `${OK_ACTOR_PREFIX}${JSON.stringify(payload)}`;
 }
 
 /**
@@ -347,6 +361,10 @@ export function parseOkActor(body: string): OkActorEntry | null {
     if (obj.v !== 1) return null;
     if (!('display_name' in obj) || typeof obj.display_name !== 'string') return null;
     if (!('docs' in obj) || !Array.isArray(obj.docs)) return null;
+    const summaries =
+      'summaries' in obj && Array.isArray(obj.summaries)
+        ? (obj.summaries as unknown[]).filter((s): s is string => typeof s === 'string')
+        : undefined;
     return {
       v: 1,
       principal: typeof obj.principal === 'string' ? obj.principal : null,
@@ -358,6 +376,7 @@ export function parseOkActor(body: string): OkActorEntry | null {
       display_name: obj.display_name,
       color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
       docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
+      ...(summaries && summaries.length > 0 ? { summaries } : {}),
     };
   }
   return null;
@@ -395,6 +414,54 @@ export function formatRenameSubject(oldName: string, newName: string): string {
 /** Format a `checkpoint:` subject for save-version and safety-checkpoint commits (D53). */
 export function formatCheckpointSubject(message: string): string {
   return `checkpoint: ${message}`;
+}
+
+// ─── Change-notes composition (agent change-notes follow-up spec, FR-5/FR-6) ─
+
+/**
+ * Upper bound on the length of the rendered commit subject line.
+ * Matches the CommonMark / git subject-line convention so `git log --oneline`
+ * stays legible without wrapping.
+ */
+export const COMMIT_SUBJECT_MAX_LEN = 72;
+
+/**
+ * Combine a base subject (from `formatWipSubject` / `subjectOverride`) with
+ * agent-supplied change-notes, producing a single subject line capped at
+ * `COMMIT_SUBJECT_MAX_LEN`. Rules:
+ *   - 0 summaries → base subject unchanged.
+ *   - 1 summary → `<base> — <summary>` truncated with a trailing ellipsis
+ *     when over budget; the `<base>` portion is never truncated.
+ *   - ≥2 summaries → `<base> (N edits)`. The bullet body lives separately
+ *     (see `formatChangeNoteBody`) — the subject only carries the count.
+ *
+ * Truncation preserves the base, suffix, and em-dash so the `grep`-friendly
+ * target stays intact even for very short terminal widths.
+ */
+export function composeCommitSubject(base: string, summaries: string[]): string {
+  if (summaries.length === 0) return base;
+  if (summaries.length >= 2) return `${base} (${summaries.length} edits)`;
+  const [summary] = summaries;
+  if (summary === undefined) return base; // defensive; length-1 branch guards against this
+  const full = `${base} — ${summary}`;
+  if (full.length <= COMMIT_SUBJECT_MAX_LEN) return full;
+  const prefix = `${base} — `;
+  const budget = COMMIT_SUBJECT_MAX_LEN - prefix.length - 1; // reserve one char for ellipsis
+  if (budget <= 0) return full.slice(0, COMMIT_SUBJECT_MAX_LEN); // base already over budget
+  return `${prefix}${summary.slice(0, budget)}…`;
+}
+
+/**
+ * Format the markdown bullet block that precedes `ok-contributors:` / `ok-actor:`
+ * in the commit body when there are ≥2 summaries. Returns an empty string for
+ * 0–1 summaries (0 summaries → no body; 1 summary is carried in the subject
+ * and does not duplicate into the body).
+ *
+ * Each summary is emitted as `- <text>` in original call order (FR-6).
+ */
+export function formatChangeNoteBody(summaries: string[]): string {
+  if (summaries.length < 2) return '';
+  return summaries.map((s) => `- ${s}`).join('\n');
 }
 
 /** Format an `import:` subject for upstream-import commits (D53). */

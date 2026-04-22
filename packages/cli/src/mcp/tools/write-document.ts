@@ -31,6 +31,7 @@ export const DESCRIPTION = [
   '- `docName` — Document name, typically without extension (e.g., "my-doc" or "notes/meeting"). A trailing `.md` or `.mdx` is stripped automatically. New documents are created as `.md` by default; to create a `.mdx` file, first place it on disk, then use this tool for edits.',
   '- `markdown` — Markdown content to write',
   '- `position` — Where to insert: "append", "prepend", or "replace"',
+  '- `summary` — Optional one-sentence description of *why* you are making this edit (e.g., "added auth design outline", "tightened intro paragraph"). Surfaced in the shadow-repo commit message so `git log` reads like a well-run team\'s history. Omit when intent is not useful. Present-tense imperative or past-tense both fine. Max 200 chars.',
 ].join('\n');
 
 interface WriteDocumentDeps {
@@ -48,9 +49,22 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       docName: z.string().describe('Document name to write to'),
       markdown: z.string().describe('Markdown content to write'),
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-sentence change-note surfaced in the shadow-repo commit message. Max 200 chars.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; markdown: string; position: string; cwd?: string }) => {
+    async (args: {
+      docName: string;
+      markdown: string;
+      position: string;
+      summary?: string;
+      cwd?: string;
+    }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -67,6 +81,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
+        ...(args.summary ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,

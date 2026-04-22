@@ -33,6 +33,7 @@ export const DESCRIPTION = [
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
+  '- `summary` (optional) — One-sentence description of *why* you are making this edit (e.g., "fixed typo in header", "linked [[Auth Design]]"). Surfaced in the shadow-repo commit message. Max 200 chars.',
 ].join('\n');
 
 interface EditDocumentDeps {
@@ -58,6 +59,13 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-sentence change-note surfaced in the shadow-repo commit message. Max 200 chars.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
     async (args: {
@@ -65,6 +73,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       find: string;
       replace: string;
       offset?: number;
+      summary?: string;
       cwd?: string;
     }) => {
       const context = await resolveProjectServerContext(
@@ -84,6 +93,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         find: args.find,
         replace: args.replace,
         offset: args.offset,
+        ...(args.summary ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,

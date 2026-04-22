@@ -13,6 +13,8 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
+  composeCommitSubject,
+  formatChangeNoteBody,
   formatOkActor,
   formatWipSubject,
   type OkActorEntry,
@@ -335,6 +337,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         // Classified writers (file-system, git-upstream, openknowledge-service) leave these
         // null because they have no principal/agent attribution at record time.
         const a = entry.actor;
+        // Dedup summaries by exact trim-match (agent change-notes follow-up spec, D8).
+        // Rapid retry loops that produce identical summaries should collapse to one line.
+        const summaries = entry.summaries.length > 0 ? [...new Set(entry.summaries)] : [];
         const actorEntry: OkActorEntry = {
           v: 1,
           principal: a?.principalId ?? null,
@@ -346,6 +351,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           display_name: entry.displayName,
           color_seed: entry.colorSeed,
           docs,
+          ...(summaries.length > 0 ? { summaries } : {}),
         };
         const contributorLine = `ok-contributors: ${JSON.stringify({
           v: 1,
@@ -354,8 +360,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           colorSeed: entry.colorSeed,
           docs,
         })}`;
-        const subject = entry.subjectOverride ?? formatWipSubject(docs);
-        const writerMessage = `${subject}\n\n${contributorLine}\n${formatOkActor(actorEntry)}`;
+        const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
+        const subject = composeCommitSubject(baseSubject, summaries);
+        const bulletBody = formatChangeNoteBody(summaries);
+        // Body layout: [bullet block (≥2 summaries)] + [blank line] + ok-contributors + ok-actor
+        const bodySections = bulletBody
+          ? [bulletBody, `${contributorLine}\n${formatOkActor(actorEntry)}`]
+          : [`${contributorLine}\n${formatOkActor(actorEntry)}`];
+        const writerMessage = `${subject}\n\n${bodySections.join('\n\n')}`;
         try {
           const sha = await commitWipFromTree(shadow, writer, treeSha, writerMessage, branch);
           anySuccess = true;

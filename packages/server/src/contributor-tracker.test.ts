@@ -176,3 +176,135 @@ describe('clearContributors', () => {
     expect(formatContributors()).toBe('');
   });
 });
+
+// Agent change-notes follow-up spec — FR-3 summaries accumulation
+describe('recordContributor summaries', () => {
+  test('omitted summary leaves entry with empty summaries array', () => {
+    recordContributor('a.md', 'agent-alice', 'Alice');
+    const snapshot = swapContributors();
+    const entry = snapshot.get('agent-alice');
+    expect(entry?.summaries).toEqual([]);
+  });
+
+  test('single summary is captured in call order', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'added auth design',
+    );
+    const snapshot = swapContributors();
+    expect(snapshot.get('agent-alice')?.summaries).toEqual(['added auth design']);
+  });
+
+  test('multiple summaries accumulate in call order', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'first note',
+    );
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'second note',
+    );
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'third note',
+    );
+    const snapshot = swapContributors();
+    expect(snapshot.get('agent-alice')?.summaries).toEqual([
+      'first note',
+      'second note',
+      'third note',
+    ]);
+  });
+
+  test('whitespace-only summaries are dropped', () => {
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, '   ');
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'valid note',
+    );
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, '');
+    const snapshot = swapContributors();
+    expect(snapshot.get('agent-alice')?.summaries).toEqual(['valid note']);
+  });
+
+  test('summaries are trimmed before storage', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      '  padded note  ',
+    );
+    const snapshot = swapContributors();
+    expect(snapshot.get('agent-alice')?.summaries).toEqual(['padded note']);
+  });
+
+  test('summaries are per-writer, not global', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'alice note',
+    );
+    recordContributor('b.md', 'agent-bob', 'Bob', undefined, undefined, undefined, 'bob note');
+    const snapshot = swapContributors();
+    expect(snapshot.get('agent-alice')?.summaries).toEqual(['alice note']);
+    expect(snapshot.get('agent-bob')?.summaries).toEqual(['bob note']);
+  });
+
+  test('restoreContributors preserves prior summaries when merging', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'pre-drain note',
+    );
+    const snapshot = swapContributors();
+    recordContributor(
+      'b.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'post-swap note',
+    );
+    restoreContributors(snapshot);
+    const restored = swapContributors();
+    // Order: snapshot entries first, then post-swap accumulators (call-order preservation within failed drain)
+    expect(restored.get('agent-alice')?.summaries).toEqual(['pre-drain note', 'post-swap note']);
+  });
+});

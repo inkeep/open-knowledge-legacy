@@ -4,6 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  COMMIT_SUBJECT_MAX_LEN,
+  composeCommitSubject,
+  formatChangeNoteBody,
   formatCheckpointBodyLine,
   formatCheckpointSubject,
   formatImportSubject,
@@ -513,5 +516,165 @@ describe('Subject-prefix format helpers (D53, FR-13)', () => {
     ];
     const prefixes = subjects.map((s) => s.split(':')[0]);
     expect(new Set(prefixes).size).toBe(subjects.length);
+  });
+});
+
+// Agent change-notes follow-up spec — FR-5 subject composition
+describe('composeCommitSubject (change-notes subject rules)', () => {
+  test('zero summaries: returns base subject unchanged', () => {
+    expect(composeCommitSubject('wip: notes.md', [])).toBe('wip: notes.md');
+  });
+
+  test('single short summary: appends with em-dash separator', () => {
+    expect(composeCommitSubject('wip: notes.md', ['added auth design'])).toBe(
+      'wip: notes.md — added auth design',
+    );
+  });
+
+  test('single summary fits exactly at 72 chars: no truncation', () => {
+    const base = 'wip: a.md';
+    const summary = 'x'.repeat(COMMIT_SUBJECT_MAX_LEN - base.length - ' — '.length);
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.endsWith(summary)).toBe(true);
+  });
+
+  test('single oversize summary: truncated with trailing ellipsis, base preserved', () => {
+    const base = 'wip: notes.md';
+    const summary =
+      'this is a very long change-note that goes on and on well past seventy-two characters total';
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.startsWith('wip: notes.md — ')).toBe(true);
+    expect(subject.endsWith('…')).toBe(true);
+  });
+
+  test('two summaries: N-edits suffix, does not embed individual summaries in subject', () => {
+    const subject = composeCommitSubject('wip: notes.md', ['first', 'second']);
+    expect(subject).toBe('wip: notes.md (2 edits)');
+  });
+
+  test('three summaries: N-edits suffix with correct count', () => {
+    const subject = composeCommitSubject('wip: a.md', ['a', 'b', 'c']);
+    expect(subject).toBe('wip: a.md (3 edits)');
+  });
+
+  test('works with non-wip subject prefixes (rename:, rollback:, etc.)', () => {
+    expect(composeCommitSubject('rename: a.md -> b.md', ['clarifying scope'])).toBe(
+      'rename: a.md -> b.md — clarifying scope',
+    );
+    expect(composeCommitSubject('rollback: doc.md to abc1234', ['reverting deletion'])).toBe(
+      'rollback: doc.md to abc1234 — reverting deletion',
+    );
+  });
+});
+
+describe('formatChangeNoteBody', () => {
+  test('zero summaries: empty string (no body)', () => {
+    expect(formatChangeNoteBody([])).toBe('');
+  });
+
+  test('single summary: empty string (summary carried in subject, not body)', () => {
+    expect(formatChangeNoteBody(['only one'])).toBe('');
+  });
+
+  test('two summaries: markdown bullet list in call order', () => {
+    expect(formatChangeNoteBody(['first', 'second'])).toBe('- first\n- second');
+  });
+
+  test('preserves original call order (no sort, no dedup at this layer)', () => {
+    expect(formatChangeNoteBody(['z-later', 'a-earlier', 'm-middle'])).toBe(
+      '- z-later\n- a-earlier\n- m-middle',
+    );
+  });
+});
+
+describe('OkActorEntry summaries round-trip (FR-4)', () => {
+  test('formatOkActor elides summaries field when empty', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).not.toContain('summaries');
+  });
+
+  test('formatOkActor elides summaries field when explicitly empty array', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: [],
+    };
+    const line = formatOkActor(entry);
+    expect(line).not.toContain('summaries');
+  });
+
+  test('formatOkActor includes summaries when non-empty', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: ['added auth', 'fixed typo'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"summaries":["added auth","fixed typo"]');
+  });
+
+  test('parseOkActor round-trips summaries', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      principal: 'principal-abc',
+      agent_session: 'conn-xyz',
+      agent_type: 'claude',
+      client_name: 'claude-code',
+      client_version: '1.5.2',
+      label: null,
+      display_name: 'Claude (xyz)',
+      color_seed: 'claude-code',
+      docs: ['a.md', 'b.md'],
+      summaries: ['first note', 'second note'],
+    };
+    const body = formatOkActor(entry);
+    const parsed = parseOkActor(body);
+    expect(parsed?.summaries).toEqual(['first note', 'second note']);
+  });
+
+  test('parseOkActor treats missing summaries field as undefined (pre-spec commits)', () => {
+    // Simulate a commit body emitted before this follow-up shipped.
+    const legacyBody =
+      'ok-actor: {"v":1,"principal":null,"agent_session":null,"agent_type":null,"client_name":null,"client_version":null,"label":null,"display_name":"Claude","color_seed":"claude","docs":["a.md"]}';
+    const parsed = parseOkActor(legacyBody);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.summaries).toBeUndefined();
+  });
+
+  test('parseOkActor filters non-string entries defensively', () => {
+    const corruptBody =
+      'ok-actor: {"v":1,"principal":null,"agent_session":null,"agent_type":null,"client_name":null,"client_version":null,"label":null,"display_name":"Claude","color_seed":"claude","docs":["a.md"],"summaries":["good",42,null,"also good"]}';
+    const parsed = parseOkActor(corruptBody);
+    expect(parsed?.summaries).toEqual(['good', 'also good']);
   });
 });

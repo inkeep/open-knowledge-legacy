@@ -1167,6 +1167,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   /**
+   * Agent change-notes follow-up spec, FR-1 / FR-2 / NFR-3.
+   * Extracts the optional `summary` field from a mutating-handler request body,
+   * enforces the 200-char cap at the API boundary, and returns `undefined` for
+   * missing / non-string / empty-after-trim values. Intent is the agent's and
+   * is never synthesized server-side (NG6).
+   */
+  const SUMMARY_MAX_LEN = 200;
+  function extractSummary(body: Record<string, unknown>): string | undefined {
+    const raw = body.summary;
+    if (typeof raw !== 'string') return undefined;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return undefined;
+    return trimmed.slice(0, SUMMARY_MAX_LEN);
+  }
+
+  /**
    * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
    * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
    */
@@ -1245,6 +1261,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body);
+      const summary = extractSummary(body);
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1277,6 +1294,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          summary,
         );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
@@ -1341,6 +1359,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const summary = extractSummary(body as Record<string, unknown>);
       const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1371,6 +1390,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          summary,
         );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
@@ -1854,6 +1874,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const summary = extractSummary(body as Record<string, unknown>);
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1928,6 +1949,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             colorSeed,
             undefined,
             buildAgentActor({ clientName, clientVersion, label }),
+            summary,
           );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
@@ -2001,6 +2023,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
       // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
       const { agentName, colorSeed, clientName, clientVersion, label } = extractAgentIdentity(body);
+      const summary = extractSummary(body);
 
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
@@ -2048,6 +2071,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             colorSeed,
             undefined,
             buildAgentActor({ clientName, clientVersion, label }),
+            summary,
           );
         }
       } finally {
@@ -2622,6 +2646,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       clientVersion: rollbackClientVersion,
       label: rollbackLabel,
     } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+    const rollbackSummary = extractSummary(body as Record<string, unknown>);
 
     const {
       docName: rawDocName,
@@ -2712,6 +2737,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           clientVersion: rollbackClientVersion,
           label: rollbackLabel,
         }),
+        rollbackSummary,
       );
       setReconciledBase(docName, markdown);
 
@@ -3059,6 +3085,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         clientVersion: createPageClientVersion,
         label: createPageLabel,
       } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      const createPageSummary = extractSummary(body as Record<string, unknown>);
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -3111,6 +3138,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           clientVersion: createPageClientVersion,
           label: createPageLabel,
         }),
+        createPageSummary,
       );
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
@@ -3205,6 +3233,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         clientVersion: renameClientVersion,
         label: renameLabel,
       } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      const renameSummary = extractSummary(body as Record<string, unknown>);
       const { docName, newDocName } = body as Record<string, unknown>;
       if (typeof docName !== 'string' || typeof newDocName !== 'string') {
         json(res, 400, { ok: false, error: 'docName and newDocName are required' });
@@ -3250,6 +3279,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           clientVersion: renameClientVersion,
           label: renameLabel,
         }),
+        renameSummary,
       );
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {

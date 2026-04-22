@@ -48,6 +48,12 @@ export interface ContributorEntry {
    * Last non-undefined value wins within a drain cycle.
    */
   actor?: ActorMetadata;
+  /**
+   * Per-tool-call change-notes (agent change-notes follow-up spec, FR-3).
+   * Accumulates in call order; empty array when the agent omitted `summary`
+   * on every tool call in this drain window. Drained atomically with docs/actor.
+   */
+  summaries: string[];
 }
 
 /** Module-level accumulator — shared between api-extension and persistence. */
@@ -64,6 +70,9 @@ let pendingContributors = new Map<string, ContributorEntry>();
  * @param actor - Optional actor-tuple metadata (FR-8). Populated for agent/principal
  *   writers by the api-extension.ts boundary; left undefined for classified writers.
  *   Last non-undefined values (per field) win within a drain cycle.
+ * @param summary - Optional per-tool-call change-note. Trimmed and appended to
+ *   the entry's summaries array in call order. Empty / whitespace-only values
+ *   are dropped. Agent change-notes follow-up spec, FR-3.
  */
 export function recordContributor(
   docName: string,
@@ -72,6 +81,7 @@ export function recordContributor(
   colorSeed?: string,
   subjectOverride?: string,
   actor?: ActorMetadata,
+  summary?: string,
 ): void {
   let entry = pendingContributors.get(writerId);
   if (!entry) {
@@ -82,6 +92,7 @@ export function recordContributor(
       docs: new Set(),
       subjectOverride,
       actor,
+      summaries: [],
     };
     pendingContributors.set(writerId, entry);
   }
@@ -100,6 +111,12 @@ export function recordContributor(
     if (actor.clientVersion !== undefined) merged.clientVersion = actor.clientVersion;
     if (actor.label !== undefined) merged.label = actor.label;
     entry.actor = merged;
+  }
+  if (summary !== undefined) {
+    const trimmed = summary.trim();
+    if (trimmed.length > 0) {
+      entry.summaries.push(trimmed);
+    }
   }
 }
 
@@ -130,10 +147,16 @@ export function restoreContributors(snapshot: Map<string, ContributorEntry>): vo
         colorSeed: entry.colorSeed,
         docs: new Set(),
         actor: entry.actor,
+        summaries: [],
       };
       pendingContributors.set(writerId, live);
     }
     for (const doc of entry.docs) live.docs.add(doc);
+    // Restore summaries: prepend snapshot entries before any accumulated since swap,
+    // preserving original call order within the failed drain window.
+    if (entry.summaries.length > 0) {
+      live.summaries = [...entry.summaries, ...live.summaries];
+    }
   }
 }
 
@@ -182,10 +205,14 @@ export function restoreContributorEntry(writerId: string, entry: ContributorEntr
       colorSeed: entry.colorSeed,
       docs: new Set(),
       actor: entry.actor,
+      summaries: [],
     };
     pendingContributors.set(writerId, live);
   }
   for (const doc of entry.docs) live.docs.add(doc);
+  if (entry.summaries.length > 0) {
+    live.summaries = [...entry.summaries, ...live.summaries];
+  }
 }
 
 /**

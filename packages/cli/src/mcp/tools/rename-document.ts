@@ -52,6 +52,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `docName` — Current document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `newDocName` — New document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
+  '- `summary` (optional) — One-sentence description of *why* you are renaming (e.g., "clarifying scope — this is auth-specific, not general notes"). Surfaced in the shadow-repo commit message. Max 200 chars.',
 ].join('\n');
 
 function parseRenameMappings(value: unknown): RenameDocumentMapping[] {
@@ -94,9 +95,16 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
     {
       docName: z.string().describe('Current document name'),
       newDocName: z.string().describe('New document name'),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-sentence change-note surfaced in the shadow-repo commit message. Max 200 chars.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; newDocName: string; cwd?: string }) => {
+    async (args: { docName: string; newDocName: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -115,6 +123,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       const result = await httpPost(url, '/api/rename', {
         docName: normalizedDoc.docName,
         newDocName: normalizedNewDoc.docName,
+        ...(args.summary ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,

@@ -29,6 +29,7 @@ export const DESCRIPTION = [
   '- `docName` — Document name to restore, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `commitSha` — The 40-character SHA of the shadow repo commit to restore to.',
   '  Use `get_history` to find available versions.',
+  '- `summary` (optional) — One-sentence description of *why* you are rolling back (e.g., "reverting accidental deletion of auth section"). Surfaced in the shadow-repo commit message. Max 200 chars.',
 ].join('\n');
 
 export interface RollbackToVersionDeps {
@@ -49,9 +50,16 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         .length(40)
         .regex(/^[0-9a-f]+$/i)
         .describe('40-character commit SHA from the shadow repo timeline'),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-sentence change-note surfaced in the shadow-repo commit message. Max 200 chars.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; commitSha: string; cwd?: string }) => {
+    async (args: { docName: string; commitSha: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -80,6 +88,7 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       const result = await httpPost(url, '/api/rollback', {
         docName,
         commitSha: args.commitSha,
+        ...(args.summary ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
