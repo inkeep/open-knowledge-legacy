@@ -120,15 +120,28 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
 }
 
 /**
- * Scope a locator query to the portaled submenu for a given target. The
- * disabled-row submenu pattern (replacing the prior tooltip-with-buttons
- * pattern that violated WAI-ARIA) mounts the install / claude.ai affordances
- * as real `DropdownMenuItem`s inside a `DropdownMenuSub`. Radix portals the
- * submenu content to the document body; the testid on the sub-content is the
- * stable anchor.
+ * Scope a locator query to the currently-visible disabled-row sub-content.
+ * The helper name is historical — the disabled-row affordance was originally
+ * a Radix Tooltip-with-buttons and tests were written against that shape;
+ * it's now a portaled `DropdownMenuSubContent` (WAI-ARIA-correct per Review
+ * M3 fix). Any visible sub-content wins; Radix unmounts closed sub-content
+ * so only one is in the DOM at a time. Preserving the name keeps the test
+ * assertions scannable alongside earlier review-iteration notes.
  */
-function _submenuFor(page: Page, targetId: string): Locator {
-  return page.locator(`[data-testid="open-in-agent-submenu-${targetId}"]`);
+function tooltipScope(page: Page): Locator {
+  return page.locator('[data-slot="dropdown-menu-sub-content"]');
+}
+
+/**
+ * Assert a row is rendered in its disabled-post-probe shape (`DropdownMenuSub`
+ * trigger with `data-row-disabled=""` sentinel). This replaces the old
+ * `toHaveAttribute('data-disabled', '')` assertion that worked when the row
+ * was a real disabled `DropdownMenuItem`. The sub-trigger pattern is the one
+ * shipped for Review M3 accessibility fix — Radix does not carry
+ * `data-disabled` on a sub-trigger.
+ */
+async function expectRowDisabled(row: Locator): Promise<void> {
+  await expect(row).toHaveAttribute('data-row-disabled', '');
 }
 
 test.describe('handoff — 8-cell matrix', () => {
@@ -340,11 +353,10 @@ test.describe('handoff — 8-cell matrix', () => {
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
     const cursorRow = page.getByTestId('open-in-agent-item-cursor');
-    await expect(cursorRow).toHaveAttribute('data-disabled', '');
+    await expectRowDisabled(cursorRow);
 
-    // Hover reveals the desktop-build tooltip (hover, not click, because
-    // the row is disabled). `.first()` picks the portaled-visible tooltip
-    // over the aria-describedby clone.
+    // Hover opens the DropdownMenuSubContent (portaled), which carries
+    // the descriptive message as a DropdownMenuLabel + install affordance.
     await cursorRow.hover();
     await expect(
       tooltipScope(page).getByText('Cursor handoff requires the desktop build.').first(),
@@ -385,12 +397,11 @@ test.describe('handoff — 8-cell matrix', () => {
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
     const coworkRow = page.getByTestId('open-in-agent-item-claude-cowork');
-    await expect(coworkRow).toHaveAttribute('data-disabled', '');
+    await expectRowDisabled(coworkRow);
 
-    // Hover opens the disabled-row tooltip with the web-fallback affordance.
-    // Scope to `tooltipScope` — Radix renders a portaled tooltip AND a
-    // hidden aria-describedby clone, both bearing the same testid. `.first()`
-    // picks the visible one.
+    // Hover opens the disabled-row sub-content with the web-fallback
+    // affordance (shipped as a keyboard-reachable DropdownMenuItem inside a
+    // portaled DropdownMenuSubContent; see Review M3 fix).
     await coworkRow.hover();
     const webFallback = tooltipScope(page)
       .getByTestId('open-in-agent-web-fallback-claude-cowork')
@@ -435,10 +446,10 @@ test.describe('handoff — 8-cell matrix', () => {
     await openDropdown(page);
     await waitForProbeSettled(page, 'web');
 
-    // All four rows: data-disabled.
+    // All four rows: disabled sub-trigger shape (carries data-row-disabled="").
     for (const id of ['claude-cowork', 'claude-code', 'codex', 'cursor']) {
       const row = page.getByTestId(`open-in-agent-item-${id}`);
-      await expect(row).toHaveAttribute('data-disabled', '');
+      await expectRowDisabled(row);
     }
 
     // Per-row tooltip copy verification. Reopening the dropdown between

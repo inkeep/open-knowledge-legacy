@@ -152,7 +152,7 @@ describe('handleInstalledAgents', () => {
     const mock = createMockRes();
     await handleInstalledAgents(createMockReq('POST'), mock.res, probeAll);
     expect(mock.writeHead.status).toBe(405);
-    expect(JSON.parse(mock.body)).toEqual({ ok: false, error: 'Method not allowed' });
+    expect(JSON.parse(mock.body)).toEqual({ error: 'Method not allowed' });
   });
 
   test('PUT returns 405', async () => {
@@ -176,7 +176,7 @@ describe('handleInstalledAgents', () => {
     const mock = createMockRes();
     await handleInstalledAgents(createMockReq('GET'), mock.res, probeAll);
     expect(mock.writeHead.status).toBe(500);
-    expect(JSON.parse(mock.body)).toEqual({ ok: false, error: 'Internal server error' });
+    expect(JSON.parse(mock.body)).toEqual({ error: 'Internal server error' });
   });
 });
 
@@ -388,8 +388,8 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
   test('POST returns 405', async () => {
     const res = await fetch(`http://localhost:${port}/api/installed-agents`, { method: 'POST' });
     expect(res.status).toBe(405);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body).toEqual({ ok: false, error: 'Method not allowed' });
+    const body = (await res.json()) as { error: string };
+    expect(body).toEqual({ error: 'Method not allowed' });
   });
 
   test('schemes constant is exactly the three product targets', () => {

@@ -178,6 +178,19 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                       : handoffInput === null
                         ? 'No active doc'
                         : null;
+                // Status hint for disabled rows is rendered as a plain <span>
+                // rather than <CommandShortcut>. CommandShortcut is cmdk's
+                // right-aligned affordance semantically reserved for keyboard
+                // shortcuts (⌘O / ⌘⇧N above). Overloading it with status copy
+                // ("Not installed", "Desktop only") conflated the shortcut
+                // affordance with disabled-state messaging; the plain span is
+                // the same visual placement without the semantic overload.
+                // `aria-label` composes the hint into the accessible name so
+                // AT users hear "Open in Codex, Not installed" rather than
+                // the bare "Open in Codex" that matches an enabled row.
+                const accessibleLabel = hint
+                  ? `Open in ${target.displayName}, ${hint}`
+                  : `Open in ${target.displayName}`;
                 return (
                   <CommandItem
                     key={target.id}
@@ -189,10 +202,13 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                       void dispatchHandoff(target.id, handoffInput);
                     }}
                     data-testid={`command-palette-open-in-${target.id}`}
+                    aria-label={accessibleLabel}
                   >
-                    <span>Open in {target.displayName}</span>
+                    <span className="flex-1">Open in {target.displayName}</span>
                     {hint ? (
-                      <CommandShortcut className="text-muted-foreground">{hint}</CommandShortcut>
+                      <span aria-hidden="true" className="ml-auto text-muted-foreground text-xs">
+                        {hint}
+                      </span>
                     ) : null}
                   </CommandItem>
                 );

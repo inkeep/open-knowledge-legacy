@@ -10,6 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   detectProtocol,
+  isPathWithinProject,
   recordHandoff,
   STATS_FILE_RELATIVE_PATH,
   spawnCursor,
@@ -184,6 +185,51 @@ describe('validateSpawnPath', () => {
   });
 });
 
+describe('isPathWithinProject — Review M5 confined-path check', () => {
+  test('accepts identical paths (projectPath == userPath)', () => {
+    expect(isPathWithinProject('/Users/x/project', '/Users/x/project', 'darwin')).toBe(true);
+  });
+
+  test('accepts sub-paths strictly under projectPath', () => {
+    expect(isPathWithinProject('/Users/x/project/specs/foo', '/Users/x/project', 'darwin')).toBe(
+      true,
+    );
+  });
+
+  test('rejects sibling paths (sharing common parent but not under project)', () => {
+    // `/Users/x/project-other` shares `/Users/x/` prefix with `/Users/x/project`
+    // but is NOT under the project root. String prefix matches would pass; the
+    // path-relative-based check correctly rejects.
+    expect(isPathWithinProject('/Users/x/project-other', '/Users/x/project', 'darwin')).toBe(false);
+  });
+
+  test('rejects parent-traversal escape (..)', () => {
+    // `relative()` returns `../other` when userPath escapes via ..
+    expect(isPathWithinProject('/Users/x/other', '/Users/x/project', 'darwin')).toBe(false);
+    expect(isPathWithinProject('/etc/passwd', '/Users/x/project', 'linux')).toBe(false);
+  });
+
+  test('rejects when userPath is the home dir (a compromised renderer could name .ssh)', () => {
+    expect(isPathWithinProject('/Users/x/.ssh', '/Users/x/project', 'darwin')).toBe(false);
+  });
+
+  test('rejects when either path is invalid (relative / empty / null-byte)', () => {
+    expect(isPathWithinProject('relative', '/Users/x/project', 'darwin')).toBe(false);
+    expect(isPathWithinProject('/Users/x/project/sub', '', 'darwin')).toBe(false);
+    expect(isPathWithinProject('/Users/x\0', '/Users/x/project', 'darwin')).toBe(false);
+  });
+
+  test('Windows: rejects cross-drive paths', () => {
+    expect(isPathWithinProject('D:\\other', 'C:\\Users\\x\\project', 'win32')).toBe(false);
+  });
+
+  test('Windows: accepts same-drive subpaths', () => {
+    expect(
+      isPathWithinProject('C:\\Users\\x\\project\\specs', 'C:\\Users\\x\\project', 'win32'),
+    ).toBe(true);
+  });
+});
+
 describe('spawnCursor', () => {
   test('rejects invalid path without calling resolve / spawn', async () => {
     let resolveCalls = 0;
@@ -209,6 +255,78 @@ describe('spawnCursor', () => {
     expect(result).toEqual({ ok: false, reason: 'invalid-path' });
     expect(resolveCalls).toBe(0);
     expect(spawnCalls).toBe(0);
+  });
+
+  test('rejects out-of-scope path when projectPath is bound (Review M5)', async () => {
+    // Defense-in-depth against a renderer compromise. The caller window's
+    // `ProjectContext.projectPath` is threaded from main/index.ts; any
+    // user-supplied path that escapes is refused before resolve/spawn.
+    let resolveCalls = 0;
+    let spawnCalls = 0;
+    const result = await spawnCursor(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/x/project',
+        getApplicationInfoForProtocol: async () => {
+          resolveCalls++;
+          return { name: 'Cursor', path: '/Applications/Cursor.app' };
+        },
+        resolveCursorBinary: async () => {
+          resolveCalls++;
+          return '/usr/local/bin/cursor';
+        },
+        spawn: async () => {
+          spawnCalls++;
+          return { ok: true };
+        },
+      },
+      '/Users/x/.ssh',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(resolveCalls).toBe(0);
+    expect(spawnCalls).toBe(0);
+  });
+
+  test('accepts in-scope subpath when projectPath is bound', async () => {
+    let spawnedArgs: ReadonlyArray<string> | null = null;
+    const result = await spawnCursor(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/x/project',
+        getApplicationInfoForProtocol: async () => ({
+          name: 'Cursor',
+          path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
+        }),
+        spawn: async (_exec, args) => {
+          spawnedArgs = args;
+          return { ok: true };
+        },
+      },
+      '/Users/x/project',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawnedArgs).toEqual(['/Users/x/project']);
+  });
+
+  test('skips scope check when projectPath is not supplied (e.g. Navigator-invoked)', async () => {
+    let spawnCalled = false;
+    const result = await spawnCursor(
+      {
+        platform: 'darwin',
+        // projectPath intentionally omitted — scope check falls through.
+        getApplicationInfoForProtocol: async () => ({
+          name: 'Cursor',
+          path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
+        }),
+        spawn: async () => {
+          spawnCalled = true;
+          return { ok: true };
+        },
+      },
+      '/Users/x/any-path',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawnCalled).toBe(true);
   });
 
   test('uses Electron-resolved path first (never trusts $PATH on its own)', async () => {

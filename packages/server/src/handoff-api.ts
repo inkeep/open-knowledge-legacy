@@ -157,6 +157,15 @@ export function createInstalledAgentsProbe(deps: InstalledAgentsProbeDeps): {
  * 405 on non-GET. 200 + flat `{claude, codex, cursor}` body on success.
  * 500 is unreachable under `createInstalledAgentsProbe` semantics (probe
  * rejections are swallowed into `false`), but defended against for robustness.
+ *
+ * Error envelopes use the bare `{error}` shape — NOT the `{ok:true,...}` /
+ * `{ok:false,...}` envelope some peer endpoints emit. The success shape is
+ * dictated by SPEC §6.4 ("Response body: JSON { claude, codex, cursor }") and
+ * is consumed directly by `probeViaFetch` in `packages/app/src/lib/handoff/
+ * install-detect.ts`, which keys off the three literal scheme names. Wrapping
+ * success in `{ok:true, agents:...}` would break that consumer without
+ * benefit; aligning errors to the bare shape keeps the envelope uniform
+ * across both status branches of this endpoint (Review Minor #1).
  */
 export async function handleInstalledAgents(
   req: IncomingMessage,
@@ -164,7 +173,7 @@ export async function handleInstalledAgents(
   probeAll: () => Promise<Record<InstalledAgentScheme, boolean>>,
 ): Promise<void> {
   if (req.method !== 'GET') {
-    writeJson(res, 405, { ok: false, error: 'Method not allowed' });
+    writeJson(res, 405, { error: 'Method not allowed' });
     return;
   }
   try {
@@ -172,7 +181,7 @@ export async function handleInstalledAgents(
     writeJson(res, 200, result);
   } catch (e) {
     console.error('[installed-agents]', e);
-    writeJson(res, 500, { ok: false, error: 'Internal server error' });
+    writeJson(res, 500, { error: 'Internal server error' });
   }
 }
 

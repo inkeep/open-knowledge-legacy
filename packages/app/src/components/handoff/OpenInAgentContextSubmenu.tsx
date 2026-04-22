@@ -89,6 +89,15 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
           const inputMissing = input === null;
           const enabled = rowState.enabled && !inputMissing;
           const hint = contextRowHint(target, installState, isElectronHost, inputMissing);
+          // `aria-label` composes the hint into the accessible name so screen
+          // readers hear the disabled state (e.g. "Open in Codex, Not
+          // installed") rather than reading a bare row that sounds identical
+          // to an enabled one. The hint `<span>` is `aria-hidden="true"` to
+          // avoid double-speaking the text content. Parallel to the primary
+          // EditorHeader dropdown surface (OpenInAgentMenuItem).
+          const accessibleLabel = hint
+            ? `Open in ${target.displayName}, ${hint}`
+            : `Open in ${target.displayName}`;
           return (
             <ContextMenuItem
               key={target.id}
@@ -98,9 +107,14 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
                 void dispatch(target.id, input);
               }}
               data-testid={`file-tree-open-in-${target.id}`}
+              aria-label={accessibleLabel}
             >
               <span className="flex-1">Open in {target.displayName}</span>
-              {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
+              {hint ? (
+                <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+                  {hint}
+                </span>
+              ) : null}
             </ContextMenuItem>
           );
         })}

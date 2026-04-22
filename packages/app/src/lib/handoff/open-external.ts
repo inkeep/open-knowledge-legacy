@@ -62,6 +62,16 @@ export async function openExternal(
     const a = doc.createElement('a');
     a.href = url;
     a.rel = 'noopener noreferrer';
+    // http(s) URLs are the web-fallback path (https://claude.ai/new?q=…) —
+    // without `target="_blank"` the anchor click navigates the editor tab
+    // away, discarding UI state (active doc, scroll, open panels). Custom
+    // schemes (claude://, codex://, cursor://) are intercepted by the OS
+    // scheme handler and do NOT navigate the tab; `target` stays unset on
+    // those so the TQ7 LOCKED behavior (no "Allow this site to open X?"
+    // interstitial on Firefox/Chrome) is preserved.
+    if (/^https?:/i.test(url)) {
+      a.target = '_blank';
+    }
     doc.body.appendChild(a);
     a.click();
     a.remove();

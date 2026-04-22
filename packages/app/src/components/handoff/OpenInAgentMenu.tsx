@@ -66,6 +66,14 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
     sonnerToast.success(successToastForWebFallback(target.displayName));
   };
 
+  // Parallel to handleWebFallbackSuccess — any failure of the claude.ai
+  // fallback click (popup-blocker, exotic browser, SSR / DOM-less env)
+  // surfaces an error toast so the user knows the click didn't land.
+  // Without this, the disabled-row secondary affordance would fail silently.
+  const handleWebFallbackError = (target: TargetData): void => {
+    sonnerToast.error(`Couldn't open ${target.displayName} in your browser.`);
+  };
+
   // Refresh install state on open per SQ5 DIRECTED option c. The probe
   // coordinator handles throttle + dedup so calling on every open is safe.
   const handleOpenChange = (next: boolean): void => {
@@ -113,6 +121,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
               prompt={prompt}
               onSelect={() => handleSelect(target)}
               onWebFallbackSuccess={handleWebFallbackSuccess}
+              onWebFallbackError={handleWebFallbackError}
             />
           );
         })}

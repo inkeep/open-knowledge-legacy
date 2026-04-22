@@ -42,6 +42,8 @@ import {
 import type { ReactNode } from 'react';
 import {
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -197,12 +199,17 @@ export interface OpenInAgentMenuItemProps {
   /** Test seam — fires after a successful web-fallback click so the caller can
    *  surface a toast. Defaults to a no-op; production callers will wire sonner. */
   readonly onWebFallbackSuccess?: (target: TargetData) => void;
+  /** Test seam — fires after a failed web-fallback click (popup-blocker,
+   *  exotic browser, DOM-less environment). Parallel to onWebFallbackSuccess
+   *  so the caller can surface a sonner error toast. Defaults to a no-op. */
+  readonly onWebFallbackError?: (target: TargetData, reason: string) => void;
 }
 
 export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode {
   const { target, installState, isElectronHost, prompt, onSelect } = props;
   const openExternal = props.openExternal ?? defaultOpenExternal;
   const onWebFallbackSuccess = props.onWebFallbackSuccess ?? (() => {});
+  const onWebFallbackError = props.onWebFallbackError ?? (() => {});
 
   const rowState = computeRowState({ target, installState, isElectronHost });
   const hint = computeRowHint({ target, installState, isElectronHost });
@@ -216,7 +223,11 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
     void (async () => {
       const url = computeWebFallbackUrl(prompt);
       const outcome = await openExternal(url);
-      if (outcome.ok) onWebFallbackSuccess(target);
+      if (outcome.ok) {
+        onWebFallbackSuccess(target);
+      } else {
+        onWebFallbackError(target, outcome.detail ?? outcome.reason);
+      }
     })();
   };
 
@@ -229,29 +240,70 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
     );
   }
 
-  // Pre-probe — plain disabled row with "Detecting…" hint (AC8).
+  // Pre-probe — plain disabled row with "Detecting…" hint (AC8). `aria-label`
+  // composes the hint into the accessible name so AT users hear "Open in
+  // Codex, Detecting…" rather than an identical-sounding bare row.
   if (!rowState.tooltip) {
+    const preProbeLabel = hint
+      ? `Open in ${target.displayName}, ${hint}`
+      : `Open in ${target.displayName}`;
     return (
-      <DropdownMenuItem disabled data-testid={`open-in-agent-item-${target.id}`}>
+      <DropdownMenuItem
+        disabled
+        data-testid={`open-in-agent-item-${target.id}`}
+        aria-label={preProbeLabel}
+      >
         <span className="flex-1">Open in {target.displayName}</span>
-        {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
+        {hint ? (
+          <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+            {hint}
+          </span>
+        ) : null}
       </DropdownMenuItem>
     );
   }
 
   // Disabled post-probe — submenu with install + (Claude only) web-fallback.
   // Using DropdownMenuSub instead of a Tooltip-with-buttons preserves the
-  // PQ6 affordances while being keyboard-accessible and ARIA-correct.
+  // PQ6 affordances while being keyboard-accessible and ARIA-correct. The
+  // SubContent opens with a DropdownMenuLabel carrying the descriptive
+  // message required by SPEC §7.3 ("Cursor handoff requires the desktop
+  // build." / "Requires <brand>.") — without this label the user lost the
+  // "why is this disabled" context in the Tooltip → Submenu refactor.
+  //
+  // `aria-label` on the SubTrigger composes the hint into the accessible name
+  // so screen readers hear "Open in Claude Cowork, Not installed" rather than
+  // the bare "Open in Claude Cowork" that would otherwise be indistinguishable
+  // from an enabled row. The `aria-hidden` hint span stays visually present
+  // but is not re-read as part of the computed name.
+  const accessibleLabel = hint
+    ? `Open in ${target.displayName}, ${hint}`
+    : `Open in ${target.displayName}`;
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger data-testid={`open-in-agent-item-${target.id}`}>
+      <DropdownMenuSubTrigger
+        data-testid={`open-in-agent-item-${target.id}`}
+        data-row-disabled=""
+        aria-label={accessibleLabel}
+      >
         <span className="flex-1">Open in {target.displayName}</span>
-        {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
+        {hint ? (
+          <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+            {hint}
+          </span>
+        ) : null}
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent
         className="min-w-[260px]"
         data-testid={`open-in-agent-submenu-${target.id}`}
       >
+        <DropdownMenuLabel
+          className="font-normal text-muted-foreground text-xs"
+          data-testid={`open-in-agent-message-${target.id}`}
+        >
+          {rowState.tooltip.message}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={handleInstallClick}
           data-testid={`open-in-agent-install-${target.id}`}
@@ -263,7 +315,10 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
             onSelect={handleWebFallbackClick}
             data-testid={`open-in-agent-web-fallback-${target.id}`}
           >
-            <span>{rowState.tooltip.webFallback.label}</span>
+            <span className="flex-1">{rowState.tooltip.webFallback.label}</span>
+            <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+              opens in browser
+            </span>
           </DropdownMenuItem>
         ) : null}
       </DropdownMenuSubContent>

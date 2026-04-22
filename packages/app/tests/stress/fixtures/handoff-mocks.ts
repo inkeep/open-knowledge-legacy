@@ -35,6 +35,7 @@
  *   `advanceHandoffFakeTime(ms)`.
  */
 
+import type { OkDesktopBridge } from '@inkeep/open-knowledge-core';
 import type { Page } from '@playwright/test';
 
 export interface InstallMap {
@@ -218,6 +219,14 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
       };
 
+      // Typed with `satisfies OkDesktopBridge` so drift between the canonical
+      // bridge interface (packages/core/src/desktop-bridge.ts) and this
+      // fixture surfaces at compile time rather than silently leaving a
+      // handoff test cell green after a bridge-member addition (Review
+      // Minor #5). `satisfies` preserves the literal shape + flags missing
+      // required fields. The `addInitScript` callback body is stringified at
+      // runtime but type-checked at module compile time; imported types are
+      // erased at runtime so there's no serialization burden.
       const bridge = {
         config: {
           // Hocuspocus is mounted at /collab by the Vite plugin (see
@@ -233,6 +242,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         onProjectSwitched: () => () => {},
         onMenuAction: () => () => {},
+        onGitInitNotice: () => () => {},
         dialog: {
           openFolder: async () => null,
           createFolder: async () => null,
@@ -248,7 +258,7 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         },
         platform: 'darwin' as const,
         appVersion: 'test-0.0.0',
-      };
+      } satisfies OkDesktopBridge;
 
       // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
       (window as any).okDesktop = bridge;

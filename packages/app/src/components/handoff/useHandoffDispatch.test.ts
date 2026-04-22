@@ -99,9 +99,33 @@ describe('successToastMessage / errorToastMessage — exact copy', () => {
     expect(successToastMessage('Codex')).toBe('Opened in Codex.');
   });
 
-  test('error copy uses plain ASCII apostrophe + em-dash', async () => {
+  test('error copy uses plain ASCII apostrophe + em-dash on first attempt', async () => {
     const { errorToastMessage } = await import('./useHandoffDispatch');
     expect(errorToastMessage('Cursor')).toBe("Couldn't reach Cursor — try again?");
+    expect(errorToastMessage('Cursor', 1)).toBe("Couldn't reach Cursor — try again?");
+  });
+
+  test('error copy escalates on attempt 2 (still-not-reached shape)', async () => {
+    const { errorToastMessage } = await import('./useHandoffDispatch');
+    expect(errorToastMessage('Cursor', 2)).toBe("Still couldn't reach Cursor — try one more time?");
+  });
+
+  test('error copy on final attempt omits the "try again?" question and names a retry delay', async () => {
+    // Review M5: bounded retry cap. The final-attempt copy must be distinct so
+    // the user is not trapped in a loop of identical "try again?" toasts.
+    const { errorToastMessage, MAX_DISPATCH_ATTEMPTS } = await import('./useHandoffDispatch');
+    expect(errorToastMessage('Cursor', MAX_DISPATCH_ATTEMPTS)).toBe(
+      "Couldn't reach Cursor — please try again later.",
+    );
+  });
+
+  test('retryActionLabel returns Retry / Try one more time / null across attempts', async () => {
+    const { retryActionLabel, MAX_DISPATCH_ATTEMPTS } = await import('./useHandoffDispatch');
+    expect(MAX_DISPATCH_ATTEMPTS).toBe(3);
+    expect(retryActionLabel(1)).toBe('Retry');
+    expect(retryActionLabel(2)).toBe('Try one more time');
+    expect(retryActionLabel(3)).toBeNull();
+    expect(retryActionLabel(4)).toBeNull();
   });
 });
 
@@ -270,6 +294,53 @@ describe('runHandoffDispatch — failure path', () => {
     expect(deps.recordHandoff).toHaveBeenCalledTimes(2);
     // Retry succeeded → a fresh success toast appears.
     expect(deps.toast.successCalls).toEqual(['Opened in Cursor.']);
+  });
+
+  test('third consecutive failure drops the Retry action (Review M5 bounded retry)', async () => {
+    // The retry chain is capped at MAX_DISPATCH_ATTEMPTS (=3). First failure:
+    // "Retry" button + "try again?" copy. Second failure: "Try one more time"
+    // button + "Still couldn't reach" copy. Third failure: distinct
+    // "please try again later" copy, NO button — user cannot loop further.
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const dispatch = mock(
+      async (_p: HandoffPayload) => ({ ok: false, reason: 'dispatch-error' }) as HandoffOutcome,
+    );
+    const deps = buildDeps({ dispatchHandoff: dispatch });
+    const input = sampleInput();
+
+    // Attempt 1 — initial dispatch.
+    await runHandoffDispatch('cursor', input, deps);
+    expect(deps.toast.errorCalls).toHaveLength(1);
+    expect(deps.toast.errorCalls[0]?.message).toBe("Couldn't reach Cursor — try again?");
+    expect(deps.toast.errorCalls[0]?.action?.label).toBe('Retry');
+
+    // Attempt 2 — click Retry.
+    const firstAction = deps.toast.errorCalls[0]?.action;
+    expect(firstAction).toBeDefined();
+    firstAction?.onClick();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(deps.toast.errorCalls).toHaveLength(2);
+    expect(deps.toast.errorCalls[1]?.message).toBe(
+      "Still couldn't reach Cursor — try one more time?",
+    );
+    expect(deps.toast.errorCalls[1]?.action?.label).toBe('Try one more time');
+
+    // Attempt 3 — click Try one more time.
+    const secondAction = deps.toast.errorCalls[1]?.action;
+    expect(secondAction).toBeDefined();
+    secondAction?.onClick();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(deps.toast.errorCalls).toHaveLength(3);
+    expect(deps.toast.errorCalls[2]?.message).toBe(
+      "Couldn't reach Cursor — please try again later.",
+    );
+    // CAP ENFORCED — no Retry action on the final toast. The chain terminates
+    // here; there is no button the user can click to fire a fourth attempt.
+    expect(deps.toast.errorCalls[2]?.action).toBeUndefined();
+
+    // Three attempts, three telemetry lines.
+    expect(deps.recordHandoff).toHaveBeenCalledTimes(3);
+    expect(dispatch).toHaveBeenCalledTimes(3);
   });
 
   test('web-host-cursor-unsupported reason flows through to telemetry + toast', async () => {

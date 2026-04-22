@@ -308,10 +308,23 @@ function registerIpcHandlers() {
     );
   });
 
-  handle('ok:shell:spawn-cursor', async (_event, path) => {
+  handle('ok:shell:spawn-cursor', async (event, path) => {
+    // Scope the spawn to the caller window's project directory (Review M5).
+    // A BrowserWindow without a ProjectContext (e.g. the Navigator, before it
+    // spawns an editor) should never reach this handler, but we treat that
+    // case as "no project scope" — a missing `projectPath` passes through to
+    // `spawnCursorImpl` which gates on the presence of the field. The
+    // validateSpawnPath + isPathWithinProject checks inside the impl refuse
+    // any out-of-scope path when a project IS bound.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
     return spawnCursorImpl(
       {
         platform: process.platform,
+        projectPath: callerProjectPath,
         getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
         spawn: (exec, args, timeoutMs) =>
           new Promise((resolve) => {

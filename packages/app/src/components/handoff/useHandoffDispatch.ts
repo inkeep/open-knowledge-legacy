@@ -114,6 +114,15 @@ export interface HandoffDispatchDeps {
 }
 
 /**
+ * Maximum retry attempts offered for a failed dispatch. First failure offers
+ * "Retry"; second failure offers "Try one more time"; third failure omits
+ * the retry button (final-attempt copy instead). Bounded per Review M5 —
+ * unbounded retry was the prior behavior and allowed a flaky network to
+ * produce an infinite toast chain, each attempt firing its own telemetry line.
+ */
+export const MAX_DISPATCH_ATTEMPTS = 3;
+
+/**
  * Success toast copy: `Opened in Claude Cowork.` / `Opened in Codex.` etc.
  * Exported for assertion in tests.
  */
@@ -122,13 +131,29 @@ export function successToastMessage(displayName: string): string {
 }
 
 /**
- * Failure toast copy: `Couldn't reach Claude Cowork — try again?`. Plain
- * ASCII apostrophe matches the spec string (`\'`). Em-dash `—` (U+2014)
- * matches the app's broader failure-message shape (`EditorPane.tsx`
- * uses `Checkpoint failed — try again`).
+ * Failure toast copy varies by attempt so the final-attempt message is
+ * distinct from the prior retry-offers (per Review M5). Plain ASCII
+ * apostrophe matches the spec string (`\'`). Em-dash `—` (U+2014) matches
+ * the app's broader failure-message shape (`EditorPane.tsx` uses
+ * `Checkpoint failed — try again`).
  */
-export function errorToastMessage(displayName: string): string {
+export function errorToastMessage(displayName: string, attempt = 1): string {
+  if (attempt >= MAX_DISPATCH_ATTEMPTS) {
+    return `Couldn't reach ${displayName} — please try again later.`;
+  }
+  if (attempt === MAX_DISPATCH_ATTEMPTS - 1) {
+    return `Still couldn't reach ${displayName} — try one more time?`;
+  }
   return `Couldn't reach ${displayName} — try again?`;
+}
+
+/**
+ * Retry-button label. `null` on the final attempt (no retry offered).
+ * Kept as a pure helper so tests can assert the cap directly.
+ */
+export function retryActionLabel(attempt: number): string | null {
+  if (attempt >= MAX_DISPATCH_ATTEMPTS) return null;
+  return attempt === MAX_DISPATCH_ATTEMPTS - 1 ? 'Try one more time' : 'Retry';
 }
 
 function buildStatsLine(
@@ -153,15 +178,23 @@ function buildStatsLine(
  *   - Append one telemetry line (fire-and-await; never throws per `recordHandoff`).
  *   - Fire a single sonner toast:
  *       ok    → `toast.success(successToastMessage(displayName))`
- *       error → `toast.error(errorToastMessage(displayName), { action: retry })`
- *   - Retry action re-invokes `runHandoffDispatch` with the same `(target, input, deps)`.
- *     A retry is an independent dispatch attempt — records its own stats line
+ *       error → `toast.error(errorToastMessage(displayName, attempt), { action })`
+ *         where the action is present only when `attempt < MAX_DISPATCH_ATTEMPTS`.
+ *         Retry action re-invokes `runHandoffDispatch` with `attempt + 1`; the
+ *         final toast carries a distinct "please try again later" copy and no
+ *         button (Review M5 bound — unbounded retry is the prior regression).
+ *   - A retry is an independent dispatch attempt — records its own stats line
  *     and shows its own toast.
+ *
+ * `attempt` is 1-indexed and defaults to 1 for the initial dispatch. The cap
+ * of `MAX_DISPATCH_ATTEMPTS` (3) means the user can retry at most twice after
+ * the first failure; the third failure offers no Retry button.
  */
 export async function runHandoffDispatch(
   target: HandoffTarget,
   input: HandoffDispatchInput,
   deps: HandoffDispatchDeps,
+  attempt = 1,
 ): Promise<HandoffOutcome> {
   const payload: HandoffPayload = {
     target,
@@ -181,14 +214,20 @@ export async function runHandoffDispatch(
   if (outcome.ok) {
     deps.toast.success(successToastMessage(displayName));
   } else {
-    deps.toast.error(errorToastMessage(displayName), {
-      action: {
-        label: 'Retry',
-        onClick: () => {
-          void runHandoffDispatch(target, input, deps);
+    const label = retryActionLabel(attempt);
+    const message = errorToastMessage(displayName, attempt);
+    if (label !== null) {
+      deps.toast.error(message, {
+        action: {
+          label,
+          onClick: () => {
+            void runHandoffDispatch(target, input, deps, attempt + 1);
+          },
         },
-      },
-    });
+      });
+    } else {
+      deps.toast.error(message);
+    }
   }
 
   return outcome;

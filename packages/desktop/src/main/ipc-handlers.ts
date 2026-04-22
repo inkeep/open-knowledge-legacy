@@ -18,7 +18,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { join } from 'node:path';
+import { join, posix as pathPosix, win32 as pathWin32 } from 'node:path';
 import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
 
 /** Two seconds is the product-tier budget for "detect one scheme" — SPEC §6.4. */
@@ -148,6 +148,16 @@ export interface SpawnCursorDeps {
    */
   spawn: (exec: string, args: ReadonlyArray<string>, timeoutMs: number) => Promise<SpawnOutcome>;
   platform: NodeJS.Platform;
+  /**
+   * Project root of the caller window, supplied by `main/index.ts` via
+   * `WindowManager.getContextForBrowserWindow(win).projectPath`. When
+   * present, `spawnCursor` refuses any user-supplied path that doesn't
+   * resolve at or under this root — prevents a compromised renderer from
+   * routing Cursor to arbitrary filesystem locations (Review M5). When
+   * absent (e.g., Navigator window has no project context), the check is
+   * skipped — there is no meaningful scope to compare against.
+   */
+  projectPath?: string;
   /** Resolve-phase timeout. Defaults to `WHICH_TIMEOUT_MS`. */
   resolveTimeoutMs?: number;
   /** Spawn-phase timeout. Defaults to `SPAWN_TIMEOUT_MS`. */
@@ -199,6 +209,52 @@ export function validateSpawnPath(path: string, platform: NodeJS.Platform): bool
   return path.startsWith('/');
 }
 
+/**
+ * Confined-path check: resolve both `path` and `projectPath` to their
+ * canonical forms and verify `path` lies at or under `projectPath`. Returns
+ * false if either path is invalid OR if `path` escapes the project boundary.
+ *
+ * Threat model: `spawnCursor` hands `path` to Launch Services (`open -a`) or
+ * directly to the Cursor binary. Without scope confinement, a compromised
+ * renderer could invoke the IPC with any absolute path and spawn a Cursor
+ * "agent mode" workspace rooted at `/etc/`, `~/.ssh`, etc. — widening the
+ * confused-deputy blast radius beyond the openknowledge:// allowlist entry
+ * that previously bounded outbound schemes. Review M5 flagged this gap.
+ *
+ * Uses `path/posix` or `path/win32` explicitly — not the host's default —
+ * so a POSIX dev runner correctly resolves Windows inputs under test, and
+ * (more importantly) production behavior follows the caller's OS regardless
+ * of what Node's runtime `path` module decides from `process.platform`.
+ *
+ * Pure function — exported for test coverage of the boundary logic.
+ */
+export function isPathWithinProject(
+  userPath: string,
+  projectPath: string,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!validateSpawnPath(userPath, platform)) return false;
+  if (!validateSpawnPath(projectPath, platform)) return false;
+  const p = platform === 'win32' ? pathWin32 : pathPosix;
+  try {
+    const canonicalUser = p.resolve(userPath);
+    const canonicalProject = p.resolve(projectPath);
+    if (canonicalUser === canonicalProject) return true;
+    const rel = p.relative(canonicalProject, canonicalUser);
+    // `relative` returns `..` / `..\foo` / `../foo` when `userPath` escapes
+    // the project root, or an absolute form when drives differ on Windows.
+    if (rel === '' || rel === '.') return true;
+    if (rel === '..' || rel.startsWith(`..${p.sep}`)) return false;
+    // Cross-drive on Windows ("C:\foo" → "D:\bar") makes `relative` return
+    // an absolute path; reject anything that still looks absolute.
+    if (platform === 'win32' && /^[a-zA-Z]:[\\/]/.test(rel)) return false;
+    if (platform !== 'win32' && rel.startsWith('/')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Default `which cursor` / `where cursor` fallback — overridable in tests. */
 function whichCursorReal(timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
@@ -218,9 +274,27 @@ function whichCursorReal(timeoutMs: number): Promise<string | null> {
 /**
  * Step 1 of the Cursor two-step handoff — spawn `cursor <projectDir>` so the
  * workspace is already open before the cursor:// prompt URL fires (step 2).
+ *
+ * If `deps.projectPath` is supplied (the main-process wiring passes the
+ * caller window's `ProjectContext.projectPath`), the user-supplied `path`
+ * must resolve at or under it — otherwise the spawn is refused with
+ * `invalid-path`. This bounds the confused-deputy blast radius per Review M5:
+ * a renderer compromise can no longer steer Cursor at arbitrary filesystem
+ * locations (e.g., `~/.ssh`) even though the scheme allowlist would let the
+ * subsequent `cursor://` URL through.
  */
 export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<SpawnOutcome> {
   if (!validateSpawnPath(path, deps.platform)) {
+    return { ok: false, reason: 'invalid-path' };
+  }
+  if (
+    deps.projectPath !== undefined &&
+    !isPathWithinProject(path, deps.projectPath, deps.platform)
+  ) {
+    // Defense-in-depth — the happy path is that the renderer only ever passes
+    // its own workspace content-dir (threaded via useWorkspace()), so a real
+    // out-of-scope path is either a bug in the renderer or an attacker taking
+    // advantage of a renderer compromise. Either way, refuse.
     return { ok: false, reason: 'invalid-path' };
   }
 
