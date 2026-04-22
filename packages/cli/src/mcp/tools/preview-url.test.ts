@@ -130,6 +130,33 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
     });
     expect(result?.source).toBe('config');
   });
+
+  test('attach-mode contract: desktop attach to running CLI emits http://, not openknowledge://', () => {
+    // QA-056 regression pin. When the desktop app attaches to an already-
+    // running `ok start` CLI (window-manager attach-mode branch), it does
+    // NOT fork a utility — so OK_ELECTRON_PROTOCOL_HOST=1 never lands in
+    // the CLI's utility env. The MCP server runs in the CLI's process and
+    // resolvePreviewUrl sees no env var → emits http://localhost/... via the
+    // `lock` source. This matches the SPEC §3 NG contract: CLI/bunx consumers
+    // always get http URLs, never the openknowledge:// scheme. Document this
+    // explicitly so a future change to attach-mode can't silently flip the
+    // contract without a failing test.
+    // Precondition: env var is NOT set (attach mode is env-less from the
+    // CLI's perspective — desktop never forked it).
+    expect(process.env.OK_ELECTRON_PROTOCOL_HOST).toBeUndefined();
+
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
+    const result = resolvePreviewUrl('docs/a', {
+      config: BASE_CONFIG,
+      lockDir,
+      contentDir: tmpDir,
+    });
+
+    expect(result?.source).toBe('lock');
+    expect(result?.url.startsWith('http://')).toBe(true);
+    expect(result?.url.startsWith('openknowledge://')).toBe(false);
+  });
 });
 
 describe('resolvePreviewUrl — priority', () => {

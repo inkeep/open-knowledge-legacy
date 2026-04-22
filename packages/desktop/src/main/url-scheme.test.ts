@@ -110,6 +110,19 @@ describe('parseOpenKnowledgeUrl — null-byte defense', () => {
   test('rejects %00 in doc', () => {
     expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=x%00.md')).toBeNull();
   });
+
+  test('rejects double-encoded %2500 in project (layered null-byte smuggle)', () => {
+    // URL.searchParams.get() decodes once ('%2500' → '%00'); decodeURIComponent
+    // decodes again ('%00' → '\x00'). The post-decode null-byte recheck must
+    // catch it — otherwise a layered encoding would bypass the raw-input gate.
+    expect(
+      parseOpenKnowledgeUrl('openknowledge://open?project=%2500/safe/proj&doc=x.md'),
+    ).toBeNull();
+  });
+
+  test('rejects double-encoded %2500 in doc (layered null-byte smuggle)', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=x%2500.md')).toBeNull();
+  });
 });
 
 describe('parseOpenKnowledgeUrl — path-traversal defense', () => {

@@ -206,6 +206,38 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     expect(env.sendDeepLink).toHaveBeenCalled();
   });
 
+  test('two deep-links received before whenReady both drain in FIFO order', async () => {
+    // QA-054 regression: the real-OS "two URLs in rapid cold-start" case
+    // (parent spec §7 OQ-3) is blocked on signed-DMG, but the queue-drain
+    // mechanism is deterministic and testable here. Fires two open-url
+    // events pre-ready, resolves ready, asserts BOTH routeUrl calls fire
+    // in arrival order.
+    env.readyWindow = { id: 'pre-existing' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p1&doc=a.md');
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p2&doc=b.md');
+
+    // Pre-ready: neither routed.
+    expect(env.openProject).not.toHaveBeenCalled();
+
+    env.app.resolveReady();
+    await flushPromises();
+    await flushPromises();
+
+    // Both URLs drained in FIFO order — no URL lost, no duplicate.
+    expect(env.openProject).toHaveBeenCalledTimes(2);
+    expect(env.openProject).toHaveBeenNthCalledWith(1, '/tmp/p1');
+    expect(env.openProject).toHaveBeenNthCalledWith(2, '/tmp/p2');
+    expect(env.sendDeepLink).toHaveBeenCalledTimes(2);
+  });
+
   test('retries flush up to 10 × 500ms while no window is up, then drains anyway', async () => {
     env.readyWindow = null;
     registerProtocolHandler({
