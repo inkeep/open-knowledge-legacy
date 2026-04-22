@@ -20,6 +20,7 @@
  * is the human-side reminder.
  */
 
+import { rename, writeFile } from 'node:fs/promises';
 import type { BootedServer, BootServerOptions } from '@inkeep/open-knowledge-server';
 import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
 
@@ -121,6 +122,19 @@ export interface SetupUtilityDeps {
    * `runKeyringSmoke` from `./keyring-smoke.ts`.
    */
   runSmoke?: () => Promise<KeyringSmokeResult>;
+  /**
+   * Environment provider — `process.env` in production. Tests inject a
+   * plain object so `OK_DEBUG_KEYRING_SMOKE*` can be toggled per test
+   * without leaking into sibling tests.
+   */
+  env?: Record<string, string | undefined>;
+  /**
+   * Atomic file writer for the boot-time smoke output (SPEC US-005).
+   * Production writes via `fs.promises.writeFile` to a tmp path then
+   * `rename` to the final path. Tests inject a spy so output filename and
+   * payload can be asserted without touching the filesystem.
+   */
+  writeSmokeResult?: (path: string, contents: string) => Promise<void>;
 }
 
 export interface UtilityHandle {
@@ -251,6 +265,8 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   }
 
   const runSmoke = deps.runSmoke ?? runKeyringSmoke;
+  const env = deps.env ?? (process.env as Record<string, string | undefined>);
+  const writeSmokeResult = deps.writeSmokeResult ?? defaultWriteSmokeResult;
 
   async function handleDebugKeyringSmoke(msg: UtilityDebugKeyringSmokeMessage): Promise<void> {
     const result = await runSmoke();
@@ -261,17 +277,58 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     });
   }
 
-  // Register IPC listener
-  deps.parentPort?.on('message', (event) => {
-    const msg = event.data as UtilityIncomingMessage;
-    if (msg?.type === 'init') {
-      void handleInit(msg);
-    } else if (msg?.type === 'shutdown') {
-      void shutdown('shutdown-ipc');
-    } else if (msg?.type === 'debug-keyring-smoke') {
-      void handleDebugKeyringSmoke(msg);
+  function registerMessageListener(): void {
+    deps.parentPort?.on('message', (event) => {
+      const msg = event.data as UtilityIncomingMessage;
+      if (msg?.type === 'init') {
+        void handleInit(msg);
+      } else if (msg?.type === 'shutdown') {
+        void shutdown('shutdown-ipc');
+      } else if (msg?.type === 'debug-keyring-smoke') {
+        void handleDebugKeyringSmoke(msg);
+      }
+    });
+  }
+
+  async function runBootAutoSmoke(): Promise<void> {
+    const result = await runSmoke();
+    const outPath = env.OK_DEBUG_KEYRING_SMOKE_OUT;
+    if (outPath && outPath.length > 0) {
+      try {
+        await writeSmokeResult(outPath, `${JSON.stringify(result)}\n`);
+      } catch (err) {
+        // Non-fatal: log + continue so a permissions failure on the output
+        // path doesn't leave the driver hung waiting for an exit that never
+        // comes. The driver's missing-output-file branch (US-006 AC) will
+        // surface this on its side.
+        console.warn('[utility] auto-smoke write failed', {
+          err: (err as Error).message,
+          outPath,
+        });
+      }
     }
-  });
+    deps.parentPort?.postMessage({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'auto-boot',
+      result,
+    });
+    if (env.OK_DEBUG_KEYRING_SMOKE_EXIT === '1') {
+      deps.exit(0);
+      return;
+    }
+    registerMessageListener();
+  }
+
+  // SPEC D-M5-6 — when OK_DEBUG_KEYRING_SMOKE=1 is set, the utility runs the
+  // smoke ONCE at boot, BEFORE the `init` message is dispatched. Node.js
+  // buffers messages posted to parentPort until a listener is registered, so
+  // delaying `registerMessageListener()` until after the smoke completes
+  // guarantees the ordering without dropping messages.
+  if (env.OK_DEBUG_KEYRING_SMOKE === '1') {
+    void runBootAutoSmoke();
+  } else {
+    registerMessageListener();
+  }
 
   // Signal handlers
   deps.onSignal('SIGTERM', () => void shutdown('SIGTERM'));
@@ -285,6 +342,17 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     stopParentPoll,
     shutdown,
   };
+}
+
+/**
+ * Default atomic file writer for the smoke output — write to `<path>.tmp`
+ * then `rename` to `<path>`, so a reader never sees a partially-written
+ * payload. The driver script (US-006) is the primary consumer.
+ */
+async function defaultWriteSmokeResult(path: string, contents: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, contents, { encoding: 'utf-8' });
+  await rename(tmp, path);
 }
 
 // Production entry — auto-runs when imported by `utilityProcess.fork(<this-file>)`.
