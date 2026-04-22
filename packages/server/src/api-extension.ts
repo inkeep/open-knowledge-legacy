@@ -454,8 +454,13 @@ async function renameTrackedPathInGit(
     const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
     if (!tracked) return false;
     mkdirSync(dirname(destinationPath), { recursive: true });
-    await pg.raw('mv', '--', sourceRel, destinationRel);
-    return true;
+    try {
+      await pg.raw('mv', '--', sourceRel, destinationRel);
+      return true;
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git mv failed, falling back to fs rename:', err);
+      return false;
+    }
   });
 }
 
