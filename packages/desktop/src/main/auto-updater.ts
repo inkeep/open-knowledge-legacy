@@ -571,6 +571,33 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 }
 
 /**
+ * Shape returned by `() => import('electron-updater')`. The npm package is
+ * published as CommonJS with the `autoUpdater` member installed via
+ * `Object.defineProperty(exports, 'autoUpdater', { get: ... })` — a dynamic
+ * getter that Node's CJS → ESM interop wraps behind `.default` when loaded
+ * via `await import(...)`. Static named exports (AppUpdater, MacUpdater, …)
+ * are also re-exposed at the top level, but `autoUpdater` is NOT. We must
+ * read it off `.default`, with the top-level path kept as a fallback for
+ * test mocks that still pass `{ autoUpdater }` directly.
+ *
+ * See electron-updater `out/main.js` for the `Object.defineProperty` site.
+ */
+export interface ElectronUpdaterModule {
+  autoUpdater?: UpdaterLike;
+  default?: { autoUpdater?: UpdaterLike };
+}
+
+/**
+ * Resolve `autoUpdater` from the imported module across both the real
+ * CJS-wrapped-by-ESM shape and the flat shape used by test mocks. Returns
+ * `null` if neither path exposes the member so the caller can log + bail
+ * cleanly instead of throwing on the subsequent property assignment.
+ */
+export function resolveAutoUpdater(mod: ElectronUpdaterModule): UpdaterLike | null {
+  return mod.default?.autoUpdater ?? mod.autoUpdater ?? null;
+}
+
+/**
  * Catch-path-tested wrapper around the dynamic `electron-updater` import +
  * `startAutoUpdater` call. Review Pass 4 Major #5: a failed dynamic import
  * (bundling drift, corrupt node_modules, future Electron upgrade that
@@ -580,16 +607,23 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
  * one line AND the catch branch is reachable from a `bun test` harness
  * without an Electron runtime.
  *
- * Tests pass a throwing `importUpdater` + a captured logger; production
- * passes `() => import('electron-updater')`.
+ * Tests pass a throwing `importUpdater` OR a flat `{ autoUpdater }` mock +
+ * a captured logger; production passes `() => import('electron-updater')`
+ * which resolves via `mod.default.autoUpdater` (see ElectronUpdaterModule).
  */
 export async function bootAutoUpdater(
-  importUpdater: () => Promise<{ autoUpdater: UpdaterLike }>,
+  importUpdater: () => Promise<ElectronUpdaterModule>,
   opts: Omit<StartAutoUpdaterOpts, 'updater'>,
 ): Promise<StartAutoUpdaterHandle | null> {
   const logger = opts.logger ?? DEFAULT_LOGGER;
   try {
-    const { autoUpdater } = await importUpdater();
+    const mod = await importUpdater();
+    const autoUpdater = resolveAutoUpdater(mod);
+    if (!autoUpdater) {
+      throw new Error(
+        "electron-updater did not expose 'autoUpdater' on either the module namespace or .default — check electron-updater version + Node ESM-CJS interop",
+      );
+    }
     return startAutoUpdater({ updater: autoUpdater, ...opts });
   } catch (err) {
     logger.error('auto-updater boot failed — app will run without updates this session', {

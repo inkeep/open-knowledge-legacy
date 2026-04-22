@@ -1155,4 +1155,88 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     expect(handle).toBeNull();
     expect(logger.error).toHaveBeenCalled();
   });
+
+  // Regression: electron-updater's `autoUpdater` export is installed via
+  // `Object.defineProperty(exports, 'autoUpdater', { get: ... })` — a dynamic
+  // getter that Node's CJS → ESM interop exposes under `.default`, NOT on the
+  // module namespace root. The original bootAutoUpdater destructured
+  // `{ autoUpdater }` off the top level, got `undefined`, and the subsequent
+  // `updater.autoDownload = true` threw "Cannot set properties of undefined".
+  // In dev this looked like a caught error; in packaged builds it meant zero
+  // auto-updates ever. Fix: `resolveAutoUpdater` checks `.default.autoUpdater`
+  // first and falls back to the top-level for flat test mocks.
+
+  test('resolveAutoUpdater handles .default.autoUpdater shape (real CJS-from-ESM)', async () => {
+    const fakeUpdater = new FakeUpdater();
+    const handle = await bootAutoUpdater(
+      // Mirror the real electron-updater ESM namespace: autoUpdater is only
+      // reachable via `.default`, NOT on the top-level module namespace.
+      () => Promise.resolve({ default: { autoUpdater: fakeUpdater } }),
+      {
+        ipcMain: makeFakeIpc(),
+        readState: () => emptyState(),
+        writeState: () => {},
+        getPrimaryWindow: () => null,
+        getAppVersion: () => '0.3.1',
+        isPackaged: true,
+        clock: makeFakeClock(),
+        now: () => new Date(),
+      },
+    );
+    expect(handle).not.toBeNull();
+    // The fake received the configuration lock-down — proves the boot path
+    // actually called `startAutoUpdater` rather than catching silently.
+    expect(fakeUpdater.autoDownload).toBe(true);
+    expect(fakeUpdater.autoInstallOnAppQuit).toBe(true);
+    expect(fakeUpdater.channel).toBe('latest');
+    handle?.destroy();
+  });
+
+  test('resolveAutoUpdater still accepts the flat { autoUpdater } shape (test-mock compat)', async () => {
+    const fakeUpdater = new FakeUpdater();
+    const handle = await bootAutoUpdater(() => Promise.resolve({ autoUpdater: fakeUpdater }), {
+      ipcMain: makeFakeIpc(),
+      readState: () => emptyState(),
+      writeState: () => {},
+      getPrimaryWindow: () => null,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock: makeFakeClock(),
+      now: () => new Date(),
+    });
+    expect(handle).not.toBeNull();
+    expect(fakeUpdater.autoDownload).toBe(true);
+    handle?.destroy();
+  });
+
+  test('module exposes neither top-level nor .default.autoUpdater → logs + returns null', async () => {
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    const handle = await bootAutoUpdater(
+      // A degenerate module that has neither shape — simulates a future
+      // major-version rename of `autoUpdater` without anyone updating our code.
+      () => Promise.resolve({ default: {} }) as unknown as Promise<{ autoUpdater: UpdaterLike }>,
+      {
+        ipcMain: makeFakeIpc(),
+        readState: () => emptyState(),
+        writeState: () => {},
+        getPrimaryWindow: () => null,
+        getAppVersion: () => '0.3.1',
+        isPackaged: true,
+        clock: makeFakeClock(),
+        now: () => new Date(),
+        logger,
+      },
+    );
+    expect(handle).toBeNull();
+    expect(logger.error).toHaveBeenCalled();
+    const errorCall = logger.error.mock.calls[0];
+    expect(errorCall?.[1]).toMatchObject({
+      message: expect.stringContaining('electron-updater did not expose'),
+    });
+  });
 });
