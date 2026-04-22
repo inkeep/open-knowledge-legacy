@@ -245,15 +245,28 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   };
 
   // ── Auto-convert to rawMdxFallback for wildcard + render errors ────────
-  // Fires once on mount (guarded by convertedRef). The rawMdxFallback CM
-  // handles source editing + re-parse on commit. Dep array tracks the
-  // inputs that flip `needsConversion` or determine the replacement node;
-  // the convertedRef guard still enforces single-fire under Strict Mode.
+  // Fires once after the dispatch actually lands. The rawMdxFallback CM
+  // handles source editing + re-parse on commit.
+  //
+  // `convertedRef` is flipped INSIDE the rAF callback (after the successful
+  // dispatch), not before scheduling it. Under React 19 StrictMode, every
+  // effect runs → cleanup → remounts-and-reruns. If the ref were flipped
+  // pre-dispatch, the StrictMode cleanup `cancelAnimationFrame` would cancel
+  // the only dispatch attempt and the remount's effect would early-return
+  // (convertedRef already true → skip) — leaving the user stuck on the
+  // "opening source editor..." placeholder forever. Flipping the ref
+  // post-dispatch means the first rAF that actually lands wins; cancelled
+  // rAFs don't count toward "already converted."
+  //
+  // The `cancelled` closure flag makes this re-entry-safe: if a fast
+  // re-render triggers the effect twice before the first rAF fires, only
+  // the first dispatch succeeds; the second sees `cancelled === true` from
+  // its own cleanup and skips. Local to the effect invocation, so a
+  // cancelled first run doesn't block a subsequent run's dispatch.
   const needsConversion = descriptor.name === '*' || renderError !== null;
   const convertedRef = useRef(false);
   useEffect(() => {
     if (!needsConversion || convertedRef.current) return;
-    convertedRef.current = true;
 
     const p = typeof getPos === 'function' ? getPos() : undefined;
     if (typeof p !== 'number') return;
@@ -269,18 +282,22 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       node.type.schema.text(source),
     );
 
-    // Defer to next frame to avoid dispatching during render. Tracked + cancelled
-    // on cleanup so an unmount between schedule and fire (e.g., parent tree
-    // replaced by a remote peer edit) does not dispatch against a stale view.
+    let cancelled = false;
+
+    // Defer to next frame to avoid dispatching during render. Tracked +
+    // cancelled on cleanup so an unmount between schedule and fire (e.g.,
+    // parent tree replaced by a remote peer edit, or StrictMode's
+    // intentional unmount-remount) does not dispatch against a stale view.
     const frameId = requestAnimationFrame(() => {
+      if (cancelled) return;
       try {
         editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
+        convertedRef.current = true;
       } catch (err) {
         // Position may have changed if other transactions fired.
         // Log as a structured event so recurring failures are visible in
-        // telemetry — the convertedRef guard prevents re-entry, but a
-        // swallowed exception here would otherwise leave the user on the
-        // "opening source editor..." placeholder with no signal.
+        // telemetry — a swallowed exception here would otherwise leave the
+        // user on the "opening source editor..." placeholder with no signal.
         console.warn(
           JSON.stringify({
             event: 'jsx-component-auto-convert-failed',
@@ -291,7 +308,10 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       }
     });
 
-    return () => cancelAnimationFrame(frameId);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+    };
   }, [needsConversion, node, editor, getPos, descriptor, renderError]);
 
   // Show placeholder while conversion is pending
