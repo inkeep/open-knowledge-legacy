@@ -14,19 +14,12 @@
     Paired consumer: `src/editor/use-editor-mode.ts` (hook reads
     `window.__OK_EDITOR_MODE__` once in its useState initializer).
     Spec: specs/2026-04-21-editor-mode-persistence/SPEC.md §7.2.
+    Script body is on a single line with no inner newlines — biome's HTML
+    formatter reindents inline-script content on every pass (+4 spaces/run),
+    producing an infinite deny-loop at pre-commit. No-inner-newline form has
+    nothing for the formatter to reindent.
   -->
-  <script>
-    (() => {
-              let mode = 'wysiwyg';
-              try {
-                const raw = localStorage.getItem('ok-editor-mode-v1');
-                if (raw === 'wysiwyg' || raw === 'source') mode = raw;
-              } catch {
-                // localStorage unavailable (privacy mode, quota, etc.) — fall through to default
-              }
-              window.__OK_EDITOR_MODE__ = mode;
-            })();
-  </script>
+  <script>(() => { let mode = 'wysiwyg'; try { const raw = localStorage.getItem('ok-editor-mode-v1'); if (raw === 'wysiwyg' || raw === 'source') mode = raw; } catch {} window.__OK_EDITOR_MODE__ = mode; })();</script>
 </head>
 
 <body class="antialiased">
