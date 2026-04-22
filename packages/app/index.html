@@ -7,6 +7,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Open Knowledge</title>
+  <script>
+    (() => {
+      let mode = 'wysiwyg';
+      try {
+        const raw = localStorage.getItem('ok-editor-mode-v1');
+        if (raw === 'wysiwyg' || raw === 'source') mode = raw;
+      } catch {
+        // localStorage unavailable (privacy mode, quota, etc.) — fall through to default
+      }
+      window.__OK_EDITOR_MODE__ = mode;
+    })();
+  </script>
 </head>
 
 <body class="antialiased">
