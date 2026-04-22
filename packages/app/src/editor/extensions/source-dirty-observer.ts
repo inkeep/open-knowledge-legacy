@@ -81,6 +81,38 @@ export const SourceDirtyObserver = Extension.create({
             // Map from newState position back to oldState position
             const oldPos = invertedMapping.map(pos);
             const oldNode = oldState.doc.nodeAt(oldPos);
+
+            // Fresh-insert pristine-preservation guard: if this jsxComponent
+            // is newly inserted at a position that didn't previously hold a
+            // jsxComponent, AND it arrives with an authoritative `sourceRaw`
+            // already populated (non-empty string), do NOT mark it dirty.
+            //
+            // Freshly-parsed jsxComponents from our mdast→PM handlers carry
+            // a verbatim source string — the upgrade path (on-blur
+            // rawMdxFallback → jsxComponent), MDX paste, and slash-menu
+            // template inserts all produce this shape. Marking these dirty
+            // forces the auto-convert / serialize path to re-emit via the
+            // to-markdown handler's canonical `<Open>\n\n<children>\n\n
+            // <Close>` form, clobbering the user's exact input (e.g.,
+            // `<Foo>\ntext\n</Foo>` serializes to `<Foo>\n\ntext\n\n
+            // </Foo>`). Preserving sourceRaw here maintains the I12
+            // "pristine → sourceRaw verbatim" invariant for newly-inserted
+            // components.
+            //
+            // This does NOT apply to user edits on existing jsxComponents:
+            // a prop edit via `setNodeMarkup` spreads the old attrs
+            // (preserving sourceRaw) but changes `props` — `oldNode` still
+            // exists as a jsxComponent at the same position, and the
+            // propsChanged/contentChanged comparison below correctly marks
+            // dirty. The guard only applies when the position was
+            // previously empty or a different node type.
+            const isFreshInsert = !oldNode || oldNode.type.name !== 'jsxComponent';
+            const hasAuthoritativeSource =
+              typeof node.attrs.sourceRaw === 'string' && node.attrs.sourceRaw.length > 0;
+            if (isFreshInsert && hasAuthoritativeSource) {
+              return;
+            }
+
             if (!oldNode) {
               // Node is new (inserted) — mark dirty if it has content
               if (node.content.size > 0 || Object.keys(node.attrs.props ?? {}).length > 0) {
