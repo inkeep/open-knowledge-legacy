@@ -41,14 +41,20 @@ function makeUtility(pid: number): MockUtility {
   };
 }
 
-function makeWindow(): BrowserWindowLike & {
+function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
   fireClose: () => void;
   fireDomReady: () => void;
 } {
   let closeHandler: (() => void) | null = null;
   let domReadyHandler: (() => void) | null = null;
+  let minimized = opts?.minimized ?? false;
   return {
     focus: mock(() => {}),
+    show: mock(() => {}),
+    restore: mock(() => {
+      minimized = false;
+    }),
+    isMinimized: mock(() => minimized),
     on: mock((_event: 'closed', cb: () => void) => {
       closeHandler = cb;
     }) as BrowserWindowLike['on'],
@@ -355,6 +361,70 @@ describe('WindowManager', () => {
     expect(wm.getContextForBrowserWindow(stranger)).toBeUndefined();
   });
 
+  test('onUtilityMessage (when wired) receives post-init utility messages', async () => {
+    const observed: unknown[] = [];
+    env.deps.onUtilityMessage = (msg) => observed.push(msg);
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/post-init-listener' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52100, apiOrigin: 'http://localhost:52100' });
+    await p;
+
+    // Post-init message routes to the wired listener.
+    env.utilities[0]?.fire({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'cid-42',
+      result: { ok: true, backend: 'keyring', durationMs: 9, timestamp: '2026-04-21T00:00:00Z' },
+    });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'cid-42',
+    });
+  });
+
+  test('onUtilityMessage is not attached when not provided (no-op for back-compat)', async () => {
+    delete env.deps.onUtilityMessage;
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-listener' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52101, apiOrigin: 'http://localhost:52101' });
+    await p;
+    // Firing a debug result should not throw even without a listener wired.
+    expect(() =>
+      env.utilities[0]?.fire({
+        type: 'debug-keyring-smoke-result',
+        correlationId: 'x',
+        result: {},
+      }),
+    ).not.toThrow();
+  });
+
+  test('onUtilityExit (when wired) is invoked on utility exit with the utility ref', async () => {
+    const observed: unknown[] = [];
+    env.deps.onUtilityExit = (utility) => observed.push(utility);
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52200, apiOrigin: 'http://localhost:52200' });
+    await p;
+
+    const utilityRef = env.utilities[0];
+    env.utilities[0]?.fireExit(0);
+
+    expect(observed).toHaveLength(1);
+    // Identity match: consumer (debug-ipc) will use this to select pending
+    // entries for cleanup via ===.
+    expect(observed[0]).toBe(utilityRef);
+  });
+
+  test('onUtilityExit is not attached when not provided (no-op for back-compat)', async () => {
+    delete env.deps.onUtilityExit;
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52201, apiOrigin: 'http://localhost:52201' });
+    await p;
+    // Firing exit should not throw even without a listener wired.
+    expect(() => env.utilities[0]?.fireExit(1)).not.toThrow();
+  });
+
   // Attach-mode tests — D44 case (b) revised: when a live same-host server
   // already holds the lock (a running `ok start` CLI, another Electron
   // instance, etc.), reuse it instead of fighting over the lock.
@@ -602,5 +672,225 @@ describe('WindowManager', () => {
       expect(onceCalled).toBe(true);
       expect(onceCalledBeforeLoadResolved).toBe(true);
     });
+  });
+});
+
+describe('WindowManager.focusWindowForProject (M4 URL-scheme warm-start)', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('returns null when no window is open for the project', () => {
+    const wm = new WindowManager(env.deps);
+    expect(wm.focusWindowForProject('/tmp/never-opened')).toBeNull();
+  });
+
+  test('returns the window when a project is open + calls focus+show', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/warm-proj' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51200, apiOrigin: 'http://localhost:51200' });
+    const ctx = await p;
+
+    const win = wm.focusWindowForProject('/tmp/warm-proj');
+    expect(win).toBe(ctx.window);
+    expect(ctx.window.focus).toHaveBeenCalled();
+    expect(ctx.window.show).toHaveBeenCalled();
+  });
+
+  test('restores a minimized window before focusing', async () => {
+    // Replace createWindow with one that returns a pre-minimized mock so
+    // `isMinimized()` returns true. The first (+ only) createProjectWindow
+    // call will receive this pre-minimized window.
+    const w = makeWindow({ minimized: true });
+    env.deps.createWindow = () => {
+      env.createWindowOpts.push({ additionalArguments: [], title: '' });
+      env.windows.push(w);
+      return w;
+    };
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/min-proj' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51201, apiOrigin: 'http://localhost:51201' });
+    await p;
+
+    const result = wm.focusWindowForProject('/tmp/min-proj');
+    expect(result).toBe(w);
+    expect(w.isMinimized).toHaveBeenCalled();
+    expect(w.restore).toHaveBeenCalled();
+    expect(w.focus).toHaveBeenCalled();
+  });
+
+  test('canonicalizes project path before lookup (resolve equivalence)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/canon' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51202, apiOrigin: 'http://localhost:51202' });
+    await p;
+
+    // A variant path that `path.resolve` would canonicalize to the same
+    // storage key must match. `/tmp/canon/.` resolves to `/tmp/canon`.
+    expect(wm.focusWindowForProject('/tmp/canon/.')).not.toBeNull();
+  });
+
+  test('realpath canonicalization: open via symlink, focus via realpath matches', async () => {
+    // Simulated symlink: `/Users/me/workspaces/dragon` → `/Users/me/projects/dragon`.
+    // User opens via the symlink path; MCP's preview-url.ts emits the URL with
+    // `realpathSync(contentDir)` = the realpath. Without realpath canonicalization
+    // on the window-manager side, focusWindowForProject(realpath) would miss and
+    // spawn a duplicate window. This test drives the injected realpathSync stub.
+    const realpathMap = new Map([
+      ['/Users/me/workspaces/dragon', '/Users/me/projects/dragon'],
+      ['/Users/me/projects/dragon', '/Users/me/projects/dragon'],
+    ]);
+    env.deps.realpathSync = (p: string) => {
+      const mapped = realpathMap.get(p);
+      if (mapped) return mapped;
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    };
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({ projectPath: '/Users/me/workspaces/dragon' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51210, apiOrigin: 'http://localhost:51210' });
+    const ctx = await pending;
+
+    // Lookup via the realpath (what preview-url.ts emits) — must hit.
+    const found = wm.focusWindowForProject('/Users/me/projects/dragon');
+    expect(found).toBe(ctx.window);
+    expect(ctx.window.focus).toHaveBeenCalled();
+    // Symmetric: getWindowFor also hits.
+    expect(wm.getWindowFor('/Users/me/projects/dragon')).toBe(ctx);
+    // canonicalKey is stored so cleanup handlers use the same key.
+    expect(ctx.canonicalKey).toBe('/Users/me/projects/dragon');
+    // User-facing projectPath retains the symlink path for UI / recents.
+    expect(ctx.projectPath).toBe('/Users/me/workspaces/dragon');
+  });
+
+  test('realpathSync throws (ENOENT) → falls back to resolve(projectPath)', async () => {
+    // Unreadable path — realpath throws. The canonicalizeKey helper falls back
+    // to resolve(path) so the old behavior is preserved for nonexistent paths.
+    env.deps.realpathSync = () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    };
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/ghost-path' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51211, apiOrigin: 'http://localhost:51211' });
+    const ctx = await p;
+    // Same fallback path on lookup → match.
+    expect(wm.focusWindowForProject('/tmp/ghost-path')).toBe(ctx.window);
+    expect(ctx.canonicalKey).toBe('/tmp/ghost-path');
+  });
+});
+
+describe('WindowManager — pendingDeepLinkDoc dom-ready gate (M4 US-007 / Finding 2)', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('spawn path: pendingDeepLinkDoc registers dom-ready listener BEFORE loadURL resolves', async () => {
+    // Regression: the send must be registered BEFORE `await loadURL` so the
+    // one-shot `ok:deep-link` event lands after the renderer's subscriber
+    // mounts but not after did-finish-load (which misses dom-ready entirely).
+    let onceCalledBeforeLoadResolved = false;
+    let domReadyRegistrations = 0;
+    env.deps.createWindow = () => {
+      const w = makeWindow();
+      const baseOnce = w.webContents.once as (event: 'dom-ready', cb: () => void) => void;
+      w.webContents.once = ((event: 'dom-ready', cb: () => void) => {
+        domReadyRegistrations++;
+        baseOnce(event, cb);
+      }) as typeof w.webContents.once;
+      const baseLoadFile = w.loadFile as () => Promise<void>;
+      w.loadFile = mock(async () => {
+        onceCalledBeforeLoadResolved = domReadyRegistrations > 0;
+        return baseLoadFile();
+      }) as typeof w.loadFile;
+      env.windows.push(w);
+      env.createWindowOpts.push({ additionalArguments: [], title: '' });
+      return w;
+    };
+
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({
+      projectPath: '/tmp/deep-link-proj',
+      pendingDeepLinkDoc: 'notes/meeting',
+    });
+    env.utilities[0]?.fire({ type: 'ready', port: 51220, apiOrigin: 'http://localhost:51220' });
+    await pending;
+
+    expect(onceCalledBeforeLoadResolved).toBe(true);
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+
+    // dom-ready callback sends the deep-link event.
+    expect((window.webContents.send as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    const deepLinkCall = sendCalls.find((c) => c[0] === 'ok:deep-link');
+    expect(deepLinkCall).toBeDefined();
+    expect(deepLinkCall?.[1]).toEqual({ doc: 'notes/meeting' });
+  });
+
+  test('spawn path: no pendingDeepLinkDoc → no ok:deep-link event fires on dom-ready', async () => {
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({ projectPath: '/tmp/no-deep-link' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51221, apiOrigin: 'http://localhost:51221' });
+    await pending;
+
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    expect(sendCalls.find((c) => c[0] === 'ok:deep-link')).toBeUndefined();
+  });
+
+  test('attach path: pendingDeepLinkDoc also fires on dom-ready', async () => {
+    // Attach mode skips utility fork but still mounts a renderer, so the
+    // dom-ready gate applies symmetrically.
+    const liveLock: ServerLockMetadataLike = {
+      pid: 65793,
+      hostname: 'my-host',
+      port: 59600,
+      startedAt: '2026-04-21T10:00:00.000Z',
+      worktreeRoot: '/tmp/attach-deep-link',
+    };
+    env.deps.readServerLock = () => liveLock;
+    env.deps.isProcessAlive = () => true;
+    env.deps.hostname = () => 'my-host';
+
+    const wm = new WindowManager(env.deps);
+    const ctx = await wm.createProjectWindow({
+      projectPath: '/tmp/attach-deep-link',
+      pendingDeepLinkDoc: 'attached/note',
+    });
+    expect(ctx.ownsServer).toBe(false);
+
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    const deepLinkCall = sendCalls.find((c) => c[0] === 'ok:deep-link');
+    expect(deepLinkCall).toBeDefined();
+    expect(deepLinkCall?.[1]).toEqual({ doc: 'attached/note' });
+  });
+});
+
+describe('WindowManager.getWindowFor — canonicalization symmetry with focusWindowForProject', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('returns the window when caller passes a non-canonical path', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/canon-get' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51300, apiOrigin: 'http://localhost:51300' });
+    const ctx = await p;
+
+    // Without canonicalization, `/tmp/canon-get/.` would not match the key
+    // `/tmp/canon-get` stored at spawn time — introducing an asymmetry with
+    // `focusWindowForProject` that already resolves its input.
+    expect(wm.getWindowFor('/tmp/canon-get/.')).toBe(ctx);
   });
 });

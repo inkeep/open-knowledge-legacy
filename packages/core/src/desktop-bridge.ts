@@ -116,6 +116,23 @@ export interface OkUpdateStuckHintInfo {
 }
 
 /**
+ * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
+ * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
+ * (identical field set). Duplicated here (not imported) because core has no
+ * dep on desktop. Drift across the three copies (desktop, core, app) is
+ * caught by the `M1 invariant: bridge contract drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts`, which walks the
+ * interface body of each file and asserts field-name set equality.
+ */
+export interface OkKeyringSmokeResult {
+  ok: boolean;
+  backend?: 'keyring' | 'file';
+  error?: string;
+  durationMs?: number;
+  timestamp: string;
+}
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -158,6 +175,13 @@ export interface OkDesktopBridge {
    * M3 Toast C.
    */
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `ok:deep-link` — fired when an `openknowledge://open?project=…
+   * &doc=<name>` URL routed to this window (M4 SPEC 2026-04-21-m4-url-scheme).
+   * Renderer updates `location.hash` to open the target doc via the existing
+   * hash-route listener. Returns unsubscribe.
+   */
+  onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   /** Native folder-picker dialog surfaces. */
   dialog: {
@@ -253,6 +277,15 @@ export interface OkDesktopBridge {
   readonly platform: 'darwin' | 'win32' | 'linux';
   /** Electron app version (from main's `app.getVersion()`). */
   readonly appVersion: string;
+
+  /**
+   * Debug-only namespace — populated by preload ONLY when the
+   * `OK_DEBUG_KEYRING_SMOKE=1` env var is set OR the app is unpacked (dev
+   * mode). Absent in normal production runs. M5 SPEC D-M5-8.
+   */
+  debug?: {
+    keyringSmoke(): Promise<OkKeyringSmokeResult>;
+  };
 }
 
 declare global {

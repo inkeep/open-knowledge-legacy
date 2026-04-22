@@ -50,4 +50,10 @@ export interface EventChannels {
    * the user at the manual-download page. Fires at most once per installation.
    */
   'ok:update:stuck-hint': { payload: { downloadUrl: string } };
+  /**
+   * Main → renderer on an `openknowledge://open?project=…&doc=<name>` URL
+   * that routed to this window (M4). Renderer updates `location.hash` to
+   * open the target doc — the existing hash-route listener handles the rest.
+   */
+  'ok:deep-link': { payload: { doc: string } };
 }

@@ -100,4 +100,12 @@ describe('preload channel names are declared in EventChannels', () => {
     }
     expect(undeclared).toEqual([]);
   });
+
+  test('ok:deep-link is wired (M4 URL-scheme preload handshake)', () => {
+    const preloadSrc = readFileSync(PRELOAD_PATH, 'utf-8');
+    const eventsSrc = readFileSync(EVENTS_PATH, 'utf-8');
+    expect(preloadSrc).toContain("ipcRenderer.on('ok:deep-link'");
+    expect(preloadSrc).toContain("ipcRenderer.removeListener('ok:deep-link'");
+    expect(eventsSrc).toContain("'ok:deep-link'");
+  });
 });
