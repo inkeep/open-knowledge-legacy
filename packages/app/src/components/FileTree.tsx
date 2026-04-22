@@ -1,3 +1,4 @@
+import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
 import {
   Bot,
   ChevronRight,
@@ -72,6 +73,14 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { joinWorkspacePath } from '@/lib/workspace-paths';
+import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
+import {
+  buildHandoffInput,
+  type HandoffDispatchInput,
+  useHandoffDispatch,
+} from './handoff/useHandoffDispatch';
+import { useInstalledAgents } from './handoff/useInstalledAgents';
 import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
 
 function navigateTo(targetPath: string) {
@@ -82,22 +91,13 @@ function navigateTo(targetPath: string) {
  * Workspace-relative on-disk path for a tree node. Files get the `.md` extension;
  * folders return the bare path (no trailing slash). Mirrors how paths appear in
  * git diffs, VS Code 'Copy Relative Path', and the server's docName convention.
+ *
+ * US-011 promoted the sibling `joinWorkspacePath` to `@/lib/workspace-paths` so
+ * handoff dispatch inputs share the same normalizer. `relativePathForNode`
+ * stays local because it operates on a `TreeNode` (not a bare docName).
  */
 function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): string {
   return node.kind === 'file' ? `${node.path}.md` : node.path;
-}
-
-/**
- * Join `contentDir` with a workspace-relative path. Cross-platform — uses the
- * platform separator that `/api/workspace` returns (Node's `path.sep`), which
- * is the source of truth for the host. `TreeNode.path` and `DocEntry.docName`
- * are always POSIX-form in transit, so when the host is Windows we rewrite
- * their internal `/` to `\` before joining.
- */
-function joinWorkspacePath(contentDir: string, relative: string, sep: '/' | '\\'): string {
-  const normalizedRelative = sep === '\\' ? relative.replaceAll('/', '\\') : relative;
-  const trimmedDir = contentDir.endsWith(sep) ? contentDir.slice(0, -1) : contentDir;
-  return `${trimmedDir}${sep}${normalizedRelative}`;
 }
 
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -226,6 +226,18 @@ const FileTreeNode: FC<{
   busyPath: string | null;
   /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
   workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
+  /** Handoff install states + dispatch fn, lifted to the FileTree root so every
+   *  file-row ContextMenu shares one `useInstalledAgents` coordinator (otherwise
+   *  N file rows spin up N probe coordinators each with a 10s throttle — the
+   *  server-side cache absorbs it but the React state stays fragmented). */
+  handoff: {
+    readonly installStates: Record<HandoffTarget, InstallState>;
+    readonly isElectronHost: boolean;
+    readonly dispatch: (
+      target: HandoffTarget,
+      input: HandoffDispatchInput,
+    ) => Promise<HandoffOutcome>;
+  };
   onNavigate: (targetPath: string) => void;
   /** Hover-intent prewarm trigger (V2 Option G). Safe-no-op when not wired. */
   prewarm: (docName: string) => void;
@@ -252,6 +264,7 @@ const FileTreeNode: FC<{
   editingValue,
   busyPath,
   workspace,
+  handoff,
   onNavigate,
   prewarm,
   onStartRename,
@@ -542,6 +555,14 @@ const FileTreeNode: FC<{
               </ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
+          {isFile && (
+            <OpenInAgentContextSubmenu
+              input={buildHandoffInput({ docName: node.path, workspace })}
+              installStates={handoff.installStates}
+              isElectronHost={handoff.isElectronHost}
+              dispatch={handoff.dispatch}
+            />
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             variant="destructive"
@@ -575,6 +596,7 @@ const FileTreeNode: FC<{
               editingValue={editingValue}
               busyPath={busyPath}
               workspace={workspace}
+              handoff={handoff}
               onNavigate={onNavigate}
               prewarm={prewarm}
               onStartRename={onStartRename}
@@ -642,6 +664,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     contentDir: string;
     pathSeparator: '/' | '\\';
   } | null>(null);
+
+  // Handoff surface (US-011) — shared across every file row's right-click menu.
+  // Lifted to the tree root so one `useInstalledAgents` coordinator backs the
+  // whole sidebar; per-row hook calls would spin up N probe coordinators (each
+  // with its own 10s throttle) for no benefit.
+  const { states: handoffInstallStates } = useInstalledAgents();
+  const { dispatch: dispatchHandoff } = useHandoffDispatch();
+  const handoffIsElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+  const handoff = {
+    installStates: handoffInstallStates,
+    isElectronHost: handoffIsElectronHost,
+    dispatch: dispatchHandoff,
+  };
 
   // Ref callback: fires when the active row DOM node attaches. Handles initial
   // page load (tree mounts after /api/documents resolves), hash navigation, and
@@ -1161,6 +1196,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             inlineCreate={getInlineCreate(node.path)}
             getInlineCreate={getInlineCreate}
             workspace={workspace}
+            handoff={handoff}
           />
         ))}
       </SidebarMenu>

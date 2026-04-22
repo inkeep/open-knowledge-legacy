@@ -311,3 +311,60 @@ describe('defaultHandoffDispatchDeps — production wiring', () => {
     expect(deps.getDisplayName('claude-cowork')).toBe('Claude Cowork');
   });
 });
+
+describe('buildHandoffInput — shared surface helper (US-011)', () => {
+  test('null docName returns null', async () => {
+    const { buildHandoffInput } = await import('./useHandoffDispatch');
+    expect(
+      buildHandoffInput({
+        docName: null,
+        workspace: { contentDir: '/repo', pathSeparator: '/' },
+      }),
+    ).toBeNull();
+  });
+
+  test('null workspace returns null', async () => {
+    const { buildHandoffInput } = await import('./useHandoffDispatch');
+    expect(buildHandoffInput({ docName: 'specs/foo/SPEC', workspace: null })).toBeNull();
+  });
+
+  test('POSIX: composes relativePath + projectDir + docPath', async () => {
+    const { buildHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildHandoffInput({
+      docName: 'specs/foo/SPEC',
+      workspace: { contentDir: '/Users/andrew/repo', pathSeparator: '/' },
+    });
+    expect(input).toEqual({
+      docContext: { relativePath: 'specs/foo/SPEC.md' },
+      projectDir: '/Users/andrew/repo',
+      docPath: '/Users/andrew/repo/specs/foo/SPEC.md',
+    });
+  });
+
+  test('Windows: rewrites relativePath slashes to backslash for docPath', async () => {
+    const { buildHandoffInput } = await import('./useHandoffDispatch');
+    const input = buildHandoffInput({
+      docName: 'specs/foo/SPEC',
+      workspace: { contentDir: 'C:\\repo', pathSeparator: '\\' },
+    });
+    // `docContext.relativePath` stays POSIX-form (matches the content-directory
+    // convention + the MCP `read_document` contract). Only `docPath` uses
+    // backslashes because that's the raw OS-native path the target agent's
+    // URL scheme expects for `file=`/`path=`.
+    expect(input?.docContext.relativePath).toBe('specs/foo/SPEC.md');
+    expect(input?.projectDir).toBe('C:\\repo');
+    expect(input?.docPath).toBe('C:\\repo\\specs\\foo\\SPEC.md');
+  });
+
+  test('empty-string docName is treated as no active doc (null return)', async () => {
+    // The `!args.docName` guard covers empty-string as well as null. Surfaces
+    // sometimes carry an empty-string sentinel before the hash resolves.
+    const { buildHandoffInput } = await import('./useHandoffDispatch');
+    expect(
+      buildHandoffInput({
+        docName: '',
+        workspace: { contentDir: '/repo', pathSeparator: '/' },
+      }),
+    ).toBeNull();
+  });
+});

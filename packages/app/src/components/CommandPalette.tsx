@@ -17,7 +17,8 @@
  * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
  */
 
-import { FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
+import { Bot, Code2, FolderOpen, FolderPlus, Sparkles, Terminal } from 'lucide-react';
+import type { ComponentType } from 'react';
 import { useEffect, useState } from 'react';
 import {
   CommandDialog,
@@ -29,8 +30,13 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
+import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { useWorkspace } from '@/lib/use-workspace';
+import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
+import { useInstalledAgents } from './handoff/useInstalledAgents';
 
 /**
  * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
@@ -44,6 +50,23 @@ export const runWithToast = (
   toastApi?: { error(msg: string): void },
 ): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'CommandPalette');
 
+/**
+ * Local icon registry for the "Open in agent" group — must mirror the slugs
+ * listed in `KNOWN_TARGETS[i].icon` (US-010 / `OpenInAgentMenuItem.tsx`). Kept
+ * here instead of importing a shared registry because the icon set is small
+ * and diverging would surface immediately as a missing-icon fallback.
+ */
+const HANDOFF_ICON_REGISTRY: Record<string, ComponentType<{ className?: string }>> = {
+  Sparkles,
+  Terminal,
+  Bot,
+  Code2,
+};
+
+function resolveHandoffIcon(slug: string): ComponentType<{ className?: string }> {
+  return HANDOFF_ICON_REGISTRY[slug] ?? Sparkles;
+}
+
 interface CommandPaletteProps {
   bridge: OkDesktopBridge;
 }
@@ -51,6 +74,15 @@ interface CommandPaletteProps {
 export function CommandPalette({ bridge }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [recents, setRecents] = useState<RecentProjectEntry[]>([]);
+  const { activeDocName } = useDocumentContext();
+  const workspace = useWorkspace();
+  const { states: installStates, refresh: refreshInstallStates } = useInstalledAgents();
+  const { dispatch: dispatchHandoff } = useHandoffDispatch();
+  // Shared input construction — identical shape across the three surfaces so
+  // AC9's single-dispatch contract holds. `null` when no active doc or when
+  // workspace metadata has not resolved yet (web host only — Electron
+  // resolves synchronously via `window.okDesktop`).
+  const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
   // Lazy-load recents each time the palette opens so the list is always fresh.
   // Cheap (<10ms over IPC), and avoids a stale snapshot if the user opens
@@ -64,10 +96,15 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       const result = await bridge.project.listRecent();
       if (!cancelled) setRecents(result);
     }, 'Failed to load recent projects.');
+    // Fire-and-forget install-state refresh when the palette opens. The probe
+    // coordinator handles the 10s per-scheme throttle, so rapid open/close
+    // cycles collapse into at most one OS probe per window. Matches the
+    // EditorHeader dropdown's refresh-on-open semantics (SQ5 DIRECTED option c).
+    void refreshInstallStates();
     return () => {
       cancelled = true;
     };
-  }, [open, bridge]);
+  }, [open, bridge, refreshInstallStates]);
 
   // Cmd+K / Ctrl+K global opener. Attached once per bridge instance; React
   // Compiler handles the no-stale-closure-on-re-render concern via reactivity.
@@ -138,6 +175,51 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <CommandShortcut>⌘⇧N</CommandShortcut>
           </CommandItem>
         </CommandGroup>
+
+        {activeDocName ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Open in agent">
+              {KNOWN_TARGETS.map((target) => {
+                const installState = installStates[target.id];
+                const enabled = installState.installed === true && handoffInput !== null;
+                const Icon = resolveHandoffIcon(target.icon);
+                // The Command palette has no tooltip affordance on disabled
+                // rows; the dropdown surface (EditorHeader) carries the full
+                // PQ6 tooltip UX with install + claude.ai affordances. Here
+                // we surface a concise right-aligned status hint so the user
+                // sees *why* the row is disabled without hunting for it.
+                const hint =
+                  installState.installed === null
+                    ? 'Detecting…'
+                    : installState.installed === false
+                      ? 'Not installed'
+                      : handoffInput === null
+                        ? 'No active doc'
+                        : null;
+                return (
+                  <CommandItem
+                    key={target.id}
+                    value={`open-in-agent ${target.id} ${target.displayName}`}
+                    disabled={!enabled}
+                    onSelect={() => {
+                      if (!enabled || !handoffInput) return;
+                      setOpen(false);
+                      void dispatchHandoff(target.id, handoffInput);
+                    }}
+                    data-testid={`command-palette-open-in-${target.id}`}
+                  >
+                    <Icon />
+                    <span>Open in {target.displayName}</span>
+                    {hint ? (
+                      <CommandShortcut className="text-muted-foreground">{hint}</CommandShortcut>
+                    ) : null}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
+        ) : null}
 
         {switchable.length > 0 ? (
           <>

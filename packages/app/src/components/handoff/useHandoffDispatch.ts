@@ -32,6 +32,7 @@ import {
   type HandoffHost,
   type HandoffStatsLine,
 } from '@/lib/handoff/telemetry';
+import { docNameToRelativePath, joinWorkspacePath, type Workspace } from '@/lib/workspace-paths';
 // Side-effect import only — loads the `Window.okDesktop?` global augmentation.
 import '@/lib/desktop-bridge-types';
 
@@ -45,6 +46,35 @@ export interface HandoffDispatchInput {
   readonly docContext: DocContext;
   readonly projectDir: string;
   readonly docPath: string;
+}
+
+/**
+ * Shared helper for the three surfaces (EditorHeader, CommandPalette, FileTree)
+ * that all construct a `HandoffDispatchInput` the same way: from an extension-
+ * less doc path (`activeDocName` or a right-clicked tree-node's `path`) plus
+ * the workspace root / OS separator.
+ *
+ * Returns `null` when either input is missing — mirrors the
+ * `OpenInAgentMenu.input` contract ("disabled trigger when nothing to dispatch").
+ *
+ * Centralizing the construction here guarantees that every surface:
+ *   - Uses the same `.md`-suffix convention (via `docNameToRelativePath`).
+ *   - Joins with the advertised separator (via `joinWorkspacePath`).
+ *   - Sets `docContext.relativePath` to the exact same POSIX form that the
+ *     prompt composer and MCP server consume.
+ */
+export function buildHandoffInput(args: {
+  readonly docName: string | null;
+  readonly workspace: Workspace | null;
+}): HandoffDispatchInput | null {
+  if (!args.docName || !args.workspace) return null;
+  const relativePath = docNameToRelativePath(args.docName);
+  const { contentDir, pathSeparator } = args.workspace;
+  return {
+    docContext: { relativePath },
+    projectDir: contentDir,
+    docPath: joinWorkspacePath(contentDir, relativePath, pathSeparator),
+  };
 }
 
 /**
