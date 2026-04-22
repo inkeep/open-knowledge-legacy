@@ -35,6 +35,11 @@ export interface ProjectOpenRequest {
   target: 'new-window';
 }
 
+/** Outcome of a spawn probe — narrow shape so renderer can branch cleanly without inspecting strings. */
+export type SpawnOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' };
+
 export interface RequestChannels {
   /** Open native folder-picker (`showOpenDialog({ properties: ['openDirectory'] })`). */
   'ok:dialog:open-folder': { args: []; result: string | null };
@@ -42,6 +47,24 @@ export interface RequestChannels {
   'ok:dialog:create-folder': { args: []; result: string | null };
   /** Outbound URL via `shell.openExternal` (D47 scheme allowlist enforced in main handler). */
   'ok:shell:open-external': { args: [url: string]; result: undefined };
+  /**
+   * Detect whether a URL scheme has a registered handler on this OS — used by
+   * the "Open in Agent Desktop" dropdown to render disabled-with-tooltip rows
+   * when the target app is not installed. Returns `{installed: false}` on any
+   * failure (timeout, platform-API error) — conservative default per SPEC §6.4.
+   */
+  'ok:shell:detect-protocol': {
+    args: [scheme: string];
+    result: { installed: boolean; displayName?: string };
+  };
+  /**
+   * Cursor IDE step-1 folder spawn (pair of the cursor:// prompt URL that
+   * fires from `shell.openExternal` after a settle delay). Dedicated channel —
+   * not overloading `ok:shell:open-external` — because the threat model is a
+   * command allowlist (PATH hijacking, arg injection) distinct from the URL-
+   * scheme allowlist. See SPEC §6.5 TQ4b LOCKED.
+   */
+  'ok:shell:spawn-cursor': { args: [path: string]; result: SpawnOutcome };
   /** Clipboard text write (IPC-relay — renderer is sandboxed). */
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   /** Read the current window's config (projectPath, collabUrl, etc.). */

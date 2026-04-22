@@ -117,13 +117,33 @@ export interface OkDesktopBridge {
   };
 
   /**
-   * IPC-relayed wrapper around `shell.openExternal`. Main-process handler
-   * enforces the outbound-scheme allowlist (`https`, `http`, `mailto`,
-   * `openknowledge` only — D47) before delegating to Electron's `shell`
-   * module. Unauthorized schemes reject.
+   * IPC-relayed wrappers around Electron's `shell` module. Main-process
+   * handlers enforce the outbound-scheme allowlist (`https`, `http`,
+   * `mailto`, `openknowledge`, plus `claude`, `codex`, `cursor` added by
+   * SPEC 2026-04-21 for the "Open in Agent Desktop" dropdown — D47) before
+   * delegating. Unauthorized schemes reject.
    */
   shell: {
     openExternal(url: string): Promise<void>;
+    /**
+     * Probe whether a URL scheme has a registered handler on this OS.
+     * Used by the "Open in Agent Desktop" dropdown to render disabled-
+     * with-tooltip rows when the target app isn't installed. Returns
+     * `{installed: false}` on timeout or platform-API error.
+     */
+    detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
+    /**
+     * Step 1 of the Cursor two-step handoff — spawns `cursor <path>` via a
+     * validated argv (shell:false, 2s timeout). Dedicated channel because
+     * the threat model is a command allowlist (PATH hijacking, arg
+     * injection) distinct from the URL-scheme allowlist above.
+     */
+    spawnCursor(
+      path: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
+    >;
   };
 
   /** IPC-relayed clipboard writer (sandboxed renderer cannot call clipboard directly). */

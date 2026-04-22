@@ -14,6 +14,7 @@
  * this entry wires it into Electron lifecycle + IPC handlers.
  */
 
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -33,6 +34,10 @@ import {
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { promptForFolder } from './dialog-helpers.ts';
+import {
+  detectProtocol as detectProtocolImpl,
+  spawnCursor as spawnCursorImpl,
+} from './ipc-handlers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { checkOutboundUrl } from './shell-allowlist.ts';
@@ -290,6 +295,44 @@ function registerIpcHandlers() {
     }
     await shell.openExternal(url);
     return undefined;
+  });
+
+  handle('ok:shell:detect-protocol', async (_event, scheme) => {
+    return detectProtocolImpl(
+      {
+        platform: process.platform,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+      },
+      scheme,
+    );
+  });
+
+  handle('ok:shell:spawn-cursor', async (_event, path) => {
+    return spawnCursorImpl(
+      {
+        platform: process.platform,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+        spawn: (binaryPath, userPath, timeoutMs) =>
+          new Promise((resolve) => {
+            try {
+              const child = spawn(binaryPath, [userPath], {
+                shell: false,
+                timeout: timeoutMs,
+                stdio: ['ignore', 'ignore', 'pipe'],
+              });
+              // Drain stderr so a chatty Cursor binary can't block on a full pipe buffer.
+              child.stderr?.on('data', () => {});
+              // `spawn` event fires once the process is successfully launched —
+              // that's the success criterion per SPEC (not a clean exit).
+              child.once('spawn', () => resolve({ ok: true }));
+              child.once('error', () => resolve({ ok: false, reason: 'spawn-error' }));
+            } catch {
+              resolve({ ok: false, reason: 'spawn-error' });
+            }
+          }),
+      },
+      path,
+    );
   });
 
   handle('ok:clipboard:write-text', async (_event, text) => {

@@ -79,6 +79,8 @@ const bridge: OkDesktopBridge = {
 
   shell: {
     openExternal: (url: string) => invoke('ok:shell:open-external', url),
+    detectProtocol: (scheme: string) => invoke('ok:shell:detect-protocol', scheme),
+    spawnCursor: (path: string) => invoke('ok:shell:spawn-cursor', path),
   },
 
   clipboard: {

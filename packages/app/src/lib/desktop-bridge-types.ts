@@ -57,6 +57,13 @@ export interface OkDesktopBridge {
   };
   shell: {
     openExternal(url: string): Promise<void>;
+    detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
+    spawnCursor(
+      path: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
+    >;
   };
   clipboard: {
     writeText(text: string): Promise<void>;
