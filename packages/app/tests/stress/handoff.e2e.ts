@@ -342,13 +342,22 @@ test.describe('handoff — 8-cell matrix', () => {
       tooltipScope(page).getByText('Cursor handoff requires the desktop build.').first(),
     ).toBeVisible();
 
-    // Click is a no-op — no dispatch fires.
+    // Click is a no-op — Radix gates `onSelect` on disabled, so no
+    // dispatch can fire. `expect.poll` with a condition that returns 0
+    // is the condition-based-wait shape required by D-Q14 (rule #1 in
+    // `tests/integration/e2e-stop-rules.test.ts`) — we verify the capture
+    // counts stay zero over a bounded poll window rather than pausing
+    // for a fixed interval.
     await cursorRow.click({ force: true });
-    // Wait a tick for any async dispatch attempt to settle.
-    await page.waitForTimeout(300);
-    const captured = await readCapturedHandoff(page);
-    expect(captured.anchorClicks).toEqual([]);
-    expect(captured.openExternalCalls).toEqual([]);
+    await expect
+      .poll(
+        async () => {
+          const c = await readCapturedHandoff(page);
+          return c.anchorClicks.length + c.openExternalCalls.length;
+        },
+        { timeout: 1_000, intervals: [100, 200, 300, 400] },
+      )
+      .toBe(0);
   });
 
   test('cell 6: Web Claude disabled — "Open in claude.ai →" fallback dispatches https://claude.ai/new', async ({
