@@ -1382,9 +1382,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const session = await sessionManager.getSession(docName);
-      const content = session.dc.document.getText('source').toString();
-      json(res, 200, { ok: true, docName, content });
+      // Read via a transient DirectConnection rather than sessionManager.getSession —
+      // this endpoint has no agent identity, and creating a cached session would
+      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+      const dc = await hocuspocus.openDirectConnection(docName);
+      try {
+        const document = dc.document;
+        if (!document) {
+          json(res, 500, { ok: false, error: 'Document not available' });
+          return;
+        }
+        const content = document.getText('source').toString();
+        json(res, 200, { ok: true, docName, content });
+      } finally {
+        await dc.disconnect();
+      }
     } catch (e) {
       console.error('[document-read]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
