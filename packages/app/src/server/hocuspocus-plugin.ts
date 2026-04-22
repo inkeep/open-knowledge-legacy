@@ -23,6 +23,8 @@ import {
   type HistoryRef,
   handleCollabSocketError,
   initHistoryRepo,
+  loadPrincipal,
+  type Principal,
   readBranchFromHead,
   releaseServerLock,
   SYSTEM_DOC_NAME,
@@ -164,6 +166,12 @@ let persistence: ReturnType<typeof createPersistenceExtension>;
 let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 let cc1Broadcaster: CC1Broadcaster;
 
+// Loaded async after init; Vite dev / Playwright must hit /api/principal
+// without 404 so the browser tab-identity fetch in main.tsx can resolve.
+// Initial value is null so the getter returns null until the async load
+// completes (within tens of ms of module init).
+let loadedPrincipal: Principal | null = null;
+
 function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
   cc1Broadcaster.signal(channel);
 }
@@ -220,8 +228,21 @@ try {
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
       signalChannel,
+      getPrincipal: () => loadedPrincipal,
     }),
   );
+
+  // Load principal asynchronously so /api/principal returns 200 in dev and
+  // Playwright, mirroring the CLI path in standalone.ts:931. We do not block
+  // extension wiring on this — the endpoint returns 404 for the brief window
+  // before load, matching production behavior.
+  void loadPrincipal(CONTENT_DIR)
+    .then((p) => {
+      loadedPrincipal = p;
+    })
+    .catch((err) => {
+      console.warn('[hocuspocus] principal load failed:', err);
+    });
 
   const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
   const pluginSchema = getSchema(sharedExtensions);

@@ -19,6 +19,7 @@ import { Hocuspocus } from '@hocuspocus/server';
 import simpleGit from 'simple-git';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { clearContributors, recordContributor } from './contributor-tracker.ts';
 import { type HistoryRef, initHistoryRepo } from './history-repo.ts';
 
 interface CapturedResponse {
@@ -164,6 +165,83 @@ describe('save-version graceful availability (US-021, D45)', () => {
       const svWarn = warnings.find((w) => w.includes('[save-version] parent-git unavailable:'));
       expect(svWarn).toBeUndefined();
     } finally {
+      await sessionManager.closeAll();
+    }
+  });
+
+  test('QA-003: Co-Authored-By trailers appear per contributing agent session (FR-9, D12)', async () => {
+    // Set up a real git repo
+    const projectDir = tmpDir;
+    const contentDir = join(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(join(contentDir, 'doc.md'), '# Hello\n');
+
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.addConfig('user.name', 'Alice');
+    await git.addConfig('user.email', 'alice@example.com');
+    await git.add('.');
+    await git.commit('initial');
+
+    const historyHandle = await initHistoryRepo(projectDir);
+    const historyRef: HistoryRef = { current: historyHandle };
+
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const sessionManager = new AgentSessionManager(hocuspocus);
+
+    // Seed two agent contributors + one principal contributor via the
+    // contributor-tracker before save-version. This mirrors what a real
+    // session does during an agent-write and lets us verify save-version's
+    // trailer emission without a live MCP subprocess.
+    clearContributors();
+    recordContributor('doc.md', 'agent-a4f2', 'Claude (a4f2)', 'claude-code');
+    recordContributor('doc.md', 'agent-9d2e', 'Cursor (9d2e)', 'cursor');
+    recordContributor('doc.md', 'principal-test-123', 'Alice', 'principal-test-123');
+
+    try {
+      const ext = createApiExtension({
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        projectDir,
+        historyRef,
+        contentRoot: 'content',
+        getFileIndex: () => new Map(),
+      });
+
+      const req = makeJsonPostReq('/api/save-version', {
+        message: 'feat: update section A',
+        principal: { name: 'Alice', email: 'alice@example.com' },
+      });
+      const { res, captured } = makeRes();
+      await (
+        ext as {
+          onRequest: (ctx: { request: IncomingMessage; response: ServerResponse }) => Promise<void>;
+        }
+      ).onRequest({ request: req, response: res });
+
+      expect(captured.status).toBe(200);
+      expect(captured.parsed.versionTag).toBe('ok/v1');
+
+      // Read the parent-git HEAD commit body and assert the trailer shape.
+      const headMessage = await git.raw(['log', '-1', '--pretty=%B']);
+      // Subject: checkpoint: <user message>
+      expect(headMessage).toContain('checkpoint: feat: update section A');
+      // Co-Authored-By trailers: one per distinct agent/principal contributor
+      expect(headMessage).toMatch(
+        /Co-Authored-By:\s+Claude \(a4f2\)\s+<agent-a4f2@openknowledge\.local>/,
+      );
+      expect(headMessage).toMatch(
+        /Co-Authored-By:\s+Cursor \(9d2e\)\s+<agent-9d2e@openknowledge\.local>/,
+      );
+      // principal- writers also emit trailers (non-agent-session contributor path)
+      expect(headMessage).toMatch(/Co-Authored-By:\s+Alice\s+<principal-test-123@/);
+
+      // Author = principal, not a classified writer
+      const headAuthor = (await git.raw(['log', '-1', '--pretty=%an <%ae>'])).trim();
+      expect(headAuthor).toBe('Alice <alice@example.com>');
+    } finally {
+      clearContributors();
       await sessionManager.closeAll();
     }
   });

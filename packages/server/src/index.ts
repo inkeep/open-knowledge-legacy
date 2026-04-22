@@ -1,3 +1,4 @@
+export type { Principal } from '@inkeep/open-knowledge-core';
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
@@ -130,6 +131,7 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { loadPrincipal } from './principal.ts';
 export { isProcessAlive } from './process-alive.ts';
 export {
   acquireProcessLock,
@@ -163,7 +165,11 @@ export {
   createServerObserverExtension,
   type ServerObserverExtensionOptions,
 } from './server-observer-extension.ts';
-export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
+export {
+  isPairedWriteOrigin,
+  OBSERVER_SYNC_ORIGIN,
+  type PairedWriteOrigin,
+} from './server-observers.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   acquireUiLock,
