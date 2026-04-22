@@ -28,6 +28,7 @@ export const KNOWN_TARGETS = [
   {
     id: 'claude-cowork',
     displayName: 'Claude Cowork',
+    appBrandName: 'Claude Desktop',
     schemes: ['claude:'],
     installUrl: 'https://claude.com/download',
     hasWebFallback: true,
@@ -35,6 +36,7 @@ export const KNOWN_TARGETS = [
   {
     id: 'claude-code',
     displayName: 'Claude Code',
+    appBrandName: 'Claude Desktop',
     schemes: ['claude:'],
     installUrl: 'https://claude.com/download',
     hasWebFallback: true,
@@ -42,6 +44,7 @@ export const KNOWN_TARGETS = [
   {
     id: 'codex',
     displayName: 'Codex',
+    appBrandName: 'Codex Desktop',
     schemes: ['codex:'],
     installUrl: 'https://openai.com/codex',
   },

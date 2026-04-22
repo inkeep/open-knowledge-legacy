@@ -90,6 +90,14 @@ export interface TargetData {
   /** User-facing display name — fills "Open in <displayName>". */
   readonly displayName: string;
   /**
+   * App-brand name shown in disabled-state copy: "Requires <appBrandName>." +
+   * "Install <appBrandName> →". Distinct from `displayName` because Cowork and
+   * Code are tabs of a single app ("Claude Desktop") — per SPEC §7.3 the
+   * disabled message points the user at the installable app, not the tab.
+   * Falls back to `displayName` when omitted.
+   */
+  readonly appBrandName?: string;
+  /**
    * URL scheme(s) to probe for install detection. Cowork + Code both list
    * `['claude:']`; install detection dedupes via
    * `new Set(KNOWN_TARGETS.flatMap(t => t.schemes))`.

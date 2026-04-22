@@ -167,8 +167,8 @@ describe('computeRowState — branch 3: not installed', () => {
       isElectronHost: true,
     });
     expect(state.enabled).toBe(false);
-    expect(state.tooltip?.message).toBe('Requires Codex.');
-    expect(state.tooltip?.installAction.label).toBe('Install Codex →');
+    expect(state.tooltip?.message).toBe('Requires Codex Desktop.');
+    expect(state.tooltip?.installAction.label).toBe('Install Codex Desktop →');
     expect(state.tooltip?.installAction.url).toBe('https://openai.com/codex');
     expect(state.tooltip?.webFallback).toBeUndefined();
   });
@@ -181,8 +181,8 @@ describe('computeRowState — branch 3: not installed', () => {
       isElectronHost: true,
     });
     expect(state.enabled).toBe(false);
-    expect(state.tooltip?.message).toBe('Requires Claude Cowork.');
-    expect(state.tooltip?.installAction.label).toBe('Install Claude Cowork →');
+    expect(state.tooltip?.message).toBe('Requires Claude Desktop.');
+    expect(state.tooltip?.installAction.label).toBe('Install Claude Desktop →');
     expect(state.tooltip?.installAction.url).toBe('https://claude.com/download');
     expect(state.tooltip?.webFallback).toBeDefined();
     expect(state.tooltip?.webFallback?.label).toBe('Open in claude.ai →');

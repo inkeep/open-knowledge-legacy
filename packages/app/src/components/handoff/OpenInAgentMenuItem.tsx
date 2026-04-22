@@ -139,10 +139,11 @@ export function computeRowState(args: {
 
   // Branch 3: not installed — install + (claude only) web-fallback.
   if (installState.installed === false) {
+    const brand = target.appBrandName ?? target.displayName;
     const tooltip: DisabledTooltip = {
-      message: `Requires ${target.displayName}.`,
+      message: `Requires ${brand}.`,
       installAction: {
-        label: `Install ${target.displayName} →`,
+        label: `Install ${brand} →`,
         url: target.installUrl,
       },
       ...(target.hasWebFallback

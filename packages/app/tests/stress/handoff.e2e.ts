@@ -465,12 +465,12 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await reopenDropdown();
     await page.getByTestId('open-in-agent-item-codex').hover();
-    await expect(tooltipScope(page).getByText('Requires Codex.').first()).toBeVisible();
+    await expect(tooltipScope(page).getByText('Requires Codex Desktop.').first()).toBeVisible();
     await expect(tooltipScope(page).getByTestId('open-in-agent-web-fallback-codex')).toHaveCount(0);
 
     await reopenDropdown();
     await page.getByTestId('open-in-agent-item-claude-cowork').hover();
-    await expect(tooltipScope(page).getByText('Requires Claude Cowork.').first()).toBeVisible();
+    await expect(tooltipScope(page).getByText('Requires Claude Desktop.').first()).toBeVisible();
     await expect(
       tooltipScope(page).getByTestId('open-in-agent-web-fallback-claude-cowork').first(),
     ).toBeVisible();
