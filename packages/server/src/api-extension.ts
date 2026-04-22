@@ -21,7 +21,6 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { readFile as readFileAsync } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
@@ -1247,151 +1246,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
       console.error('[document-read]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  /**
-   * GET /api/document-disk?docName=X — V2 spec FR11 (Option E backend).
-   *
-   * Returns the raw markdown bytes currently on disk for `docName`, WITHOUT
-   * creating a Y.Doc session, WITHOUT admitting via ContentFilter, and
-   * WITHOUT mutating file-watcher state. Used by the Suspense fallback
-   * (FallbackDocumentRender) to render a static fumadocs tree while the
-   * editor mounts in the background — see `specs/2026-04-20-perf-v2-editor-
-   * cache-and-cold-load-ux/SPEC.md` §9.3 + Audit §B1.
-   *
-   * STOP rule (SPEC §16): this endpoint MUST NOT call `sessionManager.getSession`,
-   * MUST NOT touch the file index, MUST NOT register the doc anywhere.
-   * `/api/document` already returns live Y.Text via a session; this endpoint
-   * exists because that behavior defeats the fallback's purpose (we WANT
-   * what's on disk, pre-sync, so the fallback doesn't wait for Y.js).
-   *
-   * Symlink-safe: reuses the existing `assertNoSymlinkEscape` helper so a
-   * symlinked doc whose target points outside `contentDir` returns 403.
-   * Broken symlinks / missing files return 404.
-   */
-  /**
-   * Upper bound on disk bytes served by `/api/document-disk` (review
-   * Pass-2 Major #2 + Major #5). Above this, the server returns 413 and
-   * the client's `FallbackDocumentRender` falls through to `EditorSkeleton`
-   * while the editor mounts in the background. Mirrors the client's
-   * LARGE_DOC_CHAR_THRESHOLD × 4 to allow headroom for multi-MB prose
-   * docs that don't trip the client's defer-mount gate; oversize docs
-   * still get a proper editor mount — the fallback just stops being
-   * worth the parse+walk cost. Keep at 2 MB: larger than any doc we've
-   * measured in the wild + below the point where the sync-over-the-
-   * network transfer dominates the budget.
-   */
-  const DOCUMENT_DISK_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
-
-  async function handleDocumentDiskRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const rawDocName = url.searchParams.get('docName');
-      if (!rawDocName || !isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid or missing docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      // Look up the canonical path via the existing file index — the watcher
-      // already tracks which files are in scope. We DO NOT mutate the index.
-      const index = getFileIndex();
-      const entry = index.get(docName);
-      if (!entry) {
-        json(res, 404, { ok: false, error: `Document '${docName}' not found` });
-        return;
-      }
-      // Symlink-safety check — reject paths whose canonical resolution
-      // escapes contentDir. The file-watcher's canonicalPath is already
-      // realpath-resolved, but we defensively re-verify here to guard
-      // against stale index entries after a symlink retarget.
-      const resolvedContentDir = resolve(contentDir);
-      try {
-        assertNoSymlinkEscape(entry.canonicalPath, resolvedContentDir);
-      } catch {
-        json(res, 403, { ok: false, error: 'Path resolves outside content directory' });
-        return;
-      }
-      // Stat first — short-circuit on oversize before spending any I/O on
-      // the read itself (review Pass-2 Major #2 + Major #5).
-      let stat: ReturnType<typeof statSync>;
-      try {
-        stat = statSync(entry.canonicalPath);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') {
-          json(res, 404, { ok: false, error: `File missing: ${docName}` });
-          return;
-        }
-        throw err;
-      }
-      if (stat.size > DOCUMENT_DISK_MAX_BYTES) {
-        json(res, 413, {
-          ok: false,
-          error: 'Document exceeds disk-fetch size cap',
-          sizeBytes: stat.size,
-          maxBytes: DOCUMENT_DISK_MAX_BYTES,
-        });
-        return;
-      }
-      // Async read so parallel disk-reads don't serialize on the single
-      // event loop thread (review Pass-2 Major #2). Under burst load
-      // (10+ concurrent cold-loads on app startup) sync reads would block
-      // every concurrent WebSocket/CRDT frame for the full read duration.
-      let markdown: string;
-      try {
-        markdown = await readFileAsync(entry.canonicalPath, 'utf-8');
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') {
-          json(res, 404, { ok: false, error: `File missing: ${docName}` });
-          return;
-        }
-        throw err;
-      }
-      // Response shape aligned with `/api/document` — `content` + `sizeBytes`
-      // (review Minor #16). No dual-key emission: the endpoint is new in
-      // V2 and has no external consumers yet, so there's nothing to
-      // preserve compat for (review Pass-1 Minor #2 — dropping the earlier
-      // "remove after one rollout cycle" debt up-front).
-      //
-      // `Cache-Control: no-store` — disk bytes are a snapshot, not a long-
-      // lived resource; the Suspense fallback path wants the current value
-      // each cold load (review Minor #23).
-      json(
-        res,
-        200,
-        {
-          ok: true,
-          docName,
-          content: markdown,
-          sizeBytes: stat.size,
-          mtime: stat.mtimeMs,
-        },
-        { 'Cache-Control': 'no-store' },
-      );
-    } catch (e) {
-      // Structured log shape matches AGENTS.md §Logging conventions — the
-      // event is counted in aggregate by ops tooling, so the JSON form is
-      // load-bearing (review Pass-2 Major #2). `console.error` is used
-      // because this is a server-side error path; the pipeline forwards
-      // stderr to the log aggregator.
-      console.error(
-        JSON.stringify({
-          event: 'document-disk-read-failed',
-          message: e instanceof Error ? e.message : String(e),
-        }),
-      );
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -4337,7 +4191,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
-    '/api/document-disk': handleDocumentDiskRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
     '/api/backlink-counts': handleBacklinkCounts,

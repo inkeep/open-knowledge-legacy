@@ -34,12 +34,5 @@
     "capturedAt": "2026-04-20",
     "capturedFrom": "V2 SPEC §7 M4 + §2 G4 target — mode-toggle P95 < 200ms prod. CV:hidden probe AC22 MET at 204ms first / 115ms repeat dev. Target: < 200ms prod.",
     "notes": "US-009 .ok-mode-hidden CSS swap. Absolute floor 200ms = spec G4."
-  },
-  "v2g5PerceivedFirstPaint": {
-    "p50Ms": null,
-    "absoluteFloorMs": 500,
-    "capturedAt": "2026-04-20",
-    "capturedFrom": "V2 SPEC §7 M5 + §2 G5 target — perceived first-paint P95 < 500ms prod via Option E fallback. No pre-V2 baseline — new signal.",
-    "notes": "US-011 FallbackDocumentRender → ok/render/fallback telemetry mark. Target < 500ms prod P95. Absolute floor 500ms = spec G5."
   }
 }

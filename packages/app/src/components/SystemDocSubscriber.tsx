@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { clearDiskMarkdownCache } from '@/editor/disk-markdown-cache';
 import { getLastUserKeystroke } from '@/editor/observers';
 import {
   AGENT_FOCUS_DEBOUNCE_MS,
@@ -78,15 +77,6 @@ export function SystemDocSubscriber() {
       if (channels.includes('files') || channels.includes('graph')) {
         void queryClient.invalidateQueries({ queryKey: ['orphans'] });
         void queryClient.invalidateQueries({ queryKey: ['hubs'] });
-      }
-      // Review Pass-2 Major #3 — any 'files' channel change
-      // (create/delete/rename OR external update from the file-watcher)
-      // invalidates cached disk-markdown bytes so the Suspense fallback
-      // re-fetches fresh contents on the next cold load. Fires only on
-      // 'files' because the disk cache is keyed by docName contents —
-      // backlink/graph channel churn doesn't touch file bytes.
-      if (channels.includes('files')) {
-        clearDiskMarkdownCache();
       }
     });
 

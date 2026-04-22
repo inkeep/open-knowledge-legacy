@@ -69,7 +69,6 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { primeDiskMarkdown } from '@/editor/disk-markdown-cache';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
@@ -311,17 +310,13 @@ const FileTreeNode: FC<{
   // Hover-intent prewarm (review Major #7 / V2 SPEC FR12 Option G). Files
   // only — hovering a folder row doesn't trigger a prewarm. The 80ms
   // intent threshold + 3-concurrent cap live in `sidebar-hover-prewarm`;
-  // here we just wire mouseenter/mouseleave to it. Two prewarm paths
-  // fire: (a) DocumentContext.prewarm() to open a cold HocuspocusProvider,
-  // (b) primeDiskMarkdown() to populate the disk-markdown cache used by
-  // the Suspense fallback. Both are idempotent + rate-limited.
+  // here we just wire mouseenter/mouseleave to it. The prewarm opens a
+  // cold HocuspocusProvider via `prewarm(docName)` so the target doc's
+  // Y.Doc sync starts before the user clicks. Idempotent + rate-limited.
   const onRowEnter = isFile
     ? () => {
         scheduleHoverPrewarm(node.path, (docName) => {
           prewarm(docName);
-          primeDiskMarkdown(docName).catch(() => {
-            // Silent — logging happens in the cache on real failures.
-          });
         });
       }
     : undefined;

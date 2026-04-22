@@ -1327,8 +1327,21 @@ button:active:not(:disabled) {
        still has the DOM in memory but no layout/paint cost.
      - `content-visibility: hidden` keeps the element in layout but skips
        descendant layout/paint. The container reserves intrinsic size.
-       Switching back to visible is faster on large trees (no full reflow). */
+       Switching back to visible is faster on large trees (no full reflow).
+
+   Out-of-flow stacking: `position: absolute; inset: 0` takes the hidden
+   editor out of normal flow so its 8000px reserved intrinsic size does
+   not size the wrapper (or any grid row) — earlier grid-based stacking
+   sized rows to MAX intrinsic across children, stretching the visible
+   sibling to 8000px and producing bottom whitespace on short docs. The
+   consuming dual-editor wrapper must be `position: relative` so this
+   absolute positioning resolves against it (see `EditorActivityPool.tsx`).
+   `pointer-events: none` guards against stray hit-tests reaching hidden
+   descendants before content-visibility's own hit-test skip applies. */
 .ok-mode-hidden {
   content-visibility: hidden;
   contain-intrinsic-size: 0 8000px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }

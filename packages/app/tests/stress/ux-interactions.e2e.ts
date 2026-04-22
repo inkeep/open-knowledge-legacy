@@ -50,6 +50,104 @@ async function openFreshDoc(api: ApiHelpers, page: Page, label: string): Promise
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
+// --------------------------------------------------------------------------
+// Dual-editor hit-testing regression (2026-04-21).
+//
+// EditorActivityPool mounts BOTH SourceEditor and TiptapEditor concurrently
+// so mode toggle stays CSS-only. The non-active editor wears `.ok-mode-hidden`
+// (content-visibility:hidden + contain-intrinsic-size:8000px). The hidden
+// editor must NOT intercept pointer events intended for the visible one.
+//
+// Bug class: prior to the fix, `.ok-mode-hidden` had no pointer-events
+// override, and a grid-stacking wrapper placed both children in the same
+// cell — so the hidden editor's wrapper sat above the visible one in
+// source order (no z-index). Real pointer clicks anywhere in the editor
+// region hit the hidden wrapper first; CM6 never received focus/keydown.
+// `locator.click()` + `keyboard.insertText` bypassed this (the existing
+// Source→WYSIWYG test above) because insertText dispatches `beforeinput`
+// directly on the target element without going through pointer hit-testing.
+// These tests exercise the real user path: `page.mouse.click(x, y)` at a
+// coordinate inside the visible editor's bounding box + `keyboard.type`.
+//
+// Fix: `.ok-mode-hidden` sets `position:absolute; inset:0; pointer-events:none`
+// in `globals.css`, and `EditorActivityPool` wraps the dual-editor pair in
+// `position:relative` so the hidden editor goes out-of-flow instead of
+// sizing a shared grid row to its 8000px intrinsic.
+// --------------------------------------------------------------------------
+
+test('source mode: real pointer click + keystrokes land in CodeMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'source-hit-test');
+  await sourceToggle(page).click();
+  await page.waitForSelector('.cm-content');
+
+  // Real pointer hit-test: click at a pixel coordinate INSIDE the
+  // `.cm-content` box specifically (not `.cm-editor`, which includes
+  // gutters + scroller margins where a 20px inset may miss the
+  // contenteditable region on an empty doc). Goes through the browser's
+  // real z-order hit-testing, unlike `locator.click()`+`keyboard.insertText`
+  // which target a specific element directly. If a hidden sibling wrapper
+  // (e.g. `.ok-mode-hidden` without pointer-events:none) is stacked above
+  // the visible editor, the click lands on the wrapper and `.cm-content`
+  // never focuses.
+  const cmContent = page.locator('.cm-content');
+  const box = await cmContent.boundingBox();
+  if (!box) throw new Error('.cm-content has no bounding box');
+  await page.mouse.click(box.x + box.width / 2, box.y + 5);
+  await expect(cmContent).toBeFocused();
+
+  // `keyboard.type` — per-character keydown/keypress/keyup through the
+  // real focus path. A short string avoids the parallel-CPU reorder race
+  // documented in `Source→WYSIWYG` below (which uses `insertText` to
+  // sidestep that race). For this test, per-character is load-bearing:
+  // we want to exercise the full keydown → CM state.update path, not a
+  // single synthetic beforeinput event.
+  await page.keyboard.type('HITOK');
+  await expect(page.locator('.cm-content')).toContainText('HITOK', { timeout: 5_000 });
+});
+
+test('visual mode: real pointer click + keystrokes land in ProseMirror', async ({ page, api }) => {
+  await openFreshDoc(api, page, 'visual-hit-test');
+  // `openFreshDoc` leaves the page in visual mode; re-assert for clarity.
+  await expect(visualToggle(page)).toBeChecked();
+
+  const pm = page.locator('.ProseMirror');
+  const box = await pm.boundingBox();
+  if (!box) throw new Error('ProseMirror has no bounding box');
+  // Click well inside the PM content region (center-x, a bit inside top).
+  // Small fresh docs have minimal content; clicking the horizontal center
+  // with a modest y-inset lands inside the first writable paragraph.
+  await page.mouse.click(box.x + box.width / 2, box.y + 30);
+  await expect(pm).toBeFocused();
+
+  await page.keyboard.type('HITPM');
+  await expect(page.locator('.ProseMirror')).toContainText('HITPM', { timeout: 5_000 });
+});
+
+test('hidden-editor wrapper does not intercept pointer events (both modes)', async ({
+  page,
+  api,
+}) => {
+  await openFreshDoc(api, page, 'hidden-wrapper-invariant');
+
+  // Visual mode: the source editor's wrapper carries `.ok-mode-hidden`.
+  // Invariant: computed `pointer-events: none` — otherwise a real click
+  // anywhere the hidden wrapper overlaps the visible editor would be
+  // intercepted. `position: absolute` is the out-of-flow complement; it
+  // keeps the hidden wrapper from sizing a shared parent row (the prior
+  // bug stretched the visible editor to 8000px via grid-row intrinsic).
+  const hiddenInVisual = page.locator('.ok-mode-hidden').first();
+  await expect(hiddenInVisual).toHaveCSS('pointer-events', 'none');
+  await expect(hiddenInVisual).toHaveCSS('position', 'absolute');
+
+  // Source mode: role flips — the visual editor's wrapper now carries
+  // `.ok-mode-hidden`. Invariant holds symmetrically.
+  await sourceToggle(page).click();
+  await page.waitForSelector('.cm-editor');
+  const hiddenInSource = page.locator('.ok-mode-hidden').first();
+  await expect(hiddenInSource).toHaveCSS('pointer-events', 'none');
+  await expect(hiddenInSource).toHaveCSS('position', 'absolute');
+});
+
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page, api }) => {
   await openFreshDoc(api, page, 'wysiwyg-to-source');
   // Insert text in WYSIWYG mode. Two invariants:

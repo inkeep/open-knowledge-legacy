@@ -53,7 +53,7 @@ import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
-import { SuspenseDocumentFallback } from './FallbackDocumentRender';
+import { EditorSkeleton } from './EditorSkeleton';
 import { usePageList } from './PageListContext';
 
 /**
@@ -529,40 +529,56 @@ function ActivityEntry({
           onRecycle={onRecycle}
         >
           {/*
-            V2 Option E fallback (review Major #7). `SuspenseDocumentFallback`
-            reads disk bytes from `disk-markdown-cache` synchronously and
-            renders the full fumadocs-style tree via `markdownToReact`. When
-            bytes haven't arrived yet, it falls back to `EditorSkeleton`.
-            Paint budget: <500ms prod P95 (G5).
+            Suspense fallback = `EditorSkeleton`. Earlier iteration shipped
+            an Option E "static mdast→React preview" fallback that read disk
+            bytes and rendered a fumadocs-style tree; the visual jump from
+            preview to the real editor (different typography + spacing)
+            was jarring enough that we dropped the preview in favor of the
+            neutral skeleton. See commit history for `FallbackDocumentRender`
+            removal. The perceived-first-paint budget (spec G5 <500ms P95)
+            still applies — the skeleton meets it trivially.
           */}
-          <Suspense fallback={<SuspenseDocumentFallback docName={entry.docName} />}>
+          <Suspense fallback={<EditorSkeleton />}>
             <DocumentBoundary docName={entry.docName} provider={entry.provider}>
               {/* Dual-editor mount with size-gated defer for large docs. Small
                   docs render both (pre-mount-both default — mode swap stays
                   CSS-only). Large docs (>LARGE_DOC_CHAR_THRESHOLD) defer the
                   non-active editor until its mode is visited at least once —
-                  see computeEditorMountGate + evidence/s1-diagnosis.md. */}
-              {gate.renderSource ? (
-                <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
-                  <SourceEditor
-                    ytext={entry.provider.document.getText('source')}
-                    provider={entry.provider}
-                    placeholder={editorPlaceholder}
-                  />
-                </div>
-              ) : null}
-              {gate.renderVisual ? (
-                <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
-                  <TiptapEditor
-                    // Composite key matches existing pattern at EditorArea.tsx:172 —
-                    // forces TipTap remount on draft → saved transition (the isNewDoc
-                    // flip changes the page list's membership of this docName).
-                    key={`${entry.docName}-${String(isNewDoc)}`}
-                    provider={entry.provider}
-                    placeholder={editorPlaceholder}
-                  />
-                </div>
-              ) : null}
+                  see computeEditorMountGate + evidence/s1-diagnosis.md.
+
+                  Stacking: the wrapper is position:relative + h-full. The
+                  non-active child carries `.ok-mode-hidden`, which sets
+                  `position:absolute; inset:0; pointer-events:none` alongside
+                  `content-visibility:hidden + contain-intrinsic-size`. That
+                  takes the hidden editor out of normal flow so its 8000px
+                  reserved intrinsic size doesn't size the wrapper or any
+                  shared grid row (earlier grid-based stacking sized rows to
+                  the MAX intrinsic size across children, stretching the
+                  visible editor to 8000px and creating bottom whitespace on
+                  short docs — see globals.css §.ok-mode-hidden). */}
+              <div className="relative h-full">
+                {gate.renderSource ? (
+                  <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
+                    <SourceEditor
+                      ytext={entry.provider.document.getText('source')}
+                      provider={entry.provider}
+                      placeholder={editorPlaceholder}
+                    />
+                  </div>
+                ) : null}
+                {gate.renderVisual ? (
+                  <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
+                    <TiptapEditor
+                      // Composite key matches existing pattern at EditorArea.tsx:172 —
+                      // forces TipTap remount on draft → saved transition (the isNewDoc
+                      // flip changes the page list's membership of this docName).
+                      key={`${entry.docName}-${String(isNewDoc)}`}
+                      provider={entry.provider}
+                      placeholder={editorPlaceholder}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </DocumentBoundary>
           </Suspense>
         </DocumentErrorBoundary>
