@@ -20,7 +20,14 @@
  */
 
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
-import type { OkDesktopBridge, OkDesktopConfig, OkMenuAction } from '../shared/bridge-contract.ts';
+import type {
+  OkDesktopBridge,
+  OkDesktopConfig,
+  OkMenuAction,
+  OkUpdateDownloadedInfo,
+  OkUpdateStuckHintInfo,
+  OkWhatsNewInfo,
+} from '../shared/bridge-contract.ts';
 import { createInvoker } from '../shared/ipc-invoke.ts';
 
 const invoke = createInvoker(ipcRenderer);
@@ -72,6 +79,24 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:git-init-notice', listener);
   },
 
+  onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void) {
+    const listener = (_event: IpcRendererEvent, info: OkUpdateDownloadedInfo) => cb(info);
+    ipcRenderer.on('ok:update:downloaded', listener);
+    return () => ipcRenderer.removeListener('ok:update:downloaded', listener);
+  },
+
+  onWhatsNew(cb: (info: OkWhatsNewInfo) => void) {
+    const listener = (_event: IpcRendererEvent, info: OkWhatsNewInfo) => cb(info);
+    ipcRenderer.on('ok:update:whats-new', listener);
+    return () => ipcRenderer.removeListener('ok:update:whats-new', listener);
+  },
+
+  onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void) {
+    const listener = (_event: IpcRendererEvent, info: OkUpdateStuckHintInfo) => cb(info);
+    ipcRenderer.on('ok:update:stuck-hint', listener);
+    return () => ipcRenderer.removeListener('ok:update:stuck-hint', listener);
+  },
+
   dialog: {
     openFolder: () => invoke('ok:dialog:open-folder'),
     createFolder: () => invoke('ok:dialog:create-folder'),
@@ -89,6 +114,10 @@ const bridge: OkDesktopBridge = {
     listRecent: () => invoke('ok:project:list-recent'),
     open: (request) => invoke('ok:project:open', request),
     close: () => invoke('ok:project:close'),
+  },
+
+  update: {
+    relaunchNow: () => invoke('ok:update:relaunch-now'),
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',

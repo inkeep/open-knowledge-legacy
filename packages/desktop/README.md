@@ -204,6 +204,120 @@ Partial Apple credentials (e.g. `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` set b
 - [ ] **(creds-gated)** Fresh-Mac install of signed DMG: drag to `/Applications`, open, **no Gatekeeper warning**, M1 dev loop works end-to-end in packaged mode.
 - [ ] **(creds-gated)** First-launch Keychain prompt shows `CFBundleDisplayName` correctly (R16).
 
+## M3 — Auto-update (electron-updater + install-on-quit)
+
+**Status:** Scaffolding shipped; end-state smoke deferred to post-M2-creds + universal-merge fix.
+
+**Spec:** [`specs/2026-04-21-m3-electron-updater/SPEC.md`](../../specs/2026-04-21-m3-electron-updater/SPEC.md). See the parent spec [`specs/2026-04-11-electron-desktop-app/SPEC.md`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) §14 for the milestone definition.
+
+M3 wires [electron-updater](https://www.electron.build/auto-update) into the main process behind the `app.isPackaged` gate. The update path is: `autoUpdater.checkForUpdatesAndNotify()` → GitHub Releases CDN (`releases/latest/download/latest-mac.yml`) → auto-download of the `.zip` → `update-downloaded` event → renderer Toast A (`"Update downloaded"` + `"Relaunch now"`) → install on next quit via `autoInstallOnAppQuit = true`.
+
+### Runtime dependency
+
+`electron-updater` is pinned exact (no caret) as a runtime `dependencies` entry of `@inkeep/open-knowledge-desktop` — see `package.json`. Version paired with `electron-builder@^26.9.0` via shared `builder-util-runtime`; upgrade only as a coupled pair.
+
+### Main-process entry point
+
+- [`src/main/auto-updater.ts`](src/main/auto-updater.ts) — exports `startAutoUpdater(opts): { destroy }`. Every time + Electron + state surface is injectable so unit tests drive all paths under `bun test` without an Electron runtime.
+- [`src/main/index.ts`](src/main/index.ts) — calls `startAutoUpdater(...)` as the last step in `app.whenReady().then(...)` (after the window-open branch, not gated on which window opened per F2); tears down on `app.on('will-quit')` per parent D40 canonical shutdown ordering.
+
+Six `autoUpdater` events subscribed (AC2): `checking-for-update`, `update-available`, `update-not-available`, `download-progress` (debug-level log only), `update-downloaded`, `error`. NOT subscribed: `login`, `update-cancelled`, `appimage-filename-updated`.
+
+Four AppState fields persisted in [`src/main/state-store.ts`](src/main/state-store.ts):
+- `versionPendingInstall: string | null` — Toast A once-per-version gate (D11).
+- `lastSeenVersion: string | null` — Toast B once-per-version-transition gate (D9/D11).
+- `lastSuccessfulCheckAt: string | null` — D12 stuck-hint 7-day counter baseline.
+- `stuckHintShown: boolean` — D12 Toast C once-per-installation flag (resets on successful check so gate re-arms).
+
+### IPC surface
+
+Three main→renderer push events (in `src/shared/ipc-events.ts` `EventChannels`):
+- `ok:update:downloaded` `{ version }` → Toast A in renderer.
+- `ok:update:whats-new` `{ version, releaseUrl }` → Toast B in renderer.
+- `ok:update:stuck-hint` `{ downloadUrl }` → Toast C in renderer.
+
+One renderer→main request (in `src/shared/ipc-channels.ts` `RequestChannels`):
+- `ok:update:relaunch-now` → main calls `autoUpdater.quitAndInstall()` (Toast A action).
+
+All four new channels exposed on `window.okDesktop` via the triple-copy bridge contract (core/desktop/app per CLAUDE.md deliberate-duplication). Added `createSender()` typed wrapper to `src/shared/ipc-events.ts` — the third IPC wrapper alongside `createHandler` / `createInvoker`; main→renderer fan-out is type-checked against `EventChannels`.
+
+### Dev-mode smoke
+
+Three verification tiers per SPEC §7 D4:
+
+| Tier | Where | What it exercises |
+|------|-------|-------------------|
+| 1 — unit | `tests/integration/auto-updater.test.ts` | 6 events + error classification + Toast gates + IPC handlers — FakeUpdater event-stub, no Electron runtime. 51 tests, ~40ms. |
+| 2 — HTTP smoke | `scripts/smoke-mock-update.mjs` (pure node) | `GenericProvider` HTTP plumbing: `latest-mac.yml` + fake `.zip` with valid sha512 served on `127.0.0.1:<ephemeral>`. Self-tests via its own `fetch`. |
+| 3 — end-state (post-creds) | `packages/desktop/build/dev-app-update.yml` + `forceDevUpdateConfig=true` | `GitHubProvider` URL resolution against a staged pre-release tag. Canonical approach per [electron.build/auto-update](https://www.electron.build/auto-update); runs only after M2 creds procurement. |
+
+Run Tier 2 in isolation:
+
+```bash
+bun run --cwd packages/desktop smoke:mock-update
+# Prints: [mock-updater] port=<N> ...
+# Serves /latest-mac.yml + /open-knowledge-mock.zip, self-tests, exits 0.
+```
+
+Tier 2 paired with a dev Electron build (full round-trip short of the Squirrel.Mac swap):
+
+1. Terminal A: `bun run --cwd packages/desktop smoke:mock-update`. Note the printed port.
+2. Write `packages/desktop/dev-app-update.yml`:
+
+   ```yaml
+   provider: generic
+   url: http://localhost:<N>
+   ```
+
+3. Terminal B: `OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev`.
+4. Electron's main-process auto-updater (with `OK_UPDATER_FORCE_DEV=1` bypassing the `!app.isPackaged` guard, and `forceDevUpdateConfig=true` causing the feed to be read from `dev-app-update.yml`) hits the local server, downloads the fake zip, fires `update-downloaded`. Renderer Toast A renders.
+
+### Cutting a release
+
+1. `bun changeset` on a feature branch — declare a minor/patch bump for `@inkeep/open-knowledge-desktop` (and any other fixed-group packages touched).
+2. Merge the branch into main. Changesets' release bot opens a "Version Packages" PR that bumps all fixed-group versions lockstep (D7).
+3. Merge the "Version Packages" PR. `release.yml` fires on push-to-main, runs quality gates, publishes npm packages, then runs `gh release create "v${VERSION}"` with the generated notes.
+4. `desktop-release.yml` fires on the `release: published` event. Runs signed build + notarize + staple + fuse-verify on `macos-14`, then `electron-builder --publish always` uploads `.dmg`, `.dmg.blockmap`, `-mac.zip`, `-mac.zip.blockmap`, and `latest-mac.yml` to the existing Release.
+5. Users auto-update on next launch or within 1 hour via the periodic interval (D10 — matches Obsidian's hourly cadence).
+
+Required secrets for `desktop-release.yml` (same set as `desktop-build.yml`): `CSC_LINK`, `CSC_KEY_PASSWORD`, and one of the Apple notarization triples — `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, OR `APPLE_API_KEY` + `APPLE_API_KEY_ID` [+ `APPLE_API_ISSUER`]. Unsigned mode is rejected — `auto-update` refuses unsigned upgrades.
+
+### Unsigned local smoke — M2 universal-merge workaround
+
+Because `packages/desktop/build:mac:unsigned` defaults to `mac.target.arch: [universal]` and the M2 FU-1 `@napi-rs/keyring` SHA-parity issue still blocks Universal merge, the per-arch workaround is the working unsigned path:
+
+```bash
+cd packages/desktop
+bun run build:desktop
+CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac dmg:arm64 zip:arm64 -c.mac.identity=null
+```
+
+Produces `.dmg` + `.dmg.blockmap` + `-mac.zip` + `-mac.zip.blockmap` + `latest-mac.yml` under `dist-desktop/`. Worth noting: the `--arm64` CLI flag alone does NOT override `mac.target.arch: [universal]` — it ADDS `arm64`, so electron-builder tries both and re-triggers the universal-merge blocker. The `dmg:arm64 zip:arm64` target-shorthand form bypasses the YAML-default arch list entirely.
+
+### Debugging J7a failures
+
+M3's [`auto-updater.ts`](src/main/auto-updater.ts) emits structured bracket-prefixed logs (`[updater] event ...`) per CLAUDE.md's logging convention. For classified errors (`ERR_UPDATER_*` / `HTTP_ERROR_*`), the log payload is `{ code, message, timestamp }`; for unclassified (bare Squirrel.Mac `Error`), it's `{ message, stack, timestamp }`. Both paths are silent to the user per D5 — no dialog, no per-error toast.
+
+In production: find logs via Console.app filtered by the app's PID, or in `app.getPath('logs')` when writing a file logger. The one user-visible signal is Toast C (D12 stuck-hint), which fires exactly once per installation after 7 consecutive calendar days without a successful update check.
+
+Real-world error telemetry (Sentry integration) is deferred to FW5 — promote when M7 design-partner builds start generating real-world error rates.
+
+### Promote triggers (FW1a, FW2–FW6)
+
+- **FW1a** — Promote Toast B copy from bare version string + link to GitHub Release body fetch. Trigger: user asks to see release notes in-app OR reports bare-string as insufficient.
+- **FW2** — Staged rollouts via `stagingPercentage` in `latest-mac.yml`. Trigger: first real update cycle completes successfully end-to-end.
+- **FW3** — Beta channel. Trigger: more than one concurrent user-facing version line (dogfood vs stable).
+- **FW4** — Auto-rollback on crash loop. Trigger: first user-reported "update broke the app" incident.
+- **FW5** — Sentry / crash-reporter integration for update-error telemetry. Trigger: M7 design-partner builds start.
+- **FW6** — Windows / Linux auto-update. Trigger: parent D51 macOS-only constraint is lifted.
+
+### Known deferrals (creds-gated)
+
+- **AC15** — Real `v{X}` → `v{X+1}` silent upgrade on a fresh Mac. Blocked on Apple Developer Program creds + `@napi-rs/keyring` universal-merge fix.
+- **AC16** — Failed-update smoke (J7a): kill updater mid-download → next launch retries cleanly. Blocked on same creds set.
+
+Both verified once M2 FU-1 + FU-2 close and the first signed DMG lands. Workflow files (`desktop-release.yml`) are committed and lint-validated; dispatch path is gated on creds.
+
 ## Scope boundary
 
-This package is M1 + M2-scaffolding. Work that belongs to M3–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not wire `electron-updater` (M3), do not implement the `openknowledge://` protocol handler (M4), do not implement the CLI-on-PATH menu item (M6), and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3-auto-update-scaffolding. Work that belongs to M4–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the `openknowledge://` protocol handler (M4), do not implement the CLI-on-PATH menu item (M6), and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.

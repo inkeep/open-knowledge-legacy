@@ -46,11 +46,27 @@ export interface RecentProjectEntry {
   missing?: boolean;
 }
 
+export interface OkUpdateDownloadedInfo {
+  readonly version: string;
+}
+
+export interface OkWhatsNewInfo {
+  readonly version: string;
+  readonly releaseUrl: string;
+}
+
+export interface OkUpdateStuckHintInfo {
+  readonly downloadUrl: string;
+}
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
   onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
   onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
+  onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
+  onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
+  onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
   dialog: {
     openFolder(): Promise<string | null>;
     createFolder(): Promise<string | null>;
@@ -65,6 +81,9 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
+  };
+  update: {
+    relaunchNow(): Promise<void>;
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;

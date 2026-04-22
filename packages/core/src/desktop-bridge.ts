@@ -83,6 +83,39 @@ export interface OkProjectOpenRequest {
 }
 
 /**
+ * Payload delivered to `onUpdateDownloaded` subscribers. Fires after
+ * electron-updater has completed the ZIP download and is waiting for
+ * install-on-quit (or an imperative `autoUpdater.quitAndInstall()` via
+ * Toast A's "Relaunch now" action). M3 D11.
+ */
+export interface OkUpdateDownloadedInfo {
+  readonly version: string;
+}
+
+/**
+ * Payload delivered to `onWhatsNew` subscribers. Fires once per version
+ * transition on first launch post-update (main compared `app.getVersion()`
+ * to `AppState.lastSeenVersion`). `releaseUrl` is the GitHub Releases page
+ * for the new version — renderer opens it via `bridge.shell.openExternal`.
+ * M3 D9/D11.
+ */
+export interface OkWhatsNewInfo {
+  readonly version: string;
+  readonly releaseUrl: string;
+}
+
+/**
+ * Payload delivered to `onUpdateStuckHint` subscribers. Fires at most once
+ * per installation after 7 consecutive calendar days of failed update
+ * checks. `downloadUrl` is the manual-download page (inkeep.com's
+ * Open Knowledge download CTA); renderer opens it via
+ * `bridge.shell.openExternal`. M3 D12.
+ */
+export interface OkUpdateStuckHintInfo {
+  readonly downloadUrl: string;
+}
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -107,6 +140,24 @@ export interface OkDesktopBridge {
    * R5b / D10). Returns unsubscribe.
    */
   onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `autoUpdater` `update-downloaded` events. Fires once per
+   * pending-update version (gated in main by `AppState.versionPendingInstall`).
+   * Returns unsubscribe. M3 Toast A.
+   */
+  onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to post-update "What's new" events. Fires once per version
+   * transition on first launch (gated in main by `AppState.lastSeenVersion`).
+   * Returns unsubscribe. M3 Toast B.
+   */
+  onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `stuck-update` hints (D12). Fires at most once per
+   * installation after 7 consecutive failed-check days. Returns unsubscribe.
+   * M3 Toast C.
+   */
+  onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
 
   /** Native folder-picker dialog surfaces. */
   dialog: {
@@ -141,6 +192,15 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: OkProjectOpenRequest): Promise<void>;
     close(): Promise<void>;
+  };
+
+  /**
+   * Auto-update control surface. M3 AC18 / D3 revised: Toast A's "Relaunch
+   * now" button calls `relaunchNow()` which invokes
+   * `autoUpdater.quitAndInstall()` in main.
+   */
+  update: {
+    relaunchNow(): Promise<void>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

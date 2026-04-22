@@ -11,6 +11,7 @@ import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { installGitInitToast } from '@/lib/install-git-init-toast';
 import { initWebVitals } from '@/lib/perf';
 import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
+import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -44,6 +45,14 @@ if (typeof window !== 'undefined') {
   installGitInitToast({ bridge: window.okDesktop });
 }
 
+// Desktop-only: attach the M3 update-notice bridge subscribers at module-init
+// time (BEFORE React mounts) so IPC events fired before first render aren't
+// dropped, AND so renderer remounts don't detach the subscribers. The
+// module-level store in `update-notices-store` buffers notices; the
+// `<UpdateNotices />` component reads them via `useSyncExternalStore`.
+// No-op in web/CLI distribution (window.okDesktop undefined).
+installUpdateNoticesBridge();
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, staleTime: 10_000 },
@@ -72,6 +81,12 @@ createRoot(root).render(
         <TooltipProvider>
           {isNavigator && window.okDesktop ? <NavigatorApp bridge={window.okDesktop} /> : <App />}
         </TooltipProvider>
+        {/*
+         * Sonner toaster for ad-hoc status/error toasts (clone dialog, file
+         * tree, etc.). M3 auto-update notices are NOT routed here — they live
+         * in the sidebar footer via <UpdateNotices /> for a persistent home
+         * that matches their permanent-until-clicked semantics.
+         */}
         <Toaster richColors />
       </ThemeProvider>
     </QueryClientProvider>
