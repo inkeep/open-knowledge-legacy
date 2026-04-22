@@ -24,18 +24,19 @@
  *
  * Coverage map vs the fuzz op vocabulary
  * --------------------------------------
- * The bridge-convergence fuzzer has a 9-op vocabulary documented in
+ * The bridge-convergence fuzzer has a 10-op vocabulary documented in
  * `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`:
  *
  *   1. wysiwyg-type          — user typing into the WYSIWYG surface
  *   2. source-type           — user typing into the source (Y.Text) surface
  *   3. agent-write           — full-document agent write via applyExternalChange
  *   4. agent-patch           — targeted agent edits via mdManager find/replace
- *   5. external-change       — disk-driven applyExternalChange
- *   6. sync-pause            — simulate client disconnect
- *   7. sync-resume           — simulate reconnect + catch-up
- *   8. wait                  — idle tick for debounce settling
- *   9. chunked-source-paste  — large Y.Text insert across chunk boundaries
+ *   5. agent-undo            — revert last agent write via applyAgentUndo
+ *   6. external-change       — disk-driven applyExternalChange
+ *   7. sync-pause            — simulate client disconnect
+ *   8. sync-resume           — simulate reconnect + catch-up
+ *   9. wait                  — idle tick for debounce settling
+ *  10. chunked-source-paste  — large Y.Text insert across chunk boundaries
  *
  * Conversion-tier coverage in THIS file — describe blocks:
  *
@@ -44,12 +45,17 @@
  *   Chain B: serializeFragment → applyFastDiff /      — covers op (2)
  *            applyIncrementalDiff / mergeThreeWay       (any fragment → serialized → Y.Text diff,
  *                                                        the three Observer A conversion functions)
- *   Chain C: paired updateYFragment + applyFastDiff    — covers ops (3), (5)
+ *   Chain C: paired updateYFragment + applyFastDiff    — covers ops (3), (6)
  *                                                        (applyExternalChange's inner transact,
  *                                                        including stripFrontmatter + parseWithFallback)
  *   Chain D: frontmatter strip/prepend round-trip      — Observer B → Observer A frontmatter path
  *                                                        (the conversion primitives; metadata-map
  *                                                        plumbing stays in integration tests)
+ *   Chain E: agent-undo composition                    — covers op (5)
+ *                                                        (post-undo XmlFragment-authoritative
+ *                                                        composition via parseWithFallback →
+ *                                                        updateYFragment → applyFastDiff;
+ *                                                        mirrors applyAgentUndo inner logic)
  *   Handler-specific survivability                     — wikiLink, jsxComponent, rawMdxFallback
  *                                                        run through Chain A + Chain C deterministically
  *   Meta — PBT harness is live                         — NUM_RUNS floor checks (default + stress mode)
@@ -1080,6 +1086,139 @@ describe('Handler-specific survivability (chains A+C)', () => {
       }
     });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chain E: agent-undo composition path (US-027, FR-17, D18 gate)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// applyAgentUndo (packages/server/src/agent-sessions.ts) traverses the same
+// conversion functions as Chain C: stripFrontmatter → parseWithFallback →
+// updateYFragment → applyFastDiff. The key difference is that the write
+// comes from Y.UndoManager.undo() restoring a prior fragment state rather
+// than from a disk or agent write. This Chain E exercises the composition
+// path deterministically (no networking, single Y.Doc) so a regression in
+// parseWithFallback / updateYFragment / applyFastDiff is caught at PR tier
+// rather than buried in fuzz-residual noise. Matches the AGENTS.md STOP rule
+// for V0-14 agent-undo.
+//
+// Note: the Y.UndoManager-based undo itself is not a conversion function;
+// what IS tested here is the post-undo XmlFragment-authoritative composition
+// (the core of applyAgentUndo's inner logic after um.undo() runs).
+
+/**
+ * Replicate the post-undo composition from applyAgentUndo without Hocuspocus.
+ * After restoring the prior YText state via um.undo(), re-applies the content
+ * to XmlFragment via parseWithFallback → updateYFragment → applyFastDiff
+ * (the same conversion path applyAgentUndo uses in production).
+ */
+const UNDO_WRITE_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: true,
+  context: { origin: 'fidelity-undo-test', paired: true },
+} as const;
+
+function applyUndoComposition(
+  doc: Y.Doc,
+  fragment: Y.XmlFragment,
+  ytext: Y.Text,
+  um: Y.UndoManager,
+): void {
+  doc.transact(() => {
+    if (um.undoStack.length === 0) return;
+    um.undo();
+
+    // Post-undo XmlFragment-authoritative composition (mirrors applyAgentUndo)
+    const fullMd = ytext.toString();
+    const { body } = stripFrontmatter(fullMd);
+    const parsedJson = mdManager.parseWithFallback(body);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(doc, fragment, pmNode, meta);
+
+    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const canonicalFull = prependFrontmatter('', canonicalBody);
+    applyFastDiff(ytext, ytext.toString(), canonicalFull);
+  }, UNDO_WRITE_ORIGIN);
+}
+
+describe('Chain E — agent-undo composition keeps bridge invariant (US-027)', () => {
+  test('undo after agent-write: bridge invariant holds on restored state', () => {
+    const { doc, fragment, ytext } = freshDoc();
+
+    // Track a write origin that the UndoManager will track
+    const WRITE_ORIGIN = {
+      source: 'local' as const,
+      skipStoreHooks: true,
+      context: { origin: 'fidelity-agent-write', paired: false },
+    } as const;
+    const um = new Y.UndoManager([ytext], { trackedOrigins: new Set([WRITE_ORIGIN]) });
+
+    // Write initial content (tracked by UM)
+    const initial = '# Initial heading\n\nSome body text.\n';
+    applyPairedExternalChange(doc, fragment, ytext, initial);
+
+    // Write a second version that will be undone (tracked by UM)
+    const md = '# Updated heading\n\nDifferent content.\n';
+    const { body } = stripFrontmatter(md);
+    const parsedJson = mdManager.parseWithFallback(body);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    doc.transact(() => {
+      updateYFragment(doc, fragment, pmNode, meta);
+      applyFastDiff(ytext, ytext.toString(), md);
+    }, WRITE_ORIGIN);
+
+    // Verify state before undo
+    expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
+
+    // Apply undo composition (same path as applyAgentUndo)
+    applyUndoComposition(doc, fragment, ytext, um);
+
+    // Bridge invariant must hold after undo + composition
+    expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
+  });
+
+  test('undo with empty stack is a no-op that preserves bridge invariant', () => {
+    const { doc, fragment, ytext } = freshDoc();
+    const um = new Y.UndoManager([ytext], { trackedOrigins: new Set() });
+
+    const md = '# Original content\n';
+    applyPairedExternalChange(doc, fragment, ytext, md);
+
+    // UM stack is empty — applyUndoComposition should be a no-op
+    applyUndoComposition(doc, fragment, ytext, um);
+
+    expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
+  });
+
+  test('undo composition traverses parseWithFallback for crash-class MDX', () => {
+    const { doc, fragment, ytext } = freshDoc();
+
+    const WRITE_ORIGIN2 = {
+      source: 'local' as const,
+      skipStoreHooks: true,
+      context: { origin: 'fidelity-agent-write-2', paired: false },
+    } as const;
+    const um = new Y.UndoManager([ytext], { trackedOrigins: new Set([WRITE_ORIGIN2]) });
+
+    // Seed with valid content first
+    applyPairedExternalChange(doc, fragment, ytext, 'Initial paragraph.\n');
+
+    // Write crash-class MDX content (tracked)
+    const crashMd = 'Some text with <Bad attr=\n';
+    doc.transact(() => {
+      const j = mdManager.parseWithFallback(crashMd);
+      const n = schema.nodeFromJSON(j);
+      const m = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, fragment, n, m);
+      applyFastDiff(ytext, ytext.toString(), crashMd);
+    }, WRITE_ORIGIN2);
+
+    // Undo restores to the initial paragraph — composition must not throw
+    expect(() => applyUndoComposition(doc, fragment, ytext, um)).not.toThrow();
+    expect(bridgeNorm(ytext.toString())).toBe(bridgeNorm(serializeFragment(fragment)));
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
