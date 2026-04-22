@@ -8,6 +8,6 @@ feat(app): persist the editor-mode choice (`wysiwyg` / `source`) as a user-globa
 - `EditorPane.tsx` seeds its session-local `editorMode` state from the persisted value and re-applies cross-window changes via a `useEffect` guarded on `editorModeRef.current !== 'diff'`.
 - Only user-initiated header-toggle clicks persist. Tool-driven flips (`RAW_MDX_NAV_EVENT` forcing source mode to fix a broken MDX block) stay session-scoped.
 - No new npm dependencies. Implementation is ~50 lines of TypeScript (hook + inline FOUC script).
-- E2E coverage in `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (T1-T8, wired into CI `test:e2e`).
+- E2E coverage in `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (T1-T9, wired into CI `test:e2e`).
 
 Full spec + decision log (D1–D8): [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
