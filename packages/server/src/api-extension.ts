@@ -427,6 +427,43 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   return fullPath;
 }
 
+function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
+  const resolvedProjectDir = resolve(projectDir);
+  const resolvedPath = resolve(absolutePath);
+  if (
+    resolvedPath !== resolvedProjectDir &&
+    !resolvedPath.startsWith(`${resolvedProjectDir}${sep}`)
+  ) {
+    return null;
+  }
+  return relative(resolvedProjectDir, resolvedPath).split(sep).join('/');
+}
+
+async function renameTrackedPathInGit(
+  projectDir: string | undefined,
+  sourcePath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  if (!projectDir) return false;
+  const sourceRel = toGitRelativePath(projectDir, sourcePath);
+  const destinationRel = toGitRelativePath(projectDir, destinationPath);
+  if (!sourceRel || !destinationRel) return false;
+
+  return await withParentLock(async () => {
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    if (!tracked) return false;
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    try {
+      await pg.raw('mv', '--', sourceRel, destinationRel);
+      return true;
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git mv failed, falling back to fs rename:', err);
+      return false;
+    }
+  });
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
@@ -994,8 +1031,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           destinationDocName,
         );
 
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
         setReconciledBase(destinationDocName, renamedSource.markdown);
 
@@ -2877,9 +2921,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renamed.map(({ fromDocName }) => fromDocName),
       );
 
-      const applyRename = (): void => {
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+      const applyRename = async (): Promise<void> => {
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, liveContents);
       };
 
@@ -2894,7 +2945,46 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
       } else {
-        applyRename();
+        await applyRename();
+
+        const fileIndex = getFileIndex();
+        for (const { fromDocName, toDocName } of renamed) {
+          updateFileIndex(
+            {
+              kind: 'rename',
+              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
+              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
+              oldDocName: fromDocName,
+              newDocName: toDocName,
+              content:
+                liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
+
+        if (backlinkIndex) {
+          for (const { fromDocName, toDocName } of renamed) {
+            backlinkIndex.renameDocument(
+              fromDocName,
+              toDocName,
+              liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            );
+          }
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+
+        signalChannel?.('files');
       }
 
       json(res, 200, { ok: true, renamed });

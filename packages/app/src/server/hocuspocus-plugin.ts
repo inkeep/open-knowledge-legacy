@@ -219,6 +219,7 @@ try {
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
       signalChannel,
+      projectDir: PROJECT_ROOT,
     }),
   );
 
