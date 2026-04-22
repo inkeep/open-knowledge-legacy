@@ -208,6 +208,86 @@ function formatBytes(n: number): string {
   return `${Math.round(n / 104857.6) / 10} MB`;
 }
 
+// ─── Summary bullets (spec D16 + D25) ─────────────────────────────────────────
+//
+// Agent-provided summaries render as a collapsible bullet list under the author
+// line. First bullet inline, further bullets behind a "Show N more" expander
+// matching the existing WipGroup pattern.
+// The doc-list line ALWAYS renders alongside (D16 — it stays ground truth;
+// bullets enrich, they don't replace).
+
+/**
+ * Flatten summaries across contributors (D23 flat shape) preserving insertion
+ * order. Multi-contributor commits coalesce into one flat list — per-bullet
+ * contributor identity is deliberately deferred (NG4 / D26). Exported so the
+ * test suite can lock the flatten invariant without touching React.
+ */
+export function allSummariesFor(entry: TimelineEntry): string[] {
+  const out: string[] = [];
+  for (const c of entry.contributors) {
+    if (!c.summaries) continue;
+    for (const s of c.summaries) out.push(s);
+  }
+  return out;
+}
+
+interface SummaryBulletsProps {
+  summaries: string[];
+}
+
+/**
+ * Collapsible bullet renderer. Default is collapsed so coalesced-heavy rows
+ * don't dominate the panel. The expander is a real `<button>` — this works
+ * because EntryRow is a `<div role="button">` (nested `<button>` inside a
+ * `<button>` is invalid HTML; see EntryRow comment). The expander's
+ * onClick stops propagation so the row's onSelect doesn't also fire.
+ *
+ * Keys for the bullet list use the bullet text itself (with a stable
+ * dedup prefix) — the bullet list is append-only within a debounce window
+ * and order never reorders, so the text is an acceptable identity key. The
+ * prefixed index-based approach biome flags is genuinely not a reorder risk
+ * here, but using the text directly sidesteps the rule entirely.
+ */
+function SummaryBullets({ summaries }: SummaryBulletsProps) {
+  const [expanded, setExpanded] = useState(false);
+  if (summaries.length === 0) return null;
+  const [first, ...rest] = summaries;
+  return (
+    <div className="mt-0.5">
+      <p className="text-xs text-foreground/90">
+        <span aria-hidden="true">• </span>
+        {first}
+      </p>
+      {rest.length > 0 && (
+        <>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((prev) => !prev);
+            }}
+          >
+            {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+            {expanded ? `Hide ${rest.length} more` : `Show ${rest.length} more`}
+          </button>
+          {expanded && (
+            <ul className="mt-0.5 list-none">
+              {rest.map((s) => (
+                <li key={s} className="text-xs text-foreground/90">
+                  <span aria-hidden="true">• </span>
+                  {s}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Entry row ────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
@@ -221,18 +301,32 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
+  const allSummaries = allSummariesFor(entry);
 
+  // Div-with-role rather than <button>: the row contains a nested SummaryBullets
+  // expander that needs to be a real <button> (nested native buttons are
+  // invalid HTML). The div is clickable + Enter/Space-activatable to preserve
+  // the same keyboard semantics the previous <button> had.
+  const handleActivate = () => onSelect?.(entry);
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
+    <div
+      role="button"
+      tabIndex={0}
       className={[
-        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors',
+        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer',
         selected ? 'bg-muted' : 'hover:bg-muted/40',
         prominent ? 'border-b border-border/50' : '',
       ]
         .filter(Boolean)
         .join(' ')}
-      onClick={() => onSelect?.(entry)}
+      onClick={handleActivate}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleActivate();
+        }
+      }}
     >
       {prominent ? (
         (() => {
@@ -270,6 +364,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
           </div>
         )}
         {!prominent && <p className="truncate text-xs text-foreground">{authorName}</p>}
+        {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
         {allDocs.length > 0 ? (
           <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
             {allDocs.join(', ')}
@@ -288,7 +383,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
       >
         {relative}
       </time>
-    </button>
+    </div>
   );
 }
 
