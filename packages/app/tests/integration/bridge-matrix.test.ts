@@ -16,7 +16,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { markUserTyping } from '../../src/editor/observers';
 
@@ -673,7 +673,9 @@ describe('multi-client sync', () => {
     // XmlFragment (not just raw text). Without this, the test would pass even if
     // Observer B failed to parse [[...]] into a structured node — raw text
     // round-trips identically through serialization.
-    const pmJson = JSON.stringify(yXmlFragmentToProsemirrorJSON(clientA.fragment));
+    const pmJson = JSON.stringify(
+      yXmlFragmentToProseMirrorRootNode(clientA.fragment, schema).toJSON(),
+    );
     expect(pmJson).toContain('"type":"wikiLink"');
     expect(pmJson).toContain('"target":"Page"');
     expect(pmJson).toContain('"anchor":"Section"');

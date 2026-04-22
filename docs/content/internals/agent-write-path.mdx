@@ -98,7 +98,7 @@ Every history commit includes a structured `ok-actor:` JSON line:
 ok-actor: {"v":1,"principal":"principal-6f3a...","agent_session":"conn-abc","agent_type":"claude","client_name":"claude-code","client_version":null,"label":null,"display_name":"Claude (a4f2)","color_seed":"claude-code","docs":["notes.md"]}
 ```
 
-`parseOkActor` / `formatOkActor` in `packages/core/src/history-repo-layout.ts` are the canonical schema helpers.
+`parseOkActor` / `formatOkActor` in `packages/core/src/shadow-repo-layout.ts` are the canonical schema helpers.
 
 ### Commit subject prefixes
 

@@ -14,8 +14,8 @@ import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { contentHash, isSelfWrite, registerWrite } from './file-watcher';
-import { FILE_SYSTEM_WRITER, GIT_UPSTREAM_WRITER, SERVICE_WRITER } from './history-repo';
 import { isWithinContentDir, resolveWriterFromOrigin, safeContentPath } from './persistence';
+import { FILE_SYSTEM_WRITER, GIT_UPSTREAM_WRITER, SERVICE_WRITER } from './shadow-repo';
 
 describe('safeContentPath', () => {
   const contentDir = '/app/content';

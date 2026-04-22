@@ -28,7 +28,7 @@ import {
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
@@ -113,7 +113,7 @@ export function applyAgentMarkdownWrite(
     const metaMap = document.getMap('metadata');
 
     // 1. Read current authoritative state from XmlFragment + metaMap.
-    const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const currentJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const currentBody = mdManager.serialize(currentJson);
     const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
 
@@ -162,7 +162,9 @@ export function applyAgentMarkdownWrite(
 
     // 6. Mirror Y.Text with minimal mutation. Only the changed region is
     //    touched, so user-content Items in Y.Text retain their origin.
-    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const canonicalBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
     const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
     applyFastDiff(ytext, ytext.toString(), canonicalFull);
   } catch (err) {
@@ -227,7 +229,9 @@ export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'
       metaMap.set('frontmatter', finalFm);
     }
 
-    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const canonicalBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+    );
     const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
     applyFastDiff(ytext, ytext.toString(), canonicalFull);
   }, undoOrigin);

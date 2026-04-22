@@ -11,13 +11,10 @@
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import {
-  parseCheckpoint,
-  parseContributors,
-} from '@inkeep/open-knowledge-core/history-repo-layout';
+import { parseCheckpoint, parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
-import type { HistoryHandle } from './history-repo.ts';
-import { historyGit } from './history-repo.ts';
+import type { ShadowHandle } from './shadow-repo.ts';
+import { shadowGit } from './shadow-repo.ts';
 
 interface HistoryQuery {
   docName: string;
@@ -110,7 +107,7 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
  * Returns an empty result (never throws) when shadow repo is missing or corrupt.
  */
 export async function getDocumentHistory(
-  shadow: HistoryHandle,
+  shadow: ShadowHandle,
   query: HistoryQuery,
   contentRoot = 'content',
 ): Promise<HistoryResult> {
@@ -138,7 +135,7 @@ export async function getDocumentHistory(
     : undefined;
 
   try {
-    const sg = historyGit(shadow);
+    const sg = shadowGit(shadow);
 
     // ── Fast path: checkpoint-only query ───────────────────────────────────
     // Uses for-each-ref to list checkpoint SHAs, then resolves commit details

@@ -134,8 +134,16 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     : null;
 
   // Filter-aware content asset serving (matches start.ts behavior pre-split).
-  // `sirv` with `dotfiles: false` keeps `.open-knowledge/` out of reach.
-  const contentSirv = existsSync(contentDir) ? sirv(contentDir, { dotfiles: false }) : null;
+  // Use `dev: true` so sirv resolves files lazily instead of recursively
+  // crawling the entire content root at boot. Repo-root content dirs often
+  // include huge trees (`node_modules`, build artifacts) and can contain
+  // broken links from package-manager swaps; eager traversal makes UI boot
+  // fail before it has served a single request.
+  //
+  // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
+  const contentSirv = existsSync(contentDir)
+    ? sirv(contentDir, { dotfiles: false, dev: true })
+    : null;
 
   // Resolved port — filled in after listen(). /api/config reads from this so
   // the advertised `port` matches what the kernel actually bound (matters

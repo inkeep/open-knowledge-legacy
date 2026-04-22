@@ -4,11 +4,15 @@ export default {
   tags: ['-lintignore'],
   ignoreDependencies: [
     'lint-staged', // not sure if it's false positive
-    'bun-types',
   ],
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
+    // InternalLinkOptions must be exported so tsc can emit the
+    // `sharedExtensions` type without TS4023 "cannot be named" — the type
+    // leaks into sharedExtensions' inferred shape via LinkFidelity.extend<>.
+    // Knip can't see this usage because it's in a type-inference boundary.
+    'packages/app/src/editor/extensions/internal-link.ts': ['exports', 'types'],
     '{tech-probes,reports,specs}/**': ['files'],
     // Canonical shape of the Electron bridge contract. Kept as a documentation
     // anchor per packages/core/src/index.ts — the runtime consumer is a
@@ -29,7 +33,6 @@ export default {
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
-        'ws', // false positive
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
@@ -45,8 +48,7 @@ export default {
     'packages/cli': {
       entry: ['scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
-        'ws', // looks like dynamic import isn't checked
-        '@types/ws',
+        '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
       ],
       ignoreFiles: [
         'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts

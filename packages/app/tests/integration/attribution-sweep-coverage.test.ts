@@ -74,6 +74,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleLocalOpAuthSetIdentity',
   'handleTestReset',
   'handlePrincipal',
+  'handleInstalledAgentsRoute',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

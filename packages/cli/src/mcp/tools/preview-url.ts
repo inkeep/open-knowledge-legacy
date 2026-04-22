@@ -19,6 +19,7 @@
 import { readUiLock } from '@inkeep/open-knowledge-server';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { Config } from '../../config/schema.ts';
+import { type ConfigOrResolver, resolveConfig } from './shared.ts';
 
 export type PreviewUrlSource = 'env' | 'lock' | 'config';
 
@@ -39,7 +40,7 @@ interface PreviewUrlContext {
  * fallback.
  */
 export interface PreviewUrlDeps {
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
@@ -74,10 +75,12 @@ function isValidUrl(candidate: string): boolean {
 export async function resolvePreviewUrlForTool(
   docName: string,
   deps: PreviewUrlDeps,
+  cwd?: string,
 ): Promise<PreviewUrlResult | null> {
-  const cwd = await deps.resolveCwd();
-  const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-  return resolvePreviewUrl(docName, { config: deps.config, lockDir });
+  const effectiveCwd = cwd ?? (await deps.resolveCwd());
+  const config = await resolveConfig(deps.config, effectiveCwd);
+  const lockDir = resolveLockDir(resolveContentDir(config, effectiveCwd));
+  return resolvePreviewUrl(docName, { config, lockDir });
 }
 
 /**
@@ -120,10 +123,12 @@ export function resolveUiInfo(ctx: PreviewUrlContext): UiInfo {
  */
 export async function buildListResolver(
   deps: PreviewUrlDeps,
+  cwd?: string,
 ): Promise<{ resolve(docName: string): PreviewUrlResult | null; ui: UiInfo }> {
-  const cwd = await deps.resolveCwd();
-  const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-  const ctx: PreviewUrlContext = { config: deps.config, lockDir };
+  const effectiveCwd = cwd ?? (await deps.resolveCwd());
+  const config = await resolveConfig(deps.config, effectiveCwd);
+  const lockDir = resolveLockDir(resolveContentDir(config, effectiveCwd));
+  const ctx: PreviewUrlContext = { config, lockDir };
   return {
     resolve: (docName: string) => resolvePreviewUrl(docName, ctx),
     ui: resolveUiInfo(ctx),

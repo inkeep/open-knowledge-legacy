@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 
 import {
   agentWriteMd,
@@ -43,11 +43,11 @@ function applyMarkdownToFragment(client: TestClient, md: string): void {
   });
 }
 
-/** Serialize XmlFragment → markdown string. */
+/** Serialize XmlFragment → Markdown string. */
 function serializeFrag(
-  fragment: { length: number } & Parameters<typeof yXmlFragmentToProsemirrorJSON>[0],
+  fragment: { length: number } & Parameters<typeof yXmlFragmentToProseMirrorRootNode>[0],
 ): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /** Capture server-side Y.Text + XmlFragment state for a given docName. */

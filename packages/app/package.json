@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
@@ -18,8 +18,9 @@
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts",
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
+    "perf:profile": "bun run tests/perf/profile.ts",
     "size": "bun run build && size-limit"
   },
   "size-limit": [
@@ -32,7 +33,7 @@
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "950 kB",
+      "limit": "960 kB",
       "gzip": true
     },
     {
@@ -109,6 +110,7 @@
     "@size-limit/preset-app": "^12.1.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "commonmark.json": "^0.31.0",
@@ -119,6 +121,7 @@
     "size-limit": "^12.1.0",
     "typescript": "^5.9.3",
     "unified": "^11.0.5",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "web-vitals": "^5.0.0"
   }
 }

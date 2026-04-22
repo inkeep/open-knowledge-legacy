@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { ConfigSchema } from '../../config/schema.ts';
 import { register } from './save-version.ts';
 import type { ServerInstance } from './shared.ts';
 
@@ -9,7 +10,7 @@ interface ToolResult {
 }
 
 interface RegisteredTool {
-  handler: () => Promise<ToolResult>;
+  handler: (args: { cwd?: string }) => Promise<ToolResult>;
 }
 
 function createFakeServer() {
@@ -58,9 +59,9 @@ afterAll(() => {
 describe('save_version — previewUrl emission (workspace-level: always null)', () => {
   test('emits previewUrl: null alongside checkpointRef', async () => {
     const { server, getTool } = createFakeServer();
-    register(server, baseUrl);
+    register(server, ConfigSchema.parse({}), baseUrl, async () => '/tmp/project');
 
-    const result = await getTool().handler();
+    const result = await getTool().handler({ cwd: '/tmp/project' });
 
     expect(result.structuredContent).toEqual({
       checkpointRef: 'refs/checkpoints/2026-04-16-abc',

@@ -16,8 +16,8 @@ import {
   formatOkActor,
   formatWipSubject,
   type OkActorEntry,
-} from '@inkeep/open-knowledge-core/history-repo-layout';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
@@ -31,16 +31,6 @@ import {
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
-import type { HistoryRef, WriterIdentity } from './history-repo.ts';
-import {
-  buildWipTree,
-  commitWip,
-  commitWipFromTree,
-  FILE_SYSTEM_WRITER,
-  GIT_UPSTREAM_WRITER,
-  historyGit,
-  SERVICE_WRITER,
-} from './history-repo.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
@@ -48,6 +38,16 @@ import {
   incrementGitWriterCommitFailure,
   incrementPersistenceDiskWrite,
 } from './metrics.ts';
+import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
+import {
+  buildWipTree,
+  commitWip,
+  commitWipFromTree,
+  FILE_SYSTEM_WRITER,
+  GIT_UPSTREAM_WRITER,
+  SERVICE_WRITER,
+  shadowGit,
+} from './shadow-repo.ts';
 
 const log = getLogger('persistence');
 
@@ -131,7 +131,7 @@ export interface PersistenceOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /** Shadow repo ref — read at commit time so deferred init propagates. */
-  historyRef?: HistoryRef;
+  shadowRef?: ShadowRef;
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
@@ -232,7 +232,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     contentDir = contentDirRaw;
   }
   const projectDir = options?.projectDir ?? process.cwd();
-  const historyRef = options?.historyRef;
+  const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
@@ -260,7 +260,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   async function commitToWipRef(): Promise<void> {
     // Read shadow ref at commit time (not construction time) so deferred init propagates
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (shadow) {
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
       const branch = getCurrentBranch?.() ?? 'main';
@@ -306,7 +306,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
       // Per-writer fan-out (FR-7, US-014, precedent #25): build tree once, commit per writer.
       // All per-writer commits share the same tree SHA for this drain cycle.
-      // Writer IDs follow the taxonomy in parseWriterId (history-repo-layout.ts): agent-<connId>,
+      // Writer IDs follow the taxonomy in parseWriterId (shadow-repo-layout.ts): agent-<connId>,
       // principal-<UUID>, file-system, git-upstream, openknowledge-service.
       let treeSha: string;
       try {
@@ -390,7 +390,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }
 
     // Legacy path: commit to project repo (used when no shadow repo is configured)
-    const sg = historyGit({
+    const sg = shadowGit({
       gitDir: resolve(projectDir, '.git'),
       workTree: projectDir,
     });
@@ -574,7 +574,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // false-positive on the first store after load. Raw file content may
       // differ from TipTap's output (blank lines, trailing newlines, list
       // formatting) without any actual content change.
-      const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+      const normalizedBody = mdManager.serialize(
+        yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+      );
       setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
     },
 
@@ -614,7 +616,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       }
 
       const xmlFragment = document.getXmlFragment('default');
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
 
       const body = mdManager.serialize(json);
       const metaMap = document.getMap('metadata');

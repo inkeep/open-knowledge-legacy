@@ -20,7 +20,7 @@ import simpleGit from 'simple-git';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { clearContributors, recordContributor } from './contributor-tracker.ts';
-import { type HistoryRef, initHistoryRepo } from './history-repo.ts';
+import { initShadowRepo, type ShadowRef } from './shadow-repo.ts';
 
 interface CapturedResponse {
   status: number;
@@ -79,8 +79,8 @@ describe('save-version graceful availability (US-021, D45)', () => {
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(join(contentDir, 'doc.md'), '# Hello\n');
 
-    const historyHandle = await initHistoryRepo(tmpDir);
-    const historyRef: HistoryRef = { current: historyHandle };
+    const historyHandle = await initShadowRepo(tmpDir);
+    const shadowRef: ShadowRef = { current: historyHandle };
 
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
@@ -91,7 +91,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
         sessionManager,
         contentDir,
         projectDir: tmpDir, // tmpDir is NOT a git repo
-        historyRef,
+        shadowRef,
         contentRoot: 'content',
         getFileIndex: () => new Map(),
       });
@@ -131,8 +131,8 @@ describe('save-version graceful availability (US-021, D45)', () => {
     await git.add('.');
     await git.commit('initial');
 
-    const historyHandle = await initHistoryRepo(projectDir);
-    const historyRef: HistoryRef = { current: historyHandle };
+    const historyHandle = await initShadowRepo(projectDir);
+    const shadowRef: ShadowRef = { current: historyHandle };
 
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
@@ -143,7 +143,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
         sessionManager,
         contentDir,
         projectDir,
-        historyRef,
+        shadowRef,
         contentRoot: 'content',
         getFileIndex: () => new Map(),
       });
@@ -183,8 +183,8 @@ describe('save-version graceful availability (US-021, D45)', () => {
     await git.add('.');
     await git.commit('initial');
 
-    const historyHandle = await initHistoryRepo(projectDir);
-    const historyRef: HistoryRef = { current: historyHandle };
+    const historyHandle = await initShadowRepo(projectDir);
+    const shadowRef: ShadowRef = { current: historyHandle };
 
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
@@ -204,7 +204,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
         sessionManager,
         contentDir,
         projectDir,
-        historyRef,
+        shadowRef,
         contentRoot: 'content',
         getFileIndex: () => new Map(),
       });
@@ -252,8 +252,8 @@ describe('save-version graceful availability (US-021, D45)', () => {
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(join(contentDir, 'doc.md'), '# Hello\n');
 
-    const historyHandle = await initHistoryRepo(projectDir);
-    const historyRef: HistoryRef = { current: historyHandle };
+    const historyHandle = await initShadowRepo(projectDir);
+    const shadowRef: ShadowRef = { current: historyHandle };
 
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
@@ -264,7 +264,7 @@ describe('save-version graceful availability (US-021, D45)', () => {
         sessionManager,
         contentDir,
         projectDir,
-        historyRef,
+        shadowRef,
         contentRoot: 'content',
         getFileIndex: () => new Map(),
       });

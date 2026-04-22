@@ -35,7 +35,7 @@ Restores are always additive — the current state becomes the snapshot's state 
 
 When you hit **Save Version**, Open Knowledge creates two commits in parallel:
 
-1. A history-repo checkpoint under `refs/checkpoints/<branch>/<sha>` that carries the full `ok-actor:` JSON structure for every contributing session.
+1. A shadow-repo checkpoint under `refs/checkpoints/<branch>/<sha>` that carries the full `ok-actor:` JSON structure for every contributing session.
 2. A project-git commit (only when the project dir is a git repo — skipped gracefully otherwise, per SPEC D45) with `Author: <your git identity>` and one `Co-Authored-By: <agent-name> <agent@openknowledge.local>` trailer per agent session that contributed since the last checkpoint. GitHub, GitLab, and git log render these trailers natively, so "co-authored by Claude" is a first-class signal in your existing tooling.
 
 Reconnecting an MCP subprocess always creates a fresh agent session (SPEC D29) — a new connectionId, a new chip color, a new `refs/wip/<branch>/agent-<connectionId>` ref. The Timeline keeps each session discoverable via `git log refs/wip/<branch>/agent-<connectionId>` in the history repo.

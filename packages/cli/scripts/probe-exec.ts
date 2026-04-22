@@ -8,7 +8,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { commitWip, initHistoryRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
+import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
 import { buildExecResult, type ExecStructuredResult } from '../src/mcp/tools/exec.ts';
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   );
 
   // Shadow-repo activity
-  const shadow = await initHistoryRepo(root);
+  const shadow = await initShadowRepo(root);
   const branch = (await simpleGit(root).revparse(['--abbrev-ref', 'HEAD'])).trim();
   const agent: WriterIdentity = { id: 'agent-claude-7x', name: 'Claude (Tim)', email: 'a@ok.test' };
   const human: WriterIdentity = { id: 'human-tim', name: 'Tim Cardona', email: 't@ok.test' };

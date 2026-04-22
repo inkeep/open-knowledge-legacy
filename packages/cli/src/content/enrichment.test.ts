@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { commitWip, initHistoryRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
+import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
 import type { FolderRule } from '../config/schema.ts';
 import { enrichDirectory, enrichPath } from './enrichment.ts';
@@ -77,7 +77,7 @@ describe('enrichPath — slim (multi-path) shape', () => {
 describe('enrichPath — rich (single-path) shape', () => {
   test('populates history from shadow repo and backlinkCount=null when no serverUrl', async () => {
     const project = await bootstrapProject();
-    const shadow = await initHistoryRepo(project);
+    const shadow = await initShadowRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody\n');
@@ -92,7 +92,7 @@ describe('enrichPath — rich (single-path) shape', () => {
     );
 
     expect(meta.title).toBe('Auth');
-    expect(meta.historySource).toBe('history-repo');
+    expect(meta.historySource).toBe('shadow-repo');
     expect(meta.history).not.toBeNull();
     expect(meta.history?.length).toBe(1);
     expect(meta.history?.[0].writerClassification).toBe('agent');
@@ -112,7 +112,7 @@ describe('enrichPath — rich (single-path) shape', () => {
       { includeRichFields: true },
     );
 
-    expect(meta.historySource).toBe('history-repo-absent');
+    expect(meta.historySource).toBe('shadow-repo-absent');
     expect(meta.history).toEqual([]);
     expect(meta.backlinkCount).toBe(null);
   });

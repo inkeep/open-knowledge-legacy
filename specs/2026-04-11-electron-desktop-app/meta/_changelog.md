@@ -2,6 +2,40 @@
 
 Append-only record of process events. Not a substitute for the Decision Log in SPEC.md §10.
 
+## 2026-04-21 — D47 allowlist extension (from open-in-agent-desktop spec, PR #254)
+
+Extended `packages/desktop/src/main/shell-allowlist.ts` `ALLOWED_SCHEMES` from
+`{https:, http:, mailto:, openknowledge:}` to
+`{https:, http:, mailto:, openknowledge:, claude:, codex:, cursor:}`.
+
+**Rationale.** AI-desktop-app deep-link handoff for the Open-in-Agent feature
+(Claude Cowork / Claude Code / Codex / Cursor). Each scheme's outbound payload
+is constructed by a per-target URL builder in
+`packages/core/src/handoff/{claude,codex,cursor}-url.ts` — never by
+user-supplied raw URL. The composer output is bounded (<1 KB) and scoped
+(path + single-line MCP hint). D47's "narrow attack surface + deliberate
+allowlist" posture is preserved by continuing to enforce the `checkOutboundUrl`
+exact-set gate at the main-process boundary.
+
+**Threat model preserved.** The [Shabarkin 2022 "1-click RCE" attack class](https://positive.security/blog/url-open-rce)
+(`ms-msdt:`, `ms-officecmd:`, `search-ms:`, and analogous URL-scheme-delivered
+RCE chains) is defended against by the same exact-set allowlist that excludes
+those schemes. Adding `claude:`, `codex:`, `cursor:` widens the allowlist by
+three well-audited targets whose handlers OK emits structured, non-executable
+payloads to — it does NOT relax the gate for arbitrary schemes.
+
+**Drift-detector test.** `packages/desktop/tests/main/shell-allowlist.test.ts`
+imports `KNOWN_TARGETS` from `packages/app/src/lib/handoff/targets.ts` and
+asserts every scheme in the targets' `schemes` arrays is present in
+`ALLOWED_SCHEMES`. A future target addition to `KNOWN_TARGETS` without an
+allowlist edit fails this test at PR tier. See also the shell-allowlist
+exact-set membership test in the same file.
+
+**See.** `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.6 (allowlist diff
++ per-scheme JSDoc), §13 (test plan), §9 (decision log — SQ8 LOCKED + TQ4b
+LOCKED for the separate `ok:shell:spawn-cursor` channel which keeps the
+command-allowlist threat model distinct from the URL-scheme allowlist).
+
 ## 2026-04-20 (late) — Pre-ship decision-lock pass: D3 revised, D24 revised, D44 revised, D50 retracted, D52 finalized, R3 retracted
 
 User conversation before kicking off `/ship`. Five product/technical tensions revisited and locked based on direct user confirmation:

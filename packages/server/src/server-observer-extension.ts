@@ -14,9 +14,9 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import type { HistoryRef } from './history-repo.ts';
 import { incrementServerObserverError } from './metrics.ts';
 import { setupServerObservers } from './server-observers.ts';
+import type { ShadowRef } from './shadow-repo.ts';
 
 export interface ServerObserverExtensionOptions {
   mdManager: MarkdownManager;
@@ -27,7 +27,7 @@ export interface ServerObserverExtensionOptions {
    * shadow is available (e.g., minimal integration harness) — Path B then
    * skips the checkpoint but still emits structured telemetry.
    */
-  historyRef?: HistoryRef;
+  shadowRef?: ShadowRef;
   /** Resolver for the current project branch name. Defaults to 'main'. */
   getCurrentBranch?: () => string | null;
   /** Absolute content root used to place the rescue blob inside the commit tree. */
@@ -63,7 +63,7 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
             mdManager: opts.mdManager,
             schema: opts.schema,
             docName: documentName,
-            shadow: opts.historyRef ? () => opts.historyRef?.current : undefined,
+            shadow: opts.shadowRef ? () => opts.shadowRef?.current : undefined,
             getBranch: opts.getCurrentBranch
               ? () => opts.getCurrentBranch?.() ?? 'main'
               : undefined,

@@ -120,7 +120,7 @@ import {
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 
@@ -227,7 +227,7 @@ function applyPairedExternalChange(
 
 /** Serialize the fragment back to markdown. */
 function serializeFragment(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /**
@@ -1136,7 +1136,9 @@ function applyUndoComposition(
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(doc, fragment, pmNode, meta);
 
-    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const canonicalBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON(),
+    );
     const canonicalFull = prependFrontmatter('', canonicalBody);
     applyFastDiff(ytext, ytext.toString(), canonicalFull);
   }, UNDO_WRITE_ORIGIN);

@@ -80,9 +80,9 @@ Two mechanisms prevent write loops between the file watcher and persistence. Con
 
 On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then L2 -- to guarantee all pending writes reach disk and git before the process exits. See [Server Lifecycle](/internals/server-lifecycle) for the full shutdown phase sequence.
 
-## History repo
+## Shadow repo
 
-Located at `<projectRoot>/.open-knowledge/history/` (D55 rename from "shadow repo" + D56 unified state dir — replaces the legacy `.git/openknowledge/` integrated-mode and `.openknowledge/` standalone-mode split). The history repo provides auto-save history and attribution without touching the project's own git state. On first-run post-upgrade, legacy shadow directories are atomically relocated via `rename()` with an `[history-migration]` log entry.
+Located at `<projectRoot>/.git/open-knowledge/` (SPEC 2026-04-21-shadow-repo-single-mode). If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). Pre-spec integrated shadows at `.git/openknowledge/` are silently rename-migrated in-place once per repo via a `[shadow-migration]` log entry. The shadow repo provides auto-save history and attribution without touching the project's own git state.
 
 It contains:
 
@@ -90,7 +90,7 @@ It contains:
 - **Upstream imports** -- records of `git pull`/merge/rebase changes, credited to the `git-upstream` classified writer
 - **Branch parking** -- on `git checkout`, the server parks current Y.Doc state to history refs and restores it on return
 - **Rescue buffers** -- dirty documents from deleted or branch-switched files
-- **Structured commit bodies** -- every commit carries one `ok-actor:` JSON line per contributing actor (principal, agent_session, agent_type, display_name, color_seed, docs); `parseOkActor` / `formatOkActor` in `packages/core/src/history-repo-layout.ts` are the schema helpers
+- **Structured commit bodies** -- every commit carries one `ok-actor:` JSON line per contributing actor (principal, agent_session, agent_type, display_name, color_seed, docs); `parseOkActor` / `formatOkActor` in `packages/core/src/shadow-repo-layout.ts` are the schema helpers
 
 <Callout type="info" title="Isolation guarantee">
 The history repo never touches the project's git ref namespace or object store. It is an isolated journal for auto-save and attribution.

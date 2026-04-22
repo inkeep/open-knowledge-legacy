@@ -39,8 +39,8 @@ import {
   formatCheckpointSubject,
   formatRenameSubject,
   formatRollbackSubject,
-} from '@inkeep/open-knowledge-core/history-repo-layout';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
@@ -52,6 +52,12 @@ import {
   applyAgentUndo,
 } from './agent-sessions.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
+import {
+  createInstalledAgentsProbe,
+  createOsProbe,
+  handleInstalledAgents,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -82,16 +88,6 @@ import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 import {
-  type HistoryRef,
-  historyGit,
-  listRescueCheckpoints,
-  SERVICE_WRITER,
-  safetyCheckpoint,
-  saveVersion,
-  type TimelineRescueEntry,
-  type WriterIdentity,
-} from './history-repo.ts';
-import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
   expandTilde,
@@ -118,6 +114,16 @@ import {
   setReconciledBase,
 } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import {
+  listRescueCheckpoints,
+  SERVICE_WRITER,
+  type ShadowRef,
+  safetyCheckpoint,
+  saveVersion,
+  shadowGit,
+  type TimelineRescueEntry,
+  type WriterIdentity,
+} from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
 import { getDocumentHistory } from './timeline-query.ts';
@@ -439,13 +445,15 @@ export interface ApiExtensionOptions {
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests and
-   * local dev mode.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use (reset wipes document
+   * content; rescan-backlinks rebuilds the index from disk, dropping
+   * unpersisted in-memory state) and must never be exposed in production.
+   * Enable only in tests and local dev mode.
    */
   enableTestRoutes?: boolean;
-  historyRef?: HistoryRef;
+  shadowRef?: ShadowRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
   /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
@@ -494,6 +502,14 @@ export interface ApiExtensionOptions {
    * Returns null if principal has not yet been loaded or loading failed.
    */
   getPrincipal?: () => Principal | null;
+  /**
+   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
+   * parity for the Electron `ok:shell:detect-protocol` IPC — see
+   * `handoff-api.ts`). When omitted, the platform's default probe is used
+   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
+   * fake so the endpoint doesn't shell out.
+   */
+  installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -509,10 +525,16 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function json(res: ServerResponse, status: number, data: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }
@@ -587,7 +609,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getFileIndex,
     getAliasMap,
     enableTestRoutes = false,
-    historyRef,
+    shadowRef,
     flushGitCommit,
     getCurrentBranch,
     contentRoot,
@@ -599,10 +621,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     localOpCliArgs = ['open-knowledge'],
     projectDir,
     getPrincipal,
+    installedAgentsProbe,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
+
+  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
+  // Factory is called once per createApiExtension() so the cache lives for
+  // the lifetime of the server (cleared on server restart).
+  const installedAgentsCache = createInstalledAgentsProbe({
+    probe: installedAgentsProbe ?? createOsProbe(process.platform),
+  });
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -1793,7 +1823,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const xmlFragment = session.dc.document.getXmlFragment('default');
           const metaMap = session.dc.document.getMap('metadata');
           const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
-          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+          const currentBody = mdManager.serialize(
+            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+          );
           const currentFull = prependFrontmatter(currentFm, currentBody);
 
           const pos =
@@ -2023,6 +2055,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
+   *
+   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
+   * files written into freshly-created subdirectories (the recursive subwatch
+   * is registered asynchronously after the IN_CREATE for the directory, so
+   * rapid follow-up file writes race the registration). That leaves the
+   * backlink index out of sync with the content directory on disk, which the
+   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
+   * orphan-hint shape) cannot otherwise recover from.
+   *
+   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
+   * resync from the filesystem that covers dropped events. It is NOT suitable
+   * for production: rebuild wipes any in-memory backlink state not yet
+   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
+   * behind `enableTestRoutes` for that reason.
+   */
+  async function handleTestRescanBacklinks(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      if (!backlinkIndex) {
+        json(res, 503, { ok: false, error: 'Backlink index not configured' });
+        return;
+      }
+      backlinkIndex.rebuildFromDisk();
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+      });
+      signalChannel?.('backlinks');
+      signalChannel?.('graph');
+      json(res, 200, { ok: true });
+    } catch (e) {
+      console.error('[test-rescan-backlinks]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
   async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -2030,7 +2106,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2218,7 +2294,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2269,7 +2345,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, ...result });
     } catch (e) {
-      console.error('[history]', e);
+      console.error('[shadow]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -2287,7 +2363,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2303,7 +2379,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = historyGit(shadow);
+    const sg = shadowGit(shadow);
 
     // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
@@ -2328,7 +2404,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, sha, content, timestamp, author });
     } catch (e) {
-      console.error('[history-version]', e);
+      console.error('[shadow-version]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -2341,7 +2417,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2364,7 +2440,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = historyGit(shadow);
+    const sg = shadowGit(shadow);
 
     try {
       // Get "to" content
@@ -2434,7 +2510,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const shadow = historyRef?.current;
+    const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
@@ -2495,7 +2571,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const docPath = pathResult.path;
-    const sg = historyGit(shadow);
+    const sg = shadowGit(shadow);
 
     const t0 = Date.now();
     try {
@@ -2727,7 +2803,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!historyRef?.current) {
+    if (!shadowRef?.current) {
       json(res, 200, []);
       return;
     }
@@ -2748,7 +2824,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
 
-    const rescueDir = resolve(historyRef.current.gitDir, 'rescue');
+    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
     if (existsSync(rescueDir)) {
       try {
         const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
@@ -2782,7 +2858,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
       const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(historyRef.current, branch);
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
       for (const t of timelineEntries) {
         entries.push({ ...t, source: 'timeline' });
       }
@@ -2803,7 +2879,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!historyRef?.current) {
+    if (!shadowRef?.current) {
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -2812,7 +2888,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
     // this first — the flat-file path is how shutdown-flush delivers the
     // most recent unflushed state, which is the most relevant artifact.
-    const rescueBase = resolve(historyRef.current.gitDir, 'rescue');
+    const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
       res.writeHead(400);
@@ -2844,13 +2920,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // docs stream directly from git object storage.
     try {
       const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(historyRef.current, branch);
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
       // Most recent for this doc
       const match = timelineEntries
         .filter((e) => e.docName === docName)
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
       if (match) {
-        const sg = historyGit(historyRef.current);
+        const sg = shadowGit(shadowRef.current);
         const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
         // The blob is the single entry; extract its object SHA.
         const firstLine = tree.split('\n')[0] ?? '';
@@ -4557,6 +4633,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleInstalledAgentsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4624,10 +4716,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
+    '/api/installed-agents': handleInstalledAgentsRoute,
   };
 
   if (enableTestRoutes) {
     routes['/api/test-reset'] = handleTestReset;
+    routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
   return {
@@ -4654,8 +4748,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (url.startsWith('/api/')) {
         const origin = request.headers.origin;
         if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+          if (typeof response.setHeader === 'function') {
+            response.setHeader('Content-Type', 'application/json');
+          }
           response.writeHead(403);
-          response.end('origin-not-allowed');
+          response.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
           return;
         }
         if (typeof response.setHeader === 'function') {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { parseContributors } from '@inkeep/open-knowledge-core/history-repo-layout';
+import { parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import {
   clearContributors,
   contributorCount,

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { commitWip, initHistoryRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
+import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
@@ -77,7 +77,7 @@ describe('exec — happy path', () => {
     expect(files[0].path).toBe('content/auth.md');
     expect(files[0].title).toBe('Auth');
     // rich shape on single-path cat
-    expect(files[0].historySource).toBe('history-repo-absent');
+    expect(files[0].historySource).toBe('shadow-repo-absent');
   });
 
   test('ls returns slim enrichment for each matched path', async () => {
@@ -482,7 +482,7 @@ describe('exec — binary file NG8 warning', () => {
 describe('exec — CC9 parity with read_document', () => {
   test('enrichment fields match read_document output for same path', async () => {
     const project = await bootstrap();
-    const shadow = await initHistoryRepo(project);
+    const shadow = await initShadowRepo(project);
     const contentDir = resolve(project, 'articles');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(
@@ -514,7 +514,7 @@ describe('exec — CC9 parity with read_document', () => {
     // read_document's rendered output (both go through the shared enrichPath).
     expect(execMeta.title).toBe('Parity');
     expect(execMeta.tags).toEqual(['x']);
-    expect(execMeta.historySource).toBe('history-repo');
+    expect(execMeta.historySource).toBe('shadow-repo');
     expect(execMeta.history?.length).toBe(1);
     expect(execMeta.history?.[0].writerClassification).toBe('agent');
 

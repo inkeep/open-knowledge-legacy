@@ -34,7 +34,6 @@ const DIRECTORY_SCAN_CAP = 1000;
 const DIR_SKIP: ReadonlySet<string> = new Set([
   '.git',
   OK_DIR,
-  '.openknowledge',
   'node_modules',
   '.changeset',
   '.claude',
@@ -427,7 +426,7 @@ export async function enrichPath(
     fetchForwardLinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
     readShadowLog(deps.projectDir, relPath, historyDepth).catch(() => ({
       commits: [] as ShadowCommit[],
-      source: 'history-repo' as HistorySource,
+      source: 'shadow-repo' as HistorySource,
     })),
     readProjectGitLog(deps.projectDir, relPath, historyDepth).catch(() => ({
       commits: [] as GitCommit[],

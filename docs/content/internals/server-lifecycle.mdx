@@ -27,7 +27,7 @@ createServer(options)          ← synchronous, returns ServerInstance
        ├─ HEAD-drift check     ← compare last-known-head vs current HEAD;
        │                         commitUpstreamImport() if diverged
        ├─ File watcher start   ← @parcel/watcher subscribe
-       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
+       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/
        └─ SyncEngine start     ← remote detection → auto-sync timers (if remote exists)
 ```
 
@@ -49,7 +49,7 @@ destroy()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
   ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
   ├─ Phase 4.5: SyncEngine     ← syncEngine.destroy() — persists state to sync-state.json
-  ├─ Phase 5: History release  ← write last-known-head + destroyHistoryRepo() — always runs
+  ├─ Phase 5: History release  ← write last-known-head + destroyShadowRepo() — always runs
   └─ Phase 6: Server lock      ← releaseServerLock() — LAST, in finally block
 ```
 
@@ -85,7 +85,7 @@ flushAllStoresAndWait timeout after 10000ms — 2/3 docs did not unload: [my-not
   — rescued [my-notes], lost [drafts]
 ```
 
-If the history repo failed to initialize (the `historyRef.current` closure is nullish), rescue writes are skipped entirely and all still-loaded documents are reported as lost.
+If the history repo failed to initialize (the `shadowRef.current` closure is nullish), rescue writes are skipped entirely and all still-loaded documents are reported as lost.
 
 Users can recover rescued content via the existing `GET /api/rescue` (list) and `GET /api/rescue/:docName` (retrieve) endpoints. Rescue files older than 24 hours are cleaned up automatically.
 

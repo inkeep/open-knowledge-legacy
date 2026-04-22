@@ -7,10 +7,10 @@ import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
   commitWip,
-  initHistoryRepo,
+  initShadowRepo,
   saveVersion,
   type WriterIdentity,
-} from './history-repo';
+} from './shadow-repo';
 import { getDocumentHistory } from './timeline-query';
 
 let tmpDir: string;
@@ -23,7 +23,7 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
-/** Set up an integrated-mode project+shadow for tests. */
+/** Set up a project + shadow for tests. */
 async function setup() {
   const projectRoot = resolve(tmpDir, 'project');
   const contentDir = resolve(projectRoot, 'content/docs');
@@ -39,7 +39,7 @@ async function setup() {
   await git.add('.');
   await git.commit('Initial commit');
 
-  const shadow = await initHistoryRepo(projectRoot);
+  const shadow = await initShadowRepo(projectRoot);
   return { projectRoot, contentDir, shadow };
 }
 
@@ -243,7 +243,7 @@ describe('getDocumentHistory', () => {
   test('returns empty result gracefully when shadow repo is corrupt/missing', async () => {
     // Create a shadow handle pointing to a non-existent git dir
     const fakeShadow = {
-      gitDir: resolve(tmpDir, 'nonexistent/.git/openknowledge'),
+      gitDir: resolve(tmpDir, 'nonexistent/.git/open-knowledge'),
       workTree: resolve(tmpDir, 'nonexistent'),
     };
 

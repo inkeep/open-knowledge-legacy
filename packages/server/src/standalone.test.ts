@@ -4,13 +4,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as Y from 'yjs';
-import { historyGit, initHistoryRepo } from './history-repo.ts';
 import { loggerFactory, type PinoLogger } from './logger.ts';
 import {
   createManagedRenameRecoveryJournal,
   managedRenameJournalPath,
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
+import { ensureProjectGit } from './project-git.ts';
+import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer, type ServerInstance } from './standalone.ts';
 
 // ─── CaptureLogger infrastructure ───────────────────────────────────────────
@@ -168,7 +169,8 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    await ensureProjectGit(projectDir);
+    const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -176,7 +178,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      historyRepo: historyHandle,
+      shadowRepo: shadowHandle,
     });
     await server.ready;
 
@@ -195,9 +197,9 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     await server.destroy();
 
-    // Verify L2 git commit landed in history repo — check for any WIP ref
+    // Verify L2 git commit landed in shadow repo — check for any WIP ref
     // (the exact writer ID depends on contributor-tracker state shared across tests)
-    const sg = historyGit(historyHandle);
+    const sg = shadowGit(shadowHandle);
     const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
     expect(wipRefs).toBeTruthy();
   });
@@ -209,7 +211,8 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    await ensureProjectGit(projectDir);
+    const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -217,7 +220,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       contentRoot: 'content',
       quiet: true,
       destroyTimeoutMs: 500, // D11: fast timeout for CI — not the 10s default
-      historyRepo: historyHandle,
+      shadowRepo: shadowHandle,
     });
     await server.ready;
 
@@ -268,7 +271,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. The in-memory Y.Doc
     // state was preserved to <history-gitDir>/rescue/<docName>.md so the user
     // can recover via the existing /api/rescue endpoints.
-    const rescuePath = join(historyHandle.gitDir, 'rescue', 'pathological-doc.md');
+    const rescuePath = join(shadowHandle.gitDir, 'rescue', 'pathological-doc.md');
     expect(existsSync(rescuePath)).toBe(true);
     expect(readFileSync(rescuePath, 'utf-8')).toContain('will not be flushed');
 
@@ -428,13 +431,13 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
  * failed to initialize.
  *
  * Failure injection:
- *   - history-repo: forced via invalid path (file-as-dir). This subsystem's
+ *   - shadow-repo: forced via invalid path (file-as-dir). This subsystem's
  *     init throws on invalid paths, so the SPEC's preferred technique works.
  *   - file-watcher + head-watcher: cannot be forced via invalid paths because
  *     startWatcher falls back from @parcel/watcher to chokidar (tolerates
  *     invalid paths) and startHeadWatcher returns a no-op handle on missing
  *     .git. The degraded.push wiring for these subsystems is verified by
- *     the history-repo test (same push pattern) + code-level assertions below.
+ *     the shadow-repo test (same push pattern) + code-level assertions below.
  *     mock.module was attempted but leaks across all test files in the same
  *     `bun test` process, breaking file-watcher.test.ts. See PR #62.
  */
@@ -466,7 +469,7 @@ describe('createServer() degraded signal', () => {
     await srv.destroy();
   });
 
-  test('history-repo init failure — degraded includes "history-repo"', async () => {
+  test('shadow-repo init failure — degraded includes "shadow-repo"', async () => {
     const fileAsDir = resolve(testProjectDir, 'not-a-dir');
     writeFileSync(fileAsDir, 'I am a file, not a directory');
 
@@ -479,8 +482,8 @@ describe('createServer() degraded signal', () => {
 
     await srv.ready;
 
-    expect(srv.degraded).toContain('history-repo');
-    expect(srv.degraded.filter((s) => s === 'history-repo')).toHaveLength(1);
+    expect(srv.degraded).toContain('shadow-repo');
+    expect(srv.degraded.filter((s) => s === 'shadow-repo')).toHaveLength(1);
 
     await srv.destroy();
   });
@@ -494,7 +497,7 @@ describe('createServer() degraded signal', () => {
     const src = readFileSync(resolve(dir, 'standalone.ts'), 'utf-8');
 
     // Each subsystem's catch block should push to the degraded array
-    expect(src).toContain("degraded.push('history-repo')");
+    expect(src).toContain("degraded.push('shadow-repo')");
     expect(src).toContain("degraded.push('file-watcher')");
     expect(src).toContain("degraded.push('head-watcher')");
 

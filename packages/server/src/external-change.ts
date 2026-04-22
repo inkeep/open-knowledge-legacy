@@ -8,14 +8,14 @@
 
 import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { formatReconcileSubject } from '@inkeep/open-knowledge-core/history-repo-layout';
+import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
-import { FILE_SYSTEM_WRITER } from './history-repo.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import { FILE_SYSTEM_WRITER } from './shadow-repo.ts';
 
 /**
  * Transaction origin for file-watcher disk→CRDT bridge operations.

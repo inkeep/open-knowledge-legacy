@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
@@ -20,19 +20,6 @@ import {
   resolveGitDir,
   startHeadWatcher,
 } from './head-watcher.ts';
-import {
-  commitUpstreamImport,
-  destroyHistoryRepo,
-  type HistoryHandle,
-  type HistoryRef,
-  historyGit,
-  initHistoryRepo,
-  type ParkableDoc,
-  parkBranch,
-  readParkedState,
-  SERVICE_WRITER,
-  saveInMemoryCheckpoint,
-} from './history-repo.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
@@ -63,6 +50,19 @@ import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import {
+  commitUpstreamImport,
+  destroyShadowRepo,
+  initShadowRepo,
+  type ParkableDoc,
+  parkBranch,
+  readParkedState,
+  SERVICE_WRITER,
+  type ShadowHandle,
+  type ShadowRef,
+  saveInMemoryCheckpoint,
+  shadowGit,
+} from './shadow-repo.ts';
 import { SyncEngine } from './sync-engine.ts';
 
 export interface ServerOptions {
@@ -77,13 +77,14 @@ export interface ServerOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use and must never be
+   * exposed in production. Enable only in tests.
    */
   enableTestRoutes?: boolean;
   /** Shadow repo handle — passed to persistence. */
-  historyRepo?: HistoryHandle;
+  shadowRepo?: ShadowHandle;
   /** Content root relative to project dir. */
   contentRoot?: string;
   /** Glob patterns for files to include (default: ['**\/*.md']). */
@@ -126,7 +127,7 @@ export interface ServerInstance {
    * Names of subsystems that failed to initialize during boot.
    * Read AFTER `await ready` for a stable list; reads before may return a partial result.
    * Empty array means all subsystems initialized successfully.
-   * Possible values: `'history-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
    * `'head-watcher'`.
    */
   readonly degraded: readonly string[];
@@ -169,7 +170,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
     enableTestRoutes = false,
-    historyRepo,
+    shadowRepo,
     contentRoot,
     includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
@@ -192,7 +193,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
   let backlinkIndex: BacklinkIndex;
-  let historyRef: HistoryRef;
+  let shadowRef: ShadowRef;
   let persistence: ReturnType<typeof createPersistenceExtension>;
   let hocuspocus: Hocuspocus;
   let sessionManager: AgentSessionManager;
@@ -213,7 +214,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 
-    historyRef = { current: historyRepo };
+    shadowRef = { current: shadowRepo };
 
     const persistenceOpts: PersistenceOptions = {
       contentDir,
@@ -221,7 +222,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       gitEnabled,
       commitDebounceMs,
       wipRef,
-      historyRef,
+      shadowRef,
       contentRoot,
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
@@ -312,7 +313,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,
-      historyRef,
+      shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       contentRoot,
@@ -331,7 +332,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       createServerObserverExtension({
         mdManager,
         schema,
-        historyRef,
+        shadowRef,
         contentRoot,
         getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       }),
@@ -343,8 +344,8 @@ export function createServer(options: ServerOptions): ServerInstance {
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
-  function safeRescuePath(historyGitDir: string, docName: string): string | null {
-    const rescueBase = resolve(historyGitDir, 'rescue');
+  function safeRescuePath(shadowGitDir: string, docName: string): string | null {
+    const rescueBase = resolve(shadowGitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) return null;
     return filePath;
@@ -355,7 +356,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     const document = hocuspocus.documents.get(docName);
     if (!document) return null;
     const xmlFragment = document.getXmlFragment('default');
-    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
     const metaMap = document.getMap('metadata');
     const fm = metaMap.get('frontmatter');
@@ -522,12 +523,12 @@ export function createServer(options: ServerOptions): ServerInstance {
           const ours = serializeDoc(docName) ?? '';
           const isDirty = ours !== base;
 
-          if (isDirty && historyRef.current) {
+          if (isDirty && shadowRef.current) {
             // Silent rescue checkpoint (SPEC §6 R7e) — preserve in-memory
             // content on a timeline ref so TimelinePanel renders it as an
             // 'external-change-rescue' row. Fire-and-forget; failures warn
             // but don't block the delete lifecycle.
-            const shadowForCheckpoint = historyRef.current;
+            const shadowForCheckpoint = shadowRef.current;
             const branch = headWatcher?.getLastKnownBranch() ?? 'main';
             queueMicrotask(() => {
               saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
@@ -691,7 +692,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         // hang semantic means diff-vs-reconciled-base is not the right gate.
         const rescued: string[] = [];
         const rescueFailed: string[] = [];
-        if (historyRef.current) {
+        if (shadowRef.current) {
           for (const docName of stillLoaded) {
             if (isSystemDoc(docName)) continue;
             try {
@@ -706,13 +707,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                 rescueFailed.push(docName);
                 continue;
               }
-              const rescuePath = safeRescuePath(historyRef.current.gitDir, docName);
+              const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
               if (!rescuePath) {
                 // Path-traversal guard fired — docName tried to escape the
                 // rescue/ directory. Log at warn level since this is
                 // security-relevant, not just a write failure.
                 log.warn(
-                  { docName, gitDir: historyRef.current.gitDir },
+                  { docName, gitDir: shadowRef.current.gitDir },
                   `[rescue] path-traversal guard rejected docName: ${docName}`,
                 );
                 rescueFailed.push(docName);
@@ -894,14 +895,14 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
         } finally {
           // Phase 5: shadow repo release — ALWAYS runs
-          if (historyRef.current) {
+          if (shadowRef.current) {
             // Persist current HEAD before releasing shadow lock (FR11)
             try {
               const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
               const currentHead = (await projectGit.revparse('HEAD')).trim();
               if (currentHead) {
                 writeFileSync(
-                  resolve(historyRef.current.gitDir, 'last-known-head'),
+                  resolve(shadowRef.current.gitDir, 'last-known-head'),
                   currentHead,
                   'utf-8',
                 );
@@ -911,13 +912,13 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
 
             try {
-              destroyHistoryRepo(historyRef.current);
+              destroyShadowRepo(shadowRef.current);
             } catch (err) {
               phaseErrors.push({
                 phase: 'shadow-repo-release',
                 error: err instanceof Error ? err.message : String(err),
               });
-              log.error({ err }, '[server] shutdown phase-5 destroyHistoryRepo failed');
+              log.error({ err }, '[server] shutdown phase-5 destroyShadowRepo failed');
             }
           }
 
@@ -971,34 +972,34 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     // Auto-initialize shadow repo if not provided
-    if (!historyRef.current) {
+    if (!shadowRef.current) {
       try {
-        historyRef.current = await initHistoryRepo(projectDir);
+        shadowRef.current = await initShadowRepo(projectDir);
         log.info(
-          { gitDir: historyRef.current.gitDir },
-          `[server] history repo initialized at ${historyRef.current.gitDir}`,
+          { gitDir: shadowRef.current.gitDir },
+          `[server] history repo initialized at ${shadowRef.current.gitDir}`,
         );
       } catch (e) {
         log.error({ err: e }, '[server] history repo init failed');
-        degraded.push('history-repo');
+        degraded.push('shadow-repo');
       }
     }
 
     // Verify history repo integrity — reinit only on structural corruption, not transient errors
-    if (historyRef.current) {
+    if (shadowRef.current) {
       try {
-        const sg = historyGit(historyRef.current);
+        const sg = shadowGit(shadowRef.current);
         await sg.raw('rev-parse', '--git-dir');
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
           log.warn({}, '[server] history repo appears corrupted — reinitializing');
           try {
-            historyRef.current = await initHistoryRepo(projectDir);
+            shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
             log.error({ err: e2 }, '[server] history repo reinit failed');
-            historyRef.current = undefined;
-            if (!degraded.includes('history-repo')) degraded.push('history-repo');
+            shadowRef.current = undefined;
+            if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
           log.error({ err: e }, '[server] history repo check failed (transient?)');
@@ -1008,9 +1009,9 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     // HEAD-drift check (FR11): detect git operations that occurred while offline
     // Compare stored last-known-head against current HEAD SHA and import if diverged
-    if (historyRef.current) {
+    if (shadowRef.current) {
       try {
-        const lastKnownHeadPath = resolve(historyRef.current.gitDir, 'last-known-head');
+        const lastKnownHeadPath = resolve(shadowRef.current.gitDir, 'last-known-head');
 
         // Read last persisted HEAD SHA
         let lastKnownHead: string | null = null;
@@ -1048,7 +1049,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             try {
               await commitUpstreamImport(
-                historyRef.current,
+                shadowRef.current,
                 contentRoot ?? '',
                 lastKnownHead,
                 currentHead,
@@ -1134,7 +1135,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           setBatchInProgress(true);
 
           // Park current branch's Y.Doc state to shadow refs
-          if (historyRef.current) {
+          if (shadowRef.current) {
             const currentBranch = getActiveBranch();
             // Read new branch from HEAD (already updated by git at onBatchBegin time)
             // so the park subject can carry both ends of the switch (D39, D53).
@@ -1158,7 +1159,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             if (docs.length > 0) {
               try {
                 const sha = await parkBranch(
-                  historyRef.current,
+                  shadowRef.current,
                   currentBranch,
                   SERVICE_WRITER.id,
                   docs,
@@ -1172,7 +1173,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   );
                 }
               } catch (e) {
-                log.error({ err: e }, '[history] park failed');
+                log.error({ err: e }, '[shadow] park failed');
               }
             }
           }
@@ -1217,10 +1218,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const ours = serializeDoc(docName) ?? '';
                   const isDirty = ours !== base;
 
-                  if (isDirty && historyRef.current) {
+                  if (isDirty && shadowRef.current) {
                     // Silent rescue checkpoint on branch-switch tombstone
                     // (SPEC §6 R7e). Same pattern as reconcile-delete above.
-                    const shadowForCheckpoint = historyRef.current;
+                    const shadowForCheckpoint = shadowRef.current;
                     queueMicrotask(() => {
                       saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
                         kind: 'external-change-rescue',
@@ -1275,13 +1276,13 @@ export function createServer(options: ServerOptions): ServerInstance {
             });
 
             // Restore parked WIP if exists (three-way merge parked state against current disk)
-            if (historyRef.current && info.batchKind === 'cross-branch') {
+            if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
                 if (isSystemDoc(docName)) continue;
                 try {
                   const parked = await readParkedState(
-                    historyRef.current,
+                    shadowRef.current,
                     newBranch,
                     SERVICE_WRITER.id,
                     docName,
@@ -1334,9 +1335,9 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
 
             // Clean up detached HEAD context if switching FROM detached TO named branch
-            if (info.oldBranch?.startsWith('detached-') && historyRef.current) {
+            if (info.oldBranch?.startsWith('detached-') && shadowRef.current) {
               try {
-                const sg = historyGit(historyRef.current);
+                const sg = shadowGit(shadowRef.current);
                 // List refs under the detached context
                 const refs = (
                   await sg.raw('for-each-ref', `refs/wip/${info.oldBranch}/`, '--format=%(refname)')
@@ -1363,11 +1364,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           // (files were already written by the user/editor). Only `git pull`, `git merge`,
           // `git rebase`, or `git checkout` produce buffered file-watcher events, so
           // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
-          if (info.headMoved && info.newHead && historyRef.current && bufferedCount > 0) {
+          if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
             const contentRootForShadow = contentRoot ?? 'content';
             try {
               const sha = await commitUpstreamImport(
-                historyRef.current,
+                shadowRef.current,
                 contentRootForShadow,
                 info.oldHead,
                 info.newHead,
@@ -1383,7 +1384,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 `[history] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );
             } catch (e) {
-              log.error({ err: e }, '[history] upstream-import failed');
+              log.error({ err: e }, '[shadow] upstream-import failed');
             }
           }
         },

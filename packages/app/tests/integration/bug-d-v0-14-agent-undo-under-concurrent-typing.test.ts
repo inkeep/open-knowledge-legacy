@@ -22,7 +22,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
 import { mdManager, schema } from './test-harness';
@@ -45,7 +45,9 @@ function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFr
   updateYFragment(doc, xmlFragment, pmNode, meta);
 
   // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
-  const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+  const canonicalBody = mdManager.serialize(
+    yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+  );
   const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
   if (canonicalFull !== fullText) {
     ytext.delete(0, fullText.length);
@@ -55,7 +57,7 @@ function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFr
 
 /** Serialize XmlFragment → markdown string. */
 function serializeFrag(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /** Apply markdown content to XmlFragment via updateYFragment. */

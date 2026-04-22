@@ -19,9 +19,9 @@ import {
   clearContributors,
   createServer,
   FILE_SYSTEM_WRITER,
-  historyGit,
-  initHistoryRepo,
+  initShadowRepo,
   recordContributor,
+  shadowGit,
 } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
@@ -42,7 +42,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    const historyHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -50,7 +50,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      historyRepo: historyHandle,
+      shadowRepo: historyHandle,
     });
     await server.ready;
 
@@ -74,7 +74,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
     await server.destroy();
 
     // Both writers must have WIP refs
-    const sg = historyGit(historyHandle);
+    const sg = shadowGit(historyHandle);
     const s1Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();
     const s2Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s2')).trim();
     expect(s1Sha).toBeTruthy();
@@ -93,7 +93,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    const historyHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -101,7 +101,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      historyRepo: historyHandle,
+      shadowRepo: historyHandle,
     });
     await server.ready;
 
@@ -119,7 +119,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
 
     await server.destroy();
 
-    const sg = historyGit(historyHandle);
+    const sg = shadowGit(historyHandle);
     const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
     expect(wipRefs).toBeTruthy();
   });
@@ -128,7 +128,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    const historyHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -136,7 +136,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      historyRepo: historyHandle,
+      shadowRepo: historyHandle,
     });
     await server.ready;
 
@@ -157,7 +157,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
 
     await server.destroy();
 
-    const sg = historyGit(historyHandle);
+    const sg = shadowGit(historyHandle);
     const fsRef = (await sg.raw('rev-parse', 'refs/wip/main/file-system')).trim();
     expect(fsRef).toBeTruthy();
 
@@ -170,7 +170,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
-    const historyHandle = await initHistoryRepo(projectDir);
+    const historyHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
       contentDir,
@@ -178,7 +178,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
       contentRoot: 'content',
       quiet: true,
       debounce: 60_000,
-      historyRepo: historyHandle,
+      shadowRepo: historyHandle,
     });
     await server.ready;
 
@@ -202,7 +202,7 @@ describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
 
     await server.destroy();
 
-    const sg = historyGit(historyHandle);
+    const sg = shadowGit(historyHandle);
 
     // Both refs must exist after the drain
     const agentSha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();

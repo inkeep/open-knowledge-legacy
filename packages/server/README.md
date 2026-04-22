@@ -80,7 +80,7 @@ Observer A's Path B (used when local Y.Text has diverged from the last-synced Xm
 The error is caught only at the Observer A Path B call site (`server-observers.ts`). In production, the bridge:
 
 1. Emits a structured `bridge-merge-content-loss` JSON log via `console.warn` and increments `bridgeMergeContentLoss` in `src/metrics.ts`.
-2. Queues a silent named version-history checkpoint via `saveInMemoryCheckpoint` (`src/history-repo.ts`) at `refs/checkpoints/<branch>/<sha>`, with `kind: 'bridge-merge-loss'` metadata containing the lost substrings. `bridgeMergeCheckpointCreated` increments on success.
+2. Queues a silent named version-history checkpoint via `saveInMemoryCheckpoint` (`src/shadow-repo.ts`) at `refs/checkpoints/<branch>/<sha>`, with `kind: 'bridge-merge-loss'` metadata containing the lost substrings. `bridgeMergeCheckpointCreated` increments on success.
 3. Applies the merge result as-computed via `applyFastDiff` so the editor stays responsive — no toast, no modal, no user-visible interruption (Notion-style).
 
 `TimelinePanel` renders these checkpoints with kind-aware copy so users can `Restore` them through the existing UI. In dev/test the catch re-throws so `bun run check` and integration tests fail loudly.
@@ -89,7 +89,7 @@ The error is caught only at the Observer A Path B call site (`server-observers.t
 
 ### Silent in-memory checkpoint primitive
 
-`saveInMemoryCheckpoint(history, contentRoot, params)` in `src/history-repo.ts` is the generic write-side primitive shared by Observer A's bridge-merge recovery and external-change rescue (`reconciliation.ts` and `branch-switch.ts`). The discriminated-union `params` carries `{ kind: 'bridge-merge-loss' | 'external-change-rescue', docName, contents, label, branch, metadata }`; `parseCheckpoint` (`@inkeep/open-knowledge-core/history-repo-layout`) reads them back kind-aware from the commit body. Refs land at `refs/checkpoints/<branch>/<sha>` and never touch `refs/wip/*`. Concurrent same-process invocations stay safe via per-call `randomUUID` tmp-index files.
+`saveInMemoryCheckpoint(history, contentRoot, params)` in `src/shadow-repo.ts` is the generic write-side primitive shared by Observer A's bridge-merge recovery and external-change rescue (`reconciliation.ts` and `branch-switch.ts`). The discriminated-union `params` carries `{ kind: 'bridge-merge-loss' | 'external-change-rescue', docName, contents, label, branch, metadata }`; `parseCheckpoint` (`@inkeep/open-knowledge-core/shadow-repo-layout`) reads them back kind-aware from the commit body. Refs land at `refs/checkpoints/<branch>/<sha>` and never touch `refs/wip/*`. Concurrent same-process invocations stay safe via per-call `randomUUID` tmp-index files.
 
 ### `GET /api/rescue` reads both surfaces
 
@@ -110,7 +110,7 @@ Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this
 
 `POST /api/save-version` uses `Author: <principal_display_name>` + `Co-Authored-By: <agent>` trailers (FR-9, D12) on the project-git commit; gracefully skips when the project dir is absent / not a git repo (D45). The history checkpoint always lands regardless of project-git state.
 
-Classified writer IDs for non-attributable writes: `file-system` (disk reconciliation), `git-upstream` (HEAD-move import), `openknowledge-service` (park snapshots, fallback). See `packages/core/src/history-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor` and AGENTS.md → "History repo & branch runtime" for the full taxonomy table.
+Classified writer IDs for non-attributable writes: `file-system` (disk reconciliation), `git-upstream` (HEAD-move import), `openknowledge-service` (park snapshots, fallback). See `packages/core/src/shadow-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor` and AGENTS.md → "History repo & branch runtime" for the full taxonomy table.
 
 ### Session lifecycle + cleanup
 
@@ -120,11 +120,11 @@ Classified writer IDs for non-attributable writes: `file-system` (disk reconcili
 
 `src/metrics.ts` exposes the bridge counters via `GET /api/metrics/reconciliation`:
 
-| Counter | Meaning |
-|---|---|
-| `bridgeMergeContentLoss` | Observer A Path B post-condition violations since process start |
-| `bridgeMergeCheckpointCreated` | Silent checkpoints written successfully via `saveInMemoryCheckpoint` |
-| `serverObserverFiresA` / `serverObserverFiresB` | Drain-level dispatch count per direction |
+| Counter                                           | Meaning                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `bridgeMergeContentLoss`                          | Observer A Path B post-condition violations since process start                     |
+| `bridgeMergeCheckpointCreated`                    | Silent checkpoints written successfully via `saveInMemoryCheckpoint`                |
+| `serverObserverFiresA` / `serverObserverFiresB`   | Drain-level dispatch count per direction                                            |
 | `serverObserverErrorsA` / `serverObserverErrorsB` | Caught failures inside the observer body (parse, serialize, baseline) per direction |
 
 The counters are the load-bearing signal for SS-1 (single-CRDT collapse) urgency calibration over the post-launch observation window.
@@ -251,3 +251,39 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 - `__system__` — CC1 broadcast target (v1).
 - Future `cc1:*` names — reserved for additional CC1 internal channels. Treat as 1-way-door; lock before any consumer adopts.
+
+---
+
+## `GET /api/installed-agents` — web-host install detection
+
+Web-host parity for the Electron `ok:shell:detect-protocol` IPC in `packages/desktop/src/main/ipc-handlers.ts`. The browser can't enumerate the OS's scheme handlers directly, so the [[Open in Agent Desktop|Open-in-Agent dropdown]] in the `open-knowledge start` web build asks the server to probe on its behalf.
+
+Governing spec: [[specs/2026-04-21-open-in-agent-desktop/SPEC|Open in Agent Desktop SPEC]] §6.4.
+
+### Response shape
+
+```json
+{ "claude": true, "codex": false, "cursor": true }
+```
+
+One boolean per scheme — Cowork and Code share `claude:` so they flatten to one field. The client UI always renders the Cursor row disabled on web hosts regardless of the boolean returned (E4 DIRECTED — local-use-case posture; the probe stays in place to keep the response shape stable).
+
+### Per-OS probes
+
+Each probe is install-registration (does the scheme have a handler?), NOT a running-process check. Implemented in `src/handoff-api.ts`.
+
+| Platform | Command                                             | Signal               |
+| -------- | --------------------------------------------------- | -------------------- |
+| macOS    | `osascript -e 'id of app "<AppName>"'`              | stdout has bundle id |
+| Windows  | `reg query "HKCU\\Software\\Classes\\<scheme>" /ve` | exit code 0          |
+| Linux    | `xdg-mime query default x-scheme-handler/<scheme>`  | non-empty stdout     |
+
+2-second per-probe timeout; any timeout, non-zero exit, or shell error resolves to `installed: false` so the row renders disabled-with-tooltip instead of crashing.
+
+### Caching
+
+Per-scheme 60-second TTL with in-flight dedup — a burst of three client requests within the window triggers exactly one OS probe per scheme. The cache lives for the lifetime of the server process (cleared on restart). Clients additionally throttle dropdown-open refreshes to ≤1 per 10 seconds per target.
+
+### Test injection
+
+`createApiExtension({ installedAgentsProbe })` accepts a probe override so unit tests and integration tests don't shell out. The default uses `createOsProbe(process.platform)` from `handoff-api.ts`.

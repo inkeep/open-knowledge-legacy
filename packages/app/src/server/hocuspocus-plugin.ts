@@ -20,13 +20,12 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
-  type HistoryRef,
   handleCollabSocketError,
-  initHistoryRepo,
   loadPrincipal,
   type Principal,
   readBranchFromHead,
   releaseServerLock,
+  type ShadowRef,
   SYSTEM_DOC_NAME,
   startWatcher,
   updateServerLockPort,
@@ -37,6 +36,7 @@ import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
+import { runDevShadowInit } from './dev-shadow-init.ts';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
@@ -141,16 +141,15 @@ console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
 // Shadow repo — initialized lazily. Deferred ref pattern matches standalone.ts.
-const historyRef: HistoryRef = { current: undefined };
+// SPEC 2026-04-21-shadow-repo-single-mode R2 / D12: ensureProjectGit runs BEFORE
+// initShadowRepo so a missing `git` binary fails the dev server fast instead of
+// leaving the shadow in a degraded state. Core pipeline + error dispatch live in
+// `./dev-shadow-init.ts` so the fail-fast / degraded branches are unit-tested.
+const shadowRef: ShadowRef = { current: undefined };
 if (!isTestIsolated) {
-  initHistoryRepo(PROJECT_ROOT)
-    .then((shadow) => {
-      historyRef.current = shadow;
-      console.log(`[dev] Shadow repo initialized at ${shadow.gitDir}`);
-    })
-    .catch((e) => {
-      console.warn('[dev] Shadow repo init failed (timeline features unavailable):', e);
-    });
+  void runDevShadowInit(PROJECT_ROOT, (shadow) => {
+    shadowRef.current = shadow;
+  });
 }
 
 // All throwable module-scope init runs inside this try. If anything fails we
@@ -194,7 +193,7 @@ try {
     projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
     contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
     gitEnabled: !isTestIsolated,
-    historyRef,
+    shadowRef,
     backlinkIndex,
     getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
     getPrincipal: () => loadedPrincipal,
@@ -224,7 +223,7 @@ try {
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
       enableTestRoutes: true,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-      historyRef,
+      shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
@@ -251,7 +250,7 @@ try {
     createServerObserverExtension({
       mdManager: pluginMdManager,
       schema: pluginSchema,
-      historyRef,
+      shadowRef,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
     }),

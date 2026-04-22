@@ -196,4 +196,46 @@ describe('saveAppStateToDir (atomic write via tmp + rename)', () => {
     saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
     expect(mkdirSpy).toHaveBeenCalledWith('/fake/userdata', { recursive: true });
   });
+
+  // Review Pass 1 Finding #1: return boolean so writeState callers can
+  // detect disk-failure and roll back in-memory state.
+  test('returns true on successful persist', () => {
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => true),
+      mkdirSync: mock(() => undefined),
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {}) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => {}) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    const result = saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
+    expect(result).toBe(true);
+  });
+
+  test('returns false when renameSync throws', () => {
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => true),
+      mkdirSync: mock(() => undefined),
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {
+        throw new Error('EACCES');
+      }) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => undefined) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    const result = saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
+    expect(result).toBe(false);
+  });
+
+  test('returns false when userData mkdir throws', () => {
+    const fs: SaveAppStateFs = {
+      existsSync: mock(() => false),
+      mkdirSync: mock(() => {
+        throw new Error('EROFS');
+      }),
+      writeFileSync: mock(() => {}) as unknown as SaveAppStateFs['writeFileSync'],
+      renameSync: mock(() => {}) as unknown as SaveAppStateFs['renameSync'],
+      unlinkSync: mock(() => {}) as unknown as SaveAppStateFs['unlinkSync'],
+    };
+    const result = saveAppStateToDir('/fake/userdata', emptyState(), fs, { error: () => {} });
+    expect(result).toBe(false);
+  });
 });

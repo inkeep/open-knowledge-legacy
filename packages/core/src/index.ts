@@ -24,7 +24,6 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
-
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -49,6 +48,21 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
+export {
+  buildClaudeAiWebUrl,
+  buildClaudeUrl,
+  buildCodexUrl,
+  buildCursorUrl,
+  composePrompt,
+  type DocContext,
+  type HandoffFailureReason,
+  type HandoffOutcome,
+  type HandoffPayload,
+  type HandoffTarget,
+  type InstallState,
+  type TargetData,
+} from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,
@@ -81,7 +95,7 @@ export {
 
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
-// subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/history-repo-layout'`.
+// subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
 // (D22/FR20 — CLI read path and server write path are the only consumers.)
 
 // Bridge — observer/CRDT-bridge shared utilities (precedent #14)
@@ -116,7 +130,7 @@ export type {
   DiffLine,
   DiffLineType,
   EntryType,
-  HistoryContributor,
+  ShadowContributor,
   TimelineEntry,
 } from './types/timeline.ts';
 

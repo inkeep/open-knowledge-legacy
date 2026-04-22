@@ -24,6 +24,7 @@ import type { Server as HttpServer } from 'node:http';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
+import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 
 /** 30 minutes — matches SPEC §9 default threshold. */
@@ -48,7 +49,7 @@ export interface BootServerOptions
     | 'destroyTimeoutMs'
     | 'localOpCliArgs'
     | 'onAgentWrite'
-    | 'historyRepo'
+    | 'shadowRepo'
     | 'enableTestRoutes'
   > {
   /**
@@ -77,6 +78,15 @@ export interface BootServerOptions
    * Returns `true` if any scaffolding occurred during this invocation.
    */
   autoInitFn?: () => boolean | Promise<boolean>;
+  /**
+   * Pre-createServer fail-fast hook for ensuring the project has a `.git/`
+   * directory. CLI + Vite dev plugin + integration test harness inject
+   * `ensureProjectGit`; desktop utility passes it through from its own import.
+   * Called only when `skipAutoInit === false`. Runs BEFORE `autoInitFn` and
+   * BEFORE `httpServer.listen()` so that on failure, `bootServer` rejects
+   * before any port is bound (SPEC D12 — no degraded fallback).
+   */
+  ensureProjectGitFn?: () => Promise<EnsureProjectGitResult>;
   /**
    * CLI-specific UI-sibling spawn orchestration. Called once after the server
    * has bound a port IF `attachUiSibling !== false`. Receives `lockDir` so the
@@ -116,6 +126,8 @@ export interface BootedServer {
   degraded: readonly string[];
   /** `true` if `autoInitFn` scaffolded anything during this boot. */
   didAutoInit: boolean;
+  /** `true` if `ensureProjectGitFn` ran `git init` during this boot. `false` when the hook was omitted or the project already had `.git/`. */
+  didGitInit: boolean;
   /** Full ServerInstance from createServer — exposed for advanced consumers (e.g., desktop utility's drain sequencing). */
   serverInstance: ServerInstance;
 }
@@ -136,6 +148,15 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const { createServer: createHttpServer } = await import('node:http');
   const { WebSocketServer } = await import('ws');
   const { updateServerLockPort } = await import('./server-lock.ts');
+
+  // Pre-createServer fail-fast hook — ensure project .git/ exists. Runs BEFORE
+  // autoInitFn and BEFORE httpServer.listen() so that on failure, bootServer
+  // rejects before any port is bound. No try/catch — errors propagate (D12).
+  let didGitInit = false;
+  if (!skipAutoInit && opts.ensureProjectGitFn) {
+    const gitResult = await opts.ensureProjectGitFn();
+    didGitInit = Boolean(gitResult.didInit);
+  }
 
   // Pre-createServer scaffold hook. CLI passes initContent; desktop omits.
   let didAutoInit = false;
@@ -162,7 +183,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     commitDebounceMs: opts.commitDebounceMs,
     wipRef: opts.wipRef,
     enableTestRoutes: opts.enableTestRoutes,
-    historyRepo: opts.historyRepo,
+    shadowRepo: opts.shadowRepo,
     includePatterns: opts.includePatterns,
     excludePatterns: opts.excludePatterns,
     destroyTimeoutMs: opts.destroyTimeoutMs,
@@ -388,6 +409,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     ready,
     degraded,
     didAutoInit,
+    didGitInit,
     serverInstance,
   };
 }

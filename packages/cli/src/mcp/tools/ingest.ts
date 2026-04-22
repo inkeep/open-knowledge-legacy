@@ -6,10 +6,15 @@
  * That's `research`'s job.
  */
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textPlusStructured } from './shared.ts';
+import {
+  type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 function buildBody(source: string, contentDir: string): string {
   return `Capture this external source into the project knowledge base as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
@@ -86,7 +91,12 @@ export const DESCRIPTION = [
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 
-export function register(server: ServerInstance, config: Config): void {
+interface IngestDeps {
+  config: ConfigOrResolver;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: IngestDeps): void {
   // previewUrl is null per FR-2.1: ingest is a workflow primer keyed on `source`
   // (URL or local file) — the target docName is chosen by the agent later during
   // Step 2 of the prompt. There is no single canonical document to preview at
@@ -95,8 +105,16 @@ export function register(server: ServerInstance, config: Config): void {
   server.tool(
     'ingest',
     DESCRIPTION,
-    { source: z.string().describe('URL, file path, or identifier of the source to ingest') },
-    (args: { source: string }) =>
-      textPlusStructured(buildBody(args.source, config.content.dir), { previewUrl: null }),
+    {
+      source: z.string().describe('URL, file path, or identifier of the source to ingest'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { source: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      return textPlusStructured(buildBody(args.source, context.config.content.dir), {
+        previewUrl: null,
+      });
+    },
   );
 }

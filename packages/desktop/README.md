@@ -6,7 +6,7 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 — dev loop, local, unsigned. `bun run --filter=@inkeep/open-knowledge-desktop dev` launches the app end-to-end on macOS with Hocuspocus running in a utility process. M2 (signing + notarization + DMG) onwards is deferred; see SPEC §14 for the milestone plan and the spec's `meta/_changelog.md` for the scope calibration that landed M1 in isolation.
+M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. See SPEC §14 for M3–M7.
 
 ## Process model
 
@@ -53,7 +53,8 @@ packages/desktop/
 │   │   ├── window-manager.ts      # createProjectWindow — spawns BrowserWindow + utility
 │   │   ├── navigator-window.ts    # createNavigatorWindow — persistent launcher
 │   │   ├── state-store.ts         # electron-store for recents + window bounds
-│   │   └── shell-allowlist.ts     # shell.openExternal scheme allowlist (D47)
+│   │   ├── shell-allowlist.ts     # shell.openExternal scheme allowlist (D47 + Open-in-Agent)
+│   │   └── ipc-handlers.ts        # pure handlers: detect-protocol, spawn-cursor, record-handoff
 │   ├── preload/
 │   │   └── index.ts               # contextBridge.exposeInMainWorld('okDesktop', ...)
 │   ├── utility/
@@ -99,13 +100,26 @@ Agents never set this — they want the full env. Add it to your shell profile i
 Every renderer↔main call goes through the typed channel map in `src/shared/ipc-channels.ts` (requests) or `src/shared/ipc-events.ts` (events). **Never call `ipcMain.handle` or `ipcRenderer.invoke` directly** — use `createHandler` / `createInvoker`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` (configured at the repo root, D19) fails lint on violations.
 
 File-scoped allowlist for direct IPC access (the wrapper implementations themselves):
+
 - `src/shared/ipc-handler.ts`
 - `src/shared/ipc-invoke.ts`
 - `src/preload/index.ts`
 
 Subscription methods on the bridge (`onProjectSwitched`, `onMenuAction`, etc.) **must** use the preload-side listener-wrapper pattern — the contextBridge wraps callbacks, so passing the renderer's callback reference directly to `ipcRenderer.removeListener` silently fails ([electron/electron#33328](https://github.com/electron/electron/issues/33328)). The existing bridge in `src/preload/index.ts` is the reference.
 
-`shell.openExternal` is proxied through main with an explicit scheme allowlist (`https | http | mailto | openknowledge`) per D47 to close the Shabarkin 2022 "1-click RCE" class via OS-native schemes. Adding a new scheme requires editing `src/main/shell-allowlist.ts` and updating its test.
+`shell.openExternal` is proxied through main with an explicit scheme allowlist (`https | http | mailto | openknowledge | claude | codex | cursor`) per D47 + the [[specs/2026-04-21-open-in-agent-desktop/SPEC|Open-in-Agent extension]] to close the Shabarkin 2022 "1-click RCE" class via OS-native schemes. Adding a new scheme requires editing `src/main/shell-allowlist.ts` and updating its exact-set test. The drift-detector test in `tests/main/shell-allowlist.test.ts` imports `KNOWN_TARGETS` from `packages/app/src/lib/handoff/targets.ts` and fails if a target's scheme is not covered by `ALLOWED_SCHEMES`.
+
+## Open-in-Agent IPC channels
+
+Three channels added for the [[Open in Agent Desktop|Open-in-Agent]] handoff feature (SPEC `2026-04-21-open-in-agent-desktop`). Handlers are pure injectable functions in `src/main/ipc-handlers.ts` (registered from `main/index.ts`, the only file on the D19 direct-IPC allowlist). The same channels are mirrored in `src/shared/bridge-contract.ts` and `packages/core/src/desktop-bridge.ts` so the typed `window.okDesktop.shell.*` surface stays in sync via the contract-equality integration test.
+
+| Channel                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ok:shell:detect-protocol` | Probe whether `<scheme>://` has a registered handler. macOS + Windows use `app.getApplicationInfoForProtocol` (2 s timeout); Linux falls back to `xdg-mime query default x-scheme-handler/<scheme>` because the Electron API is mac+win only. Returns `{ installed, displayName? }`; any failure collapses to `{ installed: false }`.                                                                                                                                                                                          |
+| `ok:shell:spawn-cursor`    | Step 1 of Cursor's two-step handoff — spawn `cursor <projectDir>` so the workspace is open before the `cursor://` prompt URL fires. Binary resolution prefers `getApplicationInfoForProtocol('cursor://').path`, falls back to `which cursor` / `where cursor` (500 ms budget). Spawn uses argv array + `shell: false` + 2 s timeout. Deliberately a separate channel from `ok:shell:open-external` — the threat model is command allowlisting with argument-injection + PATH-hijacking concerns, not URL-scheme allowlisting. |
+| `ok:shell:record-handoff`  | Append one JSONL line per dispatch to `~/.open-knowledge/stats.jsonl`. Local-only telemetry; failures are logged and swallowed so dispatch never depends on telemetry success. Zero network. Named under the `ok:shell:*` namespace to match the `shell.recordHandoff` bridge location.                                                                                                                                                                                                                                        |
+
+The Cursor two-step step 1 is wired on the Electron host only — the web host renders the Cursor row disabled-with-tooltip ("Cursor handoff requires the desktop build") per E4 DIRECTED. Claude and Codex dispatch via `ok:shell:open-external` with the URL builders in `packages/core/src/handoff/`.
 
 ## Lifecycle primitives
 
@@ -120,19 +134,203 @@ The editor renderer is the existing `packages/app/` Vite bundle, loaded through 
 
 ## Testing
 
-| File | What it covers |
-|---|---|
-| `tests/integration/m1-smoke.test.ts` | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release |
-| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code |
-| `tests/main/shell-allowlist.test.ts` | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
-| `tests/main/state-store.test.ts` | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery |
-| `tests/main/window-manager.test.ts` | Spawning + tracking + collision-dialog dispatch |
-| `tests/preload/bridge.test.ts` | `window.okDesktop` config parsing, subscription wrapper correctness |
-| `tests/utility/server-entry.test.ts` | IPC handshake, graceful shutdown drain, parent-death exit |
-| `tests/unit/scaffold.test.ts` | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop |
+| File                                                         | What it covers                                                                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `tests/integration/m1-smoke.test.ts`                         | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release         |
+| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
+| `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
+| `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
+| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch                                                                     |
+| `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
+| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit                                                           |
+| `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
 
 Run the full gate from the repo root (`bun run check`) or scope to this package with `cd packages/desktop && bun test`.
 
+## M2 — signed/notarized DMG build
+
+### Local smoke (unsigned, no creds needed)
+
+**Prereqs.** `bun install` at the repo root installs the new `@electron/fuses` + `@electron/notarize` devDeps. The CLI's `build:assets` script copies `packages/app/dist/` → `packages/cli/dist/public/` (consumed by `electron-builder.yml`'s `extraResources` rule), but the CLI doesn't declare its app workspace dep in `package.json` — so turbo's `^build` doesn't build the app first. Build in explicit order:
+
+```bash
+bun install
+bun run --filter=@inkeep/open-knowledge-app build
+bun run --filter=@inkeep/open-knowledge build
+cd packages/desktop
+bunx electron-builder --mac --arm64 -c.mac.identity=null   # arm64-only smoke, see below
+```
+
+`afterPack.mjs` flips the six spec-§8.9 fuses; `afterSign.mjs` logs `skipping notarize — no Apple credentials in env` and exits clean. Verify the packaged binary:
+
+```bash
+bunx --bun electron-fuses read --app "dist-desktop/mac-arm64/Open Knowledge.app"
+```
+
+Expected output matches `targetFuses` in `scripts/target-fuses.mjs` (shared source of truth imported by both `afterPack.mjs` and `afterSign.mjs`): RunAsNode=Disabled, EnableCookieEncryption=Enabled, EnableNodeOptionsEnvironmentVariable=Disabled, EnableNodeCliInspectArguments=Enabled, EnableEmbeddedAsarIntegrityValidation=Enabled, OnlyLoadAppFromAsar=Enabled.
+
+Install smoke: `open dist-desktop/*.dmg`, drag to Applications, `xattr -cr "/Applications/Open Knowledge.app"` to clear the quarantine bit, launch. The app is ad-hoc signed (`codesign -dv` reports `Signature=adhoc`) — Gatekeeper-runnable locally, unusable by anyone else (the proper Developer-ID sign comes from `CSC_LINK`).
+
+### ⚠ Universal DMG + bun workspace: known gap
+
+`build:mac` / `build:mac:unsigned` (without `--arm64`) target a **Universal DMG** per spec D29 (single download, arm64 + x64 merged). Today this fails in our bun workspace during `@electron/universal.makeUniversalApp` with:
+
+> Detected file `Contents/Resources/app.asar.unpacked/node_modules/@napi-rs/keyring-darwin-arm64/keyring.darwin-arm64.node` that's the same in both x64 and arm64 builds and not covered by the x64ArchFiles rule
+
+**Root cause:** `@napi-rs/keyring` ships arch-specific prebuilt binaries via optionalDependencies. Bun only installs the host arch's variant (`@napi-rs/keyring-darwin-arm64` on an M-series Mac), never the x64 variant. When electron-builder packs both arches for the universal merge, both arch-specific temp dirs contain the same arm64 `.node` file — `@electron/universal`'s SHA-parity check then refuses the merge because arch-specific binaries shouldn't be bit-identical. **`@parcel/watcher` is at lower risk** because `@electron/rebuild` compiles it from source per-arch during electron-builder's rebuild step; the prebuilt-binary pattern on `@napi-rs/keyring` is what trips the merge.
+
+**Fix (follow-up, not M2 scaffolding scope):** force-install both darwin-arm64 and darwin-x64 keyring prebuilt binaries before `build:mac`. Options: `bun add -D --filter=@inkeep/open-knowledge-desktop @napi-rs/keyring-darwin-arm64@1.2.0 @napi-rs/keyring-darwin-x64@1.2.0` (pollutes package.json), or a `scripts/prepare-universal.mjs` that extracts the tarballs into `node_modules/@napi-rs/` without recording them in package.json. The second is cleaner. Either way this lands separately — the M2 scaffolding in this PR already does its job (fuses + signing + notarization hooks), and the universal-merge issue is a pre-existing bun+workspace gap that would have blocked M1's `build:dir` too if anyone had run it.
+
+**Workaround today:** use `--arm64` or `--x64` alone for local smoke; the CI workflow will hit the same universal blocker and needs the follow-up fix before it can produce a real universal DMG.
+
+### Local signed build (requires creds)
+
+Export all five env vars, then run `bun run build:mac`:
+
+```bash
+export CSC_LINK="$(base64 -i ./developer-id.p12)"   # .p12 cert + private key
+export CSC_KEY_PASSWORD='<p12-password>'
+export APPLE_ID='you@example.com'
+export APPLE_APP_SPECIFIC_PASSWORD='xxxx-xxxx-xxxx-xxxx'   # appleid.apple.com → sign in & security
+export APPLE_TEAM_ID='ABCDE12345'                    # developer.apple.com/account
+bun run build:mac
+```
+
+`afterSign.mjs` runs `@electron/notarize` (which staples on success), `xcrun stapler validate`, then `@electron/fuses.getCurrentFuseWire` and asserts every fuse matches `afterPack.mjs`'s `targetFuses` map. Any mismatch fails the build loud (D17).
+
+Alternative credentials: App Store Connect API key — set `APPLE_API_KEY` (path to `.p8`) + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` instead of the APPLE\_ID triplet. The afterSign script auto-detects which shape is present.
+
+### CI
+
+`.github/workflows/desktop-build.yml` (manual `workflow_dispatch` for this iteration) runs the same flow on a `macos-14` runner and uploads the DMG + `latest-mac.yml` as a 14-day artifact. The workflow detects signing mode from `CSC_LINK`'s presence and routes accordingly — `build:mac` when set, `build:mac:unsigned` when absent — and encodes the mode in the artifact name (`open-knowledge-macos-signed-<sha>` vs `open-knowledge-macos-unsigned-<sha>`) so downstream consumers cannot confuse the two. Wire the five secrets at Settings → Secrets to upgrade from unsigned smoke to full signed+notarized output. Path-gated `pull_request` trigger is deferred until the signed path has been green at least once.
+
+Partial Apple credentials (e.g. `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` set but `APPLE_TEAM_ID` omitted) now **fail loud** in `afterSign.mjs` rather than silently skipping notarize. Silent skip only happens when zero notarize credentials are present, which is paired with the explicit `build:mac:unsigned` invocation from the workflow.
+
+### M2 DOD checklist
+
+- [x] Universal DMG target (D29) wired in `electron-builder.yml` (`mac.target.arch: [universal]`, fuse-flip + notarize hooks).
+- [ ] **(follow-up)** Universal DMG merge produces a valid DMG end-to-end. Blocked by `@napi-rs/keyring` single-arch install under bun — configured, not yet green. See ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) above.
+- [x] `afterPack` flips fuses per spec §8.9 (D17); verified on packaged arm64 binary via `electron-fuses read`.
+- [x] `afterSign` invokes `@electron/notarize` + `xcrun stapler validate` + `@electron/fuses.getCurrentFuseWire` verification; graceful-skip on absent creds smoke-tested.
+- [x] Hardened runtime + entitlements applied (unchanged from M1 — already matches spec).
+- [x] CI workflow structure in place; artifact upload on success.
+- [ ] **(creds-gated)** Fresh-Mac install of signed DMG: drag to `/Applications`, open, **no Gatekeeper warning**, M1 dev loop works end-to-end in packaged mode.
+- [ ] **(creds-gated)** First-launch Keychain prompt shows `CFBundleDisplayName` correctly (R16).
+
+## M3 — Auto-update (electron-updater + install-on-quit)
+
+**Status:** Scaffolding shipped; end-state smoke deferred to post-M2-creds + universal-merge fix.
+
+**Spec:** [`specs/2026-04-21-m3-electron-updater/SPEC.md`](../../specs/2026-04-21-m3-electron-updater/SPEC.md). See the parent spec [`specs/2026-04-11-electron-desktop-app/SPEC.md`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) §14 for the milestone definition.
+
+M3 wires [electron-updater](https://www.electron.build/auto-update) into the main process behind the `app.isPackaged` gate. The update path is: `autoUpdater.checkForUpdatesAndNotify()` → GitHub Releases CDN (`releases/latest/download/latest-mac.yml`) → auto-download of the `.zip` → `update-downloaded` event → renderer Toast A (`"Update downloaded"` + `"Relaunch now"`) → install on next quit via `autoInstallOnAppQuit = true`.
+
+### Runtime dependency
+
+`electron-updater` is pinned exact (no caret) as a runtime `dependencies` entry of `@inkeep/open-knowledge-desktop` — see `package.json`. Version paired with `electron-builder@^26.9.0` via shared `builder-util-runtime`; upgrade only as a coupled pair.
+
+### Main-process entry point
+
+- [`src/main/auto-updater.ts`](src/main/auto-updater.ts) — exports `startAutoUpdater(opts): { destroy }`. Every time + Electron + state surface is injectable so unit tests drive all paths under `bun test` without an Electron runtime.
+- [`src/main/index.ts`](src/main/index.ts) — calls `startAutoUpdater(...)` as the last step in `app.whenReady().then(...)` (after the window-open branch, not gated on which window opened per F2); tears down on `app.on('will-quit')` per parent D40 canonical shutdown ordering.
+
+Six `autoUpdater` events subscribed (AC2): `checking-for-update`, `update-available`, `update-not-available`, `download-progress` (debug-level log only), `update-downloaded`, `error`. NOT subscribed: `login`, `update-cancelled`, `appimage-filename-updated`.
+
+Four AppState fields persisted in [`src/main/state-store.ts`](src/main/state-store.ts):
+- `versionPendingInstall: string | null` — Toast A once-per-version gate (D11).
+- `lastSeenVersion: string | null` — Toast B once-per-version-transition gate (D9/D11).
+- `lastSuccessfulCheckAt: string | null` — D12 stuck-hint 7-day counter baseline.
+- `stuckHintShown: boolean` — D12 Toast C once-per-installation flag (resets on successful check so gate re-arms).
+
+### IPC surface
+
+Three main→renderer push events (in `src/shared/ipc-events.ts` `EventChannels`):
+- `ok:update:downloaded` `{ version }` → Toast A in renderer.
+- `ok:update:whats-new` `{ version, releaseUrl }` → Toast B in renderer.
+- `ok:update:stuck-hint` `{ downloadUrl }` → Toast C in renderer.
+
+One renderer→main request (in `src/shared/ipc-channels.ts` `RequestChannels`):
+- `ok:update:relaunch-now` → main calls `autoUpdater.quitAndInstall()` (Toast A action).
+
+All four new channels exposed on `window.okDesktop` via the triple-copy bridge contract (core/desktop/app per CLAUDE.md deliberate-duplication). Added `createSender()` typed wrapper to `src/shared/ipc-events.ts` — the third IPC wrapper alongside `createHandler` / `createInvoker`; main→renderer fan-out is type-checked against `EventChannels`.
+
+### Dev-mode smoke
+
+Three verification tiers per SPEC §7 D4:
+
+| Tier | Where | What it exercises |
+|------|-------|-------------------|
+| 1 — unit | `tests/integration/auto-updater.test.ts` | 6 events + error classification + Toast gates + IPC handlers — FakeUpdater event-stub, no Electron runtime. 51 tests, ~40ms. |
+| 2 — HTTP smoke | `scripts/smoke-mock-update.mjs` (pure node) | `GenericProvider` HTTP plumbing: `latest-mac.yml` + fake `.zip` with valid sha512 served on `127.0.0.1:<ephemeral>`. Self-tests via its own `fetch`. |
+| 3 — end-state (post-creds) | `packages/desktop/build/dev-app-update.yml` + `forceDevUpdateConfig=true` | `GitHubProvider` URL resolution against a staged pre-release tag. Canonical approach per [electron.build/auto-update](https://www.electron.build/auto-update); runs only after M2 creds procurement. |
+
+Run Tier 2 in isolation:
+
+```bash
+bun run --cwd packages/desktop smoke:mock-update
+# Prints: [mock-updater] port=<N> ...
+# Serves /latest-mac.yml + /open-knowledge-mock.zip, self-tests, exits 0.
+```
+
+Tier 2 paired with a dev Electron build (full round-trip short of the Squirrel.Mac swap):
+
+1. Terminal A: `bun run --cwd packages/desktop smoke:mock-update`. Note the printed port.
+2. Write `packages/desktop/dev-app-update.yml`:
+
+   ```yaml
+   provider: generic
+   url: http://localhost:<N>
+   ```
+
+3. Terminal B: `OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev`.
+4. Electron's main-process auto-updater (with `OK_UPDATER_FORCE_DEV=1` bypassing the `!app.isPackaged` guard, and `forceDevUpdateConfig=true` causing the feed to be read from `dev-app-update.yml`) hits the local server, downloads the fake zip, fires `update-downloaded`. Renderer Toast A renders.
+
+### Cutting a release
+
+1. `bun changeset` on a feature branch — declare a minor/patch bump for `@inkeep/open-knowledge-desktop` (and any other fixed-group packages touched).
+2. Merge the branch into main. Changesets' release bot opens a "Version Packages" PR that bumps all fixed-group versions lockstep (D7).
+3. Merge the "Version Packages" PR. `release.yml` fires on push-to-main, runs quality gates, publishes npm packages, then runs `gh release create "v${VERSION}"` with the generated notes.
+4. `desktop-release.yml` fires on the `release: published` event. Runs signed build + notarize + staple + fuse-verify on `macos-14`, then `electron-builder --publish always` uploads `.dmg`, `.dmg.blockmap`, `-mac.zip`, `-mac.zip.blockmap`, and `latest-mac.yml` to the existing Release.
+5. Users auto-update on next launch or within 1 hour via the periodic interval (D10 — matches Obsidian's hourly cadence).
+
+Required secrets for `desktop-release.yml` (same set as `desktop-build.yml`): `CSC_LINK`, `CSC_KEY_PASSWORD`, and one of the Apple notarization triples — `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, OR `APPLE_API_KEY` + `APPLE_API_KEY_ID` [+ `APPLE_API_ISSUER`]. Unsigned mode is rejected — `auto-update` refuses unsigned upgrades.
+
+### Unsigned local smoke — M2 universal-merge workaround
+
+Because `packages/desktop/build:mac:unsigned` defaults to `mac.target.arch: [universal]` and the M2 FU-1 `@napi-rs/keyring` SHA-parity issue still blocks Universal merge, the per-arch workaround is the working unsigned path:
+
+```bash
+cd packages/desktop
+bun run build:desktop
+CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac dmg:arm64 zip:arm64 -c.mac.identity=null
+```
+
+Produces `.dmg` + `.dmg.blockmap` + `-mac.zip` + `-mac.zip.blockmap` + `latest-mac.yml` under `dist-desktop/`. Worth noting: the `--arm64` CLI flag alone does NOT override `mac.target.arch: [universal]` — it ADDS `arm64`, so electron-builder tries both and re-triggers the universal-merge blocker. The `dmg:arm64 zip:arm64` target-shorthand form bypasses the YAML-default arch list entirely.
+
+### Debugging J7a failures
+
+M3's [`auto-updater.ts`](src/main/auto-updater.ts) emits structured bracket-prefixed logs (`[updater] event ...`) per CLAUDE.md's logging convention. For classified errors (`ERR_UPDATER_*` / `HTTP_ERROR_*`), the log payload is `{ code, message, timestamp }`; for unclassified (bare Squirrel.Mac `Error`), it's `{ message, stack, timestamp }`. Both paths are silent to the user per D5 — no dialog, no per-error toast.
+
+In production: find logs via Console.app filtered by the app's PID, or in `app.getPath('logs')` when writing a file logger. The one user-visible signal is Toast C (D12 stuck-hint), which fires exactly once per installation after 7 consecutive calendar days without a successful update check.
+
+Real-world error telemetry (Sentry integration) is deferred to FW5 — promote when M7 design-partner builds start generating real-world error rates.
+
+### Promote triggers (FW1a, FW2–FW6)
+
+- **FW1a** — Promote Toast B copy from bare version string + link to GitHub Release body fetch. Trigger: user asks to see release notes in-app OR reports bare-string as insufficient.
+- **FW2** — Staged rollouts via `stagingPercentage` in `latest-mac.yml`. Trigger: first real update cycle completes successfully end-to-end.
+- **FW3** — Beta channel. Trigger: more than one concurrent user-facing version line (dogfood vs stable).
+- **FW4** — Auto-rollback on crash loop. Trigger: first user-reported "update broke the app" incident.
+- **FW5** — Sentry / crash-reporter integration for update-error telemetry. Trigger: M7 design-partner builds start.
+- **FW6** — Windows / Linux auto-update. Trigger: parent D51 macOS-only constraint is lifted.
+
+### Known deferrals (creds-gated)
+
+- **AC15** — Real `v{X}` → `v{X+1}` silent upgrade on a fresh Mac. Blocked on Apple Developer Program creds + `@napi-rs/keyring` universal-merge fix.
+- **AC16** — Failed-update smoke (J7a): kill updater mid-download → next launch retries cleanly. Blocked on same creds set.
+
+Both verified once M2 FU-1 + FU-2 close and the first signed DMG lands. Workflow files (`desktop-release.yml`) are committed and lint-validated; dispatch path is gated on creds.
+
 ## Scope boundary
 
-This package is M1 only. Work that belongs to M2–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not expand `electron-builder.yml` into signed-build territory, do not wire `electron-updater`, do not register the `openknowledge://` protocol, do not implement the CLI-on-PATH menu item, and do not populate the MCP first-launch consent dialog until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3-auto-update-scaffolding. Work that belongs to M4–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the `openknowledge://` protocol handler (M4), do not implement the CLI-on-PATH menu item (M6), and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.

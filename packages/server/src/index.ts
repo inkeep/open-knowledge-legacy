@@ -68,32 +68,6 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
-  buildWipTree,
-  type CheckpointGcResult,
-  type CheckpointRetentionPolicy,
-  commitUpstreamImport,
-  commitWip,
-  commitWipFromTree,
-  DEFAULT_CHECKPOINT_RETENTION,
-  FILE_SYSTEM_WRITER,
-  GIT_UPSTREAM_WRITER,
-  gcCheckpointRefs,
-  type HistoryHandle,
-  type HistoryRef,
-  historyGit,
-  type InMemoryCheckpointParams,
-  initHistoryRepo,
-  listRescueCheckpoints,
-  type SafetyCheckpointParams,
-  type SaveVersionResult,
-  SERVICE_WRITER,
-  safetyCheckpoint,
-  saveInMemoryCheckpoint,
-  saveVersion,
-  type TimelineRescueEntry,
-  type WriterIdentity,
-} from './history-repo.ts';
-export {
   type AttachIdleShutdownOptions,
   attachIdleShutdown,
   type IdleShutdownHandle,
@@ -145,6 +119,11 @@ export {
   updateProcessLockPort,
 } from './process-lock.ts';
 export {
+  type EnsureProjectGitResult,
+  ensureProjectGit,
+  ProjectGitInitError,
+} from './project-git.ts';
+export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
   containsConflictMarkers,
@@ -170,6 +149,32 @@ export {
   OBSERVER_SYNC_ORIGIN,
   type PairedWriteOrigin,
 } from './server-observers.ts';
+export {
+  buildWipTree,
+  type CheckpointGcResult,
+  type CheckpointRetentionPolicy,
+  commitUpstreamImport,
+  commitWip,
+  commitWipFromTree,
+  DEFAULT_CHECKPOINT_RETENTION,
+  FILE_SYSTEM_WRITER,
+  GIT_UPSTREAM_WRITER,
+  gcCheckpointRefs,
+  type InMemoryCheckpointParams,
+  initShadowRepo,
+  listRescueCheckpoints,
+  type SafetyCheckpointParams,
+  type SaveVersionResult,
+  SERVICE_WRITER,
+  type ShadowHandle,
+  type ShadowRef,
+  safetyCheckpoint,
+  saveInMemoryCheckpoint,
+  saveVersion,
+  shadowGit,
+  type TimelineRescueEntry,
+  type WriterIdentity,
+} from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   acquireUiLock,
