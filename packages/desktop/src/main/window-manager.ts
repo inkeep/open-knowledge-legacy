@@ -186,9 +186,16 @@ export class WindowManager {
 
   constructor(private readonly deps: WindowManagerDeps) {}
 
-  /** Read-only snapshot for tests + the J7b dialog handler. */
+  /**
+   * Read-only snapshot for tests + the J7b dialog handler. Canonicalizes the
+   * input via `path.resolve` — matches the key shape used when
+   * `createProjectWindow` stores entries in `windowsByPath`. Without this,
+   * callers that pass a non-resolved path (e.g. a path from `process.argv`
+   * that contains `./` or `/..` segments) get `undefined` even when the
+   * window actually exists. Symmetric with `focusWindowForProject`.
+   */
   getWindowFor(projectPath: string): ProjectContext | undefined {
-    return this.windowsByPath.get(projectPath);
+    return this.windowsByPath.get(resolve(projectPath));
   }
 
   /**

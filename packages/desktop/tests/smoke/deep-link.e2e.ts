@@ -57,6 +57,22 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     `Main build missing at ${MAIN_ENTRY} — run "bun run build:desktop" first.`,
   );
 
+  // Explicit visibility of the coverage gap — appears in test-run output as
+  // a named skip so the missing coverage can't be overlooked when scanning
+  // CI logs. See file-level comment for the full rationale (signed DMG +
+  // Launch Services binding required). Tracked alongside M2 packaged-build
+  // harness per the same file-level rationale.
+  test.skip('cold-start Apple-Event delivery — deferred until signed DMG enables Launch Services binding', () => {
+    // Intentionally empty. Implementation requires:
+    //   1. Signed + notarized DMG so macOS Launch Services binds
+    //      `openknowledge://` to this bundle instead of the generic
+    //      Electron shell.
+    //   2. A harness that fires `open openknowledge://...` against a
+    //      not-yet-running installed .app (i.e. no `_electron.launch`
+    //      pre-boot) and asserts the queue-then-flush path catches the
+    //      Apple Event that fires before `whenReady`.
+  });
+
   test('open(1) shell-out post-launch updates renderer hash to target doc', async () => {
     // Seed a temp project with a real .open-knowledge/ + target doc so the
     // window-manager spawn path can boot an editor window for it.

@@ -80,6 +80,19 @@ describe('installDeepLinkListener (M4 US-007)', () => {
     expect(setHash.mock.calls[0]?.[0]).toBe('#/My%20Doc%20%E2%80%94%202026.md');
   });
 
+  test('URL-encodes nested doc names (round-trips via docNameFromHash)', () => {
+    // Nested docNames are the common MCP producer shape. The deep-link parser
+    // hands us `docs/a` after URL-decoding the query param; we encode the
+    // WHOLE string with encodeURIComponent so that `/` becomes `%2F`. The
+    // consumer `docNameFromHash` (packages/app/src/lib/doc-hash.ts) splits on
+    // `/` then decodes each segment, reconstructing `docs/a` cleanly.
+    const bridge = makeBridge();
+    const setHash = mock(() => {});
+    installDeepLinkListener({ bridge, setHash });
+    bridge.fireDeepLink({ doc: 'notes/meeting-2026' });
+    expect(setHash.mock.calls[0]?.[0]).toBe('#/notes%2Fmeeting-2026');
+  });
+
   test('returns bridge unsubscribe so callers can detach on teardown', () => {
     const detach = mock(() => {});
     const bridge = makeBridge({

@@ -526,192 +526,219 @@ function installLocalhostCorsInjector() {
   );
 }
 
-// URL-scheme handler (M4) — register BEFORE `whenReady` so macOS cold-start
-// `open-url` Apple Events are caught even if they fire before the ready hook.
-// Listener registration is synchronous; the actual routing defers URLs into a
-// queue and drains them after `whenReady` + the first BrowserWindow exists.
-// Also wires `second-instance` for CLI / dev invocations that deliver the URL
-// via argv rather than Apple Events.
-registerProtocolHandler({
-  app: {
-    on: (event, cb) => {
-      // electron's `app.on` is overloaded — inject our typed shape by casting at
-      // the call site. The `url-scheme` module owns the narrowing; this is just
-      // the dispatch plumbing.
-      app.on(event as Parameters<typeof app.on>[0], cb as Parameters<typeof app.on>[1]);
+// Single-instance lock (M4) — required for `app.on('second-instance')` to
+// fire AND to prevent a duplicate OK.app launch from racing state.json +
+// server.lock with the primary. A duplicate launch that carries an
+// `openknowledge://` URL in argv (`OK.app/Contents/MacOS/Open Knowledge
+// openknowledge://...`) relinquishes the lock; Electron then dispatches its
+// argv to the primary via the `second-instance` listener registered below.
+// If we fail to acquire the lock we ARE the duplicate — exit without
+// registering any of the boot-time handlers below.
+const GOT_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
+if (!GOT_SINGLE_INSTANCE_LOCK) {
+  app.quit();
+}
+
+if (GOT_SINGLE_INSTANCE_LOCK) {
+  bootPrimaryInstance();
+}
+
+function bootPrimaryInstance(): void {
+  // URL-scheme handler (M4) — register BEFORE `whenReady` so macOS cold-start
+  // `open-url` Apple Events are caught even if they fire before the ready hook.
+  // Listener registration is synchronous; the actual routing defers URLs into a
+  // queue and drains them after `whenReady` + the first BrowserWindow exists.
+  // Also wires `second-instance` for CLI / dev invocations that deliver the URL
+  // via argv rather than Apple Events.
+  registerProtocolHandler({
+    app: {
+      on: (event, cb) => {
+        // electron's `app.on` is overloaded — inject our typed shape by casting at
+        // the call site. The `url-scheme` module owns the narrowing; this is just
+        // the dispatch plumbing.
+        app.on(event as Parameters<typeof app.on>[0], cb as Parameters<typeof app.on>[1]);
+      },
+      whenReady: () => app.whenReady(),
+      isPackaged: app.isPackaged,
+      setAsDefaultProtocolClient: (scheme) => app.setAsDefaultProtocolClient(scheme),
     },
-    whenReady: () => app.whenReady(),
-    isPackaged: app.isPackaged,
-    setAsDefaultProtocolClient: (scheme) => app.setAsDefaultProtocolClient(scheme),
-  },
-  focusWindowForProject: (projectPath) => {
-    if (!wm) return null;
-    return wm.focusWindowForProject(projectPath) as unknown as object | null;
-  },
-  openProject: async (projectPath) => {
-    await openProject(projectPath);
-    ensureWindowManager();
-    const ctx = wm.getWindowFor(projectPath);
-    if (!ctx) throw new Error(`openProject succeeded but no window found for ${projectPath}`);
-    return ctx.window as unknown as object;
-  },
-  sendDeepLink: (win, payload) => {
-    const w = win as BrowserWindowLike;
-    sendToRenderer(w.webContents, 'ok:deep-link', payload);
-  },
-  getAnyReadyWindow: () => {
-    const first = BrowserWindow.getAllWindows()[0];
-    return first ? (first as unknown as object) : null;
-  },
-  log: {
-    warn: (obj, msg) => console.warn(msg, obj),
-    info: (obj, msg) => console.info(msg, obj),
-  },
-});
-
-app.whenReady().then(async () => {
-  appState = loadAppState();
-  installLocalhostCorsInjector();
-  registerIpcHandlers();
-  refreshApplicationMenu();
-  installDockIcon();
-
-  // D3 revised: every project open spawns a NEW editor window. App boot
-  // restores the last-opened project (if any) into a fresh editor window OR
-  // opens the Navigator if the user holds Option at launch (or no last project).
-  const optionHeld = process.argv.includes('--navigator');
-  if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
-    void openProjectOrFallbackToNavigator(appState.lastOpenedProject);
-  } else {
-    openNavigator();
-  }
-
-  // M3 auto-updater — wired as the LAST step in whenReady, after the window-
-  // open branch (either openProjectOrFallbackToNavigator OR openNavigator).
-  // F2 audit: not gated on createNavigatorWindow specifically — Navigator
-  // only opens on the Option-held / no-last-project path, but the updater
-  // must run on every boot path. `electron-updater` is imported dynamically
-  // so unit tests that import main/index.ts indirectly don't pull in the
-  // Electron-only runtime dependency.
-  //
-  // Routed through `bootAutoUpdater` — a thin testable wrapper that
-  // centralizes the dynamic-import + startAutoUpdater try/catch contract
-  // (Review Pass 4 Major #5). A silent dynamic-import failure (bundling
-  // drift, corrupt node_modules, future Electron upgrade that desyncs the
-  // electron-updater version) would leave the app session un-updateable
-  // with no signal; the wrapper logs the failure at `error` level so
-  // operators see it in the packaged-app console output and returns null
-  // so `autoUpdaterHandle` stays null (destroy on will-quit no-ops).
-  autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
-    ipcMain,
-    readState: () => appState,
-    writeState: (next) => {
-      // Rollback in-memory on disk-save failure so persistSafely-false in
-      // auto-updater.ts truly means "no gate armed" (Review Pass 1
-      // Finding #1). `saveAppStateToDir` returns a success boolean — on
-      // failure it has already logged + cleaned up; we just revert the
-      // in-memory commit and throw so persistSafely's catch registers
-      // the failure, skips the broadcast, and leaves memory + disk
-      // agreeing on "nothing armed." `saveAppStateToDir` itself never
-      // throws, so the rollback path is reached purely via the return
-      // value.
-      const prev = appState;
-      appState = next;
-      const ok = saveAppState(appState);
-      if (!ok) {
-        appState = prev;
-        throw new Error('saveAppState failed — rolled back in-memory state');
+    focusWindowForProject: (projectPath) => {
+      if (!wm) return null;
+      return wm.focusWindowForProject(projectPath) as unknown as object | null;
+    },
+    openProject: async (projectPath) => {
+      // Use the Navigator-fallback path: on failure (bad path, git-init error,
+      // stale lock) the user sees a dialog and is returned to the Navigator
+      // rather than a silent "link doesn't work." Success path returns the
+      // BrowserWindow so the caller can dispatch `ok:deep-link`.
+      await openProjectOrFallbackToNavigator(projectPath);
+      const ctx = wm?.getWindowFor(projectPath);
+      if (!ctx) {
+        // The fallback ran — dialog shown, Navigator reopened. Return null so
+        // the caller's `sendDeepLink` is skipped.
+        return null;
       }
+      return ctx.window as unknown as object;
     },
-    // Target exactly one window per update event (D24 multi-window fix).
-    // Prefer the currently-focused window so the toast lands on the window
-    // the user is looking at; fall back to the first open window when none
-    // is focused (e.g., editor minimized); return null when no window is
-    // open so the broadcast helper no-ops.
-    getPrimaryWindow: () => {
-      const focused = BrowserWindow.getFocusedWindow();
-      if (focused) return focused;
-      const all = BrowserWindow.getAllWindows();
-      return all[0] ?? null;
+    sendDeepLink: (win, payload) => {
+      const w = win as BrowserWindowLike;
+      sendToRenderer(w.webContents, 'ok:deep-link', payload);
     },
-    getAppVersion: () => app.getVersion(),
-    isPackaged: app.isPackaged,
-    forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
-    // Tier-2 smoke override: point the updater at a local mock HTTP server
-    // that serves a hand-crafted `latest-mac.yml` + fake .zip with valid
-    // sha512. Production leaves this unset and reads `publish: github`
-    // from `app-update.yml`. Paired with `OK_UPDATER_FORCE_DEV=1` (above)
-    // so the `checkForUpdates()` gate actually hits the network in a dev
-    // build. See `packages/desktop/scripts/smoke-mock-update.mjs --keep-alive`
-    // for the server side.
-    feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
-    // Toast B renderer-mount race (Review Pass 4 Major #1 part B) —
-    // defer the dispatch until the primary window's renderer has
-    // finished loading so its `<UpdateToast/>` subscribers are
-    // attached. Without this, `webContents.send` sent from this very
-    // `app.whenReady()` handler is dropped on the floor (Electron does
-    // NOT buffer renderer-bound events before `did-finish-load`). If
-    // the primary window has already loaded by the time Toast B fires
-    // (rare — updater wires before loadURL resolves), fire immediately.
-    whenRendererReady: (fn) => {
-      // Three cases, all must deliver Toast B eventually because
-      // `lastSeenVersion` has already advanced at the call site and the
-      // AC7 contract ("user sees a toast on first launch post-update")
-      // does not allow silent-drop (Review Pass 5 Minor #3 — close the
-      // `lastSeenVersion`-advanced-but-broadcast-lost gap that the
-      // original Pass 4 Major #1 fix left open for the no-window race).
-      //
-      //   1. Window exists + already loaded → fire immediately.
-      //   2. Window exists + still loading  → wait for did-finish-load.
-      //   3. No window yet                  → wait for the next
-      //      `browser-window-created` event, then recurse into cases
-      //      1/2 against the fresh window.
-      //
-      // Electron emits `browser-window-created` synchronously inside
-      // `new BrowserWindow(opts)`; `once` self-detaches after the first
-      // firing so this listener can't leak across future spawns. If
-      // the user quits the app before any window ever opens (pathological
-      // — macOS doesn't dispatch Cmd+Q without a window), the listener is
-      // garbage-collected alongside the `app` object at process exit.
-      const tryFire = (win: BrowserWindow): void => {
-        if (win.webContents.isLoading()) {
-          win.webContents.once('did-finish-load', fn);
-        } else {
-          fn();
-        }
-      };
-      const focused = BrowserWindow.getFocusedWindow();
-      const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
-      if (existing) {
-        tryFire(existing);
-        return;
-      }
-      app.once('browser-window-created', (_event, createdWin) => {
-        tryFire(createdWin as BrowserWindow);
-      });
+    getAnyReadyWindow: () => {
+      const first = BrowserWindow.getAllWindows()[0];
+      return first ? (first as unknown as object) : null;
+    },
+    getInitialArgv: () => process.argv,
+    log: {
+      warn: (obj, msg) => console.warn(msg, obj),
+      info: (obj, msg) => console.info(msg, obj),
     },
   });
-});
 
-// F17 audit: cleared on `will-quit` (parent D40 canonical ordering — NOT
-// `before-quit`, which fires earlier in the shutdown sequence). The handle
-// is safe to call multiple times via `?.destroy()` in case of spurious
-// will-quit emissions.
-app.on('will-quit', () => {
-  autoUpdaterHandle?.destroy();
-  autoUpdaterHandle = null;
-});
+  app.whenReady().then(async () => {
+    appState = loadAppState();
+    installLocalhostCorsInjector();
+    registerIpcHandlers();
+    refreshApplicationMenu();
+    installDockIcon();
 
-app.on('window-all-closed', () => {
-  // macOS convention — keep app running so Dock icon click can re-open Navigator.
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+    // D3 revised: every project open spawns a NEW editor window. App boot
+    // restores the last-opened project (if any) into a fresh editor window OR
+    // opens the Navigator if the user holds Option at launch (or no last project).
+    const optionHeld = process.argv.includes('--navigator');
+    if (appState.lastOpenedProject && !optionHeld && existsSync(appState.lastOpenedProject)) {
+      void openProjectOrFallbackToNavigator(appState.lastOpenedProject);
+    } else {
+      openNavigator();
+    }
 
-app.on('activate', () => {
-  // macOS Dock icon click while no windows visible — re-open Navigator.
-  if (BrowserWindow.getAllWindows().length === 0) {
-    openNavigator();
-  }
-});
+    // M3 auto-updater — wired as the LAST step in whenReady, after the window-
+    // open branch (either openProjectOrFallbackToNavigator OR openNavigator).
+    // F2 audit: not gated on createNavigatorWindow specifically — Navigator
+    // only opens on the Option-held / no-last-project path, but the updater
+    // must run on every boot path. `electron-updater` is imported dynamically
+    // so unit tests that import main/index.ts indirectly don't pull in the
+    // Electron-only runtime dependency.
+    //
+    // Routed through `bootAutoUpdater` — a thin testable wrapper that
+    // centralizes the dynamic-import + startAutoUpdater try/catch contract
+    // (Review Pass 4 Major #5). A silent dynamic-import failure (bundling
+    // drift, corrupt node_modules, future Electron upgrade that desyncs the
+    // electron-updater version) would leave the app session un-updateable
+    // with no signal; the wrapper logs the failure at `error` level so
+    // operators see it in the packaged-app console output and returns null
+    // so `autoUpdaterHandle` stays null (destroy on will-quit no-ops).
+    autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
+      ipcMain,
+      readState: () => appState,
+      writeState: (next) => {
+        // Rollback in-memory on disk-save failure so persistSafely-false in
+        // auto-updater.ts truly means "no gate armed" (Review Pass 1
+        // Finding #1). `saveAppStateToDir` returns a success boolean — on
+        // failure it has already logged + cleaned up; we just revert the
+        // in-memory commit and throw so persistSafely's catch registers
+        // the failure, skips the broadcast, and leaves memory + disk
+        // agreeing on "nothing armed." `saveAppStateToDir` itself never
+        // throws, so the rollback path is reached purely via the return
+        // value.
+        const prev = appState;
+        appState = next;
+        const ok = saveAppState(appState);
+        if (!ok) {
+          appState = prev;
+          throw new Error('saveAppState failed — rolled back in-memory state');
+        }
+      },
+      // Target exactly one window per update event (D24 multi-window fix).
+      // Prefer the currently-focused window so the toast lands on the window
+      // the user is looking at; fall back to the first open window when none
+      // is focused (e.g., editor minimized); return null when no window is
+      // open so the broadcast helper no-ops.
+      getPrimaryWindow: () => {
+        const focused = BrowserWindow.getFocusedWindow();
+        if (focused) return focused;
+        const all = BrowserWindow.getAllWindows();
+        return all[0] ?? null;
+      },
+      getAppVersion: () => app.getVersion(),
+      isPackaged: app.isPackaged,
+      forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+      // Tier-2 smoke override: point the updater at a local mock HTTP server
+      // that serves a hand-crafted `latest-mac.yml` + fake .zip with valid
+      // sha512. Production leaves this unset and reads `publish: github`
+      // from `app-update.yml`. Paired with `OK_UPDATER_FORCE_DEV=1` (above)
+      // so the `checkForUpdates()` gate actually hits the network in a dev
+      // build. See `packages/desktop/scripts/smoke-mock-update.mjs --keep-alive`
+      // for the server side.
+      feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
+      // Toast B renderer-mount race (Review Pass 4 Major #1 part B) —
+      // defer the dispatch until the primary window's renderer has
+      // finished loading so its `<UpdateToast/>` subscribers are
+      // attached. Without this, `webContents.send` sent from this very
+      // `app.whenReady()` handler is dropped on the floor (Electron does
+      // NOT buffer renderer-bound events before `did-finish-load`). If
+      // the primary window has already loaded by the time Toast B fires
+      // (rare — updater wires before loadURL resolves), fire immediately.
+      whenRendererReady: (fn) => {
+        // Three cases, all must deliver Toast B eventually because
+        // `lastSeenVersion` has already advanced at the call site and the
+        // AC7 contract ("user sees a toast on first launch post-update")
+        // does not allow silent-drop (Review Pass 5 Minor #3 — close the
+        // `lastSeenVersion`-advanced-but-broadcast-lost gap that the
+        // original Pass 4 Major #1 fix left open for the no-window race).
+        //
+        //   1. Window exists + already loaded → fire immediately.
+        //   2. Window exists + still loading  → wait for did-finish-load.
+        //   3. No window yet                  → wait for the next
+        //      `browser-window-created` event, then recurse into cases
+        //      1/2 against the fresh window.
+        //
+        // Electron emits `browser-window-created` synchronously inside
+        // `new BrowserWindow(opts)`; `once` self-detaches after the first
+        // firing so this listener can't leak across future spawns. If
+        // the user quits the app before any window ever opens (pathological
+        // — macOS doesn't dispatch Cmd+Q without a window), the listener is
+        // garbage-collected alongside the `app` object at process exit.
+        const tryFire = (win: BrowserWindow): void => {
+          if (win.webContents.isLoading()) {
+            win.webContents.once('did-finish-load', fn);
+          } else {
+            fn();
+          }
+        };
+        const focused = BrowserWindow.getFocusedWindow();
+        const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
+        if (existing) {
+          tryFire(existing);
+          return;
+        }
+        app.once('browser-window-created', (_event, createdWin) => {
+          tryFire(createdWin as BrowserWindow);
+        });
+      },
+    });
+  });
+
+  // F17 audit: cleared on `will-quit` (parent D40 canonical ordering — NOT
+  // `before-quit`, which fires earlier in the shutdown sequence). The handle
+  // is safe to call multiple times via `?.destroy()` in case of spurious
+  // will-quit emissions.
+  app.on('will-quit', () => {
+    autoUpdaterHandle?.destroy();
+    autoUpdaterHandle = null;
+  });
+
+  app.on('window-all-closed', () => {
+    // macOS convention — keep app running so Dock icon click can re-open Navigator.
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+
+  app.on('activate', () => {
+    // macOS Dock icon click while no windows visible — re-open Navigator.
+    if (BrowserWindow.getAllWindows().length === 0) {
+      openNavigator();
+    }
+  });
+} // end bootPrimaryInstance

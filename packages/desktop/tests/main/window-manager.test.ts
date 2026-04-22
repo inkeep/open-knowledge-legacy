@@ -668,3 +668,23 @@ describe('WindowManager.focusWindowForProject (M4 URL-scheme warm-start)', () =>
     expect(wm.focusWindowForProject('/tmp/canon/.')).not.toBeNull();
   });
 });
+
+describe('WindowManager.getWindowFor — canonicalization symmetry with focusWindowForProject', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('returns the window when caller passes a non-canonical path', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/canon-get' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51300, apiOrigin: 'http://localhost:51300' });
+    const ctx = await p;
+
+    // Without canonicalization, `/tmp/canon-get/.` would not match the key
+    // `/tmp/canon-get` stored at spawn time — introducing an asymmetry with
+    // `focusWindowForProject` that already resolves its input.
+    expect(wm.getWindowFor('/tmp/canon-get/.')).toBe(ctx);
+  });
+});

@@ -6,9 +6,18 @@
  *     Electron import at module top, so unit tests exercise it without a real
  *     Electron runtime (precedent #4 — shared computation, per-surface render).
  *   - `registerProtocolHandler(deps)` — wires `app.on('open-url', ...)` +
- *     `app.on('second-instance', ...)` and implements the VS Code queue-then-
- *     flush pattern so macOS cold-start Apple Events that fire before
- *     `whenReady` are never lost.
+ *     `app.on('second-instance', ...)`, scans `process.argv` for cold-start
+ *     CLI-launch delivery, and implements the VS Code queue-then-flush
+ *     pattern so macOS cold-start Apple Events that fire before `whenReady`
+ *     are never lost.
+ *
+ * **Caller contract:** `app.requestSingleInstanceLock()` MUST be acquired by
+ * the caller BEFORE `registerProtocolHandler` runs. Without the lock, the
+ * `second-instance` event cannot fire (Electron only dispatches it on the
+ * primary when a secondary invocation relinquishes the lock), so the
+ * documented "CLI launch with argv delivery" path is silently dead. The
+ * current call site is `packages/desktop/src/main/index.ts`, gated on
+ * `GOT_SINGLE_INSTANCE_LOCK`.
  *
  * Validation layers (URL shape: `openknowledge://open?project=<abs>&doc=<name>`):
  *   1. Reject null bytes anywhere in the raw input (`\x00`, `%00`).
@@ -17,7 +26,13 @@
  *   4. `project` must be absolute AND must not contain `..` segments after
  *      `path.normalize()` — `path.resolve` would silently flatten `../../etc/x`
  *      to `/etc/x`, so we reject ANY `..` segment in the decoded path.
- *   5. `doc` must be a relative in-project name — reject `..`, `/`, `\`.
+ *   5. `doc` must be a relative in-project name — reject any `..` segment (so
+ *      `a/../b`, `../a`, and `..` all fail) and reject Windows `\` separators.
+ *      `/` IS allowed as a segment separator — nested docNames like
+ *      `notes/meeting-2026` are the common MCP producer shape (see
+ *      `packages/cli/src/mcp/tools/write-document.ts:31` + `preview-url.ts:183`),
+ *      and the renderer round-trips them cleanly via `encodeURIComponent(doc)`
+ *      + `docNameFromHash` (`packages/app/src/lib/doc-hash.ts:14`).
  *
  * URL shape LOCKED by the parent Electron spec D43. Changes require a
  * corrigendum there — this module is downstream of that contract.
@@ -79,14 +94,15 @@ export function parseOpenKnowledgeUrl(input: string): ParsedOpenKnowledgeUrl | n
   // safe gate is "does the raw string split on separators contain `..`."
   if (project.split(/[/\\]/).includes('..')) return null;
 
-  // `doc` must be a relative name inside the project — NOT a path. Reject any
-  // separator or `..` segment. (The renderer uses the doc to set `window.
-  // location.hash = '#/' + encodeURIComponent(doc)`; letting `/` or `..` in
-  // would break hash-route parsing and could also be used for XSS via the
-  // URL fragment.)
-  if (doc === '..' || doc.startsWith('../') || doc.includes('/') || doc.includes('\\')) {
-    return null;
-  }
+  // `doc` is a relative in-project name. Nested paths (`notes/meeting`) ARE
+  // allowed — the MCP `preview-url.ts` producer emits them via
+  // `encodeURIComponent(docName)`, and the renderer round-trips them through
+  // `encodeURIComponent` + `docNameFromHash`. Reject `..` segments (any
+  // position), Windows-style `\` separators, and leading `/` (which would
+  // be interpreted as an absolute path in unrelated downstream code).
+  if (doc.includes('\\')) return null;
+  if (doc.startsWith('/')) return null;
+  if (doc.split('/').includes('..')) return null;
 
   return {
     host: 'open',
@@ -111,8 +127,13 @@ export interface ProtocolHandlerDeps {
   };
   /** Resolve an existing BrowserWindow for a project path, or null. */
   focusWindowForProject(projectPath: string): BrowserWindowHandle | null;
-  /** Spawn a new window for a project path. Returns the BrowserWindowHandle. */
-  openProject(projectPath: string): Promise<BrowserWindowHandle>;
+  /**
+   * Spawn a new window for a project path. Returns `null` when the spawn
+   * failed AND the error has already been surfaced to the user (dialog,
+   * Navigator fallback) — the caller must skip downstream `sendDeepLink` so
+   * the failure isn't double-logged.
+   */
+  openProject(projectPath: string): Promise<BrowserWindowHandle | null>;
   /** Typed event dispatch — pushes `ok:deep-link` with the doc name. */
   sendDeepLink(win: BrowserWindowHandle, payload: { doc: string }): void;
   /**
@@ -121,6 +142,15 @@ export interface ProtocolHandlerDeps {
    * the first window is up would drop them into a void.
    */
   getAnyReadyWindow(): BrowserWindowHandle | null;
+  /**
+   * Initial `process.argv` snapshot for cold-start CLI-launch delivery. The
+   * handler scans argv once at registration time for `openknowledge://`
+   * entries; macOS packaged builds receive URLs via the `open-url` Apple
+   * Event, but direct-binary launches (`OK.app/Contents/MacOS/Open Knowledge
+   * openknowledge://...`) and dev-mode electron-vite launches deliver via
+   * argv. Defaults to `process.argv` when omitted; tests inject a stub.
+   */
+  getInitialArgv?: () => readonly string[];
   /** Test injection for `setTimeout`. Defaults to the global. */
   setTimeout?: (cb: () => void, ms: number) => unknown;
   /** Optional structured logger. */
@@ -164,7 +194,18 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
   // builds rely on `CFBundleURLTypes` from electron-builder.yml.
   if (!deps.app.isPackaged) {
     try {
-      deps.app.setAsDefaultProtocolClient('openknowledge');
+      // Per Electron docs `setAsDefaultProtocolClient` is non-throwing and
+      // returns `false` when the OS refused the binding (another app owns
+      // the scheme, sandboxing, permissions). Surface `false` as a warn —
+      // without it the only symptom is "dev deep-links silently reach the
+      // wrong instance," which burns hours to diagnose.
+      const ok = deps.app.setAsDefaultProtocolClient('openknowledge');
+      if (!ok) {
+        deps.log?.warn(
+          {},
+          '[url-scheme] setAsDefaultProtocolClient returned false — dev deep-links may not reach this instance',
+        );
+      }
     } catch (err) {
       deps.log?.warn(
         { err: (err as Error).message },
@@ -185,10 +226,15 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
       deps.sendDeepLink(existing, { doc: parsed.doc });
       return;
     }
-    // No existing window for this project → spawn a new one.
+    // No existing window for this project → spawn a new one. `openProject`
+    // returns `null` when the spawn failed AND the error was already surfaced
+    // to the user (dialog + Navigator fallback); in that case we skip
+    // `sendDeepLink` because there's no window to send to and the user has
+    // already seen why.
     void deps
       .openProject(parsed.project)
       .then((win) => {
+        if (!win) return;
         deps.sendDeepLink(win, { doc: parsed.doc });
       })
       .catch((err) => {
@@ -216,9 +262,11 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
   });
 
   // `second-instance` — fires when a duplicate process invocation is denied
-  // by `requestSingleInstanceLock`. CLI launches (`OK.app/Contents/MacOS/Open
-  // Knowledge openknowledge://...`) and dev launches carry the URL in argv
-  // rather than firing an Apple Event, so we scan argv here.
+  // by `requestSingleInstanceLock` (caller MUST acquire the lock in
+  // `main/index.ts` before `registerProtocolHandler` runs, or this listener
+  // is dead code — Electron only emits `second-instance` on the primary
+  // when the lock machinery is active). CLI launches and dev launches carry
+  // the URL in argv rather than firing an Apple Event.
   deps.app.on('second-instance', (_event, argv) => {
     for (const arg of argv) {
       if (typeof arg === 'string' && arg.startsWith('openknowledge://')) {
@@ -226,6 +274,21 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
       }
     }
   });
+
+  // Cold-start CLI-launch scan: on the primary instance's initial boot,
+  // `process.argv` is the delivery surface for direct-binary launches (the
+  // `second-instance` handler above only catches SECOND invocations). We
+  // scan argv once here, synchronously, so a user running
+  // `./OK.app/Contents/MacOS/Open\ Knowledge openknowledge://...` on a
+  // not-yet-running app gets the URL queued alongside any Apple-Event
+  // deliveries. Electron shell launches with no URL (the normal case)
+  // produce zero matches.
+  const initialArgv = deps.getInitialArgv ? deps.getInitialArgv() : [];
+  for (const arg of initialArgv) {
+    if (typeof arg === 'string' && arg.startsWith('openknowledge://')) {
+      enqueueOrRoute(arg);
+    }
+  }
 
   // Flush loop — after `whenReady`, wait for any BrowserWindow to be up
   // before draining the queue. URLs routed while the window manager is still

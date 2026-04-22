@@ -81,7 +81,7 @@ function makeEnv(opts?: { isPackaged?: boolean }): TestEnv {
   return {
     app: makeFakeApp(opts),
     focusWindowForProject: mock((p: string) => existingWindows.get(p) ?? null),
-    openProject: mock(async (p: string) => {
+    openProject: mock(async (p: string): Promise<FakeWindowHandle | null> => {
       const win: FakeWindowHandle = { id: `win-${p}` };
       existingWindows.set(p, win);
       if (!readyWindow) readyWindow = win;
@@ -140,6 +140,26 @@ describe('registerProtocolHandler — setAsDefaultProtocolClient', () => {
       setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
     });
     expect(env.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
+  });
+
+  test('logs a warn when setAsDefaultProtocolClient returns false', () => {
+    // Per Electron docs the method is non-throwing; `false` signals the OS
+    // refused the binding. Must surface as a warn so developers don't stare
+    // at "dev deep-links not working" without a breadcrumb.
+    const env = makeEnv({ isPackaged: false });
+    env.app.setAsDefaultProtocolClient = mock(() => false);
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    expect(warnLog).toHaveLength(1);
+    expect(warnLog[0]?.msg).toContain('returned false');
   });
 });
 
@@ -283,6 +303,31 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     expect(env.openProject).toHaveBeenCalledWith('/tmp/B');
     expect(env.sendDeepLink).toHaveBeenCalled();
   });
+
+  test('skips sendDeepLink when openProject resolves null (failure already surfaced)', async () => {
+    env.readyWindow = { id: 'primary' };
+    // Stub openProject to resolve null — simulates the Navigator-fallback
+    // path where the user already saw a dialog + the Navigator reopened.
+    const openProjectStub = mock(async (_p: string): Promise<FakeWindowHandle | null> => null);
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: openProjectStub,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/broken&doc=x.md');
+    await flushPromises();
+    await flushPromises();
+
+    expect(openProjectStub).toHaveBeenCalledWith('/tmp/broken');
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
 });
 
 describe('registerProtocolHandler — second-instance argv parsing', () => {
@@ -329,5 +374,70 @@ describe('registerProtocolHandler — second-instance argv parsing', () => {
 
     expect(env.openProject).not.toHaveBeenCalled();
     expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerProtocolHandler — cold-start process.argv scan', () => {
+  test('queues openknowledge:// URL from process.argv on cold-start CLI launch', async () => {
+    // Simulates: `OK.app/Contents/MacOS/Open\ Knowledge
+    // openknowledge://open?project=/tmp/cs&doc=a.md` — primary-instance boot
+    // where no prior app is running, so no Apple Event fires and no
+    // `second-instance` dispatch. The URL lives in `process.argv`.
+    const env = makeEnv();
+    env.readyWindow = { id: 'pre-existing' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      getInitialArgv: () => [
+        '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge',
+        'openknowledge://open?project=/tmp/cs&doc=a.md',
+      ],
+    });
+    env.app.resolveReady();
+    await flushPromises();
+    await flushPromises();
+
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/cs');
+  });
+
+  test('no-op when no openknowledge:// URLs in initial argv', async () => {
+    const env = makeEnv();
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      getInitialArgv: () => ['/path/to/electron', '/path/to/main.js', '--some-flag'],
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
+
+  test('defaults to no-op when getInitialArgv is omitted', async () => {
+    // Without the dep, the handler treats initial argv as empty — the
+    // production call site injects `() => process.argv`; unit tests that
+    // don't care about argv delivery simply omit it.
+    const env = makeEnv();
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    expect(env.openProject).not.toHaveBeenCalled();
   });
 });

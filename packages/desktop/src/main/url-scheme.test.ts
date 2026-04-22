@@ -27,12 +27,33 @@ describe('parseOpenKnowledgeUrl — valid inputs', () => {
     });
   });
 
-  test('accepts nested doc-names only when they are flat (no slashes)', () => {
-    // Doc names are in-project leafs — not paths. A `subdir/foo.md` shape is
-    // reserved for a future iteration that wants to carry hierarchy.
+  test('accepts flat doc-name', () => {
     expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=a_b-c.md')).toMatchObject({
       doc: 'a_b-c.md',
     });
+  });
+
+  test('accepts nested doc-name (common MCP producer shape)', () => {
+    // `preview-url.ts` (MCP) emits `doc=<encodeURIComponent(docName)>` where
+    // docName is routinely nested — `notes/meeting`, `docs/a`, etc. The
+    // parser MUST accept these or the entire MCP deep-link contract breaks.
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=docs%2Fa')).toMatchObject({
+      doc: 'docs/a',
+    });
+  });
+
+  test('accepts deeply nested doc-name', () => {
+    expect(
+      parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=deep%2Fnested%2Fpath%2Fhere.md'),
+    ).toMatchObject({ doc: 'deep/nested/path/here.md' });
+  });
+
+  test('accepts unicode in nested doc-name', () => {
+    expect(
+      parseOpenKnowledgeUrl(
+        'openknowledge://open?project=/abs&doc=notes%2F%E6%97%A5%E6%9C%AC%E8%AA%9E',
+      ),
+    ).toMatchObject({ doc: 'notes/日本語' });
   });
 });
 
@@ -118,17 +139,72 @@ describe('parseOpenKnowledgeUrl — path-traversal defense', () => {
     expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=..')).toBeNull();
   });
 
-  test('rejects slash in doc', () => {
-    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=sub/foo.md')).toBeNull();
+  test('rejects ".." segment inside nested doc (`a/../b`)', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=a%2F..%2Fb')).toBeNull();
+  });
+
+  test('rejects ".." at start of nested doc (`../foo`)', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=..%2Ffoo.md')).toBeNull();
+  });
+
+  test('rejects ".." at end of nested doc (`foo/..`)', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=foo%2F..')).toBeNull();
+  });
+
+  test('rejects leading slash in doc (absolute-path shape)', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=%2Ffoo.md')).toBeNull();
   });
 
   test('rejects backslash in doc (Windows-style separator)', () => {
     expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=sub\\foo.md')).toBeNull();
   });
 
+  test('rejects URL-encoded backslash in nested doc', () => {
+    expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=a%5Cb')).toBeNull();
+  });
+
   test('rejects URL-encoded ../ prefix in doc', () => {
     expect(
       parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=%2e%2e%2ffoo.md'),
     ).toBeNull();
+  });
+});
+
+/**
+ * Locks the producer/consumer contract with `packages/cli/src/mcp/tools/
+ * preview-url.ts` — the MCP helper emits
+ * `openknowledge://open?project=<encodeURIComponent(realpath)>&doc=<encodeURIComponent(docName)>`
+ * for ANY docName (flat, nested, unicode). The parser MUST accept every
+ * shape the producer emits, or deep-link routing silently fails for anything
+ * other than project-root docs. If a change here breaks round-trip, the
+ * MCP contract in preview-url.ts needs an accompanying breaking-change note.
+ */
+describe('parseOpenKnowledgeUrl — MCP producer/consumer round-trip', () => {
+  function buildProducerUrl(project: string, docName: string): string {
+    return `openknowledge://open?project=${encodeURIComponent(project)}&doc=${encodeURIComponent(docName)}`;
+  }
+
+  test.each([
+    'README',
+    'notes/meeting',
+    'docs/a',
+    'deeply/nested/path/here.md',
+    'with spaces/in name',
+    'unicode/日本語',
+    'punct/foo - bar',
+  ])('round-trips producer docName: %s', (docName: string) => {
+    const url = buildProducerUrl('/abs/project', docName);
+    const parsed = parseOpenKnowledgeUrl(url);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.doc).toBe(docName);
+    expect(parsed?.project).toBe('/abs/project');
+  });
+
+  test('producer-shape traversal attempts still rejected', () => {
+    // The producer never emits these, but belt-and-suspenders: simulate a
+    // malicious MCP client constructing the URL directly.
+    expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', 'a/../b'))).toBeNull();
+    expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', '../escape'))).toBeNull();
+    expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', '/absolute'))).toBeNull();
   });
 });
