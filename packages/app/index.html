@@ -17,15 +17,15 @@
   -->
   <script>
     (() => {
-          let mode = 'wysiwyg';
-          try {
-            const raw = localStorage.getItem('ok-editor-mode-v1');
-            if (raw === 'wysiwyg' || raw === 'source') mode = raw;
-          } catch {
-            // localStorage unavailable (privacy mode, quota, etc.) — fall through to default
-          }
-          window.__OK_EDITOR_MODE__ = mode;
-        })();
+              let mode = 'wysiwyg';
+              try {
+                const raw = localStorage.getItem('ok-editor-mode-v1');
+                if (raw === 'wysiwyg' || raw === 'source') mode = raw;
+              } catch {
+                // localStorage unavailable (privacy mode, quota, etc.) — fall through to default
+              }
+              window.__OK_EDITOR_MODE__ = mode;
+            })();
   </script>
 </head>
 
