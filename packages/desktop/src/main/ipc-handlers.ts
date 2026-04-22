@@ -18,7 +18,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import type { SpawnOutcome } from '../shared/ipc-channels.ts';
+import { join } from 'node:path';
+import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
 
 /** Two seconds is the product-tier budget for "detect one scheme" — SPEC §6.4. */
 export const DEFAULT_PROBE_TIMEOUT_MS = 2000;
@@ -216,4 +217,58 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   }
 
   return deps.spawn(binaryPath, path, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
+}
+
+/**
+ * Local-only telemetry sink (SPEC 2026-04-21 §5.1 / E5b). Append-only writer
+ * to `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent
+ * dispatch. Zero phone-home (XQ3 LOCKED).
+ */
+export interface RecordHandoffDeps {
+  /** `os.homedir()` — overridable in tests so a tmpdir stands in for `~`. */
+  readonly homedir: () => string;
+  /**
+   * Append the JSONL line to the stats file. Default wiring uses
+   * `fs.promises.appendFile` with utf-8 encoding. Errors thrown by this dep
+   * (EACCES / ENOSPC / read-only filesystem) are caught and logged — the
+   * caller's promise still resolves so dispatch is never affected.
+   */
+  readonly appendFile: (path: string, content: string) => Promise<void>;
+  /**
+   * Ensure the parent directory exists. Default wiring uses
+   * `fs.promises.mkdir(path, { recursive: true })`. Errors here are also
+   * caught (alongside append errors) and routed through `warn`.
+   */
+  readonly mkdir?: (path: string) => Promise<void>;
+  /** Diagnostic sink for failed appends. Defaults to `console.warn`. */
+  readonly warn?: (message: string) => void;
+}
+
+/** Path to the stats file relative to HOME. Centralized so tests can assert on it. */
+export const STATS_FILE_RELATIVE_PATH = ['.open-knowledge', 'stats.jsonl'] as const;
+
+/**
+ * Append one JSONL line to the local stats sink. Failure NEVER throws — a
+ * write error is logged via `warn` and the function resolves. Dispatch path
+ * is the only consumer; it must not depend on telemetry success.
+ */
+export async function recordHandoff(
+  deps: RecordHandoffDeps,
+  line: HandoffStatsLine,
+): Promise<void> {
+  const home = deps.homedir();
+  const dir = join(home, STATS_FILE_RELATIVE_PATH[0]);
+  const file = join(dir, STATS_FILE_RELATIVE_PATH[1]);
+  const json = `${JSON.stringify(line)}\n`;
+
+  const warn = deps.warn ?? ((m: string) => console.warn(m));
+  try {
+    if (deps.mkdir) {
+      await deps.mkdir(dir);
+    }
+    await deps.appendFile(file, json);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    warn(`[handoff] recordHandoff failed (telemetry skipped): ${reason}`);
+  }
 }

@@ -90,6 +90,26 @@ export interface OkDesktopBridge {
       | { ok: true }
       | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
     >;
+    /**
+     * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`
+     * (SPEC 2026-04-21 §5.1 / E5b). Zero phone-home (XQ3 LOCKED). Resolves
+     * even if HOME is unwritable — telemetry failure must never bubble up
+     * and affect the dispatch path. The literal-union shape mirrors
+     * `HandoffTarget` + `HandoffFailureReason` from the core handoff types.
+     */
+    recordHandoff(line: {
+      readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
+      readonly host: 'electron' | 'web';
+      readonly outcome: 'ok' | 'error';
+      readonly ts: string;
+      readonly reason?:
+        | 'not-installed'
+        | 'scheme-blocked'
+        | 'web-endpoint-error'
+        | 'invalid-payload'
+        | 'dispatch-error'
+        | 'web-host-cursor-unsupported';
+    }): Promise<void>;
   };
 
   clipboard: {

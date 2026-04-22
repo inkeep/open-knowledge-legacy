@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { detectProtocol, spawnCursor, validateSpawnPath } from '../../src/main/ipc-handlers.ts';
+import {
+  detectProtocol,
+  recordHandoff,
+  STATS_FILE_RELATIVE_PATH,
+  spawnCursor,
+  validateSpawnPath,
+} from '../../src/main/ipc-handlers.ts';
+import type { HandoffStatsLine } from '../../src/shared/ipc-channels.ts';
 
 describe('detectProtocol', () => {
   test('returns installed:true with displayName on macOS happy path', async () => {
@@ -295,5 +302,146 @@ describe('spawnCursor', () => {
       '/Users/x/project',
     );
     expect(seenTimeout).toBe(1234);
+  });
+});
+
+describe('recordHandoff', () => {
+  /**
+   * Build a fresh in-memory stub that captures appendFile + mkdir calls.
+   * Each test gets its own instance — mutations don't leak between tests.
+   */
+  const makeStubs = () => {
+    const calls: { appendFile: Array<{ path: string; content: string }>; mkdir: string[] } = {
+      appendFile: [],
+      mkdir: [],
+    };
+    const warnings: string[] = [];
+    return {
+      calls,
+      warnings,
+      deps: {
+        homedir: () => '/Users/test',
+        appendFile: async (path: string, content: string) => {
+          calls.appendFile.push({ path, content });
+        },
+        mkdir: async (path: string) => {
+          calls.mkdir.push(path);
+        },
+        warn: (m: string) => {
+          warnings.push(m);
+        },
+      },
+    };
+  };
+
+  const sampleLine: HandoffStatsLine = {
+    target: 'claude-cowork',
+    host: 'electron',
+    outcome: 'ok',
+    ts: '2026-04-22T01:55:00.000Z',
+  };
+
+  test('appends one JSONL line per call (3 calls → 3 lines)', async () => {
+    const { calls, deps } = makeStubs();
+    await recordHandoff(deps, { ...sampleLine, ts: '2026-04-22T00:00:01.000Z' });
+    await recordHandoff(deps, { ...sampleLine, ts: '2026-04-22T00:00:02.000Z' });
+    await recordHandoff(deps, { ...sampleLine, ts: '2026-04-22T00:00:03.000Z' });
+    expect(calls.appendFile).toHaveLength(3);
+    for (const call of calls.appendFile) {
+      expect(call.content.endsWith('\n')).toBe(true);
+      expect(call.content.split('\n').filter(Boolean)).toHaveLength(1);
+    }
+    const timestamps = calls.appendFile.map((c) => JSON.parse(c.content).ts as string);
+    expect(timestamps).toEqual([
+      '2026-04-22T00:00:01.000Z',
+      '2026-04-22T00:00:02.000Z',
+      '2026-04-22T00:00:03.000Z',
+    ]);
+  });
+
+  test('writes to ~/.open-knowledge/stats.jsonl with mkdir(parent) called first', async () => {
+    const { calls, deps } = makeStubs();
+    await recordHandoff(deps, sampleLine);
+    expect(calls.mkdir).toEqual(['/Users/test/.open-knowledge']);
+    expect(calls.appendFile).toHaveLength(1);
+    expect(calls.appendFile[0]?.path).toBe('/Users/test/.open-knowledge/stats.jsonl');
+    expect(STATS_FILE_RELATIVE_PATH).toEqual(['.open-knowledge', 'stats.jsonl']);
+  });
+
+  test('serializes the full schema verbatim including optional reason on errors', async () => {
+    const { calls, deps } = makeStubs();
+    const errorLine: HandoffStatsLine = {
+      target: 'cursor',
+      host: 'electron',
+      outcome: 'error',
+      ts: '2026-04-22T01:55:00.000Z',
+      reason: 'not-installed',
+    };
+    await recordHandoff(deps, errorLine);
+    expect(calls.appendFile).toHaveLength(1);
+    expect(JSON.parse(calls.appendFile[0]?.content ?? '')).toEqual(errorLine);
+  });
+
+  test('HOME unwritable (appendFile throws EACCES) → warn, no throw', async () => {
+    const { warnings, deps } = makeStubs();
+    const failingDeps = {
+      ...deps,
+      appendFile: async () => {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      },
+    };
+    // Must resolve to undefined — never throw — so dispatch path can continue.
+    await expect(recordHandoff(failingDeps, sampleLine)).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('EACCES');
+    expect(warnings[0]).toContain('telemetry skipped');
+  });
+
+  test('mkdir throws (e.g., ENOSPC) → warn, no throw, no append attempted', async () => {
+    const { calls, warnings, deps } = makeStubs();
+    let appendCalled = 0;
+    const failingDeps = {
+      ...deps,
+      mkdir: async () => {
+        throw new Error('ENOSPC: no space left on device');
+      },
+      appendFile: async (path: string, content: string) => {
+        appendCalled++;
+        calls.appendFile.push({ path, content });
+      },
+    };
+    await expect(recordHandoff(failingDeps, sampleLine)).resolves.toBeUndefined();
+    expect(appendCalled).toBe(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('ENOSPC');
+  });
+
+  test('mkdir is optional — skipped when dep absent', async () => {
+    const calls: Array<{ path: string; content: string }> = [];
+    await recordHandoff(
+      {
+        homedir: () => '/Users/test',
+        appendFile: async (path, content) => {
+          calls.push({ path, content });
+        },
+      },
+      sampleLine,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  test('non-Error thrown values are coerced via String() in the warn message', async () => {
+    const { warnings, deps } = makeStubs();
+    const failingDeps = {
+      ...deps,
+      appendFile: async () => {
+        // Intentionally throws a non-Error to exercise the String(err) coercion
+        // branch in `recordHandoff`'s catch block.
+        throw 'plain-string-failure';
+      },
+    };
+    await expect(recordHandoff(failingDeps, sampleLine)).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('plain-string-failure');
   });
 });

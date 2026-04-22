@@ -15,8 +15,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname as osHostname } from 'node:os';
+import { existsSync, promises as fsPromises, readFileSync, writeFileSync } from 'node:fs';
+import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
@@ -36,6 +36,7 @@ import { createHandler } from '../shared/ipc-handler.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
   detectProtocol as detectProtocolImpl,
+  recordHandoff as recordHandoffImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
 import { installApplicationMenu } from './menu.ts';
@@ -333,6 +334,18 @@ function registerIpcHandlers() {
       },
       path,
     );
+  });
+
+  handle('ok:handoff:record', async (_event, line) => {
+    await recordHandoffImpl(
+      {
+        homedir: osHomedir,
+        appendFile: (path, content) => fsPromises.appendFile(path, content, 'utf-8'),
+        mkdir: (path) => fsPromises.mkdir(path, { recursive: true }).then(() => undefined),
+      },
+      line,
+    );
+    return undefined;
   });
 
   handle('ok:clipboard:write-text', async (_event, text) => {

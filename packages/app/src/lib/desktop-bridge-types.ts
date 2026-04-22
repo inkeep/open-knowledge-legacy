@@ -64,6 +64,19 @@ export interface OkDesktopBridge {
       | { ok: true }
       | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
     >;
+    recordHandoff(line: {
+      readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
+      readonly host: 'electron' | 'web';
+      readonly outcome: 'ok' | 'error';
+      readonly ts: string;
+      readonly reason?:
+        | 'not-installed'
+        | 'scheme-blocked'
+        | 'web-endpoint-error'
+        | 'invalid-payload'
+        | 'dispatch-error'
+        | 'web-host-cursor-unsupported';
+    }): Promise<void>;
   };
   clipboard: {
     writeText(text: string): Promise<void>;
