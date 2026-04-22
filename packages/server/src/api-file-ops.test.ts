@@ -497,6 +497,30 @@ describe('file operation API routes', () => {
     expect(status).not.toContain('?? guides/');
   });
 
+  test('file rename uses git mv for tracked files', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'old-name.md'), '# Doc\\n', 'utf-8');
+
+    const git = simpleGit(dir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@example.com');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      { docName: 'old-name', newDocName: 'new-name' },
+      { backlinkIndex: buildBacklinkIndex(dir), projectDir: dir },
+    );
+
+    expect(result.status).toBe(200);
+    const status = await git.raw('status', '--short');
+    expect(status).toContain('old-name.md -> new-name.md');
+  });
+
   test('deletes a file and reports the removed doc name', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'trash-me.md'), '# Delete me\n', 'utf-8');
