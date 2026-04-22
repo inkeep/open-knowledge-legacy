@@ -33,6 +33,7 @@ export const DESCRIPTION = [
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
+  '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Changed 1 line"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 interface EditDocumentDeps {
@@ -58,6 +59,13 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
     async (args: {
@@ -65,6 +73,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       find: string;
       replace: string;
       offset?: number;
+      summary?: string;
       cwd?: string;
     }) => {
       const context = await resolveProjectServerContext(
@@ -84,6 +93,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         find: args.find,
         replace: args.replace,
         offset: args.offset,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -101,6 +111,12 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const noPreviewAttached = subscriberCount === 0;
 
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number })
+          : undefined;
+      const summaryHint = typeof result.hint === 'string' ? result.hint : undefined;
+
       const lines: string[] = ['Edit applied successfully.'];
       if (preview) lines.push(`Preview: ${preview.url}`);
       if (noPreviewAttached) {
@@ -110,9 +126,10 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
             : `Warning: no preview is currently attached to "${normalized.docName}".`,
         );
       }
+      if (summaryHint) lines.push(summaryHint);
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached) {
+      if (!preview && !noPreviewAttached && !summaryResult) {
         return textResult(text);
       }
 
@@ -126,6 +143,9 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
           message: `No preview attached to ${normalized.docName}.`,
           previewUrl: preview?.url ?? null,
         };
+      }
+      if (summaryResult) {
+        structured.summary = summaryResult;
       }
       return textPlusStructured(text, structured);
     },

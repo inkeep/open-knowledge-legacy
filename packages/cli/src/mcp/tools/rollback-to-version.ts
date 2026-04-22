@@ -29,12 +29,17 @@ export const DESCRIPTION = [
   '- `docName` — Document name to restore, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `commitSha` — The 40-character SHA of the shadow repo commit to restore to.',
   '  Use `get_history` to find available versions.',
+  '- `summary` — Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline. If omitted, a default like "Restored to <sha-short>" is generated. Provide your own summary to explain the why. Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 export interface RollbackToVersionDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
+  /** Same identity passthrough pattern as write-document (D15). Without this,
+   *  MCP-driven rollback posts no agentId → the server-side D22 guard skips
+   *  attribution. UI-driven rollback (EditorPane.tsx:155) intentionally stays
+   *  anonymous; MCP-driven rollback participates via this passthrough. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -49,9 +54,16 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         .length(40)
         .regex(/^[0-9a-f]+$/i)
         .describe('40-character commit SHA from the shadow repo timeline'),
+      summary: z
+        .string()
+        .max(200)
+        .optional()
+        .describe(
+          'Optional one-line user-outcome description (≤80 chars). Defaults to "Restored to <sha-short>" when omitted.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; commitSha: string; cwd?: string }) => {
+    async (args: { docName: string; commitSha: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -80,6 +92,7 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       const result = await httpPost(url, '/api/rollback', {
         docName,
         commitSha: args.commitSha,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -91,7 +104,17 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const text = `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`;
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number })
+          : undefined;
+      const summaryHint = typeof result.hint === 'string' ? result.hint : undefined;
+
+      const textLines = [
+        `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`,
+      ];
+      if (summaryHint) textLines.push(summaryHint);
+
       const preview = await resolvePreviewUrlForTool(
         docName,
         {
@@ -100,9 +123,10 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         },
         cwd,
       );
-      return textPlusStructured(text, {
+      return textPlusStructured(textLines.join('\n'), {
         previewUrl: preview?.url ?? null,
         ...(preview ? { previewUrlSource: preview.source } : {}),
+        ...(summaryResult ? { summary: summaryResult } : {}),
       });
     },
   );
