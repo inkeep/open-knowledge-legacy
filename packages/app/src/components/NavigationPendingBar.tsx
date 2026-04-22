@@ -107,6 +107,7 @@ export function NavigationPendingBar({
     'w-full bg-azure-400/70 dark:bg-azure-500/60 transition-opacity duration-150';
   const stripAnimClass = tier >= 1 ? 'animate-pulse opacity-100' : 'opacity-60';
 
+  // h-0 outer so the bar overlays rather than consuming a flex line.
   return (
     <div
       role="status"
@@ -114,31 +115,33 @@ export function NavigationPendingBar({
       aria-hidden="false"
       data-slot="navigation-pending-bar"
       data-tier={tier}
-      className="pointer-events-none flex w-full flex-col items-center"
+      className="pointer-events-none relative z-10 h-0 w-full"
     >
-      <div className={cn(stripBaseClass, stripHeightClass, stripAnimClass)} />
-      {tier >= 1 ? (
-        <div className="pointer-events-auto mt-2 flex items-center gap-3 px-3 text-xs text-muted-foreground">
-          <span className="font-medium">Loading…</span>
-          {tier >= 2 ? (
-            <span className="max-w-md text-center">
-              Still loading. Taking longer than expected.
-            </span>
-          ) : null}
-          {tier >= 3 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => onRetry?.()}
-              disabled={!onRetry}
-              data-slot="navigation-pending-retry"
-            >
-              Try again
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="absolute inset-x-0 top-0 flex flex-col items-center">
+        <div className={cn(stripBaseClass, stripHeightClass, stripAnimClass)} />
+        {tier >= 1 ? (
+          <div className="pointer-events-auto mt-2 flex items-center gap-3 px-3 text-xs text-muted-foreground">
+            <span className="font-medium">Loading…</span>
+            {tier >= 2 ? (
+              <span className="max-w-md text-center">
+                Still loading. Taking longer than expected.
+              </span>
+            ) : null}
+            {tier >= 3 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onRetry?.()}
+                disabled={!onRetry}
+                data-slot="navigation-pending-retry"
+              >
+                Try again
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
