@@ -31,6 +31,7 @@ import {
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  type Principal,
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -43,6 +44,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   type AgentSessionManager,
@@ -486,6 +488,12 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * Getter for the server's principal record (D50, US-024).
+   * Called at request time so deferred async init propagates.
+   * Returns null if principal has not yet been loaded or loading failed.
+   */
+  getPrincipal?: () => Principal | null;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -564,6 +572,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
     projectDir,
+    getPrincipal,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
@@ -1089,6 +1098,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
           applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
@@ -1175,6 +1186,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
           applyAgentMarkdownWrite(session.dc.document, markdown, position);
@@ -1670,6 +1683,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let staleTarget = false;
       session.dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
           // Read current authoritative state. Search the FULL markdown
@@ -2464,6 +2479,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
+      agentFocusBroadcaster?.setFocus(rollbackAgentId, {
+        agentName: rollbackAgentName,
+        currentDoc: docName,
+        writeKind: 'rollback-apply',
+        ts: Date.now(),
+      });
+
       json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
     } catch (e) {
       console.error('[rollback]', e);
@@ -2494,6 +2516,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, getParseHealth());
+  }
+
+  async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const principal = getPrincipal?.() ?? null;
+    if (!principal) {
+      json(res, 404, { error: 'Principal not available' });
+      return;
+    }
+    json(res, 200, principal);
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -4439,6 +4475,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
