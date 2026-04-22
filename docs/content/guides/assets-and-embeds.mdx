@@ -15,6 +15,20 @@ Any file under the configured size limit (25 MB by default) is accepted. The edi
 | PDF, MP4, MP3, WAV, OGG, M4A, MOV, WebM             | Wiki-embed (plain-link fallback today; typed viewers in a future release) | `![[draft.pdf]]`        |
 | Opaque (ZIP, DOCX, CSV, arbitrary)                  | Markdown link                       | `[archive.zip](archive.zip)` |
 
+### Full emit-dispatch matrix
+
+Three settings combine to pick the insertion shape. If you flip `upload.emitFormat` to `markdown-image` (useful for GitHub preview fidelity), the table changes:
+
+| Extension in `wikiEmbedExtensions`? | `emitFormat`         | Insert shape                                    |
+| ----------------------------------- | -------------------- | ----------------------------------------------- |
+| Yes, image                          | `wikiembed` (default) | `![[photo.png]]`                                |
+| Yes, image                          | `markdown-image`     | `![alt](path)` — markdown image                |
+| Yes, non-image (pdf / mp4 / ...)    | `wikiembed` (default) | `![[draft.pdf]]`                                |
+| Yes, non-image (pdf / mp4 / ...)    | `markdown-image`     | `[name](path)` — markdown **link** (not image) |
+| No (opaque: zip / docx / ...)       | (ignored)            | `[name](path)` — always markdown link          |
+
+The third + fourth row are the one that usually surprises Obsidian refugees: under `markdown-image`, non-image renderables (PDF, video, audio) emit as a regular markdown **link**, not an image — standard markdown has no `![alt](foo.pdf)` form for non-images.
+
 <Callout type="info">
 Images render as `<img>` in both WYSIWYG and the rendered output. Video, audio, and PDF embeds currently render as clickable links; rich inline viewers land with the typed component-nodes rollout — the storage shape (`![[file.ext]]`) will not change, so you're not painting yourself into a corner.
 </Callout>
@@ -121,6 +135,8 @@ Restart the server after editing. Changes take effect on the next upload.
 - **Garbage collection of orphaned assets is manual.** A future `openknowledge gc` CLI command will scan refs, diff against disk, and surface orphans with confirm-delete UX.
 - **Embed size modifiers (`![[image.png|640x480]]`) aren't parsed.** The base embed round-trips correctly; the `|modifier` suffix passes through as alias text.
 - **GitHub raw-file preview doesn't render wiki-embed refs.** GitHub renders `![](url)` and `[text](url)` forms natively; `![[...]]` shows as literal text. Set `emitFormat: markdown-image` if GitHub preview fidelity matters more to you than Obsidian parity.
+- **Editing an asset in place does not refresh the rendered embed until reload.** When you overwrite an image or PDF on disk (replace-in-Finder, save-over, external tool), the file watcher fires and the file list re-invalidates — but open editor tabs keep the old bytes cached by the browser's asset URL. Reload the tab to see the updated bytes. (Cache-busting query strings and a dedicated `asset-update` signal are tracked as follow-on work.)
+- **`upload.dedup.ui: confirm` currently falls through to the `toast` shape.** The blocking confirm-dialog flow isn't implemented yet; setting `confirm` behaves like `toast` today. Prefer `toast` or `silent` until the dialog ships.
 
 ## Next steps
 
@@ -132,6 +148,6 @@ Restart the server after editing. Changes take effect on the next upload.
     Asset changes sync the same way markdown does — auto-commit, push, pull.
   </Card>
   <Card title="Content filtering" href="/guides/content-filtering">
-    What the file watcher sees and how `content.include` / `content.exclude` apply to both markdown and assets.
+    What the file watcher sees. `content.exclude` and `.gitignore` gate both markdown and assets; asset extensions are fixed by Open Knowledge (`content.include` does not narrow them).
   </Card>
 </Cards>

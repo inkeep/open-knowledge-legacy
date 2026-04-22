@@ -183,6 +183,9 @@
         },
         "anchor": {
           "hasDefault": true
+        },
+        "resolvedSrc": {
+          "hasDefault": true
         }
       },
       "content": "",

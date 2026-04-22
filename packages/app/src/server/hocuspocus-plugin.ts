@@ -98,26 +98,53 @@ function resolveContentConfig(): ContentConfig {
         );
         if (valid.length > 0) defaults.exclude = valid;
       }
+      // Loose validation with warn-on-drop to match `ok start`'s fail-fast
+      // posture in observability if not in severity (Zod rejects an invalid
+      // enum at CLI startup; here we warn + fall back to default). Silent
+      // drop would let a `dedup.ui: 'confir'` typo silently revert to the
+      // default `'toast'` — the operator reasonably believes their config
+      // is in effect and files a bug only after running `ok start` reveals
+      // the real error.
       const upload = parsed?.upload as Record<string, unknown> | undefined;
       if (upload && typeof upload === 'object') {
         const userUpload: PartialUserUploadConfig = {};
         if (typeof upload.attachmentFolderPath === 'string') {
           userUpload.attachmentFolderPath = upload.attachmentFolderPath;
+        } else if (upload.attachmentFolderPath !== undefined) {
+          console.warn(
+            `[hocuspocus] config.yml upload.attachmentFolderPath must be a string (got ${JSON.stringify(upload.attachmentFolderPath)}); ignoring`,
+          );
         }
         if (upload.emitFormat === 'wikiembed' || upload.emitFormat === 'markdown-image') {
           userUpload.emitFormat = upload.emitFormat;
+        } else if (upload.emitFormat !== undefined) {
+          console.warn(
+            `[hocuspocus] config.yml upload.emitFormat must be 'wikiembed' or 'markdown-image' (got ${JSON.stringify(upload.emitFormat)}); falling back to default`,
+          );
         }
         if (typeof upload.maxBytes === 'number' && Number.isInteger(upload.maxBytes)) {
           userUpload.maxBytes = upload.maxBytes;
+        } else if (upload.maxBytes !== undefined) {
+          console.warn(
+            `[hocuspocus] config.yml upload.maxBytes must be an integer (got ${JSON.stringify(upload.maxBytes)}); falling back to default`,
+          );
         }
         const dedup = upload.dedup as Record<string, unknown> | undefined;
         if (dedup && typeof dedup === 'object') {
           const dedupPartial: PartialUserUploadConfig['dedup'] = {};
           if (dedup.mode === 'off' || dedup.mode === 'same-dir') {
             dedupPartial.mode = dedup.mode;
+          } else if (dedup.mode !== undefined) {
+            console.warn(
+              `[hocuspocus] config.yml upload.dedup.mode must be 'off' or 'same-dir' (got ${JSON.stringify(dedup.mode)}); falling back to default`,
+            );
           }
           if (dedup.ui === 'silent' || dedup.ui === 'toast' || dedup.ui === 'confirm') {
             dedupPartial.ui = dedup.ui;
+          } else if (dedup.ui !== undefined) {
+            console.warn(
+              `[hocuspocus] config.yml upload.dedup.ui must be 'silent', 'toast', or 'confirm' (got ${JSON.stringify(dedup.ui)}); falling back to default`,
+            );
           }
           if (Object.keys(dedupPartial).length > 0) userUpload.dedup = dedupPartial;
         }
@@ -126,6 +153,10 @@ function resolveContentConfig(): ContentConfig {
             (e): e is string => typeof e === 'string',
           );
           userUpload.wikiEmbedExtensions = valid;
+        } else if (upload.wikiEmbedExtensions !== undefined) {
+          console.warn(
+            `[hocuspocus] config.yml upload.wikiEmbedExtensions must be an array of strings (got ${JSON.stringify(upload.wikiEmbedExtensions)}); falling back to default`,
+          );
         }
         if (Object.keys(userUpload).length > 0) defaults.upload = userUpload;
       }
@@ -413,7 +444,16 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // --- Filter-aware asset serving over contentDir (D9) ---
-      const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
+      // `extensions: []` disables sirv's default `['html', 'htm']` fallback.
+      // Without this, `/docs/evil` transparently resolves `docs/evil.html` /
+      // `docs/evil/index.html` and serves it as `text/html`, bypassing the
+      // Content-Disposition gate below (the gate inspects the requested URL
+      // extension via lastIndexOf('.'), which returns -1 for extensionless
+      // URLs). Under D-M accept-all a user can drop a `.html` into contentDir
+      // and it becomes stored-XSS same-origin with the editor — the fix is
+      // to refuse extension inference at the static-file layer so only the
+      // literal requested URL is served.
+      const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false, extensions: [] });
       // Scripted-document extensions: match the set in packages/cli/src/
       // commands/ui.ts. Serving these with Content-Disposition: attachment
       // prevents a planted HTML/SVG under contentDir from executing same-
@@ -425,7 +465,12 @@ export function hocuspocusPlugin(): Plugin {
         return SCRIPTED_DOC_EXTS.has(p.slice(idx + 1).toLowerCase());
       };
       server.middlewares.use((req, res, next) => {
-        const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
+        let rel: string;
+        try {
+          rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
+        } catch {
+          return next();
+        }
         if (!rel || contentFilter.isExcluded(rel)) return next();
         res.setHeader('X-Content-Type-Options', 'nosniff');
         if (isScriptedDocumentExt(rel)) {
@@ -516,8 +561,28 @@ export function hocuspocusPlugin(): Plugin {
           // startup walk has finished. `seedBasenameIndex` walks the
           // content directory separately (watcher's fileIndex is
           // markdown-only) using the same ContentFilter admission rules.
+          // Per-entry skips (EACCES, EMFILE, etc.) surface through the
+          // `onSkip` callback as structured warnings — without this a
+          // single permissions issue on a subtree silently truncates
+          // the index with no log signal.
           try {
-            seedBasenameIndex({ contentDir: CONTENT_DIR, contentFilter, basenameIndex });
+            let skipCount = 0;
+            seedBasenameIndex({
+              contentDir: CONTENT_DIR,
+              contentFilter,
+              basenameIndex,
+              onSkip: (reason, code, path) => {
+                skipCount++;
+                console.warn(
+                  `[hocuspocus] basename-index seed skipped (${reason}${code ? ` ${code}` : ''}): ${path}`,
+                );
+              },
+            });
+            if (skipCount > 0) {
+              console.warn(
+                `[hocuspocus] basename-index seed completed with ${skipCount} skipped entries — embeds under inaccessible subtrees will not resolve`,
+              );
+            }
           } catch (err) {
             console.warn('[hocuspocus] basename-index startup seed failed:', err);
           }

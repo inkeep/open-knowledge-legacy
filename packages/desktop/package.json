@@ -18,7 +18,8 @@
   "dependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
-    "@napi-rs/keyring": "^1.2.0"
+    "@napi-rs/keyring": "^1.2.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",

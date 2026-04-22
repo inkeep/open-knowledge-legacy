@@ -2559,8 +2559,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // posture as the rest of the API; loopback binding limits blast radius.
   async function handleUploadConfigGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
     const cfg = getUploadConfig ? getUploadConfig() : DEFAULT_UPLOAD_CONFIG;
@@ -3232,8 +3231,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
 
@@ -3353,15 +3351,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // the existing on-disk basename instead of producing a fresh
     // pasted-<ts>.png stub. Server returns { deduped: true } so the
     // client decides toast/silent/confirm per upload.dedup.ui.
+    //
+    // `destDir` already exists — the post-symlink-check mkdirSync above
+    // created it with { recursive: true } inside a try/catch that returns
+    // a JSON 500 on failure. No second mkdirSync here or before the
+    // writeUploadAtomic call below; a bare redundant call could throw a
+    // raw Error on TOCTOU (dir deleted between calls, fs becomes read-only
+    // mid-request) and bypass the JSON envelope entirely.
     const dedupMode = getUploadConfig?.().dedup.mode ?? 'same-dir';
     if (dedupMode === 'same-dir') {
-      mkdirSync(destDir, { recursive: true });
       const sha = sha256Hex(buffer);
       const existing = findDuplicateAsset(destDir, sha, buffer.length);
       if (existing) {
         const relPath = relative(contentDir, resolve(destDir, existing));
-        console.log(
-          JSON.stringify({
+        log.info(
+          {
             event: 'upload',
             endpoint: req.url ?? '/api/upload',
             dedup: true,
@@ -3369,9 +3373,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             size: buffer.length,
             destPath: relPath,
             httpStatus: 200,
-          }),
+          },
+          '[upload] dedup hit',
         );
-        json(res, 200, { ok: true, src: existing, deduped: true });
+        // SPEC §6 FR-2 + Major-1 fix: include the contentDir-relative
+        // `path` in the response so the client honors non-default
+        // `attachmentFolderPath`. Without this the client assumes the
+        // asset is co-located with the parent doc and emits a broken
+        // relative ref when operators configure attachmentFolderPath:
+        // 'attachments' (Obsidian-style global path) or similar.
+        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
         return;
       }
     }
@@ -3397,13 +3408,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       finalFilename = sanitizeFilename(filename);
     }
 
-    mkdirSync(destDir, { recursive: true });
-
     try {
       const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
-      console.log(
-        JSON.stringify({
+      log.info(
+        {
           event: 'upload',
           endpoint: req.url ?? '/api/upload',
           dedup: false,
@@ -3419,12 +3428,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // auto-label-extraction honors the sub-object convention.
           destPath: relPath,
           httpStatus: 200,
-        }),
+        },
+        '[upload] write ok',
       );
-      json(res, 200, { ok: true, src: destFilename, deduped: false });
+      // Major-1: same rationale as the dedup branch above — client needs
+      // the contentDir-relative path to emit correct refs under any
+      // attachmentFolderPath value.
+      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
+      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      log.error(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          filename: finalFilename,
+          size: buffer.length,
+          reason,
+          message,
+          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+        },
+        '[upload] write failed',
+      );
       if (e instanceof UploadWriteError) {
         if (e.reason === 'storage-full') {
           // RFC 4918 507 Insufficient Storage — explicit "disk full,"
@@ -3454,9 +3479,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * /api/upload-image is a one-release deprecation shim (D-G). It forwards
    * to handleUploadImage, logs a deprecation notice once per process, and
-   * emits RFC 8594 `Deprecation:` + `Sunset:` headers on every response so
-   * external integrators that never read stdout still see the migration
-   * signal programmatically.
+   * emits an RFC 9745 `Deprecation:` header + RFC 5988 `Link:
+   * rel="successor-version"` pointer on every response so external
+   * integrators that never read stdout still see the migration signal
+   * programmatically. RFC 8594's `Sunset:` header is deliberately NOT
+   * emitted (see body comment).
    */
   let deprecationLogged = false;
   async function handleUploadImageDeprecated(
@@ -3469,12 +3496,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       );
       deprecationLogged = true;
     }
-    // RFC 8594 `Deprecation: true` signals "migrate now." A `Sunset:`
-    // date is deliberately NOT emitted — the removal target is "next
-    // minor," which is release-train-bound rather than date-bound; we
-    // don't commit a date we can't keep. `Link: rel="successor-version"`
-    // is the canonical RFC 5988 pointer external integrators consume to
-    // discover the replacement endpoint programmatically.
+    // RFC 9745 `Deprecation: true` signals "migrate now." RFC 8594
+    // `Sunset:` (a dated header) is intentionally NOT emitted — the
+    // removal target is "next minor," which is release-train-bound
+    // rather than date-bound; we don't commit a date we can't keep.
+    // `Link: rel="successor-version"` (RFC 5988) is the canonical
+    // pointer external integrators consume to discover the replacement
+    // endpoint programmatically.
     if (typeof res.setHeader === 'function') {
       res.setHeader('Deprecation', 'true');
       res.setHeader('Link', '</api/upload>; rel="successor-version"');

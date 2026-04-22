@@ -310,12 +310,7 @@ const WIKI_EMBED_NON_IMAGE_EXTS: ReadonlySet<string> = new Set(
   DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions.filter((e) => !IMAGE_EXTENSIONS.has(e)),
 );
 
-function extensionOf(target: string): string {
-  const basename = target.split('/').pop() ?? target;
-  const idx = basename.lastIndexOf('.');
-  if (idx < 0 || idx === basename.length - 1) return '';
-  return basename.slice(idx + 1).toLowerCase();
-}
+import { extensionOf } from '../utils/extension.ts';
 
 function buildMdastToPmHandlers(
   schema: Schema,
@@ -1060,10 +1055,12 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
-  // SPEC §6 FR-3c reverse: PM wikiLinkEmbed → mdast. The `resolved` attr
-  // is render-layer state (populated by the basename index at render
-  // time) and doesn't flow back into mdast — serialization is lossless
-  // over target/anchor/alias.
+  // SPEC §6 FR-3c reverse: PM wikiLinkEmbed → mdast. The `resolvedSrc`
+  // attr is a transient render-layer hint (populated by the upload
+  // response at drop time, consumed by `WikiLinkEmbed.renderHTML`) and
+  // MUST NOT flow back into mdast — serialization is lossless over
+  // target/anchor/alias only. The storage shape is always `![[name.ext]]`
+  // regardless of `upload.attachmentFolderPath`.
   if (n.wikiLinkEmbed) {
     nodeHandlers.wikiLinkEmbed = (pmNode: PmNode) => {
       const target: string = pmNode.attrs.target ?? '';

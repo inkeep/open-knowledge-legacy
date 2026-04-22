@@ -105,6 +105,29 @@ type _ResolvedFieldsMatch =
 const _shapeCheck: _ResolvedFieldsMatch = true;
 void _shapeCheck;
 
+// US-018 precedence guard: `attachmentFolderPath` and `emitFormat` MUST
+// stay `.optional()` — if a future contributor "fixes" the optional
+// fields by giving them defaults (`z.string().default('./')`), the
+// Zod-inferred type would no longer include `undefined` and
+// `resolveUploadConfig`'s `user ?? vault ?? default` chain would never
+// fall through to the vault partial. Every Obsidian refugee would
+// silently lose their vault's `attachmentFolderPath` mapping with no
+// compile error. These guards assert `undefined` is still assignable
+// to each field's type; adding a Zod `.default()` removes `undefined`
+// from the inferred union and trips this line at `bun run typecheck`.
+type _AttachmentFolderPathStaysOptional = undefined extends z.infer<
+  typeof UploadConfigSchema
+>['attachmentFolderPath']
+  ? true
+  : never;
+type _EmitFormatStaysOptional = undefined extends z.infer<typeof UploadConfigSchema>['emitFormat']
+  ? true
+  : never;
+const _us018Guard1: _AttachmentFolderPathStaysOptional = true;
+const _us018Guard2: _EmitFormatStaysOptional = true;
+void _us018Guard1;
+void _us018Guard2;
+
 export const ConfigSchema = z.object({
   content: z
     .object({

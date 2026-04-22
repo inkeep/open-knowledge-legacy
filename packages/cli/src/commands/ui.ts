@@ -157,7 +157,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   ];
   const assetDir = assetPaths.find((p) => existsSync(p));
   const staticHandler = assetDir
-    ? sirv(assetDir, { single: true, gzip: true, immutable: true })
+    ? sirv(assetDir, { single: true, gzip: true, immutable: true, extensions: [] })
     : null;
 
   // Filter-aware content asset serving (matches start.ts behavior pre-split).
@@ -168,8 +168,15 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // fail before it has served a single request.
   //
   // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
+  // `extensions: []` disables sirv's default `['html', 'htm']` fallback.
+  // Stored-XSS defense under D-M accept-all: without this, a request to
+  // `/docs/evil` transparently resolves `docs/evil.html` and serves it as
+  // `text/html`, bypassing the `isScriptedDocumentExtension` gate below
+  // (the gate matches on the requested URL's extension via lastIndexOf('.')
+  // which is -1 for extensionless URLs). Refusing extension inference
+  // confines lookup to the literal requested URL.
   const contentSirv = existsSync(contentDir)
-    ? sirv(contentDir, { dotfiles: false, dev: true })
+    ? sirv(contentDir, { dotfiles: false, dev: true, extensions: [] })
     : null;
 
   // Resolved port — filled in after listen(). /api/config reads from this so
@@ -246,7 +253,15 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     }
 
     // Content files (markdown etc.) served via filter-aware sirv.
-    const rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
+    // Malformed percent-encoding (`/%`, `/%E0%A4`) throws URIError — catch
+    // and fall through to the SPA handler rather than surfacing an
+    // unhandled error.
+    let rel: string;
+    try {
+      rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
+    } catch {
+      rel = '';
+    }
     if (rel && contentSirv) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       // Stored-XSS defense: D-M accept-all lets users drop any file into

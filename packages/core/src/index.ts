@@ -67,6 +67,7 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+export { extensionOf } from './utils/extension.ts';
 
 // Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
 // defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`

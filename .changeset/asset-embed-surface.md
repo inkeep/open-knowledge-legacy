@@ -16,8 +16,8 @@ Same-directory sha256 dedup returns existing paths on duplicate drops with a toa
 
 New HTTP surface on the server:
 
-- `POST /api/upload` — primary upload endpoint. Response: `{ ok, src, deduped }`.
-- `POST /api/upload-image` — one-release deprecation shim forwarding to `/api/upload`.
+- `POST /api/upload` — primary upload endpoint. Success response: `{ ok, src, path, deduped }` where `src` is the asset's basename and `path` is the contentDir-relative location (reflects `upload.attachmentFolderPath`). 413 response shape: `{ ok: false, error: 'max-bytes', message, attemptedBytes, maxBytes }`.
+- `POST /api/upload-image` — one-release deprecation shim forwarding to `/api/upload`. Note: the 413 response body previously returned `{ error: 'Payload too large' }`; it now returns the same `{ error: 'max-bytes', message, attemptedBytes, maxBytes }` shape as `/api/upload`. Clients matching on the old string must update before the shim is removed in the next minor release.
 - `GET /api/upload-config` — exposes the resolved `upload.*` subtree so the client honors operator overrides without a rebuild.
 
 New config surface under `upload.*`: `attachmentFolderPath`, `emitFormat`, `maxBytes`, `dedup.{mode,ui}`, `wikiEmbedExtensions`. Every default mirrors Obsidian's shape so refugees get zero-config parity.

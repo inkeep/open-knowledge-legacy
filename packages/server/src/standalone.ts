@@ -1087,8 +1087,35 @@ export function createServer(options: ServerOptions): ServerInstance {
       // SPEC §6 FR-3b: seed the basename index from disk once the
       // watcher's startup walk has finished. The watcher's fileIndex is
       // markdown-only, so we walk the contentDir directly for assets.
+      //
+      // Per-entry skip accumulator: reviewer flagged that the outer-throw
+      // guard below is unreachable in practice — bare catch blocks
+      // inside `seedBasenameIndex` previously swallowed EACCES / EMFILE
+      // silently, truncating the walk without logging. `onSkip` now
+      // fires for each non-ENOENT failure; a non-zero count pushes
+      // `basename-index-partial` into `degraded[]` so the Electron
+      // utility's degraded banner + ops dashboards see the signal.
+      let seedSkipCount = 0;
       try {
-        seedBasenameIndex({ contentDir, contentFilter, basenameIndex });
+        seedBasenameIndex({
+          contentDir,
+          contentFilter,
+          basenameIndex,
+          onSkip: (reason, code, path) => {
+            seedSkipCount++;
+            log.warn(
+              { reason, code, path },
+              `[basename-index] skipped entry during seed (${reason}${code ? ` ${code}` : ''})`,
+            );
+          },
+        });
+        if (seedSkipCount > 0) {
+          log.warn(
+            { count: seedSkipCount },
+            `[basename-index] startup seed completed with ${seedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve`,
+          );
+          degraded.push('basename-index-partial');
+        }
       } catch (err) {
         log.error({ err }, '[basename-index] startup seed failed');
         // An empty basename index means every `![[file.png]]` resolution
@@ -1240,6 +1267,21 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk(newBranch).catch((err) => {
               console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
             });
+
+            // SPEC §6 FR-3b cross-branch: asset DiskEvents from the switch
+            // itself are discarded (eventBuffer.splice above), and
+            // `basenameIndex` is a flat Map without branch scope — it
+            // still holds the previous branch's paths. A user opening a
+            // doc with `![[photo.png]]` after `git checkout <other>`
+            // would resolve to the old branch's path (or a path that no
+            // longer exists). Mirror backlinkIndex's branch-scoped reset:
+            // drop the index, walk the new branch's disk, re-seed.
+            try {
+              basenameIndex.clear();
+              seedBasenameIndex({ contentDir, contentFilter, basenameIndex });
+            } catch (err) {
+              log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
+            }
 
             // Restore parked WIP if exists (three-way merge parked state against current disk)
             if (shadowRef.current && info.batchKind === 'cross-branch') {

@@ -21,6 +21,15 @@ export interface BasenameIndex {
   remove(path: string): void;
   rename(oldPath: string, newPath: string): void;
   resolveEmbed(basename: string, sourcePath: string): string | null;
+  /**
+   * Drop every indexed path. Used on cross-branch HEAD switches where
+   * the on-disk asset set is swapped wholesale — asset DiskEvents do
+   * NOT fire during the switch (the file watcher's buffered events are
+   * discarded), so add/remove alone cannot transition the index to the
+   * new branch's shape. Pair with `seedBasenameIndex` to rebuild from
+   * the branch's current disk.
+   */
+  clear(): void;
   /** Debug/test only: frozen snapshot of the internal map. */
   snapshot(): ReadonlyMap<string, readonly string[]>;
   /** Number of distinct basenames currently indexed. */
@@ -160,11 +169,16 @@ export function createBasenameIndex(): BasenameIndex {
     return copy;
   }
 
+  function clear(): void {
+    buckets.clear();
+  }
+
   return {
     add,
     remove,
     rename,
     resolveEmbed,
+    clear,
     snapshot,
     size: () => buckets.size,
   };

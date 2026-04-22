@@ -29,19 +29,31 @@
  */
 import { Node } from '@tiptap/core';
 import { IMAGE_EXTENSIONS } from '../constants/upload.ts';
+import { extensionOf } from '../utils/extension.ts';
 import { normalizeNullableString } from './wiki-link.ts';
 
 export interface WikiLinkEmbedAttrs {
   target: string;
   alias: string | null;
   anchor: string | null;
-}
-
-function extensionOf(target: string): string {
-  const basename = target.split('/').pop() ?? target;
-  const idx = basename.lastIndexOf('.');
-  if (idx < 0 || idx === basename.length - 1) return '';
-  return basename.slice(idx + 1).toLowerCase();
+  /**
+   * Transient client-only render hint. When `pickInsertShape` inserts a
+   * new embed at drop time it knows the server-resolved relative path
+   * (from the upload response); storing that path here lets
+   * `renderHTML` emit `<img src=<resolvedSrc>>` instead of the bare
+   * target. Without this, a non-default `upload.attachmentFolderPath`
+   * (e.g. `attachments`) produces a broken inline preview between drop
+   * and the next round-trip.
+   *
+   * NOT serialized to markdown (the dispatch `toMarkdown`
+   * `nodeHandlers.wikiLinkEmbed` path uses target/alias/anchor only).
+   * NOT emitted by the server's mdast→PM dispatch — on load, Observer B
+   * converts `![[file.ext]]` to PM image/link with basename-index-
+   * resolved `src`, so the subsequent render path doesn't need the
+   * hint. Cleared to null when not known (opening an existing doc
+   * client-side without the hint falls through to `target`).
+   */
+  resolvedSrc: string | null;
 }
 
 function labelFor(attrs: Pick<WikiLinkEmbedAttrs, 'target' | 'alias' | 'anchor'>): string {
@@ -61,6 +73,17 @@ export const WikiLinkEmbed = Node.create({
       target: { default: '' },
       alias: { default: null },
       anchor: { default: null },
+      // `rendered: false` — the attr drives `<img src>`/`<a href>` at
+      // render time but is NOT itself serialized into a DOM attribute,
+      // and more importantly is NOT part of the markdown round-trip
+      // (nodeHandlers.wikiLinkEmbed writes target/alias/anchor only).
+      // `parseHTML: () => null` prevents an attacker-planted
+      // `data-resolved-src` from leaking into the PM tree via paste.
+      resolvedSrc: {
+        default: null,
+        rendered: false,
+        parseHTML: () => null,
+      },
     };
   },
 
@@ -78,6 +101,10 @@ export const WikiLinkEmbed = Node.create({
         target: node.getAttribute('data-target') || '',
         alias: normalizeNullableString(node.getAttribute('data-alias')),
         anchor: normalizeNullableString(node.getAttribute('data-anchor')),
+        // resolvedSrc intentionally NOT recovered from DOM: the attr is a
+        // drop-time hint from the upload response, not part of the
+        // stored shape. After parse, render falls back to `target` until
+        // the server round-trip lands the basename-resolved src.
       };
     };
     return [
@@ -90,10 +117,16 @@ export const WikiLinkEmbed = Node.create({
     const target = String(node.attrs.target ?? '');
     const alias = normalizeNullableString(node.attrs.alias);
     const anchor = normalizeNullableString(node.attrs.anchor);
+    const resolvedSrc = normalizeNullableString(node.attrs.resolvedSrc);
     const ext = extensionOf(target);
 
-    // Image extension → inline <img>. sirv serves the asset via relative
-    // path resolution against the current doc's URL.
+    // Image extension → inline <img>. `resolvedSrc` (drop-time hint from
+    // the upload response) takes priority so non-default
+    // `upload.attachmentFolderPath` values render correctly. Otherwise
+    // fall back to the bare target — the browser resolves it relative
+    // to the current doc's URL, which is only correct for the default
+    // `./` attachmentFolderPath. Server-side round-trip to PM image
+    // node provides the authoritative resolution path.
     if (IMAGE_EXTENSIONS.has(ext)) {
       return [
         'img',
@@ -103,7 +136,7 @@ export const WikiLinkEmbed = Node.create({
           'data-target': target,
           'data-alias': alias ?? '',
           'data-anchor': anchor ?? '',
-          src: target,
+          src: resolvedSrc ?? target,
           alt: alias ?? target,
         },
       ];
@@ -112,6 +145,7 @@ export const WikiLinkEmbed = Node.create({
     // Non-image or opaque → clickable link. Phase 2 will promote the
     // non-image typed extensions (pdf/mp4/mp3/…) to dedicated NodeViews
     // (Video/Audio/PDFViewer) at render time — storage shape unchanged.
+    const hrefBase = resolvedSrc ?? target;
     return [
       'a',
       {
@@ -120,7 +154,7 @@ export const WikiLinkEmbed = Node.create({
         'data-target': target,
         'data-alias': alias ?? '',
         'data-anchor': anchor ?? '',
-        href: anchor ? `${target}#${anchor}` : target,
+        href: anchor ? `${hrefBase}#${anchor}` : hrefBase,
       },
       labelFor({ target, alias, anchor }),
     ];

@@ -10,6 +10,14 @@
  * Symlink-following is intentional but bounded: cycles are caught via
  * a `visited` inode set, escape outside contentDir is rejected via
  * realpath check.
+ *
+ * Per-entry errors are classified: ENOENT stays silent (concurrent
+ * rename race is legit and common), all other errno codes surface via
+ * the optional `onSkip` callback so the caller can push a partial-
+ * degraded subsystem indicator. Without surface, EACCES on a vault
+ * subtree silently truncates the walk and every embed under that
+ * subtree breaks with no log signal — reviewer flagged this as a real
+ * "degraded[] unreachable" failure mode.
  */
 
 import type { Dirent } from 'node:fs';
@@ -19,15 +27,35 @@ import { ASSET_EXTENSIONS, type BasenameIndex } from '@inkeep/open-knowledge-cor
 import type { ContentFilter } from './content-filter.ts';
 import { isSupportedAssetFile } from './doc-extensions.ts';
 
+/** Classification of why a particular entry was skipped during the walk. */
+export type SeedSkipReason =
+  | 'read-failed'
+  | 'lstat-failed'
+  | 'realpath-failed'
+  | 'symlink-escape'
+  | 'symlink-stat-failed';
+
 interface SeedOptions {
   contentDir: string;
   contentFilter?: ContentFilter;
   basenameIndex: BasenameIndex;
+  /**
+   * Fires on each non-ENOENT per-entry failure. `code` is the Node errno
+   * string (e.g. `'EACCES'`, `'EMFILE'`, `'EPERM'`) or `undefined` if
+   * the error didn't carry one. Invoked synchronously from inside
+   * `seedBasenameIndex`; keep the body light (log + increment counter).
+   */
+  onSkip?(reason: SeedSkipReason, code: string | undefined, path: string): void;
 }
 
 function isWithinDir(candidate: string, dir: string): boolean {
   if (candidate === dir) return true;
   return candidate.startsWith(`${dir}${sep}`);
+}
+
+function errnoCode(err: unknown): string | undefined {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' ? code : undefined;
 }
 
 export function seedBasenameIndex(opts: SeedOptions): void {
@@ -38,7 +66,9 @@ export function seedBasenameIndex(opts: SeedOptions): void {
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
-    } catch {
+    } catch (err) {
+      const code = errnoCode(err);
+      if (code !== 'ENOENT') opts.onSkip?.('read-failed', code, dir);
       return;
     }
     for (const entry of entries) {
@@ -50,7 +80,9 @@ export function seedBasenameIndex(opts: SeedOptions): void {
       let stat: ReturnType<typeof statSync>;
       try {
         stat = lstatSync(full);
-      } catch {
+      } catch (err) {
+        const code = errnoCode(err);
+        if (code !== 'ENOENT') opts.onSkip?.('lstat-failed', code, full);
         continue;
       }
 
@@ -58,14 +90,21 @@ export function seedBasenameIndex(opts: SeedOptions): void {
         let canonical: string;
         try {
           canonical = realpathSync(full);
-        } catch {
+        } catch (err) {
+          const code = errnoCode(err);
+          if (code !== 'ENOENT') opts.onSkip?.('realpath-failed', code, full);
           continue;
         }
-        if (!isWithinDir(canonical, root)) continue;
+        if (!isWithinDir(canonical, root)) {
+          opts.onSkip?.('symlink-escape', undefined, full);
+          continue;
+        }
         let realStat: ReturnType<typeof statSync>;
         try {
           realStat = statSync(canonical);
-        } catch {
+        } catch (err) {
+          const code = errnoCode(err);
+          if (code !== 'ENOENT') opts.onSkip?.('symlink-stat-failed', code, canonical);
           continue;
         }
         if (visited.has(realStat.ino)) continue;

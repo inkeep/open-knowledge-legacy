@@ -308,7 +308,7 @@ The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 - `applyExternalChange` → disk→CRDT bridge (markdown reload)
 - `applyAgentMarkdownWrite` → agent write composition
 
-The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) calls `createServer()` directly and does NOT construct this closure. In dev mode, embed resolution falls back to the literal target — acceptable because dev is for contributors, not content authoring.
+The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure + Obsidian vault detection (US-018) so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
 
 ### Obsidian vault detection (FR-4)
 

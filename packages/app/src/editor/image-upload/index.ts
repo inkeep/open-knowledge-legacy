@@ -1,5 +1,6 @@
 import {
   DEFAULT_UPLOAD_CONFIG,
+  extensionOf,
   IMAGE_EXTENSIONS,
   type UploadConfig,
 } from '@inkeep/open-knowledge-core';
@@ -16,13 +17,17 @@ interface UploadPluginState {
   uploads: Map<string, number>;
 }
 
-function createSkeletonWidget(): HTMLElement {
+function createSkeletonWidget(file?: File): HTMLElement {
   const el = document.createElement('div');
   el.className =
     'image-upload-skeleton w-full h-40 rounded-md bg-muted animate-pulse motion-reduce:animate-none my-2';
   el.setAttribute('data-upload-widget', 'loading');
   el.setAttribute('role', 'status');
-  el.setAttribute('aria-label', 'Uploading image...');
+  // WCAG 4.1.2: the announced label must reflect what is actually
+  // uploading. Under D-M accept-all the widget is used for every file
+  // type (PDF / ZIP / MP4 / CSV / etc.), so the pre-fix "Uploading
+  // image..." misdescribes every non-image upload.
+  el.setAttribute('aria-label', file?.name ? `Uploading ${file.name}…` : 'Uploading file…');
   return el;
 }
 
@@ -159,22 +164,34 @@ let uploadConfigFetchInFlight: Promise<UploadConfig> | null = null;
  * invert packaging), so "the server always returns a valid UploadConfig"
  * is only true on the `ok start` path. A misconfigured proxy, a future
  * server bug, or a Cloudflare-style 401 body poisoning could otherwise
- * overwrite `cachedUploadConfig` with a shape that crashes
- * `pickInsertShape` on the next upload. Narrow gate.
+ * overwrite `cachedUploadConfig` with a shape that crashes or misroutes
+ * `pickInsertShape` on the next upload. Narrow gate checks enum
+ * membership (not just typeof string) so a malformed
+ * `{ emitFormat: 'NUKE', dedup: { mode: 'banana', ui: 'fries' } }`
+ * body is rejected rather than silently falling through `emitFormat
+ * !== 'wikiembed'` as image-mode.
  */
+const EMIT_FORMATS = new Set(['wikiembed', 'markdown-image']);
+const DEDUP_MODES = new Set(['off', 'same-dir']);
+const DEDUP_UI_MODES = new Set(['silent', 'toast', 'confirm']);
+
 function isUploadConfig(x: unknown): x is UploadConfig {
   if (!x || typeof x !== 'object') return false;
   const c = x as Record<string, unknown>;
+  if (typeof c.maxBytes !== 'number') return false;
+  if (!Array.isArray(c.wikiEmbedExtensions)) return false;
+  if (!c.wikiEmbedExtensions.every((e) => typeof e === 'string')) return false;
+  // emitFormat + attachmentFolderPath are `.optional()` per US-018.
+  // Accept undefined; reject any other non-enum value.
+  if (c.emitFormat !== undefined && !EMIT_FORMATS.has(c.emitFormat as string)) return false;
+  if (c.attachmentFolderPath !== undefined && typeof c.attachmentFolderPath !== 'string') {
+    return false;
+  }
   const dedup = c.dedup as Record<string, unknown> | null | undefined;
-  return (
-    typeof c.maxBytes === 'number' &&
-    Array.isArray(c.wikiEmbedExtensions) &&
-    c.wikiEmbedExtensions.every((e) => typeof e === 'string') &&
-    typeof dedup === 'object' &&
-    dedup !== null &&
-    typeof dedup.mode === 'string' &&
-    typeof dedup.ui === 'string'
-  );
+  if (!dedup || typeof dedup !== 'object') return false;
+  if (!DEDUP_MODES.has(dedup.mode as string)) return false;
+  if (!DEDUP_UI_MODES.has(dedup.ui as string)) return false;
+  return true;
 }
 
 async function fetchUploadConfig(): Promise<UploadConfig> {
@@ -221,11 +238,6 @@ export function setUploadConfigForTests(cfg: UploadConfig): void {
   uploadConfigFetchInFlight = Promise.resolve(cfg);
 }
 
-function extensionOf(filename: string): string {
-  const idx = filename.lastIndexOf('.');
-  return idx === -1 ? '' : filename.slice(idx + 1).toLowerCase();
-}
-
 interface InsertShape {
   kind: 'wikiembed' | 'image' | 'markdown-link';
   ext: string;
@@ -243,7 +255,17 @@ export function pickInsertShape(filename: string, config: UploadConfig): InsertS
 
 interface UploadResponseBody {
   ok?: boolean;
+  /** Filename (basename only) of the written/existing asset. */
   src?: string;
+  /**
+   * ContentDir-relative path the server actually wrote to. Reflects
+   * `upload.attachmentFolderPath` — for default `"./"` this is
+   * `<docDir>/<src>`, but for `attachmentFolderPath: 'attachments'` it's
+   * `attachments/<src>` regardless of doc location. Clients MUST prefer
+   * `path` over `src` when emitting the reference, otherwise non-default
+   * attachmentFolderPath configurations produce broken relative refs.
+   */
+  path?: string;
   deduped?: boolean;
   error?: string;
   message?: string;
@@ -278,7 +300,7 @@ export async function uploadAndInsert(
   // uploads reuse the cached value.
   const uploadConfig = await ensureUploadConfig();
 
-  const skeletonWidget = createSkeletonWidget();
+  const skeletonWidget = createSkeletonWidget(file);
   editor.view.dispatch(
     editor.state.tr.setMeta(uploadPluginKey, {
       type: 'add',
@@ -337,14 +359,27 @@ export async function uploadAndInsert(
 
   const src = body.src;
   const deduped = body.deduped === true;
+  // Major-1 fix: prefer the server-returned `path` (contentDir-relative)
+  // so non-default `upload.attachmentFolderPath` values — Obsidian-style
+  // global paths like `attachments`, bare-name, or parent-relative — are
+  // honored. Pre-fix the client assumed the asset was co-located with
+  // the parent doc (`${parentDir(parentDocName)}/${src}`), which breaks
+  // whenever attachmentFolderPath isn't `./`. Fall back to the co-located
+  // assumption only when a legacy server without `path` responds.
+  const parentDocDir = parentDir(parentDocName);
+  const assetContentPath =
+    typeof body.path === 'string' && body.path.length > 0
+      ? body.path
+      : parentDocDir
+        ? `${parentDocDir}/${src}`
+        : src;
 
   // SPEC §6 FR-2 / D-B: dedup toast. `silent` suppresses the toast
   // entirely; `toast` (default) shows the reusing message. `confirm` is
   // reserved for a future blocking dialog — today it falls through to
   // the toast shape so behavior is never worse than the default.
   if (deduped && uploadConfig.dedup.ui !== 'silent') {
-    const displayPath = parentDir(parentDocName) ? `${parentDir(parentDocName)}/${src}` : src;
-    toast(`Already at ${displayPath} — reusing.`);
+    toast.info(`Already at ${assetContentPath} — reusing.`);
   }
 
   const shape = pickInsertShape(file.name, uploadConfig);
@@ -355,6 +390,12 @@ export async function uploadAndInsert(
 
   const tr = state.tr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId });
 
+  // `shortestImageRef` wants contentDir-relative paths for BOTH inputs.
+  // `assetContentPath` is already contentDir-relative from the server;
+  // `parentDocName` already is too (the client built it from the docName
+  // at the top of this function).
+  const relPath = shortestImageRef(assetContentPath, parentDocName);
+
   if (shape.kind === 'wikiembed') {
     const node = state.schema.nodes.wikiLinkEmbed;
     if (!node) {
@@ -362,7 +403,14 @@ export async function uploadAndInsert(
       showError(editor, uploadId);
       return;
     }
-    tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null }));
+    // Target stays the bare basename (Obsidian shape). The NodeView
+    // (`WikiLinkEmbed.renderHTML`) applies `data-resolved-src` for image
+    // rendering so the in-page `<img>` honors attachmentFolderPath even
+    // before the next round-trip hits the basename-index resolver.
+    tr.insert(
+      mappedPos,
+      node.create({ target: src, alias: null, anchor: null, resolvedSrc: relPath }),
+    );
   } else if (shape.kind === 'image') {
     const imageNode = state.schema.nodes.image;
     if (!imageNode) {
@@ -371,12 +419,10 @@ export async function uploadAndInsert(
       return;
     }
     const alt = file.name.replace(/\.[^.]+$/, '');
-    const relPath = shortestImageRef(`${parentDir(parentDocName)}/${src}`, parentDocName);
     tr.insert(mappedPos, imageNode.create({ src: relPath, alt }));
   } else {
     // Markdown-link fallback: insert text + link mark.
     const linkMark = state.schema.marks.link;
-    const relPath = shortestImageRef(`${parentDir(parentDocName)}/${src}`, parentDocName);
     if (linkMark) {
       const text = state.schema.text(file.name, [linkMark.create({ href: relPath })]);
       tr.insert(mappedPos, text);

@@ -140,9 +140,13 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     expect(onDisk.length).toBe(pdf.length);
     expect(sha256(onDisk)).toBe(expectedSha);
 
-    // Screenshot evidence
+    // Screenshot evidence — use the Playwright runner's per-test
+    // artifact directory so the test works on any machine, in CI, and
+    // the image auto-attaches to the HTML report. The pre-fix path
+    // hardcoded one developer's worktree and would silently no-op (or
+    // crash, depending on Playwright version) everywhere else.
     await page.screenshot({
-      path: '/Users/edwingomezcuellar/projects/open-knowledge/.claude/worktrees/finalize-asset-embed-surface/tmp/ship/screenshots/qa-001-real-pdf.png',
+      path: test.info().outputPath('qa-001-real-pdf.png'),
       fullPage: true,
     });
   });
@@ -217,9 +221,15 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     const svgCount = await page.locator('.ProseMirror svg').count();
     expect(svgCount).toBe(0);
 
-    // Wait a beat to prove no deferred alert fires.
-    await page.waitForTimeout(500);
-    expect(alertFired).toBe(false);
+    // Prove no deferred alert fires. `alertFired` is a page-level
+    // sentinel updated by an `on('dialog', ...)` handler set up at
+    // test start; we poll it with a condition-based wait instead of
+    // a fixed sleep (E2E STOP rule AC-3 forbids page.waitForTimeout).
+    // If an SVG <script> had snuck through as inline DOM, the payload
+    // would have fired `alert(1)` synchronously on insertion — this
+    // assertion forces a microtask tick + an expect.poll round to
+    // give any pending event loop work a chance to surface.
+    await expect.poll(() => alertFired, { timeout: 500 }).toBe(false);
   });
 
   test('QA-006: real CSV → [data.csv](data.csv) markdown-link (D-M accept-all)', async ({

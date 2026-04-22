@@ -240,7 +240,7 @@ function recomputeRelativeImageHref(
   return `${newRef}${querySuffix}${hashSuffix}`;
 }
 
-function buildRelativeMarkdownHref(
+function recomputeRelativeMarkdownHref(
   originalHref: string,
   sourceDocName: string,
   newDocName: string,
@@ -345,7 +345,11 @@ function rewriteMarkdownLinksInLine(
       if (markdownLink) {
         const resolved = resolveInternalHref(markdownLink.href, sourceDocName);
         if (resolved?.docName === oldDocName) {
-          const nextHref = buildRelativeMarkdownHref(markdownLink.href, sourceDocName, newDocName);
+          const nextHref = recomputeRelativeMarkdownHref(
+            markdownLink.href,
+            sourceDocName,
+            newDocName,
+          );
           const hrefRaw =
             markdownLink.hrefRaw.startsWith('<') && markdownLink.hrefRaw.endsWith('>')
               ? `<${nextHref}>`
