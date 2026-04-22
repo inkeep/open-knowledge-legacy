@@ -55,6 +55,7 @@ import {
   applyAgentUndo,
   iconFromClientName,
 } from './agent-sessions.ts';
+import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -111,7 +112,12 @@ import {
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { getMetrics } from './metrics.ts';
+import {
+  getMetrics,
+  incrementAgentWriteCalls,
+  incrementSummariesProvided,
+  incrementSummariesTruncated,
+} from './metrics.ts';
 import {
   deleteReconciledBase,
   isWithinContentDir,
@@ -1223,6 +1229,47 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
+  /**
+   * Shape of the `summary` field appended to a handler's success JSON response
+   * when the caller provided a summary (spec FR8). Absent from the response
+   * entirely when the caller did not supply a summary (including empty string,
+   * which is treated as absent per `normalizeSummary`).
+   */
+  type SummaryResponse = { value: string; truncatedFrom?: number };
+
+  /**
+   * Pure response-shape derivation from a normalized summary — NO side effects.
+   * Returns the fields the handler appends to its success JSON when the caller
+   * supplied a summary (FR8/FR12). `undefined` return values mean "omit the
+   * corresponding response key entirely."
+   */
+  function summaryResponseFields(normalized: NormalizedSummary): {
+    response?: SummaryResponse;
+    hint?: string;
+    stored: string | undefined;
+  } {
+    if (normalized.kind !== 'value') return { stored: undefined };
+    if (normalized.truncatedFrom !== undefined) {
+      return {
+        response: { value: normalized.value, truncatedFrom: normalized.truncatedFrom },
+        hint: `Summary truncated from ${normalized.truncatedFrom} chars to 80 (max 80).`,
+        stored: normalized.value,
+      };
+    }
+    return { response: { value: normalized.value }, stored: normalized.value };
+  }
+
+  /**
+   * Fire the M1/M2 counters for a summary that is about to be persisted.
+   * Call AFTER the contribution is guaranteed to land (i.e. not on 404/409
+   * early-returns) so adoption rate reflects successful writes.
+   */
+  function countNormalizedSummary(normalized: NormalizedSummary): void {
+    if (normalized.kind !== 'value') return;
+    incrementSummariesProvided();
+    if (normalized.truncatedFrom !== undefined) incrementSummariesTruncated();
+  }
+
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -1259,6 +1306,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body);
+      const normalizedSummary = normalizeSummary(body.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1267,6 +1319,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
 
       // setPresence lives INSIDE the try so the pairing with touchMode('idle')
       // in `finally` is atomic — any throw between setPresence and transact
@@ -1304,7 +1358,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
         );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
         agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
@@ -1312,7 +1369,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       flushDocToGit(docName, 'agent-write');
       onAgentWrite?.();
 
-      json(res, 200, { ok: true, timestamp });
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1369,6 +1430,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const {
+        response: summaryResponse,
+        hint: summaryHint,
+        stored: storedSummary,
+      } = summaryResponseFields(normalizedSummary);
       const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1412,7 +1483,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
         );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
         agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
@@ -1442,6 +1516,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         timestamp,
         subscriberCount,
         ...(hints ? { hints } : {}),
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+        ...(summaryHint ? { hint: summaryHint } : {}),
       });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
@@ -1895,6 +1971,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1974,7 +2055,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget)
+        if (!notFound && !staleTarget) {
+          // Only count + record when the patch actually applied. The M1
+          // denominator excludes 404/409 so adoption rate reflects successful
+          // writes, not total attempts.
+          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
             agentId,
@@ -1982,7 +2067,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             colorSeed,
             undefined,
             buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
           );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        }
       } finally {
         agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
@@ -2013,7 +2102,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const subscriberCount = getSubscriberCount(docName);
 
-      json(res, 200, { ok: true, timestamp, subscriberCount });
+      const { response: summaryResponse, hint: summaryHint } =
+        summaryResponseFields(normalizedSummary);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+        ...(summaryHint ? { hint: summaryHint } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
