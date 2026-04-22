@@ -191,6 +191,7 @@ describe('per-writer 30-day TTL GC on active branches (US-019, D54, FR-18)', () 
   /** Dates for testing TTL */
   const staleDate = new Date(Date.now() - 32 * 24 * 60 * 60 * 1000).toISOString(); // 32 days ago
   const freshDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5 days ago
+  const activeBranch = 'main';
 
   /** Create a ref with a specific commit date in the history repo */
   async function createRefWithDate(
@@ -228,37 +229,40 @@ describe('per-writer 30-day TTL GC on active branches (US-019, D54, FR-18)', () 
     await git.raw('config', 'user.email', 'test@test.com');
     await git.add('.');
     await git.commit('initial');
+    await git.raw('branch', '-M', activeBranch);
 
     const shadow = await initShadowRepo(projectRoot);
 
     // Stale session refs (>30d) — should be deleted
-    await createRefWithDate(shadow, 'refs/wip/main/agent-S1', staleDate);
-    await createRefWithDate(shadow, 'refs/wip/main/principal-P1', staleDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/agent-S1`, staleDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/principal-P1`, staleDate);
 
     // Fresh session ref (<30d) — should be preserved
-    await createRefWithDate(shadow, 'refs/wip/main/agent-S2', freshDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/agent-S2`, freshDate);
 
     // Classified writers (any age) — NEVER GC'd (D54)
-    await createRefWithDate(shadow, 'refs/wip/main/file-system', staleDate);
-    await createRefWithDate(shadow, 'refs/wip/main/git-upstream', staleDate);
-    await createRefWithDate(shadow, 'refs/wip/main/openknowledge-service', staleDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/file-system`, staleDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/git-upstream`, staleDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/openknowledge-service`, staleDate);
 
     const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
 
     expect(result.deletedStaleSessionRefs).toBe(2); // agent-S1 + principal-P1
 
     const sg = shadowGit(shadow);
-    const remaining = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/main'))
+    const remaining = (
+      await sg.raw('for-each-ref', '--format=%(refname)', `refs/wip/${activeBranch}`)
+    )
       .trim()
       .split('\n')
       .filter(Boolean);
 
-    expect(remaining).not.toContain('refs/wip/main/agent-S1');
-    expect(remaining).not.toContain('refs/wip/main/principal-P1');
-    expect(remaining).toContain('refs/wip/main/agent-S2');
-    expect(remaining).toContain('refs/wip/main/file-system');
-    expect(remaining).toContain('refs/wip/main/git-upstream');
-    expect(remaining).toContain('refs/wip/main/openknowledge-service');
+    expect(remaining).not.toContain(`refs/wip/${activeBranch}/agent-S1`);
+    expect(remaining).not.toContain(`refs/wip/${activeBranch}/principal-P1`);
+    expect(remaining).toContain(`refs/wip/${activeBranch}/agent-S2`);
+    expect(remaining).toContain(`refs/wip/${activeBranch}/file-system`);
+    expect(remaining).toContain(`refs/wip/${activeBranch}/git-upstream`);
+    expect(remaining).toContain(`refs/wip/${activeBranch}/openknowledge-service`);
   });
 
   test('preserves fresh session refs (<30d) on active branches (US-019)', async () => {
@@ -272,23 +276,26 @@ describe('per-writer 30-day TTL GC on active branches (US-019, D54, FR-18)', () 
     await git.raw('config', 'user.email', 'test@test.com');
     await git.add('.');
     await git.commit('initial');
+    await git.raw('branch', '-M', activeBranch);
 
     const shadow = await initShadowRepo(projectRoot);
 
-    await createRefWithDate(shadow, 'refs/wip/main/agent-fresh', freshDate);
-    await createRefWithDate(shadow, 'refs/wip/main/principal-fresh', freshDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/agent-fresh`, freshDate);
+    await createRefWithDate(shadow, `refs/wip/${activeBranch}/principal-fresh`, freshDate);
 
     const result = await gcShadowBranches(shadow, resolve(projectRoot, '.git'));
 
     expect(result.deletedStaleSessionRefs).toBe(0);
 
     const sg = shadowGit(shadow);
-    const remaining = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/main'))
+    const remaining = (
+      await sg.raw('for-each-ref', '--format=%(refname)', `refs/wip/${activeBranch}`)
+    )
       .trim()
       .split('\n')
       .filter(Boolean);
 
-    expect(remaining).toContain('refs/wip/main/agent-fresh');
-    expect(remaining).toContain('refs/wip/main/principal-fresh');
+    expect(remaining).toContain(`refs/wip/${activeBranch}/agent-fresh`);
+    expect(remaining).toContain(`refs/wip/${activeBranch}/principal-fresh`);
   });
 });

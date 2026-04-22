@@ -7,21 +7,6 @@
  * server's principal record). This gives presence distinctness (each tab is
  * a separate cursor/awareness entry) while grouping shadow-repo writes under
  * a single `refs/wip/<branch>/<principalId>` ref.
- *
- * `TAB_SESSION_ORIGIN` is a frozen `LocalTransactionOrigin` carrying the
- * tab's session ID. Future work: inject this into TipTap/CodeMirror transact
- * calls so Y.Doc transactions carry per-tab origin for undo attribution.
  */
 
 export const tabSessionId: string = crypto.randomUUID();
-
-export const TAB_SESSION_ORIGIN = (() => {
-  // Deep-freeze per D23 / precedent #24(b) — shallow `Object.freeze` does not
-  // freeze `context`; strict-mode callers would silently succeed at mutating
-  // `context.origin`. Freezing inner-then-outer closes the footgun.
-  const ctx = Object.freeze({ origin: 'tab-session', tabSessionId });
-  return Object.freeze({
-    source: 'local' as const,
-    context: ctx,
-  });
-})();
