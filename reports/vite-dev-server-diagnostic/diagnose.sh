@@ -320,6 +320,114 @@ ws_probe "/collab (IPv6)"            "http://[::1]:$PORT/collab"
 ws_probe "/collab (localhost)"       "http://localhost:$PORT/collab"
 ws_probe "/collab/keepalive (localhost)" "http://localhost:$PORT/collab/keepalive"
 
+# --- Address-family-forced probes (the decisive test) ----------------------
+# Forces curl to use IPv4 or IPv6 when resolving `localhost`, independent of
+# the libc resolver's preferred order. Three distinct outcomes across the pair:
+#   -4 OK, -6 OK   → listener is dual-stack; problem is NOT address family
+#   -4 fail, -6 OK → listener is IPv6-only (baseline); a browser preferring
+#                    IPv4 will never connect despite the server being "up"
+#   -4 OK, -6 fail → listener is IPv4-only or IPv6 loopback is disabled
+#   -4 fail, -6 fail → neither loopback reaches the server; firewall / VPN
+h2 "Address-family-forced HTTP probes (decisive)"
+p "Force curl to resolve \`localhost\` over IPv4 (\`-4\`) vs IPv6 (\`-6\`) and retry the request. If one succeeds and the other refuses, the binding story is settled."
+HTTP_V4_RC=99
+HTTP_V6_RC=99
+http_probe_af() {
+  local label="$1" flag="$2" url="$3"
+  h3 "$label — \`curl $flag $url\`"
+  local body; body=$(mktemp)
+  local line rc
+  line=$(curl "$flag" -sS -o "$body" --max-time 6 \
+    -w "HTTP %{http_code}  connect=%{time_connect}s  total=%{time_total}s  bytes=%{size_download}  remote=%{remote_ip}:%{remote_port}" \
+    "$url" 2>&1)
+  rc=$?
+  LAST_CURL_RC=$rc
+  {
+    printf '%s\n' "$line"
+    printf -- '--- exit=%d ---\n' "$rc"
+    printf -- '--- body (first 200 bytes) ---\n'
+    head -c 200 "$body" 2>/dev/null
+    printf '\n'
+  } | code text
+  rm -f "$body"
+}
+http_probe_af "IPv4-forced (localhost → A record)"    "-4" "http://localhost:$PORT/"
+HTTP_V4_RC=$LAST_CURL_RC
+http_probe_af "IPv6-forced (localhost → AAAA record)" "-6" "http://localhost:$PORT/"
+HTTP_V6_RC=$LAST_CURL_RC
+
+h2 "Address-family-forced WebSocket probes (decisive)"
+p "Same idea for the \`/collab\` upgrade — forces the address family independent of resolution order. A healthy upgrade has \`HTTP/1.1 101 Switching Protocols\` in the output (curl will still \`exit 28\` because it waits for frames that never come after the upgrade — that's expected)."
+WS_V4_RC=99
+WS_V6_RC=99
+ws_probe_af() {
+  local label="$1" flag="$2" url="$3"
+  h3 "$label — \`curl $flag $url\`"
+  local key out
+  key=$(openssl rand -base64 16 2>/dev/null || echo 'dGhlIHNhbXBsZSBub25jZQ==')
+  out=$(curl "$flag" -i -sS --max-time 3 \
+    -H "Connection: Upgrade" -H "Upgrade: websocket" \
+    -H "Sec-WebSocket-Key: $key" -H "Sec-WebSocket-Version: 13" \
+    "$url" 2>&1)
+  printf '%s\n' "$out" | head -10 | code text
+  if printf '%s' "$out" | grep -q "101 Switching Protocols"; then
+    LAST_WS_RC=0
+  else
+    LAST_WS_RC=1
+  fi
+}
+ws_probe_af "IPv4-forced" "-4" "http://localhost:$PORT/collab"
+WS_V4_RC=$LAST_WS_RC
+ws_probe_af "IPv6-forced" "-6" "http://localhost:$PORT/collab"
+WS_V6_RC=$LAST_WS_RC
+
+# --- Runtime DNS resolution (what bun / Vite's listen() sees) --------------
+h2 "Runtime DNS resolution (what bun / Vite's \`listen()\` sees)"
+p "\`dns.lookup\` is what Node / bun calls internally when you pass a hostname to \`http.listen()\`. Whether the listener lands on IPv4, IPv6, or both is decided by the resolver order here, not the system shell's \`getent\` / \`dscacheutil\`."
+{ bun -e '
+  const dns = require("node:dns");
+  const { promisify } = require("node:util");
+  const lookup = promisify(dns.lookup);
+  const lookupAll = (h) => promisify(dns.lookup)(h, { all: true });
+  (async () => {
+    try {
+      console.log("-- default order --");
+      console.log("  single:", await lookup("localhost"));
+      console.log("  all:   ", await lookupAll("localhost"));
+      dns.setDefaultResultOrder("ipv4first");
+      console.log("-- after setDefaultResultOrder(\"ipv4first\") --");
+      console.log("  single:", await lookup("localhost"));
+      console.log("  all:   ", await lookupAll("localhost"));
+      dns.setDefaultResultOrder("verbatim");
+      console.log("-- after setDefaultResultOrder(\"verbatim\") --");
+      console.log("  single:", await lookup("localhost"));
+      console.log("  all:   ", await lookupAll("localhost"));
+    } catch (err) { console.error("ERR:", err && err.message || err); process.exit(1); }
+  })();
+' 2>&1 | head -40; } | code text
+
+# --- Loopback interface & ping sanity --------------------------------------
+h2 "Loopback interface sanity"
+p "Confirms both \`127.0.0.1/8\` and \`::1/128\` are bound on the loopback interface. If either is missing, the kernel cannot route traffic on that address family regardless of where Vite bound."
+if command -v ifconfig >/dev/null 2>&1; then
+  run_cmd "ifconfig lo0" "ifconfig lo0 2>/dev/null || ifconfig lo 2>/dev/null"
+elif command -v ip >/dev/null 2>&1; then
+  run_cmd "ip addr show lo" "ip addr show lo"
+fi
+h3 "IPv4 loopback ping"
+{ (ping -c 1 -W 1000 127.0.0.1 2>&1 || ping -c 1 -w 1 127.0.0.1 2>&1) | head -5; } | code text
+h3 "IPv6 loopback ping"
+{ (ping6 -c 1 ::1 2>&1 || ping -c 1 -W 1000 ::1 2>&1 || ping -c 1 -w 1 ::1 2>&1) | head -5; } | code text
+
+# --- macOS Application Firewall -------------------------------------------
+if [[ "$(uname -s)" = "Darwin" && -x /usr/libexec/ApplicationFirewall/socketfilterfw ]]; then
+  h2 "macOS Application Firewall"
+  p "Rare but real — if ALF is on and bun / node are not allow-listed, inbound connections (including loopback in some setups) can be dropped."
+  run_cmd "socketfilterfw --getglobalstate" "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1"
+  run_cmd "socketfilterfw --getstealthmode" "/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode 2>&1"
+  run_cmd "socketfilterfw --getblockall" "/usr/libexec/ApplicationFirewall/socketfilterfw --getblockall 2>&1"
+fi
+
 # --- server.lock -------------------------------------------------------------
 h2 "server.lock"
 if [[ -f .open-knowledge/server.lock ]]; then
@@ -338,6 +446,25 @@ h2 "Dev server log (last 200 lines)"
 h2 "Dev server log (collab-related lines)"
 { grep -nE 'collab|hocus|upgrade|WebSocket|websocket|Hocus' "$LOG" 2>&1 | head -80 | sed "s|$REPO_ROOT|REPO|g"; } | code text
 
+# --- Verdict ----------------------------------------------------------------
+# Classify based on the four address-family outcomes (HTTP + WS, IPv4 + IPv6).
+# Exit codes from the helpers: 0 = reachable / upgrade succeeded; nonzero = not.
+verdict_for_pair() {
+  local v4="$1" v6="$2" kind="$3" url="$4"
+  if   (( v4 == 0 && v6 == 0 )); then
+    echo "**$kind: dual-stack reachable.** Both IPv4 and IPv6 loopback reach \`$url\`. The address-family hypothesis is ruled out for this transport — look elsewhere (browser cache, extensions, mismatched port, browser console errors)."
+  elif (( v4 != 0 && v6 == 0 )); then
+    echo "**$kind: IPv6-only** (matches the committed baseline). \`curl -4 $url\` is refused; \`curl -6 $url\` succeeds. A browser that resolves \`localhost\` to \`127.0.0.1\` first (Happy Eyeballs tilt, \`dns.setDefaultResultOrder('ipv4first')\`, browser extension, corporate DNS) will silently fail to connect. Decisive fix candidate: set \`server.host: '127.0.0.1'\` (or \`'0.0.0.0'\`) in \`packages/app/vite.config.ts\` so the listener binds IPv4 too."
+  elif (( v4 == 0 && v6 != 0 )); then
+    echo "**$kind: IPv4-only** — unusual. Baseline is IPv6-only. \`curl -4 $url\` succeeds; \`curl -6\` fails. Either Vite is already bound to \`127.0.0.1\` / \`0.0.0.0\` on this box, or \`::1\` is missing from the loopback interface. Check the _Loopback interface sanity_ section for \`::1/128\` on \`lo0\`."
+  else
+    echo "**$kind: neither loopback address family reaches \`$url\`.** If \`Vite ready\` + \`/collab ready\` + the lsof listener lines all show yes, traffic is being dropped between the client and the listener. Candidates: macOS Application Firewall (see section), a VPN with aggressive split-tunneling or loopback interception (Tailscale, Cloudflare WARP, Little Snitch), or IPv6 disabled at the interface level."
+  fi
+}
+h2 "Verdict"
+p "$(verdict_for_pair $HTTP_V4_RC $HTTP_V6_RC "HTTP"              "http://localhost:$PORT/")"
+p "$(verdict_for_pair $WS_V4_RC   $WS_V6_RC   "WebSocket /collab" "http://localhost:$PORT/collab")"
+
 # --- Done --------------------------------------------------------------------
 h2 "Summary"
 {
@@ -345,6 +472,10 @@ h2 "Summary"
   printf -- '- Vite ready:             %s\n'      "$([[ $READY_VITE   = 1 ]] && echo yes || echo NO)"
   printf -- '- /collab ready:          %s\n'      "$([[ $READY_COLLAB = 1 ]] && echo yes || echo NO)"
   printf -- '- Server process alive:   %s\n'      "$(kill -0 "$SERVER_PID" 2>/dev/null && echo yes || echo NO)"
+  printf -- '- HTTP IPv4 localhost:    %s\n'      "$([[ $HTTP_V4_RC -eq 0 ]] && echo reachable || echo unreachable)"
+  printf -- '- HTTP IPv6 localhost:    %s\n'      "$([[ $HTTP_V6_RC -eq 0 ]] && echo reachable || echo unreachable)"
+  printf -- '- WS   IPv4 /collab:      %s\n'      "$([[ $WS_V4_RC   -eq 0 ]] && echo 101-upgrade || echo failed)"
+  printf -- '- WS   IPv6 /collab:      %s\n'      "$([[ $WS_V6_RC   -eq 0 ]] && echo 101-upgrade || echo failed)"
 } | code text
 
 printf '\nDone. Report: %s\n'   "$OUT"

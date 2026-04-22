@@ -4,7 +4,7 @@ Open Knowledge MCP unavailable in this session; this file was written with nativ
 
 ## TL;DR
 
-Running `bun run --filter @inkeep/open-knowledge-app dev` on the working machine (Andrew's Mac, macOS 26.3, Darwin 25.3.0 arm64) came up clean: Vite ready in ~5 s, Hocuspocus `/collab` ready, HTTP `200` on the root, `/api/config` returns the expected JSON, and all three WebSocket paths (`/collab` over both IPv4 and IPv6, `/collab/keepalive`) return `101 Switching Protocols`. Baseline report: [results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md](results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md).
+Running `bun run --filter @inkeep/open-knowledge-app dev` on the working machine (Andrew's Mac, macOS 26.3, Darwin 25.3.0 arm64) came up clean: Vite ready in ~5 s, Hocuspocus `/collab` ready, HTTP `200` on the root, `/api/config` returns the expected JSON, and all three WebSocket paths (`/collab` over both IPv4 and IPv6, `/collab/keepalive`) return `101 Switching Protocols`. Baseline report: [results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-214358Z.md](results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-214358Z.md).
 
 The single most interesting signal from the baseline — and the leading hypothesis for why Dima's machine "doesn't fully work" — is that **the Vite listener is IPv6-only**. On the working machine:
 
@@ -38,10 +38,20 @@ Why it binds IPv6-only: `packages/app/vite.config.ts` sets `server.port` but not
 - Process tree + `lsof`/`ss`/`netstat` listener list on the port.
 - HTTP GET on `http://127.0.0.1:5173/`, `http://[::1]:5173/`, `http://localhost:5173/`, and `/api/config`, each with headers + first 400 body bytes + timing.
 - WebSocket upgrade handshakes to `/collab` over IPv4, IPv6, and localhost, plus `/collab/keepalive` — expects `HTTP/1.1 101 Switching Protocols`.
+- **Address-family-forced HTTP probes** — `curl -4 http://localhost:5173/` and `curl -6 http://localhost:5173/`. Forces curl to resolve over the chosen family, bypassing the libc resolver's preference, so we can distinguish "listener is IPv6-only" from "listener is dual-stack" from "resolver resolves to something unreachable" as three separate outcomes.
+- **Address-family-forced WebSocket probes** — same idea against `/collab`.
+- **Runtime DNS resolution** — runs `bun -e` to call `dns.lookup('localhost')` with default order, then with `setDefaultResultOrder('ipv4first')`, then `'verbatim'`, capturing the single + all-results shape. This is literally what Vite's `http.listen()` consults; the system-shell resolvers (`dscacheutil` / `getent`) can return different answers than Node/bun's resolver.
+- **Loopback interface sanity** — `ifconfig lo0` (or `ip addr show lo`) + `ping -c1 127.0.0.1` + `ping6 -c1 ::1`. Rules out "IPv6 loopback was disabled / `::1` was removed from `lo0`" in one line.
+- **macOS Application Firewall** (Darwin only) — `socketfilterfw --getglobalstate` / `--getstealthmode` / `--getblockall`. Rare, but a blocked bun binary in ALF can drop loopback inbound in some setups. No sudo required for these read-only queries.
 - `.open-knowledge/server.lock` dump.
 - First 60 / last 200 / collab-filtered tails of the dev-server log.
+- **Verdict block** — a plain-English classification synthesized from the four decisive-test outcomes (HTTP v4/v6 + WS v4/v6). Four possible verdicts: _dual-stack reachable_, _IPv6-only_ (matches baseline), _IPv4-only_ (unusual), or _neither reachable_. Each points at its own next step.
 
 On successful run, the report ends with a one-screen summary. Probe failures don't abort the script — they become content in the report, so a partially-broken environment still gives us a diff.
+
+### The decisive test, in one sentence
+
+If Dima's report shows `HTTP IPv4 localhost: reachable` in the Summary and/or his Verdict says "dual-stack reachable," the IPv6-binding hypothesis is dead and we need to widen the net. If it says "IPv6-only" or shows `HTTP IPv4 localhost: unreachable`, the hypothesis is confirmed and the one-line fix in `vite.config.ts` is the pressure test.
 
 ## Instructions for Dima
 
@@ -99,17 +109,21 @@ diff -u \
 
 Sections to read first, in order of signal:
 
-1. **HTTP probes** — IPv4 vs IPv6 vs localhost. Any of the three failing where my baseline has `200 OK` is the diff.
-2. **WebSocket upgrade handshakes** — anything other than `HTTP/1.1 101 Switching Protocols` in the first five lines of a section means upgrade isn't wired.
-3. **Listeners on port 5173** — `IPv6 [::1]:5173` (IPv6-only, matches baseline) vs `IPv4 *:5173` vs `IPv6 *:5173` vs nothing at all are four distinct failure modes.
-4. **Dev server log (collab-related lines)** — the `[collab] configureServer invocation=N pid=M` line tells us if the plugin initialized more than once (`specs/.../hocuspocus-plugin.ts:276` warns on >1); the `[collab] upgrade received …` / `handleUpgrade starting` / `handshake complete` trio tells us how far each WS upgrade got.
-5. **localhost resolution + /etc/hosts** — divergence here confirms or rules out the IPv6 hypothesis.
+1. **Verdict** — the script synthesizes the address-family test outcomes into a one-paragraph classification. Read this first; the rest of the report is evidence that supports it.
+2. **Summary** — scan the 4 address-family outcome lines (`HTTP IPv4 / IPv6 localhost`, `WS IPv4 / IPv6 /collab`). These are the decisive bits.
+3. **Address-family-forced HTTP + WebSocket probes** — the raw `curl -4` / `curl -6` output backing the verdict. If the exit code for `-4` is `7` and `-6` is `0`, it's IPv6-only; any other pattern is a different story.
+4. **Runtime DNS resolution** — what bun/node's `dns.lookup` returns for `localhost` under default / `ipv4first` / `verbatim` orders. If your default order is `ipv4first` on Dima's box, that alone explains the silent connect failure from any Node/bun tooling that hits the dev server without explicit `-6`.
+5. **Loopback interface sanity** — `ifconfig lo0` must show both `127.0.0.1` and `::1`; both pings must succeed. A divergence here means the network stack is broken before we even get to the application.
+6. **Listeners on port 5173** — `IPv6 [::1]:5173` (IPv6-only, matches baseline) vs `IPv4 *:5173` vs `IPv6 *:5173` vs nothing at all are four distinct failure modes.
+7. **Dev server log (collab-related lines)** — the `[collab] configureServer invocation=N pid=M` line tells us if the plugin initialized more than once (`specs/.../hocuspocus-plugin.ts:276` warns on >1); the `[collab] upgrade received …` / `handleUpgrade starting` / `handshake complete` trio tells us how far each WS upgrade got.
+8. **macOS Application Firewall** — if `--getglobalstate` is anything other than `Firewall is disabled.` and `--getblockall` is anything other than `off`, that's a candidate for silent localhost drops.
+9. **localhost resolution + /etc/hosts** — divergence here confirms or rules out the IPv6 hypothesis at the system-shell level (distinct from the runtime-DNS level above).
 
 ## Artifacts in this directory
 
 - `diagnose.sh` — the probe script.
 - `REPORT.md` — this file.
-- `results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md` — baseline from the working machine. (The script also writes `server-<host>-<ts>.log` beside it — the raw dev-server stdout — but `*.log` is repo-`.gitignore`d, so it only exists locally. The collab-filtered / first-60 / last-200 tails are embedded in the `.md` report itself.)
+- `results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-214358Z.md` — baseline from the working machine. (The script also writes `server-<host>-<ts>.log` beside it — the raw dev-server stdout — but `*.log` is repo-`.gitignore`d, so it only exists locally. The collab-filtered / first-60 / last-200 tails are embedded in the `.md` report itself.)
 
 ## Script layout (quick tour)
 
@@ -126,6 +140,12 @@ The report sections are produced in this order; the first two are the ones to re
 9. **Listeners on port** — `lsof` / `ss` / `netstat` — the line that reveals IPv6-only vs dual-stack vs IPv4-only binding.
 10. **HTTP probes** — IPv4 / IPv6 / localhost / `/api/config`.
 11. **WebSocket upgrade handshakes** — `/collab` over IPv4 + IPv6 + localhost, plus `/collab/keepalive`.
-12. **server.lock** — the `.open-knowledge/server.lock` dump.
-13. **Dev server log** — first 60 / last 200 / collab-filtered tails of the raw stdout+stderr.
-14. **Summary** — four-line TL;DR: `node_modules`, Vite ready, `/collab` ready, process alive.
+12. **Address-family-forced HTTP probes (decisive)** — `curl -4` vs `curl -6` against `localhost:<port>`, exit codes captured. The pair of outcomes nails the binding story.
+13. **Address-family-forced WebSocket probes (decisive)** — same for `/collab`.
+14. **Runtime DNS resolution** — what bun's `dns.lookup('localhost')` returns under default / `ipv4first` / `verbatim` orders. Vite's `listen()` consults this, not the system shell.
+15. **Loopback interface sanity** — `ifconfig lo0` / `ping` on `127.0.0.1` and `::1`.
+16. **macOS Application Firewall** (Darwin only) — global state + stealth + block-all, no sudo.
+17. **server.lock** — the `.open-knowledge/server.lock` dump.
+18. **Dev server log** — first 60 / last 200 / collab-filtered tails of the raw stdout+stderr.
+19. **Verdict** — one-paragraph classification from the four decisive-test outcomes.
+20. **Summary** — eight-line TL;DR adding the four address-family reach outcomes alongside node_modules / Vite ready / /collab ready / process alive.
