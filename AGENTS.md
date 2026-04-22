@@ -2114,7 +2114,6 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
 
-||||||| parent of 2900e5f7 (docs(handoff): document Open-in-Agent surface across AGENTS.md + READMEs)
 1. Call `get_preview_url` to obtain the browser URL for the target doc.
    - If it returns `null`, the server is not running. Start it with `open-knowledge start` (or `preview_start`), then call `get_preview_url` again — the server writes a lock file that this tool reads.
    - NEVER guess or manually construct the preview URL — always use the URL returned by `get_preview_url`.
