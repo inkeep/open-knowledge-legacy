@@ -241,7 +241,7 @@ Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](.
 
 | Method | Path                 | Purpose |
 | ------ | -------------------- | ------- |
-| POST   | `/api/upload`        | Upload an asset (multipart). Response: `{ok, src, deduped}` on 200; `{ok:false, error:'maxBytes', attemptedBytes, maxBytes, message}` on 413. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
+| POST   | `/api/upload`        | Upload an asset (multipart). Response: `{ok, src, deduped}` on 200; `{ok:false, error:'max-bytes', attemptedBytes, maxBytes, message}` on 413. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
 | POST   | `/api/upload-image`  | One-release deprecation shim (D-G). Forwards to `/api/upload`; logs a single per-process deprecation notice. Removed in the next minor. |
 | GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `maxBytes`. |
 
@@ -322,7 +322,7 @@ Field mapping:
 | `useMarkdownLinks`         | `emitFormat`             | `true → 'markdown-image'`, `false → 'wikiembed'` |
 | `newLinkFormat`            | (surfaced but unused)    | Foam-style shortest is the OK default       |
 
-Called in `packages/cli/src/commands/start.ts`. When the vault has a value, **it overrides the corresponding key in `config.upload`** (vault-first merge). Zod always materializes defaults on the user side, so there's no way to distinguish "user kept default" from "user never touched upload" — the pragmatic interpretation is "vault is authoritative when it speaks."
+Called in `packages/cli/src/commands/start.ts`. Precedence is **user > vault > default**: an explicit value in `config.upload` wins over the vault, and the vault only fills in where the user was silent. This works because `attachmentFolderPath` and `emitFormat` are declared `.optional()` on the Zod schema (no default materialized), so `undefined` is a reliable "user didn't set it" signal. See `resolveUploadConfig()` in `@inkeep/open-knowledge-core` for the resolver.
 
 Read-only posture: never writes to `.obsidian/` or `.open-knowledge/config.yml`. Errors emit structured JSON logs (`{event: 'obsidian-vault-detect', reason: 'symlink-escape' | 'read-failed' | 'parse-error'}`) + fall through to the user's config.
 
@@ -346,7 +346,7 @@ The `MANAGED_RENAME_ORIGIN` is a paired-write origin (`context.paired: true`) so
                                       ↓
                              config.upload (UploadConfig)
                                       │
-                                      ├─→  detectObsidianVault()  (vault-first merge for attachmentFolderPath + emitFormat)
+                                      ├─→  detectObsidianVault()  +  resolveUploadConfig()  (user > vault > default merge)
                                       │
                                       ↓
                              bootServer({ uploadConfig }) → createServer({ uploadConfig })

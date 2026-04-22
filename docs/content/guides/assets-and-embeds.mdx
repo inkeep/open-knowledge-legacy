@@ -79,7 +79,7 @@ Open Knowledge reads `.obsidian/app.json` at server startup and pre-populates tw
 - `attachmentFolderPath` — 1:1 passthrough of Obsidian's setting.
 - `emitFormat` — derived from Obsidian's `useMarkdownLinks`. `false` (Obsidian's default) maps to `wikiembed`; `true` maps to `markdown-image`.
 
-Nothing is written back to `.obsidian/` or to `.open-knowledge/config.yml`. When a vault provides a value, it takes precedence over `config.upload` — the pragmatic assumption is "if there's a vault, follow the vault."
+Nothing is written back to `.obsidian/` or to `.open-knowledge/config.yml`. Precedence is **user > vault > default**: anything you set in `.open-knowledge/config.yml` always wins, and vault detection only fills in where you were silent. This works because `attachmentFolderPath` and `emitFormat` are declared `.optional()` in the Zod schema (no default is materialized), so `undefined` is a reliable "user didn't set it" signal.
 
 Once opened, an Obsidian vault should just work:
 

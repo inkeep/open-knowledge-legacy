@@ -22,6 +22,7 @@ export {
   type DedupMode,
   type DedupUIMode,
   type EmitFormat,
+  IMAGE_EXTENSIONS,
   type UploadConfig,
 } from './constants/upload.ts';
 

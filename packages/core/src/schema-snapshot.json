@@ -309,6 +309,103 @@
       "atom": false
     }
   },
+  "marks": {
+    "code": {
+      "attrs": {},
+      "excludes": "",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "strike": {
+      "attrs": {},
+      "excludes": "strike",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "underline": {
+      "attrs": {},
+      "excludes": "underline",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "highlight": {
+      "attrs": {},
+      "excludes": "highlight",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "emphasis": {
+      "attrs": {
+        "sourceDelimiter": {
+          "hasDefault": true
+        }
+      },
+      "excludes": "emphasis",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "strong": {
+      "attrs": {
+        "sourceDelimiter": {
+          "hasDefault": true
+        }
+      },
+      "excludes": "strong",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "link": {
+      "attrs": {
+        "href": {
+          "hasDefault": true
+        },
+        "target": {
+          "hasDefault": true
+        },
+        "rel": {
+          "hasDefault": true
+        },
+        "class": {
+          "hasDefault": true
+        },
+        "title": {
+          "hasDefault": true
+        },
+        "linkStyle": {
+          "hasDefault": true
+        },
+        "refLabel": {
+          "hasDefault": true
+        },
+        "sourceForm": {
+          "hasDefault": true
+        },
+        "anchor": {
+          "hasDefault": true
+        },
+        "alias": {
+          "hasDefault": true
+        }
+      },
+      "excludes": "link",
+      "group": "",
+      "inclusive": true,
+      "spanning": true
+    },
+    "escapeMark": {
+      "attrs": {},
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
+    }
+  },
   "extensionOrder": [
     "jsxComponent",
     "rawMdxFallback",

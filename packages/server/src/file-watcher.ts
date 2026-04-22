@@ -68,6 +68,18 @@ export type AssetDiskEvent =
 
 export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
 
+/**
+ * Exhaustiveness guard for DiskEvent dispatch sites. Every consumer that
+ * pattern-matches on `event.kind` should terminate with
+ * `assertNeverDiskEvent(event)` so a new variant produces a TypeScript
+ * error at every consumer until they explicitly handle it. The new
+ * variant is discovered at compile time, not by silent drop-on-floor at
+ * runtime.
+ */
+export function assertNeverDiskEvent(event: never): never {
+  throw new Error(`[DiskEvent] unhandled variant: ${JSON.stringify(event)}`);
+}
+
 // ─── File index ─────────────────────────────────────────────────────────────
 
 export interface FileIndexEntry {

@@ -485,7 +485,7 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
       maxBytes: number;
     };
     expect(body.ok).toBe(false);
-    expect(body.error).toBe('maxBytes');
+    expect(body.error).toBe('max-bytes');
     expect(body.maxBytes).toBe(100);
     // Message must name the configured limit explicitly (P1.3 — no generic
     // "too large" phrase).

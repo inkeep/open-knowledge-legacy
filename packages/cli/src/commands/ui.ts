@@ -36,6 +36,33 @@ import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-pro
 /** 12 hours — D-025 default safety-net interval. */
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
 
+/**
+ * Extensions that browsers execute inline as scripted documents when
+ * served from contentDir under the editor's same origin. Serving these
+ * with `Content-Disposition: attachment` flips top-level navigation from
+ * "execute" to "download" — a planted `xss.html` cannot run against the
+ * editor's `/api/*` endpoints. `<img src>` / `<link rel=stylesheet>` tags
+ * still render (Content-Disposition is ignored for subresources), so
+ * wiki-embedded SVG images keep working per NFR-3.
+ */
+const SCRIPTED_DOCUMENT_EXTENSIONS = new Set([
+  'html',
+  'htm',
+  'xhtml',
+  'xml',
+  'mhtml',
+  'svg',
+  'svgz',
+]);
+
+function isScriptedDocumentExtension(urlPath: string): boolean {
+  const questionMark = urlPath.indexOf('?');
+  const clean = questionMark >= 0 ? urlPath.slice(0, questionMark) : urlPath;
+  const dotIdx = clean.lastIndexOf('.');
+  if (dotIdx < 0) return false;
+  return SCRIPTED_DOCUMENT_EXTENSIONS.has(clean.slice(dotIdx + 1).toLowerCase());
+}
+
 export interface UiServerHandle {
   /**
    * All bound HTTP servers. In two-socket-loopback mode (default, per D-033)
@@ -222,6 +249,15 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     const rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
     if (rel && contentSirv) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Stored-XSS defense: D-M accept-all lets users drop any file into
+      // contentDir, so an attacker-planted `.html` / `.svg` would execute
+      // same-origin with the editor if served inline. Force download for
+      // scripted-document extensions — browsers still honor Content-Type
+      // when the tag is `<img src>` (SVG still renders inline via <img>),
+      // but a top-level navigation downloads instead of executing.
+      if (isScriptedDocumentExtension(rel)) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
       contentSirv(req, res, () => {
         if (staticHandler) {
           staticHandler(req, res);

@@ -103,7 +103,7 @@ upload:
     - mp4
 ```
 
-Projects that contain an `.obsidian/app.json` file pre-populate `attachmentFolderPath` and `emitFormat` from the vault's `attachmentFolderPath` + `useMarkdownLinks` settings at server startup (non-destructive — nothing is written back to `.obsidian/`). When a vault provides a value, it overrides the equivalent key in `config.upload`. Operators who want to pin a different setting remove the `.obsidian/app.json` field (or its file) before restart.
+Projects that contain an `.obsidian/app.json` file pre-populate `attachmentFolderPath` and `emitFormat` from the vault's `attachmentFolderPath` + `useMarkdownLinks` settings at server startup (non-destructive — nothing is written back to `.obsidian/`). Precedence is **user > vault > default**: anything you set in `config.upload` wins, and vault detection only fills in where you were silent. To pin a setting explicitly, set it in `.open-knowledge/config.yml` — you do not need to touch `.obsidian/`.
 
 ### Sync configuration
 

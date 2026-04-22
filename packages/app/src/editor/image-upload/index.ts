@@ -1,8 +1,13 @@
-import { DEFAULT_UPLOAD_CONFIG, type UploadConfig } from '@inkeep/open-knowledge-core';
+import {
+  DEFAULT_UPLOAD_CONFIG,
+  IMAGE_EXTENSIONS,
+  type UploadConfig,
+} from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
+import { getEditorDocName } from '../extensions/doc-context.ts';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -128,13 +133,18 @@ export function shortestImageRef(assetPath: string, mdPath: string): string {
   return [...new Array(ups).fill('..'), ...downs, assetName].join('/');
 }
 
-let currentDocName: string | null = null;
-
-export function setCurrentDocName(docName: string | null): void {
-  currentDocName = docName;
+/**
+ * Resolve the doc name for an in-progress upload from the WeakMap the
+ * TiptapEditor mount effect populates. Reading from a per-editor
+ * registry — not a module-level singleton — is the race-safe choice
+ * for `EditorActivityPool`: up to `ACTIVITY_MOUNT_LIMIT` editors mount
+ * concurrently, and Activity-hidden editors do not unmount. A module-
+ * level `currentDocName` would reflect whichever mount effect ran most
+ * recently, not the user-active editor.
+ */
+function docNameFromEditor(editor: Editor): string | null {
+  return getEditorDocName(editor);
 }
-
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
 
 // US-015: live `upload.*` config, fetched from `/api/upload-config` on
 // first upload. DEFAULT_UPLOAD_CONFIG is the fallback until the fetch
@@ -143,17 +153,53 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', '
 let cachedUploadConfig: UploadConfig = DEFAULT_UPLOAD_CONFIG;
 let uploadConfigFetchInFlight: Promise<UploadConfig> | null = null;
 
+/**
+ * Lightweight runtime validation at the network boundary. The dev plugin
+ * parses YAML without Zod (monorepo layering — an app→cli dep would
+ * invert packaging), so "the server always returns a valid UploadConfig"
+ * is only true on the `ok start` path. A misconfigured proxy, a future
+ * server bug, or a Cloudflare-style 401 body poisoning could otherwise
+ * overwrite `cachedUploadConfig` with a shape that crashes
+ * `pickInsertShape` on the next upload. Narrow gate.
+ */
+function isUploadConfig(x: unknown): x is UploadConfig {
+  if (!x || typeof x !== 'object') return false;
+  const c = x as Record<string, unknown>;
+  const dedup = c.dedup as Record<string, unknown> | null | undefined;
+  return (
+    typeof c.maxBytes === 'number' &&
+    Array.isArray(c.wikiEmbedExtensions) &&
+    c.wikiEmbedExtensions.every((e) => typeof e === 'string') &&
+    typeof dedup === 'object' &&
+    dedup !== null &&
+    typeof dedup.mode === 'string' &&
+    typeof dedup.ui === 'string'
+  );
+}
+
 async function fetchUploadConfig(): Promise<UploadConfig> {
   try {
     const res = await fetch('/api/upload-config', { headers: { Accept: 'application/json' } });
-    if (!res.ok) return cachedUploadConfig;
-    const body = (await res.json()) as UploadConfig;
-    // Trust the server-validated shape — it came through the cli's Zod
-    // schema at startup, so the only corruption risk is a user poking at
-    // the endpoint directly, which falls into "don't care" territory.
+    if (!res.ok) {
+      // Reset the in-flight slot so a later upload can retry instead of
+      // holding the rejected promise forever (it resolves to
+      // cachedUploadConfig, but that's brittle if caching semantics change).
+      uploadConfigFetchInFlight = null;
+      return cachedUploadConfig;
+    }
+    const body: unknown = await res.json();
+    if (!isUploadConfig(body)) {
+      console.warn('[upload] /api/upload-config returned malformed body; keeping cached shape');
+      uploadConfigFetchInFlight = null;
+      return cachedUploadConfig;
+    }
     cachedUploadConfig = body;
     return body;
   } catch {
+    // Transient failures (network blip, server mid-restart) shouldn't
+    // poison the cache for the entire session — drop the in-flight slot
+    // so the next upload retries from scratch.
+    uploadConfigFetchInFlight = null;
     return cachedUploadConfig;
   }
 }
@@ -220,7 +266,8 @@ export async function uploadAndInsert(
   editor: Editor,
   insertPos: number,
 ): Promise<void> {
-  const parentDocName = currentDocName ? `${currentDocName}.md` : '';
+  const docName = docNameFromEditor(editor);
+  const parentDocName = docName ? `${docName}.md` : '';
   if (!parentDocName) {
     toast.error('Cannot upload: no document is open');
     return;
@@ -266,7 +313,7 @@ export async function uploadAndInsert(
     // SPEC P1.3: byte-size-specific message naming both attempted size
     // and configured limit. Server populates `message` with the human-
     // readable form; fall through to a generic shape only if it didn't.
-    if (body.error === 'maxBytes') {
+    if (body.error === 'max-bytes' || body.error === 'maxBytes') {
       if (typeof body.message === 'string') {
         message = body.message;
       } else if (typeof body.maxBytes === 'number') {
@@ -291,9 +338,11 @@ export async function uploadAndInsert(
   const src = body.src;
   const deduped = body.deduped === true;
 
-  // SPEC §6 FR-2 / D-B: dedup toast (default 'toast' ui mode). Operator
-  // tunability for 'silent' / 'confirm' is a follow-on.
-  if (deduped) {
+  // SPEC §6 FR-2 / D-B: dedup toast. `silent` suppresses the toast
+  // entirely; `toast` (default) shows the reusing message. `confirm` is
+  // reserved for a future blocking dialog — today it falls through to
+  // the toast shape so behavior is never worse than the default.
+  if (deduped && uploadConfig.dedup.ui !== 'silent') {
     const displayPath = parentDir(parentDocName) ? `${parentDir(parentDocName)}/${src}` : src;
     toast(`Already at ${displayPath} — reusing.`);
   }

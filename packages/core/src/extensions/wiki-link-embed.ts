@@ -28,6 +28,7 @@
  * dispatches on extension alone.
  */
 import { Node } from '@tiptap/core';
+import { IMAGE_EXTENSIONS } from '../constants/upload.ts';
 import { normalizeNullableString } from './wiki-link.ts';
 
 export interface WikiLinkEmbedAttrs {
@@ -35,8 +36,6 @@ export interface WikiLinkEmbedAttrs {
   alias: string | null;
   anchor: string | null;
 }
-
-const WIKI_LINK_EMBED_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
 
 function extensionOf(target: string): string {
   const basename = target.split('/').pop() ?? target;
@@ -66,18 +65,24 @@ export const WikiLinkEmbed = Node.create({
   },
 
   parseHTML() {
+    // Match every tag `renderHTML` actually emits — <img> (image ext)
+    // and <a> (non-image / opaque). Clipboard copy-and-paste of a
+    // rendered embed reaches us as the rendered tag, so the matcher
+    // must cover both shapes to round-trip the wikiembed attrs.
+    // `priority: 100` wins over the standard Image / Link extensions
+    // that would otherwise claim the node first (default priority 50).
+    const getAttrs = (node: HTMLElement | string) => {
+      if (typeof node === 'string') return false;
+      if (!node.hasAttribute('data-wiki-embed')) return false;
+      return {
+        target: node.getAttribute('data-target') || '',
+        alias: normalizeNullableString(node.getAttribute('data-alias')),
+        anchor: normalizeNullableString(node.getAttribute('data-anchor')),
+      };
+    };
     return [
-      {
-        tag: 'span[data-wiki-embed]',
-        getAttrs: (node) => {
-          if (typeof node === 'string') return false;
-          return {
-            target: node.getAttribute('data-target') || '',
-            alias: normalizeNullableString(node.getAttribute('data-alias')),
-            anchor: normalizeNullableString(node.getAttribute('data-anchor')),
-          };
-        },
-      },
+      { tag: 'img[data-wiki-embed]', getAttrs, priority: 100 },
+      { tag: 'a[data-wiki-embed]', getAttrs, priority: 100 },
     ];
   },
 
@@ -89,7 +94,7 @@ export const WikiLinkEmbed = Node.create({
 
     // Image extension → inline <img>. sirv serves the asset via relative
     // path resolution against the current doc's URL.
-    if (WIKI_LINK_EMBED_IMAGE_EXTS.has(ext)) {
+    if (IMAGE_EXTENSIONS.has(ext)) {
       return [
         'img',
         {

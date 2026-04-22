@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveUploadConfig } from '@inkeep/open-knowledge-core';
-import { ConfigSchema } from './schema';
+import { ConfigSchema, UploadConfigSchema } from './schema';
 
 describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
@@ -239,6 +239,22 @@ describe('ConfigSchema.upload (FR-5)', () => {
     // emitFormat is optional pre-resolution (US-018)
     expect(config.upload.emitFormat).toBeUndefined();
     expect(config.upload.dedup.mode).toBe('same-dir');
+  });
+
+  test('US-018 invariant: attachmentFolderPath + emitFormat must stay optional — adding a Zod default would break user-wins precedence', () => {
+    // Explicit regression gate. If a future refactor tightens either
+    // field to `.default(...)`, `resolveUploadConfig`'s user > vault >
+    // default precedence collapses: user's `undefined` becomes the
+    // materialized default and is indistinguishable from "user set
+    // this explicitly." The vault partial stops reaching the merge
+    // silently, flipping the documented user-wins behavior.
+    //
+    // Keep this test failing-loud. Do not weaken by materializing
+    // values here; the point is to prove the Zod shape still treats
+    // missing fields as `undefined`.
+    const parsed = UploadConfigSchema.parse({});
+    expect(parsed.attachmentFolderPath).toBeUndefined();
+    expect(parsed.emitFormat).toBeUndefined();
   });
 
   test('user sets attachmentFolderPath + emitFormat explicitly → Zod preserves exact values', () => {

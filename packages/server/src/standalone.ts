@@ -18,7 +18,13 @@ import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
-import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
+import {
+  assertNeverDiskEvent,
+  contentHash,
+  type DiskEvent,
+  startWatcher,
+  type WatcherHandle,
+} from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
@@ -583,6 +589,8 @@ export function createServer(options: ServerOptions): ServerInstance {
           signalChannel('files');
           break;
         }
+        default:
+          assertNeverDiskEvent(event);
       }
     } catch (err) {
       const label = diskEventLabel(event);
@@ -1082,7 +1090,14 @@ export function createServer(options: ServerOptions): ServerInstance {
       try {
         seedBasenameIndex({ contentDir, contentFilter, basenameIndex });
       } catch (err) {
-        console.warn('[basename-index] startup seed failed:', err);
+        log.error({ err }, '[basename-index] startup seed failed');
+        // An empty basename index means every `![[file.png]]` resolution
+        // returns null after boot — equivalent to the vault silently
+        // losing every wiki-embed. Surface via `degraded[]` so the
+        // Electron utility's `UtilityDegradedMessage` IPC can render a
+        // banner and operators know to investigate rather than hunting
+        // a rendering regression.
+        degraded.push('basename-index');
       }
     } catch (err) {
       log.error({ err }, '[server] disk bridge watcher failed to start');

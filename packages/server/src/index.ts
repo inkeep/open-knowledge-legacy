@@ -51,6 +51,7 @@ export {
 } from './external-change.ts';
 export {
   type AsyncSubscription,
+  assertNeverDiskEvent,
   classifyEvents,
   contentHash,
   type DiskEvent,

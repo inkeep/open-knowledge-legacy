@@ -23,8 +23,9 @@ import {
   createClipboardTextSerializer,
   createHandlePaste,
 } from './clipboard/index.ts';
+import { setEditorDocName } from './extensions/doc-context.ts';
 import { sharedExtensions } from './extensions/shared.ts';
-import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
+import { uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
@@ -173,14 +174,18 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     ],
   });
 
-  // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
-  // its tree-replacement sync while the user is actively editing, preventing concurrent
-  // user edits from being obliterated by updateYFragment.
+  // Register this editor's doc name in the per-editor WeakMap so
+  // `image-upload/uploadAndInsert(editor, ...)` can resolve it safely —
+  // no module-level singleton to race over when multiple editors are
+  // mounted concurrently under an Activity pool.
   useEffect(() => {
-    const docName = provider.configuration.name;
-    setCurrentDocName(docName ?? null);
-    return () => setCurrentDocName(null);
-  }, [provider]);
+    if (!editor) return;
+    const docName = provider.configuration.name ?? null;
+    setEditorDocName(editor, docName);
+    return () => {
+      setEditorDocName(editor, null);
+    };
+  }, [editor, provider]);
 
   // DEV-only: register the TipTap editor instance in the module-level
   // active-editor map so Playwright can resolve `window.__activeEditor` →

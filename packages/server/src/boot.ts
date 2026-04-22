@@ -315,11 +315,34 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
-    idleHandle?.detach();
-    await new Promise<void>((resolveClose) => {
-      httpServer.close(() => resolveClose());
-    });
-    await destroyHocuspocus();
+    try {
+      idleHandle?.detach();
+    } catch (err) {
+      log.warn({ err }, '[bootServer.destroy] idleHandle.detach failed');
+    }
+    // Bound the listener shutdown so a stuck keep-alive socket or hung
+    // upgrade can't wedge the server.lock release. `closeAllConnections()`
+    // (Node ≥18.2) severs in-flight sockets, and the 10s race guarantees
+    // forward progress. The `try/finally` is load-bearing: `destroyHocuspocus`
+    // MUST run so its own `try/finally` can release the server.lock — the
+    // outer wrapper's earlier shape silently skipped it when close() hung.
+    try {
+      try {
+        httpServer.closeAllConnections?.();
+      } catch (err) {
+        log.warn({ err }, '[bootServer.destroy] closeAllConnections failed');
+      }
+      await Promise.race([
+        new Promise<void>((resolveClose) => httpServer.close(() => resolveClose())),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('httpServer.close timeout after 10s')), 10_000),
+        ),
+      ]).catch((err) => {
+        log.warn({ err }, '[bootServer.destroy] httpServer.close did not complete within timeout');
+      });
+    } finally {
+      await destroyHocuspocus();
+    }
   };
 
   return {

@@ -20,6 +20,7 @@ import {
 import {
   AgentSessionManager,
   acquireServerLock,
+  assertNeverDiskEvent,
   BacklinkIndex,
   CC1Broadcaster,
   createApiExtension,
@@ -413,10 +414,23 @@ export function hocuspocusPlugin(): Plugin {
 
       // --- Filter-aware asset serving over contentDir (D9) ---
       const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
+      // Scripted-document extensions: match the set in packages/cli/src/
+      // commands/ui.ts. Serving these with Content-Disposition: attachment
+      // prevents a planted HTML/SVG under contentDir from executing same-
+      // origin with the editor (stored-XSS defense under D-M accept-all).
+      const SCRIPTED_DOC_EXTS = new Set(['html', 'htm', 'xhtml', 'xml', 'mhtml', 'svg', 'svgz']);
+      const isScriptedDocumentExt = (p: string): boolean => {
+        const idx = p.lastIndexOf('.');
+        if (idx < 0) return false;
+        return SCRIPTED_DOC_EXTS.has(p.slice(idx + 1).toLowerCase());
+      };
       server.middlewares.use((req, res, next) => {
         const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
         if (!rel || contentFilter.isExcluded(rel)) return next();
         res.setHeader('X-Content-Type-Options', 'nosniff');
+        if (isScriptedDocumentExt(rel)) {
+          res.setHeader('Content-Disposition', 'attachment');
+        }
         contentSirv(req, res, next);
       });
 
@@ -481,6 +495,12 @@ export function hocuspocusPlugin(): Plugin {
               } else if (event.kind === 'asset-delete') {
                 basenameIndex.remove(event.relativePath);
                 signalChannel('files');
+              } else {
+                // Exhaustiveness: adding a new DiskEvent variant to
+                // file-watcher.ts fails this compile-time check at
+                // every consumer. Keeps the dev plugin in lockstep with
+                // standalone.ts's dispatch table.
+                assertNeverDiskEvent(event);
               }
               void backlinkIndex.saveToDisk().catch((err: unknown) => {
                 console.warn('[hocuspocus] Failed to persist backlink cache:', err);

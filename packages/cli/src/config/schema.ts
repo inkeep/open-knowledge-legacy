@@ -1,8 +1,9 @@
-import type {
-  DedupMode as CoreDedupMode,
-  DedupUIMode as CoreDedupUIMode,
-  EmitFormat as CoreEmitFormat,
-  UploadConfig as CoreUploadConfig,
+import {
+  type DedupMode as CoreDedupMode,
+  type DedupUIMode as CoreDedupUIMode,
+  type EmitFormat as CoreEmitFormat,
+  type UploadConfig as CoreUploadConfig,
+  DEFAULT_UPLOAD_CONFIG,
 } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 
@@ -30,25 +31,14 @@ export type FolderRule = z.infer<typeof FolderRuleSchema>;
 // `dedup` is a nested object because SPEC declares the YAML path
 // `upload.dedup.ui` — that requires `dedup` to be an object, not a string.
 // The mode enum ('off' | 'same-dir') lives on `dedup.mode`.
-const DEFAULT_WIKI_EMBED_EXTENSIONS = [
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'avif',
-  'svg',
-  'pdf',
-  'mp4',
-  'webm',
-  'mov',
-  'mp3',
-  'wav',
-  'ogg',
-  'm4a',
-] as const;
+//
+// Value-imported from core's DEFAULT_UPLOAD_CONFIG so widening the list in
+// one place flows to both the cli Zod default AND the core runtime
+// fallback. Previously the two lists were literal duplicates, silently
+// drifting apart when either side was edited in isolation.
+const DEFAULT_WIKI_EMBED_EXTENSIONS: readonly string[] = DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions;
 
-const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_UPLOAD_CONFIG.maxBytes;
 
 export const UploadDedupSchema = z
   .object({

@@ -36,14 +36,24 @@ interface NodeShape {
   atom: boolean;
 }
 
+interface MarkShape {
+  attrs: Record<string, AttrShape>;
+  excludes: string;
+  group: string;
+  inclusive: boolean;
+  spanning: boolean;
+}
+
 interface SchemaSnapshot {
   nodes: Record<string, NodeShape>;
+  marks?: Record<string, MarkShape>;
   extensionOrder: string[];
 }
 
 function captureSchemaShape(): SchemaSnapshot {
   const schema = getSchema(sharedExtensions);
   const nodes: Record<string, NodeShape> = {};
+  const marks: Record<string, MarkShape> = {};
 
   for (const [name, nodeType] of Object.entries(schema.nodes)) {
     const attrs: Record<string, AttrShape> = {};
@@ -61,13 +71,33 @@ function captureSchemaShape(): SchemaSnapshot {
     };
   }
 
+  for (const [name, markType] of Object.entries(schema.marks)) {
+    const attrs: Record<string, AttrShape> = {};
+    for (const [attrName, attrSpec] of Object.entries(markType.spec.attrs ?? {})) {
+      attrs[attrName] = {
+        hasDefault: 'default' in (attrSpec as Record<string, unknown>),
+      };
+    }
+    marks[name] = {
+      attrs,
+      // `excludes` controls mark co-occurrence (CLAUDE.md STOP on Code
+      // mark's deliberate widening). `undefined` means "exclude marks of
+      // the same type," which PM canonicalizes to the mark's name; `''`
+      // means "coexist with everything" (widened state).
+      excludes: typeof markType.spec.excludes === 'string' ? markType.spec.excludes : name,
+      group: markType.spec.group ?? '',
+      inclusive: markType.spec.inclusive !== false,
+      spanning: markType.spec.spanning !== false,
+    };
+  }
+
   const extensionOrder = sharedExtensions.map((ext) => {
     if ('name' in ext && typeof ext.name === 'string') return ext.name;
     if ('configure' in ext) return '(configured)';
     return String(ext);
   });
 
-  return { nodes, extensionOrder };
+  return { nodes, marks, extensionOrder };
 }
 
 // ── Snapshot loading ────────────────────────────────────────────────
@@ -132,6 +162,57 @@ describe('R10: schema add-only invariant', () => {
   test('sharedExtensions ordering unchanged', () => {
     expect(current.extensionOrder).toEqual(snapshot.extensionOrder);
   });
+
+  // ── Mark invariants (R10 applied to PM marks — same y-prosemirror
+  //    destructive-delete risk as nodes; see CLAUDE.md WARN on Code
+  //    mark's deliberately-widened excludes). `current.marks` is always
+  //    captured; `snapshot.marks` may be absent for snapshots written
+  //    before F14 added mark coverage — the branch gracefully skips
+  //    mark-specific assertions in that case. Once the snapshot carries
+  //    `marks`, a narrowed `excludes` or removed attr/mark fails loudly.
+  const snapshotMarks = snapshot.marks;
+  if (snapshotMarks) {
+    test('no marks removed', () => {
+      for (const markName of Object.keys(snapshotMarks)) {
+        expect(current.marks?.[markName]).toBeDefined();
+      }
+    });
+
+    test('no attrs removed from existing marks', () => {
+      for (const [markName, expected] of Object.entries(snapshotMarks)) {
+        const actual = current.marks?.[markName];
+        if (!actual) continue;
+        for (const attrName of Object.keys(expected.attrs)) {
+          expect(actual.attrs[attrName]).toBeDefined();
+        }
+      }
+    });
+
+    test('all mark attrs have default values', () => {
+      for (const [, shape] of Object.entries(current.marks ?? {})) {
+        for (const [, attrShape] of Object.entries(shape.attrs)) {
+          expect(attrShape.hasDefault).toBe(true);
+        }
+      }
+    });
+
+    test('mark excludes not narrowed (STOP rule on Code mark widening)', () => {
+      // Narrowing `excludes` re-adds mark-exclusion constraints a
+      // previous build had relaxed. Cannonical bug case: upstream
+      // Tiptap bumping `Code.excludes` back to `_` — CLAUDE.md calls
+      // this out explicitly. The check: current `excludes` must be
+      // equal to OR wider than the snapshot's. "Wider" is hard to
+      // generalize for PM mark-group expressions, so we treat `''`
+      // (coexist with everything) as universally wider and otherwise
+      // demand identity — conservative but matches the actual risk.
+      for (const [markName, expected] of Object.entries(snapshotMarks)) {
+        const actual = current.marks?.[markName];
+        if (!actual) continue;
+        if (actual.excludes === '') continue; // widest — always acceptable
+        expect(actual.excludes).toBe(expected.excludes);
+      }
+    });
+  }
 
   test('rawMdxFallback node can be constructed at runtime (R13 patch guard)', () => {
     // The y-prosemirror R13 patch substitutes rawMdxFallback on schema.node()

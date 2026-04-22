@@ -297,23 +297,18 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 // image vs non-image renderable categories. Extensions outside both sets
 // are "opaque" (dispatch as a plain markdown link with literal href).
 //
-// These lists mirror the `wikiEmbedExtensions` default in the
-// `ConfigSchema` (packages/cli/src/config/schema.ts) at the boundary
-// between image-ext (native <img>) and non-image-ext (Phase 2 typed
-// component nodes — Video/Audio/PDFViewer — per D-F read-time promotion).
-// Keep these in sync with the cli schema default whenever the allowlist
-// widens.
-const WIKI_EMBED_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
-const WIKI_EMBED_NON_IMAGE_EXTS = new Set([
-  'pdf',
-  'mp4',
-  'webm',
-  'mov',
-  'mp3',
-  'wav',
-  'ogg',
-  'm4a',
-]);
+// Image-extension set is canonical at `constants/upload.ts` — one source
+// for every dispatch question (client emit-shape, server mdast→PM,
+// TipTap renderHTML). Non-image wikiembed extensions are derived from
+// `DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions` minus `IMAGE_EXTENSIONS`
+// so widening the canonical list (e.g. adding `heic`) flows here
+// automatically — no manual edit in this file.
+import { DEFAULT_UPLOAD_CONFIG, IMAGE_EXTENSIONS } from '../constants/upload.ts';
+
+const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
+const WIKI_EMBED_NON_IMAGE_EXTS: ReadonlySet<string> = new Set(
+  DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions.filter((e) => !IMAGE_EXTENSIONS.has(e)),
+);
 
 function extensionOf(target: string): string {
   const basename = target.split('/').pop() ?? target;
@@ -734,14 +729,14 @@ function buildMdastToPmHandlers(
         return schema.text(label, [linkMark]);
       }
 
-      // Defensive fallback only hit if the schema somehow lacks both
-      // `image` node and `link` mark — not reachable under
-      // sharedExtensions.
-      return n.wikiLinkEmbed.createAndFill({
-        target,
-        alias,
-        anchor,
-      });
+      // Unreachable under `sharedExtensions`. Fail loud rather than emit
+      // a PM `wikiLinkEmbed` — per AGENTS.md STOP rule, server-side
+      // mdast→PM must never produce that node (y-prosemirror would
+      // tombstone user-content Items on the next round-trip).
+      throw new Error(
+        '[wikiLinkEmbed handler] schema lacks both `image` node and `link` mark — ' +
+          'cannot dispatch without violating the STOP rule against emitting PM wikiLinkEmbed server-side',
+      );
     };
   }
 

@@ -203,6 +203,44 @@ export function sanitizeFilename(name: string): string {
   return stripped === '' ? 'upload' : stripped;
 }
 
+/**
+ * SPEC §6 FR-5 / docs/assets-and-embeds.mdx: resolve the destination
+ * directory for an upload from the parent doc's path and the configured
+ * `upload.attachmentFolderPath`. Matches Obsidian's literal schema (D-J
+ * free-form string):
+ *
+ *   - `"./"` (default)  → same directory as the doc
+ *   - `"/"`             → content-directory root
+ *   - `"./<sub>"`       → subdirectory beside the doc
+ *   - `"<name>"` (bare) → fixed content-relative path
+ *
+ * Treats any `./` prefix as "relative to doc dir," any other value as
+ * "relative to content dir." Empty or whitespace-only strings fall back
+ * to the default (doc dir).
+ *
+ * Returns an absolute path within `resolvedContentDir` — path-escape
+ * enforcement happens at the caller via `isWithinContentDir` + `realpath`.
+ */
+export function resolveUploadDestDir(
+  parentDocName: string,
+  attachmentFolderPath: string,
+  resolvedContentDir: string,
+): string {
+  const trimmed = attachmentFolderPath.trim();
+  if (trimmed === '' || trimmed === './') {
+    return resolve(resolvedContentDir, dirname(parentDocName));
+  }
+  if (trimmed === '/') {
+    return resolvedContentDir;
+  }
+  if (trimmed.startsWith('./')) {
+    // Subdirectory beside the doc. `"./attachments"` → `<docDir>/attachments`.
+    return resolve(resolvedContentDir, dirname(parentDocName), trimmed.slice(2));
+  }
+  // Bare name or nested path: fixed content-relative location.
+  return resolve(resolvedContentDir, trimmed);
+}
+
 function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
@@ -213,14 +251,23 @@ function sha256Hex(buf: Buffer): string {
  * or null if no match. Bounded by directory size — O(n) in sibling count, not
  * vault size, per NFR-1. Only files with extensions in ASSET_EXTENSIONS are
  * candidates; everything else (markdown, .git/, etc.) is skipped.
+ *
+ * `expectedSize` is the buffer's byte length — passed in so we can size-
+ * prefilter before hashing siblings. sha256 collision requires equal-sized
+ * inputs, so same-extension siblings with a different size are not
+ * candidates and we skip their (potentially multi-MB) read. This turns
+ * the common "paste a new screenshot" path from O(total asset bytes in
+ * dir) back to O(sibling count × stat). Non-ENOENT read failures log at
+ * WARN so silent dedup degradation has a signal.
  */
-function findDuplicateAsset(destDir: string, sha: string): string | null {
+function findDuplicateAsset(destDir: string, sha: string, expectedSize: number): string | null {
   let entries: string[];
   try {
     entries = readdirSync(destDir);
   } catch {
     return null;
   }
+  const log = getLogger('upload');
   for (const entry of entries) {
     const ext = extname(entry).slice(1).toLowerCase();
     if (!ASSET_EXTENSIONS.has(ext)) continue;
@@ -231,11 +278,19 @@ function findDuplicateAsset(destDir: string, sha: string): string | null {
     } catch {
       continue;
     }
-    if (!stat.isFile()) continue;
+    if (!stat.isFile() || stat.size !== expectedSize) continue;
     let buf: Buffer;
     try {
       buf = readFileSync(fullPath);
-    } catch {
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOENT is the legitimate concurrent-rename race — stay silent.
+      if (code !== 'ENOENT') {
+        log.warn(
+          { event: 'upload-dedup-skip', reason: 'read-failed', code, entry },
+          '[upload-dedup] skipped candidate — read failed',
+        );
+      }
       continue;
     }
     if (sha256Hex(buf) === sha) return entry;
@@ -251,6 +306,32 @@ function formatBytes(bytes: number): string {
   const mb = kb / 1024;
   if (mb < 1024) return `${mb.toFixed(1)} MB`;
   return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+/**
+ * Discriminator for write failures so the upload handler can surface a
+ * specific error code (`collision-exhaustion` / `storage-full` /
+ * `storage-readonly` / `storage-error`) instead of collapsing every
+ * filesystem failure into a generic 500 "Failed to save file" response.
+ * The code field is a stable part of the error envelope; the numeric
+ * HTTP status differentiates transient-yet-retry (500) from full-disk
+ * (507) per RFC 4918.
+ */
+export type UploadWriteReason =
+  | 'collision-exhaustion'
+  | 'storage-full'
+  | 'storage-readonly'
+  | 'storage-error';
+
+export class UploadWriteError extends Error {
+  readonly reason: UploadWriteReason;
+  readonly cause?: unknown;
+
+  constructor(reason: UploadWriteReason, cause?: unknown) {
+    super(`UploadWriteError: ${reason}`);
+    this.reason = reason;
+    this.cause = cause;
+  }
 }
 
 function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
@@ -269,11 +350,18 @@ function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): 
       }
       return name;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') continue;
+      if (code === 'ENOSPC' || code === 'EDQUOT') {
+        throw new UploadWriteError('storage-full', err);
+      }
+      if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
+        throw new UploadWriteError('storage-readonly', err);
+      }
+      throw new UploadWriteError('storage-error', err);
     }
   }
-  throw new Error('Could not find available filename after 100 attempts');
+  throw new UploadWriteError('collision-exhaustion');
 }
 
 interface UploadResult {
@@ -3164,7 +3252,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           typeof attemptedHeader === 'string' ? Number.parseInt(attemptedHeader, 10) : NaN;
         json(res, 413, {
           ok: false,
-          error: 'maxBytes',
+          error: 'max-bytes',
           message: Number.isFinite(attemptedBytes)
             ? `File is ${formatBytes(attemptedBytes)} but the upload limit is ${formatBytes(maxBytes)}.`
             : `Upload exceeds the configured ${formatBytes(maxBytes)} limit.`,
@@ -3197,10 +3285,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const resolvedContentDir = resolve(contentDir);
-    const destDir = resolve(resolvedContentDir, dirname(parentDocName));
+    const attachmentFolderPath =
+      getUploadConfig?.().attachmentFolderPath ?? DEFAULT_UPLOAD_CONFIG.attachmentFolderPath;
+    const destDir = resolveUploadDestDir(parentDocName, attachmentFolderPath, resolvedContentDir);
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
+    }
+    // mkdir -p the destination — bare-name / nested attachmentFolderPath
+    // values produce directories that may not exist at first upload.
+    try {
+      mkdirSync(destDir, { recursive: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        log.error({ err, destDir }, '[upload] failed to create attachment directory');
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
     }
 
     // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
@@ -3255,7 +3357,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (dedupMode === 'same-dir') {
       mkdirSync(destDir, { recursive: true });
       const sha = sha256Hex(buffer);
-      const existing = findDuplicateAsset(destDir, sha);
+      const existing = findDuplicateAsset(destDir, sha, buffer.length);
       if (existing) {
         const relPath = relative(contentDir, resolve(destDir, existing));
         console.log(
@@ -3307,6 +3409,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           dedup: false,
           mime: detectedMime ?? null,
           size: buffer.length,
+          // `destPath` is the contentDir-relative asset path. High-
+          // cardinality by nature — a vault with 10K assets produces
+          // 10K distinct values. Fine as a log field consumed by text-
+          // search / by-incident filtering; NEVER promote it to a
+          // metric label (Prometheus / Datadog will blow up memory on
+          // per-asset label explosion). Keep the nested-context shape
+          // below if you later route these through an aggregator so
+          // auto-label-extraction honors the sub-object convention.
           destPath: relPath,
           httpStatus: 200,
         }),
@@ -3315,13 +3425,38 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
-      json(res, 500, { ok: false, error: 'Failed to save file' });
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'storage-full') {
+          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
+          // retry makes no sense until the operator frees space.
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        if (e.reason === 'collision-exhaustion') {
+          // Exhausted 100 collision-suffix candidates in one directory —
+          // practically unreachable absent an adversarial workload, but
+          // surfacing the reason helps operators diagnose a pathological
+          // filename that's dodging sanitize.
+          json(res, 500, { ok: false, error: 'collision-exhaustion' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      json(res, 500, { ok: false, error: 'storage-error' });
     }
   }
 
   /**
    * /api/upload-image is a one-release deprecation shim (D-G). It forwards
-   * to handleUploadImage and logs a deprecation notice once per process.
+   * to handleUploadImage, logs a deprecation notice once per process, and
+   * emits RFC 8594 `Deprecation:` + `Sunset:` headers on every response so
+   * external integrators that never read stdout still see the migration
+   * signal programmatically.
    */
   let deprecationLogged = false;
   async function handleUploadImageDeprecated(
@@ -3330,9 +3465,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   ): Promise<void> {
     if (!deprecationLogged) {
       console.warn(
-        '[upload] /api/upload-image is deprecated; clients should POST to /api/upload (one-release shim — will be removed)',
+        '[upload] /api/upload-image is deprecated; clients should POST to /api/upload. Removal target: next minor release of @inkeep/open-knowledge-server.',
       );
       deprecationLogged = true;
+    }
+    // RFC 8594 Deprecation + Sunset. The value of `Sunset` is aspirational
+    // (next minor release) rather than a fixed date — integrators can pin
+    // their own release train against whichever minor removes the shim,
+    // and `Deprecation: true` already signals "migrate now."
+    if (typeof res.setHeader === 'function') {
+      res.setHeader('Deprecation', 'true');
+      res.setHeader('Link', '</api/upload>; rel="successor-version"');
     }
     return handleUploadImage(req, res);
   }
@@ -4496,6 +4639,37 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
+  // DNS-rebinding defense: routes that mutate local filesystem / CRDT /
+  // vault state. A DNS-rebound cross-origin page could otherwise POST to
+  // these endpoints and write to the user's content dir. Read-only
+  // endpoints (document/pages/backlinks/…) stay accessible so the editor
+  // UI can bootstrap against the collab server; mutations require a
+  // loopback Host header. /api/workspace enforces this inline already.
+  const MUTATING_ROUTES: ReadonlySet<string> = new Set([
+    '/api/upload',
+    '/api/upload-image',
+    '/api/create-page',
+    '/api/rename',
+    '/api/rename-path',
+    '/api/delete-path',
+    '/api/agent-write',
+    '/api/agent-write-md',
+    '/api/agent-patch',
+    '/api/save-version',
+    '/api/rollback',
+    '/api/sync/trigger',
+    '/api/sync/set-enabled',
+    '/api/sync/resolve-conflict',
+    '/api/sync/abort-merge',
+    '/api/test-reset',
+    '/api/test-rescan-backlinks',
+  ]);
+  // Every `/api/local-op/*` endpoint mutates local filesystem state or
+  // issues network requests on behalf of the user — clone/open/auth
+  // flows all fit. Prefix-match so new local-op handlers are protected
+  // by default.
+  const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
+
   return {
     priority: 100, // Higher priority — API routes run before static file serving
     async onRequest({ request, response }: { request: IncomingMessage; response: ServerResponse }) {
@@ -4524,6 +4698,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         if (request.method === 'OPTIONS') {
           response.writeHead(204);
           response.end();
+          return;
+        }
+      }
+
+      // DNS-rebinding defense for state-mutating endpoints. The
+      // `isLoopbackAddress` TCP-peer check and `isAllowedWorkspaceHostHeader`
+      // Host-header check together block the standard rebinding pattern
+      // (attacker-owned hostname whose DNS resolves to 127.0.0.1 after an
+      // initial attacker-serves-JS response — the TCP peer is loopback,
+      // but the Host header names the attacker domain). The same mitigation
+      // already gates `/api/workspace`; without it, a rebinding page could
+      // POST /api/upload + /api/agent-write, mutating the local vault.
+      //
+      // Test-harness note: Node's production socket always has
+      // `remoteAddress` set by the kernel; the only path that reaches
+      // this check without a socket is a mocked `IncomingMessage` built
+      // from `Readable.from(...)`. Those mocks bypass the HTTP listener
+      // entirely and can't be reached by a real remote attacker, so a
+      // missing socket is treated as test-context and skips the check.
+      // The Host-header gate still fires (tests set `host: 'localhost'`),
+      // so the protection remains meaningful for any production path.
+      if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
+        const peerAddress = request.socket?.remoteAddress;
+        if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
+          json(response, 403, { ok: false, error: 'loopback-required' });
+          return;
+        }
+        if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
+          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
           return;
         }
       }

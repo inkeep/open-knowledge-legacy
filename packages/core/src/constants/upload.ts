@@ -6,6 +6,22 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
   'image/svg+xml',
 ] as const;
 
+/**
+ * Canonical image-extension set. One source of truth for every dispatch
+ * question: client emit-shape (`pickInsertShape`), server mdast→PM
+ * (`handlers.wikiLinkEmbed`), client TipTap renderHTML (WikiLinkEmbed).
+ * Widening here (e.g. heic) lands in all three dispatch paths atomically.
+ */
+export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'avif',
+  'svg',
+]);
+
 // SPEC §13 / FR-6 / D-H widening: ContentFilter must admit non-image asset
 // extensions so they sit alongside markdown in the file index. The default
 // matches the FR-5 `wikiEmbedExtensions` allowlist plus opaque types that

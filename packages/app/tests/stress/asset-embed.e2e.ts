@@ -142,6 +142,39 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
     expect(text).not.toContain('![[shot-1.png]]');
   });
 
+  test('P1.1-paste: paste a PNG via ClipboardEvent → Y.Text contains ![[shot.png]]', async ({
+    page,
+  }) => {
+    // Clipboard-paste is a separate FileHandler binding (`onPaste`) from
+    // drag-drop (`onDrop`). Both route through `uploadAndInsert`, but the
+    // event-binding itself could regress independently — a TipTap upgrade
+    // changing the FileHandler API or a misnamed callback would silently
+    // break the dominant screenshot-paste workflow on macOS. The below
+    // synthesizes a paste event with a single PNG file, matching what
+    // Cmd+V produces when the clipboard contains a pasted image.
+    await page.evaluate(
+      ({ bytes, name, type }) => {
+        const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
+        if (!editor) throw new Error('no editor');
+        const file = new File([new Uint8Array(bytes)], name, { type });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        editor.dispatchEvent(
+          new ClipboardEvent('paste', {
+            clipboardData: dt,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      },
+      { bytes: TINY_PNG, name: 'shot.png', type: 'image/png' },
+    );
+
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 5_000 })
+      .toContain('![[shot.png]]');
+  });
+
   test('SVG drop emits as wiki-embed (NFR-3 sniff-fallback path)', async ({ page }) => {
     // SVG has no magic bytes; the server's text-sniff fallback marks it
     // image/svg+xml so the file lands as an image. Client emits the

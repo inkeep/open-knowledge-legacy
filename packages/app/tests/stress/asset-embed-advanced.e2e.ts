@@ -145,10 +145,13 @@ test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / 
     const body = (await docRes.json()) as { text?: string };
     const text = body.text ?? '';
     // From archive/2026/<name>.md, the image in docs/ is two levels up
-    // and one across — the rewrite is deterministic even if the exact
-    // prefix varies across path algorithms. Assert the rewritten ref
-    // points into docs/ and names first-draft.png.
-    expect(text).toMatch(/!\[first draft]\([^)]*docs\/first-draft\.png\)/);
+    // and one across — posix.relative produces this exact shape
+    // deterministically (unit test `managed-rename-rewrite.test.ts`
+    // asserts the same path against the same inputs). Use `toContain`
+    // on the exact expected form so a one-dot-dot-short or extra-
+    // subtree bug fails this test instead of sneaking past a permissive
+    // regex.
+    expect(text).toContain('![first draft](../../docs/first-draft.png)');
   });
 
   test('P5.1a: rename doc with ![[name.ext]] wiki-embed ref — body stays byte-identical', async ({
