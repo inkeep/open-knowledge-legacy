@@ -35,8 +35,8 @@ import { existsSync, linkSync, mkdirSync, readdirSync, statSync, unlinkSync } fr
 import { extname, resolve } from 'node:path';
 import { Transform, type TransformCallback } from 'node:stream';
 
-import { UploadWriteError } from './api-extension.ts';
 import { getLogger } from './logger.ts';
+import { UploadWriteError } from './upload-errors.ts';
 
 const log = getLogger('upload-streaming');
 

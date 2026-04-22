@@ -67,6 +67,7 @@ import {
   shadowGit,
 } from './shadow-repo.ts';
 import { SyncEngine } from './sync-engine.ts';
+import { cleanupOrphanUploadTempfiles } from './upload-streaming.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -1063,6 +1064,29 @@ export function createServer(options: ServerOptions): ServerInstance {
     } catch (err) {
       log.error({ err }, '[server] managed rename recovery failed');
       degraded.push('managed-rename-recovery');
+    }
+
+    // SPEC §6 FR-2 / streaming-upload-refactor D5: reap orphaned tempfiles
+    // from .open-knowledge/tmp/ older than the 24h grace window. Adversarial
+    // or buggy clients that abort mid-upload leave a tempfile behind; the
+    // in-request cleanup handles the common path but a SIGKILL between
+    // pipeline completion and rename/unlink leaks the inode. Boot sweep is
+    // the correctness backstop.
+    try {
+      const sweep = cleanupOrphanUploadTempfiles(contentDir);
+      if (sweep.deleted > 0 || sweep.errors > 0) {
+        log.info(
+          {
+            scanned: sweep.scanned,
+            deleted: sweep.deleted,
+            errors: sweep.errors,
+          },
+          `[upload-tempfile-sweep] swept ${sweep.deleted} orphan tempfile(s)`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, '[server] upload-tempfile sweep failed');
+      degraded.push('upload-tempfile-sweep');
     }
 
     // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before

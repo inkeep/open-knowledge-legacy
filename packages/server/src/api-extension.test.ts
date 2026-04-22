@@ -457,30 +457,13 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('over-cap upload rejected with byte-size-specific message', async () => {
-    // 250-byte buffer against a 100-byte cap.
-    const big = Buffer.alloc(250, 0x42);
-    const formData = new FormData();
-    formData.append('parentDocName', 'docs/guide.md');
-    formData.append('file', new Blob([big]), 'big.bin');
-    const res = await fetch(`http://localhost:${port}/api/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    expect(res.status).toBe(413);
-    const body = (await res.json()) as {
-      ok: boolean;
-      error: string;
-      message: string;
-      maxBytes: number;
-    };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('max-bytes');
-    expect(body.maxBytes).toBe(100);
-    // Message must name the configured limit explicitly (P1.3 — no generic
-    // "too large" phrase).
-    expect(body.message).toContain('100');
-  });
+  // Post-streaming refactor: there is no user-facing upload cap. The busboy
+  // `limits.fileSize` guard was a memory-safety backstop for the buffer-to-
+  // memory anti-pattern; `stream.pipeline` + on-the-fly sha256 makes memory
+  // O(1), so the cap serves no purpose. Every file drop under disk capacity
+  // accepts. See reports/streaming-upload-refactor/REPORT.md §D8 +
+  // .changeset/asset-embed-surface.md. The previously-asserted 413 envelope
+  // + P1.3 scenario are deleted intentionally.
 
   test('under-cap upload still works with custom config', async () => {
     const tiny = Buffer.from('tiny');

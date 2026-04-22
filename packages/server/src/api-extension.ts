@@ -9,21 +9,23 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createWriteStream,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ASSET_EXTENSIONS,
@@ -40,7 +42,7 @@ import {
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
-import { fileTypeFromBuffer } from 'file-type';
+import { fileTypeFromFile } from 'file-type';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   AGENT_WRITE_ORIGIN,
@@ -56,6 +58,11 @@ import {
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
 import { readUiLock } from './ui-lock.ts';
+import {
+  HashingPassThrough,
+  linkTempToFinalWithCollisionRetry,
+  mintTempUploadPath,
+} from './upload-streaming.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -170,7 +177,7 @@ const MAX_BODY_BYTES = 1_048_576; // 1 MB
 // SPEC §6 FR-5 fallback when no `getUploadConfig` is provided. Matches the
 // Zod default in packages/cli/src/config/schema.ts so test harnesses don't
 // have to wire the accessor when they only care about the legacy contract.
-const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const _DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -243,6 +250,23 @@ export function resolveUploadDestDir(
 
 function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
+ * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
+ * the tempfile, read its head, and check for `<svg` / `<?xml ... <svg`
+ * without ever materializing the whole file.
+ */
+function readTempFileHead(path: string, n: number): Buffer {
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const read = readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -334,7 +358,7 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
   return null;
 }
 
-function formatBytes(bytes: number): string {
+function _formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
   if (bytes < 1024) return `${bytes} bytes`;
   const kb = bytes / 1024;
@@ -353,67 +377,43 @@ function formatBytes(bytes: number): string {
  * HTTP status differentiates transient-yet-retry (500) from full-disk
  * (507) per RFC 4918.
  */
-export type UploadWriteReason =
-  | 'collision-exhaustion'
-  | 'storage-full'
-  | 'storage-readonly'
-  | 'storage-error';
+export { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
-export class UploadWriteError extends Error {
-  readonly reason: UploadWriteReason;
-  readonly cause?: unknown;
-
-  constructor(reason: UploadWriteReason, cause?: unknown) {
-    super(`UploadWriteError: ${reason}`);
-    this.reason = reason;
-    this.cause = cause;
-  }
-}
-
-function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
-  const ext = extname(sanitized);
-  const stem = sanitized.slice(0, sanitized.length - ext.length);
-  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
-
-  for (const name of candidates) {
-    const destPath = resolve(destDir, name);
-    try {
-      const fd = openSync(destPath, 'wx');
-      try {
-        writeSync(fd, buffer);
-      } finally {
-        closeSync(fd);
-      }
-      return name;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'EEXIST') continue;
-      if (code === 'ENOSPC' || code === 'EDQUOT') {
-        throw new UploadWriteError('storage-full', err);
-      }
-      if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
-        throw new UploadWriteError('storage-readonly', err);
-      }
-      throw new UploadWriteError('storage-error', err);
-    }
-  }
-  throw new UploadWriteError('collision-exhaustion');
-}
+import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
   mimeType: string;
-  buffer: Buffer;
   parentDocName: string;
+  tempPath: string;
+  sha: string;
+  byteLength: number;
 }
 
-function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+/**
+ * Stream multipart upload body to a tempfile while hashing on-the-fly.
+ *
+ * Replaces the buffer-to-memory pattern (chunks.push(chunk) +
+ * Buffer.concat) with busboy's streaming 'file' event piped through a
+ * HashingPassThrough Transform into createWriteStream(tempPath). Memory
+ * becomes O(1); disk is the only bound.
+ *
+ * Error contract (typed via UploadWriteError.reason):
+ *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
+ *   - storage-full: ENOSPC / EDQUOT during the write stream
+ *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
+ *   - storage-error: any other write-stream error
+ *
+ * On any error, the tempfile is best-effort unlinked before propagating.
+ * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
+ */
+function readUploadBody(req: IncomingMessage, contentDir: string): Promise<UploadResult> {
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+      bb = busboy({ headers: req.headers, limits: { files: 1 } });
     } catch (err) {
-      reject(err);
+      reject(new UploadWriteError('malformed-upload', err));
       return;
     }
 
@@ -421,8 +421,33 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
     let filename = 'upload';
     let mimeType = '';
     let parentDocName = '';
-    const chunks: Buffer[] = [];
-    let exceeded = false;
+    let tempPath: string | undefined;
+    let pipelineError: unknown;
+
+    // Mint the tempfile path lazily on the first 'file' event — busboy
+    // can fire 'error' before any file arrives (e.g. missing boundary)
+    // and we'd otherwise create a zero-byte tempfile for no reason.
+
+    const fail = (reason: UploadWriteReason, cause: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (tempPath) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep catches stragglers
+        }
+      }
+      reject(cause instanceof UploadWriteError ? cause : new UploadWriteError(reason, cause));
+    };
+
+    const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
+        return 'storage-readonly';
+      }
+      return 'storage-error';
+    };
 
     bb.on('field', (name, val) => {
       if (name === 'parentDocName') parentDocName = val;
@@ -432,48 +457,50 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      file.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
+      const path = mintTempUploadPath(contentDir);
+      tempPath = path;
+      const hasher = new HashingPassThrough();
+      const writeStream = createWriteStream(path);
 
-      file.on('limit', () => {
-        exceeded = true;
-        req.unpipe(bb);
-        if (!settled) {
+      pipeline(file, hasher, writeStream)
+        .then(() => {
+          if (settled) return;
           settled = true;
-          reject(new Error('Payload too large'));
-        }
-      });
-
-      file.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      });
-    });
-
-    bb.on('finish', () => {
-      if (!settled) {
-        if (exceeded) {
-          settled = true;
-          reject(new Error('Payload too large'));
-          return;
-        }
-        if (!mimeType && chunks.length === 0) {
-          settled = true;
-          reject(new Error('No file received'));
-          return;
-        }
-        settled = true;
-        resolveP({ filename, mimeType, buffer: Buffer.concat(chunks), parentDocName });
-      }
+          resolveP({
+            filename,
+            mimeType,
+            parentDocName,
+            tempPath: path,
+            sha: hasher.digest(),
+            byteLength: hasher.byteLength(),
+          });
+        })
+        .catch((err) => {
+          pipelineError = err;
+          // Classify from the deepest write error if available; otherwise
+          // treat as a generic storage-error. The unlink happens inside fail().
+          const nodeErr = err as NodeJS.ErrnoException;
+          fail(classifyWriteError(nodeErr), err);
+        });
     });
 
     bb.on('error', (err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
+      fail('malformed-upload', err);
+    });
+
+    // busboy's 'close' fires after the request is fully parsed (success or
+    // abort). If no 'file' event ever arrived, we resolve with an empty
+    // upload that the handler rejects as "No file received" via the usual
+    // byteLength-zero path below. Handle the "req closed before any data"
+    // case explicitly — a client that disconnects before sending a file
+    // produces no 'file' and no 'error', and busboy stays open waiting
+    // for more data.
+    req.on('close', () => {
+      if (settled || pipelineError) return;
+      if (!req.complete) {
+        // Client disconnected mid-request. Pipeline cleanup handles the
+        // write stream; we just need to fail the promise.
+        fail('malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -3271,39 +3298,56 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // SPEC §13: read upload.maxBytes per-request (config hot-reload friendly).
-    const maxBytes = getUploadConfig?.().maxBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
-
     let uploadResult: UploadResult | undefined;
     try {
-      uploadResult = await readUploadBody(req, maxBytes);
+      uploadResult = await readUploadBody(req, contentDir);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message === 'Payload too large') {
-        // SPEC P1.3: byte-size-specific message naming both attempted and limit.
-        const attemptedHeader = req.headers['content-length'];
-        const attemptedBytes =
-          typeof attemptedHeader === 'string' ? Number.parseInt(attemptedHeader, 10) : NaN;
-        json(res, 413, {
-          ok: false,
-          error: 'max-bytes',
-          message: Number.isFinite(attemptedBytes)
-            ? `File is ${formatBytes(attemptedBytes)} but the upload limit is ${formatBytes(maxBytes)}.`
-            : `Upload exceeds the configured ${formatBytes(maxBytes)} limit.`,
-          attemptedBytes: Number.isFinite(attemptedBytes) ? attemptedBytes : undefined,
-          maxBytes,
-        });
-      } else if (message === 'No file received') {
-        json(res, 400, { ok: false, error: 'No file received' });
-      } else {
-        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      // All body-parse failures land as UploadWriteError with a typed reason.
+      // Tempfile cleanup is handled inside readUploadBody's error path.
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'malformed-upload') {
+          json(res, 400, { ok: false, error: 'malformed-upload' });
+          return;
+        }
+        if (e.reason === 'storage-full') {
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
       }
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
       return;
     }
 
-    const { filename, buffer, parentDocName } = uploadResult;
+    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
+
+    // Belt-and-braces cleanup: if anything below this point errors or
+    // early-returns, the tempfile must go away. Every early-return path
+    // below that does NOT consume tempPath via linkTempToFinal* runs this.
+    const cleanupTempfile = () => {
+      if (existsSync(tempPath)) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep reaps stragglers
+        }
+      }
+    };
+
+    if (byteLength === 0) {
+      cleanupTempfile();
+      json(res, 400, { ok: false, error: 'No file received' });
+      return;
+    }
 
     if (!parentDocName) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'parentDocName is required' });
       return;
     }
@@ -3314,6 +3358,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
@@ -3323,6 +3368,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       getUploadConfig?.().attachmentFolderPath ?? DEFAULT_UPLOAD_CONFIG.attachmentFolderPath;
     const destDir = resolveUploadDestDir(parentDocName, attachmentFolderPath, resolvedContentDir);
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
@@ -3333,6 +3379,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') {
+        cleanupTempfile();
         log.error({ err, destDir }, '[upload] failed to create attachment directory');
         json(res, 500, { ok: false, error: 'storage-error' });
         return;
@@ -3349,6 +3396,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         realContentDir = resolvedContentDir;
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
@@ -3357,25 +3405,33 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (code === 'ENOENT') {
         // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
     }
 
-    // D-M LOCKED accept-all: every file under maxBytes is accepted. The
-    // magic-byte sniff is only consulted to (a) preserve the SVG `<img>`-only
-    // routing for NFR-3 security and (b) recover an extension when the
-    // upload arrived with a generic clipboard filename. Non-sniffable
-    // bytes are accepted under the client-supplied filename.
-    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    // D-M LOCKED accept-all: every file under upload.maxBytes is accepted.
+    // The magic-byte sniff is only consulted to (a) preserve the SVG
+    // `<img>`-only routing for NFR-3 security and (b) recover an extension
+    // when the upload arrived with a generic clipboard filename. Non-
+    // sniffable bytes are accepted under the client-supplied filename.
+    //
+    // Post-streaming-refactor the sniff reads from tempPath via
+    // fileTypeFromFile which only pulls the minimum-required bytes.
+    const fileTypeResult = await fileTypeFromFile(tempPath);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
     // file-type can't detect SVG (text-based, no magic bytes) — check manually.
     // STOP: this fallback is LOAD-BEARING for NFR-3 — SVG must render via
     // <img>, never inline DOM. Do not remove without a compensating guard.
     if (!detectedMime) {
-      const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
-      if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+      const head = readTempFileHead(tempPath, 256);
+      const headText = head.toString('utf-8').trimStart();
+      if (
+        headText.startsWith('<svg') ||
+        (headText.startsWith('<?xml') && headText.includes('<svg'))
+      ) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
@@ -3388,17 +3444,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // pasted-<ts>.png stub. Server returns { deduped: true } so the
     // client decides toast/silent/confirm per upload.dedup.ui.
     //
-    // `destDir` already exists — the post-symlink-check mkdirSync above
-    // created it with { recursive: true } inside a try/catch that returns
-    // a JSON 500 on failure. No second mkdirSync here or before the
-    // writeUploadAtomic call below; a bare redundant call could throw a
-    // raw Error on TOCTOU (dir deleted between calls, fs becomes read-only
-    // mid-request) and bypass the JSON envelope entirely.
+    // The hash + size come from the streaming pipeline (no buffer). On a
+    // dedup hit the tempfile is unlinked and we short-circuit without
+    // touching the destDir inode — `linkTempToFinalWithCollisionRetry`
+    // never runs.
     const dedupMode = getUploadConfig?.().dedup.mode ?? 'same-dir';
     if (dedupMode === 'same-dir') {
-      const sha = sha256Hex(buffer);
-      const existing = findDuplicateAsset(destDir, sha, buffer.length);
+      const existing = findDuplicateAsset(destDir, sha, byteLength);
       if (existing) {
+        cleanupTempfile();
         const relPath = relative(contentDir, resolve(destDir, existing));
         log.info(
           {
@@ -3406,7 +3460,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             endpoint: req.url ?? '/api/upload',
             dedup: true,
             mime: detectedMime ?? null,
-            size: buffer.length,
+            size: byteLength,
             destPath: relPath,
             httpStatus: 200,
           },
@@ -3445,7 +3499,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
+      const destFilename = linkTempToFinalWithCollisionRetry(tempPath, destDir, finalFilename);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
       log.info(
         {
@@ -3453,7 +3507,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           endpoint: req.url ?? '/api/upload',
           dedup: false,
           mime: detectedMime ?? null,
-          size: buffer.length,
+          size: byteLength,
           // `destPath` is the contentDir-relative asset path. High-
           // cardinality by nature — a vault with 10K assets produces
           // 10K distinct values. Fine as a log field consumed by text-
@@ -3472,6 +3526,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // attachmentFolderPath value.
       json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
+      // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
+      // on throw; no extra cleanupTempfile() call needed here.
       const message = e instanceof Error ? e.message : String(e);
       const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
       log.error(
@@ -3479,7 +3535,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           event: 'upload',
           endpoint: req.url ?? '/api/upload',
           filename: finalFilename,
-          size: buffer.length,
+          size: byteLength,
           reason,
           message,
           httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,

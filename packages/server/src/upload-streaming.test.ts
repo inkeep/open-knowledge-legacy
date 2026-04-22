@@ -22,7 +22,7 @@ import { join, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { UploadWriteError } from './api-extension.ts';
+import { UploadWriteError } from './upload-errors.ts';
 import {
   cleanupOrphanUploadTempfiles,
   HashingPassThrough,
