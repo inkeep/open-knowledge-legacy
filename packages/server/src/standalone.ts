@@ -1,12 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter, type UploadConfig } from '@inkeep/open-knowledge-core';
+import {
+  type BasenameIndex,
+  createBasenameIndex,
+  prependFrontmatter,
+  type UploadConfig,
+} from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { seedBasenameIndex } from './asset-walk.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
@@ -117,6 +123,12 @@ export interface ServerInstance {
   cc1Broadcaster: CC1Broadcaster;
   agentFocusBroadcaster: AgentFocusBroadcaster;
   contentFilter: ContentFilter;
+  /**
+   * In-memory basename → paths index used by the mdast→PM wiki-embed
+   * handler (SPEC §6 FR-3b). Seeded at boot from disk; updated live via
+   * the asset arms of handleDiskEvent.
+   */
+  basenameIndex: BasenameIndex;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -168,6 +180,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
   });
+
+  // SPEC §6 FR-3b + FR-6 / D-D LOCKED: in-memory basename index for asset
+  // embed resolution. Populated from disk at boot, kept in sync via the
+  // asset-event arms of handleDiskEvent. Plain Map under the hood; rebuilds
+  // are cheap so no disk persistence.
+  const basenameIndex: BasenameIndex = createBasenameIndex();
 
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
@@ -287,9 +305,19 @@ export function createServer(options: ServerOptions): ServerInstance {
   const applyToDoc = (docName: string, content: string): void =>
     applyExternalChange(hocuspocus, docName, content);
 
-  /** Helper to extract docName from any DiskEvent variant. */
-  function diskEventDocName(event: DiskEvent): string {
-    return event.kind === 'rename' ? event.newDocName : event.docName;
+  /** Helper to extract a logging label from any DiskEvent variant. */
+  function diskEventLabel(event: DiskEvent): string {
+    switch (event.kind) {
+      case 'rename':
+        return event.newDocName;
+      case 'asset-create':
+      case 'asset-delete':
+        return event.relativePath;
+      case 'asset-rename':
+        return event.newRelativePath;
+      default:
+        return event.docName;
+    }
   }
 
   /** Reconciliation-aware dispatch for all DiskEvent types. */
@@ -530,11 +558,32 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.info({ docName }, `[reconcile] conflict markers detected: ${docName}`);
           break;
         }
+
+        // SPEC §6 FR-6 + D-H Option A: asset events update the basename
+        // index and fire CC1 'files' only. They do NOT touch backlinkIndex
+        // (markdown-only) and do NOT touch hocuspocus.documents (assets
+        // aren't CRDT documents).
+        case 'asset-create': {
+          basenameIndex.add(event.relativePath);
+          signalChannel('files');
+          break;
+        }
+        case 'asset-delete': {
+          basenameIndex.remove(event.relativePath);
+          signalChannel('files');
+          break;
+        }
+        case 'asset-rename': {
+          basenameIndex.rename(event.oldRelativePath, event.newRelativePath);
+          signalChannel('files');
+          break;
+        }
       }
     } catch (err) {
+      const label = diskEventLabel(event);
       log.error(
-        { err, kind: event.kind, docName: diskEventDocName(event) },
-        `[reconcile] failed to handle ${event.kind} for ${diskEventDocName(event)}`,
+        { err, kind: event.kind, label },
+        `[reconcile] failed to handle ${event.kind} for ${label}`,
       );
     }
   }
@@ -1022,6 +1071,14 @@ export function createServer(options: ServerOptions): ServerInstance {
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
       });
+      // SPEC §6 FR-3b: seed the basename index from disk once the
+      // watcher's startup walk has finished. The watcher's fileIndex is
+      // markdown-only, so we walk the contentDir directly for assets.
+      try {
+        seedBasenameIndex({ contentDir, contentFilter, basenameIndex });
+      } catch (err) {
+        console.warn('[basename-index] startup seed failed:', err);
+      }
     } catch (err) {
       log.error({ err }, '[server] disk bridge watcher failed to start');
       degraded.push('file-watcher');
@@ -1318,6 +1375,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     cc1Broadcaster,
     agentFocusBroadcaster,
     contentFilter,
+    basenameIndex,
     destroy,
     ready,
     degraded,

@@ -17,11 +17,13 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
+import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
   type DocExtension,
   forgetDocExtension,
+  isSupportedAssetFile,
   isSupportedDocFile,
   registerDocExtension,
   stripDocExtension,
@@ -38,7 +40,8 @@ type WatcherBackend = 'parcel' | 'chokidar';
 
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 
-export type DiskEvent =
+// Subset of DiskEvent that classifyEvents emits — markdown-only.
+export type MarkdownDiskEvent =
   | { kind: 'create'; path: string; docName: string; content: string }
   | { kind: 'update'; path: string; docName: string; content: string }
   | { kind: 'delete'; path: string; docName: string }
@@ -51,6 +54,23 @@ export type DiskEvent =
       content: string;
     }
   | { kind: 'conflict'; path: string; docName: string; content: string };
+
+// SPEC §6 FR-6 / D-H Option A. Asset events carry contentDir-relative
+// paths instead of docNames — assets aren't documents in the CRDT layer.
+// No content payload (binary) and no rename detection by hash (Finder
+// rename surfaces as delete+create; basename index is idempotent on add).
+export type AssetDiskEvent =
+  | { kind: 'asset-create'; path: string; relativePath: string }
+  | { kind: 'asset-delete'; path: string; relativePath: string }
+  | {
+      kind: 'asset-rename';
+      oldPath: string;
+      newPath: string;
+      oldRelativePath: string;
+      newRelativePath: string;
+    };
+
+export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
 
 // ─── File index ─────────────────────────────────────────────────────────────
 
@@ -165,7 +185,7 @@ export async function classifyEvents(
   contentDir: string,
   contentFilter?: ContentFilter,
   aliasMap?: Map<string, string>,
-): Promise<DiskEvent[]> {
+): Promise<MarkdownDiskEvent[]> {
   const deletes: RawFileEvent[] = [];
   const creates: RawFileEvent[] = [];
   const updates: RawFileEvent[] = [];
@@ -272,7 +292,7 @@ export async function classifyEvents(
     return canonicalDocName;
   }
 
-  const results: DiskEvent[] = [];
+  const results: MarkdownDiskEvent[] = [];
   const pairedCreates = new Set<string>();
   const pairedDeletes = new Set<string>();
 
@@ -562,6 +582,15 @@ function seedLastKnownHashes(
  * to keep the index in sync with actual disk state.
  */
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
+  // Asset events are tracked by the basename index in standalone.ts, not by
+  // the docName-keyed file index — short-circuit here.
+  if (
+    event.kind === 'asset-create' ||
+    event.kind === 'asset-delete' ||
+    event.kind === 'asset-rename'
+  ) {
+    return;
+  }
   const docName = event.kind === 'rename' ? event.newDocName : event.docName;
   if (isSystemDoc(docName)) return;
   switch (event.kind) {
@@ -629,6 +658,26 @@ async function handleRawEvents(
   aliasMap?: Map<string, string>,
 ): Promise<void> {
   const mdEvents = rawEvents.filter((e) => isSupportedDocFile(e.path));
+  const assetEvents = rawEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
+  if (mdEvents.length === 0 && assetEvents.length === 0) return;
+
+  // SPEC §6 FR-6: emit asset events independently. Skip content reading
+  // (binary), reconciliation, and rename-via-hash detection — basename
+  // index is idempotent on add/remove/rename so a Finder rename surfacing
+  // as delete+create produces the correct end state.
+  for (const raw of assetEvents) {
+    if (contentFilter) {
+      const relPath = relative(contentDir, raw.path);
+      if (contentFilter.isExcluded(relPath)) continue;
+    }
+    const relativePath = relative(contentDir, raw.path);
+    const event: DiskEvent =
+      raw.type === 'delete'
+        ? { kind: 'asset-delete', path: raw.path, relativePath }
+        : { kind: 'asset-create', path: raw.path, relativePath };
+    await onDiskEvent(event);
+  }
+
   if (mdEvents.length === 0) return;
 
   const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap);
