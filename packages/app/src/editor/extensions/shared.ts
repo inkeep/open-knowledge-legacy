@@ -3,10 +3,7 @@
  * JsxComponent for the React-enabled version with NodeView, and adds
  * app-only extensions (slash command menu, etc.).
  */
-import {
-  ALLOWED_IMAGE_MIME_TYPES,
-  sharedExtensions as coreExtensions,
-} from '@inkeep/open-knowledge-core';
+import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
 import FileHandler from '@tiptap/extension-file-handler';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { BlockMover } from './block-mover';
@@ -28,8 +25,11 @@ export const sharedExtensions = [
     return ext;
   }),
   SlashCommand,
+  // SPEC §6 D-M accept-all: omit `allowedMimeTypes` so the FileHandler
+  // accepts every browser-readable file type. The server is the single
+  // policy point — `upload.maxBytes` is the only rejection axis post-D-M
+  // (and the SVG `<img>`-only NFR-3 routing happens server-side too).
   FileHandler.configure({
-    allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES],
     onDrop(editor, files, pos) {
       for (const file of files) {
         uploadAndInsert(file, editor, pos);
