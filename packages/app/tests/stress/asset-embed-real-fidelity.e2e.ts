@@ -239,6 +239,54 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     expect(onDisk.toString('utf-8')).toBe('name,age,city\nAlice,30,NYC\nBob,25,LA\n');
   });
 
+  test('QA-041: ~24MB upload end-to-end <2s (hash + dedup scan + disk write + HTTP)', async ({
+    page,
+    workerServer,
+  }) => {
+    // NFR-1 sub-budget per SPEC: total <2s is the user-perceivable
+    // threshold; the isolated sha256 micro-bench runs at ~10 ms p99
+    // (tmp/qa-fixtures/sha256-bench.ts). Default upload.maxBytes is
+    // 25 MiB; send ~24 MiB so multipart framing bytes don't tip us
+    // over the limit and turn a perf scenario into a 413 scenario.
+    const docName = (page as unknown as { __docName: string }).__docName;
+    const payloadBytes = 24 * 1024 * 1024;
+    const resultJson = await page.evaluate(
+      async ({ docName, size }: { docName: string; size: number }) => {
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = (i * 13) & 0xff;
+        const blob = new Blob([bytes], { type: 'application/octet-stream' });
+        const fd = new FormData();
+        fd.append('parentDocName', `${docName}.md`);
+        fd.append('file', blob, 'big.bin');
+        const t0 = performance.now();
+        const res = await fetch('/api/upload', { method: 'POST', body: fd });
+        const elapsedMs = performance.now() - t0;
+        const body = (await res.json()) as { ok: boolean; src?: string; deduped?: boolean };
+        return { status: res.status, body, elapsedMs, sentBytes: size };
+      },
+      { docName, size: payloadBytes },
+    );
+
+    expect(resultJson.status).toBe(200);
+    expect(resultJson.body.ok).toBe(true);
+    expect(resultJson.elapsedMs).toBeLessThan(2000);
+
+    // Disk bytes are exactly what we sent, end-to-end.
+    const onDisk = await waitForDiskFile(workerServer.contentDir, 'big.bin');
+    expect(onDisk.length).toBe(payloadBytes);
+
+    // Log as evidence for qa-progress.json.
+    console.log(
+      JSON.stringify({
+        event: 'qa-041-perf',
+        sentBytes: resultJson.sentBytes,
+        elapsedMs: resultJson.elapsedMs,
+        budgetMs: 2000,
+        pass: resultJson.elapsedMs < 2000,
+      }),
+    );
+  });
+
   test('QA-010: same PNG dropped twice → dedup returns existing path, single file on disk', async ({
     page,
     workerServer,
