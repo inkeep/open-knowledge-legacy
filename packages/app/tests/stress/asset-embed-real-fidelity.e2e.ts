@@ -254,10 +254,13 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     workerServer,
   }) => {
     // NFR-1 sub-budget per SPEC: total <2s is the user-perceivable
-    // threshold; the isolated sha256 micro-bench runs at ~10 ms p99
-    // (tmp/qa-fixtures/sha256-bench.ts). Default upload.maxBytes is
-    // 25 MiB; send ~24 MiB so multipart framing bytes don't tip us
-    // over the limit and turn a perf scenario into a 413 scenario.
+    // threshold for a 24 MiB upload end-to-end. Post-2026-04-22 streaming
+    // refactor there is no user-facing byte cap — the hash is folded
+    // into the pipeline via `HashingPassThrough` so throughput is
+    // disk-bound, not hash-bound. We still send ~24 MiB here because
+    // the scenario was calibrated against that size and it's a
+    // realistic large-asset drop. See reports/streaming-upload-refactor
+    // /REPORT.md §D9 for the O(1) memory proof.
     const docName = (page as unknown as { __docName: string }).__docName;
     const payloadBytes = 24 * 1024 * 1024;
     const resultJson = await page.evaluate(

@@ -3,20 +3,30 @@
  * `evidence/e2e-acceptance-scenarios.md` that genuinely need a browser
  * (US-017):
  *
- *   - P1.3   oversized file drop → 413 + byte-size-specific toast
  *   - P5.1   rename doc with `![alt](path)` image ref → path recomputes
  *   - P5.1a  rename doc with `![[name.ext]]` wiki-embed ref → NO rewrite
  *            (basename index resolves dynamically)
  *
  * Scenarios NOT in this file (intentional — their integration-tier
- * coverage is stronger per test-runtime dollar):
+ * coverage is stronger per test-runtime dollar, or the scenario was
+ * deleted under a post-finalization amendment):
+ *   - P1.3  Oversized-file rejection — DELETED 2026-04-22 under the
+ *           streaming-upload amendment. `upload.maxBytes` no longer
+ *           exists; server-side `storage-full` / `malformed-upload` /
+ *           `collision-exhaustion` are covered at unit + integration
+ *           tier (see `packages/server/src/upload-streaming.test.ts`
+ *           and `packages/server/src/api-extension.test.ts`). See
+ *           SPEC §Post-finalization amendment +
+ *           reports/streaming-upload-refactor/REPORT.md §D8.
  *   - P2.1 / P2.1a  Obsidian vault open + ambiguous resolution — require
  *                   full server-restart against a fixture vault. Fully
  *                   covered by obsidian-vault-detect.test.ts (23 tests)
  *                   + path-resolve.test.ts tiebreak PBT.
- *   - P4.1  Operator maxBytes override — server config surgery is
- *           heavier than the test adds. Covered by api-extension.test.ts
- *           custom-config describe block.
+ *   - P4.1  Operator tunes `attachmentFolderPath` / `emitFormat` —
+ *           server config surgery is heavier than the test adds.
+ *           Covered by api-extension.test.ts custom-config describe
+ *           block (post-2026-04-22 amendment: maxBytes branch deleted
+ *           along with the field).
  *   - P5.2 / P5.3 concurrent bursts + P6.x multi-user — require
  *                 multi-browser harness. Per US-017 AC: tier-1
  *                 `createTestClients` integration tests are the right
@@ -24,89 +34,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
-
-async function getSourceText(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const provider = window.__activeProvider;
-    return provider?.document?.getText('source')?.toString() ?? '';
-  });
-}
-
-test.describe('asset-embed — advanced scenarios (SPEC §6 FR-1, FR-7)', () => {
-  let docName: string;
-
-  test.beforeEach(async ({ page, api }) => {
-    docName = `asset-embed-adv-${randomUUID().slice(0, 8)}`;
-    await api.createPage(`${docName}.md`);
-    await api.replaceDoc(docName, '# Test\n');
-    await page.goto(`/#/${docName}`);
-    await waitForProvider(page);
-    await page.waitForSelector('.ProseMirror');
-    await page.click('.ProseMirror');
-  });
-
-  test('P1.3: oversized file → 413 with byte-size-specific toast, no placeholder lingers', async ({
-    page,
-  }) => {
-    // Default maxBytes is 25 MB per FR-5. Drop a ~30 MB buffer to trip it.
-    // Allocate the Uint8Array INSIDE the browser context so the 30MB buffer
-    // doesn't have to traverse page.evaluate's structured-clone serializer
-    // (which turned the previous `Array.from({length: 30M}, () => 0)` shape
-    // into ~240MB of heap pressure + SIGABRT on the Node side).
-    await page.evaluate(
-      ({ size, name, type }) => {
-        const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
-        if (!editor) throw new Error('no editor');
-        const bytes = new Uint8Array(size);
-        const file = new File([bytes], name, { type });
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        const rect = editor.getBoundingClientRect();
-        const cx = rect.left + Math.floor(rect.width / 2);
-        const cy = rect.top + Math.floor(rect.height / 2);
-        editor.dispatchEvent(
-          new DragEvent('dragover', {
-            dataTransfer: dt,
-            bubbles: true,
-            cancelable: true,
-            clientX: cx,
-            clientY: cy,
-          }),
-        );
-        editor.dispatchEvent(
-          new DragEvent('drop', {
-            dataTransfer: dt,
-            bubbles: true,
-            cancelable: true,
-            clientX: cx,
-            clientY: cy,
-          }),
-        );
-      },
-      { size: 30 * 1024 * 1024, name: 'huge.bin', type: 'application/octet-stream' },
-    );
-
-    // Wait for a sonner toast that names both the attempted size AND the
-    // configured limit (P1.3 "no generic 'too large' phrase"). The toast
-    // library renders status='error' with the server-provided message.
-    const toast = page.locator('[data-sonner-toast]').first();
-    await expect(toast).toBeVisible({ timeout: 10_000 });
-    const toastText = await toast.textContent();
-    expect(toastText).toContain('25');
-    expect(toastText).toContain('30');
-
-    // No file reference landed in Y.Text — upload was rejected pre-dispatch.
-    const text = await getSourceText(page);
-    expect(text).not.toContain('huge.bin');
-
-    // Widget-decoration placeholder should be gone (the upload plugin
-    // removes it on server error). Selector matches the skeleton widget
-    // emitted by createSkeletonWidget().
-    await expect(page.locator('[data-upload-widget="loading"]')).toHaveCount(0);
-  });
-});
 
 test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / D-K)', () => {
   test('P5.1: rename doc with ![alt](path) image ref rewrites path', async ({ page, api }) => {

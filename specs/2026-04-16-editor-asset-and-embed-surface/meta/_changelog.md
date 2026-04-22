@@ -358,4 +358,47 @@ Stamped at `4b527410` — the cycle-2 resolutions commit (last verified codebase
 
 Draft → **Finalized**. Ready for `/ship`.
 
+---
+
+## 2026-04-22 — Post-finalization amendment: streaming upload refactor
+
+### Context
+
+During the ship review the user asked what `upload.maxBytes` actually did and whether removing it would break anything. Investigation showed the cap was a buffer-to-memory OOM guard dressed as a product choice — the editor's handler at the time read the entire multipart body into `chunks: Buffer[]` + `Buffer.concat(chunks)` before writing a byte to disk. busboy's `limits.fileSize` was the memory backstop.
+
+Authoritative research landed at [`reports/streaming-upload-refactor/REPORT.md`](../../../../reports/streaming-upload-refactor/REPORT.md) (476 LOC synthesis + 9 evidence files + peer-editor survey of 11 editors). Findings: (1) busboy is streaming-native — the `'file'` event emits a Node Readable and the handler was a regression on its intended API; (2) `stream.pipeline(fileStream, HashingPassThrough, createWriteStream)` gives O(1) memory with disk-only bound; (3) peer convergence — local-first editors (Obsidian, Logseq-local, Foam, Zettlr) have no cap because they own bytes via OS FS. OK's client-server split is an implementation detail from the user's POV (their own machine).
+
+### Changes in this amendment
+
+- **`upload.maxBytes` deleted** from `UploadConfig` interface, `DEFAULT_UPLOAD_CONFIG`, `ConfigSchema.upload`, `PartialUserUploadConfig`, `/api/upload-config` response, client `UploadResponseBody`. 5 fields now live on FR-5 (down from 6).
+- **Upload handler rewritten to stream end-to-end.** New `packages/server/src/upload-streaming.ts` module exports `HashingPassThrough` (on-the-fly sha256), `mintTempUploadPath`, `linkTempToFinalWithCollisionRetry` (POSIX `linkSync`, 99-attempt retry preserving the buffer-era `-1`…`-99` suffix semantic), `cleanupOrphanUploadTempfiles` (boot sweep, 24h TTL).
+- **Typed `UploadWriteReason` union** in new `packages/server/src/upload-errors.ts` — `malformed-upload` (400), `storage-full` (507), `storage-readonly` (500), `collision-exhaustion` (500), `storage-error` (500). Replaces the prior ad-hoc `'max-bytes'` 413 envelope.
+- **Boot-time orphan tempfile sweep** wired into `standalone.ts` `initAsync()` right after `recoverPendingManagedRename`; `degraded.push('upload-tempfile-sweep')` on error — matches the managed-rename-recovery precedent.
+- **Legacy config compatibility.** `UploadConfigSchema` is not `.strict()` so legacy `upload.maxBytes:` keys parse cleanly (silently stripped). Three deprecation WARNs surface at boot (CLI loader, Vite dev plugin, desktop loader) so users can clean up `config.yml`.
+- **SPEC direct edits** (pre-merge, per CLAUDE.md "corrigendum for shipped specs" convention which reserves breadcrumbs for post-ship state): §3 NG6, §5 P4, §6 FR-1 + FR-5 + NFR-1, §7 M5, §10 D1 mapping + D19 mapping + D-L row + D-M row, §12 A6, §13 In Scope + Agent Constraints, §15 Future Work. Amendment section appended at SPEC end.
+- **Evidence deletions.** P1.3 (oversized-file rejection) and P4.1 (operator bumps maxBytes) deleted from `evidence/e2e-acceptance-scenarios.md`. P4.1 rewritten to cover the remaining operator knobs (`attachmentFolderPath`, `emitFormat`). I-perf-sha256 invariant reframed to I-perf-streaming.
+- **E2E test deletions.** P1.3 / P4.1 tests deleted from `packages/app/tests/stress/asset-embed-advanced.e2e.ts` (Commit 4 of the refactor).
+- **Docs updates.** `docs/content/guides/configuration.mdx` + `docs/content/guides/assets-and-embeds.mdx` no longer document `upload.maxBytes`; added streaming-pipeline context + link to `reports/streaming-upload-refactor/REPORT.md`. `AGENTS.md` § upload surface updated with streaming pipeline + tempfile semantics; two new STOP rules added (do-not-re-add MIME allowlist; do-not-re-add maxBytes / buffer-to-memory pattern).
+- **Changeset bullet** in `.changeset/asset-embed-surface.md` reframes the feature as "any file drop — no user-facing byte cap" with a pointer to the streaming refactor report.
+
+### Implementation
+
+Four atomic commits, each `bun run check` green:
+
+1. `feat(server): add streaming upload primitives (no call sites)` — `packages/server/src/upload-streaming.ts` + `upload-streaming.test.ts` (25 tests) + `upload-errors.ts` (typed reason union).
+2. `feat(server): stream multipart uploads end-to-end` — rewrite `readUploadBody`, delete `writeUploadAtomic` + `sha256Hex`, rewire `handleUploadImage` to `linkTempToFinalWithCollisionRetry` + `HashingPassThrough`, extend error dispatch, wire boot sweep in `standalone.ts`.
+3. `refactor: remove upload.maxBytes from config surface` — surgical deletion from `UploadConfig`, `DEFAULT_UPLOAD_CONFIG`, `ConfigSchema`, `PartialUserUploadConfig`, client `UploadResponseBody` + `formatBytes` + toast branch. Three deprecation WARN sites.
+4. `docs(asset-embed): remove P1.3 scenario + maxBytes refs + SPEC amendment` — this changelog entry, evidence deletions, docs updates, changeset rewrite, AGENTS.md updates, SPEC direct edits + amendment section, E2E test deletions.
+
+### Unchanged
+
+Dual-CRDT bridge (precedent #14), FR-1 accept-all (D-M), FR-2 same-dir sha256 dedup, FR-3 wiki-embed tokenizer + basename index + dispatch + emit, FR-4 Obsidian vault detection (US-018 user-wins precedence), FR-6 CC1 `ch:'files'` asset events, FR-7 managed-rename image-ref rewrite (D-K refs-only), FR-8 endpoint rename, NFR-3 SVG `<img>`-only routing (text-sniff fallback survives the stream rewrite).
+
+### Baseline commit
+
+Stamped at `933421fc` — the Commit 3 completion. Commit 4 carries this changelog entry and the remaining doc/SPEC/E2E deletions.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct edit per the "shipped vs pre-merge" distinction in CLAUDE.md. Ready to proceed through the remaining ship phases (push, PR, review-cloud loop).
 

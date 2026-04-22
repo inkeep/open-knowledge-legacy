@@ -7,7 +7,7 @@ Open Knowledge treats assets (images, PDFs, video, audio, fonts, archives) as fi
 
 ## Dropping files
 
-Any file under the configured size limit (25 MB by default) is accepted. The editor routes files to one of three insertion shapes based on the extension:
+Any file is accepted — there is no user-facing size cap. Uploads stream to disk with on-the-fly sha256 (memory footprint is O(1)), so a 500 MB video works the same as a 50 KB screenshot. The only rejection axis is disk fullness, which surfaces as HTTP 507 (`storage-full`). The editor routes files to one of three insertion shapes based on the extension:
 
 | File type                                           | Default shape                       | Example                 |
 | --------------------------------------------------- | ----------------------------------- | ----------------------- |
@@ -107,7 +107,6 @@ Every file-drop behavior is tunable without a rebuild:
 
 ```yaml title=".open-knowledge/config.yml"
 upload:
-  maxBytes: 104857600               # bump to 100 MB
   attachmentFolderPath: assets      # force all uploads into content/assets/
   emitFormat: markdown-image        # for users who prefer standard markdown
   dedup:
@@ -119,7 +118,7 @@ upload:
     - pdf
 ```
 
-Restart the server after editing. Changes take effect on the next upload.
+Restart the server after editing. Changes take effect on the next upload. Legacy configs that still carry `upload.maxBytes` parse cleanly but log a one-time deprecation WARN at boot — the streaming pipeline makes the cap architecturally obsolete (see [`reports/streaming-upload-refactor/REPORT.md`](https://github.com/inkeep/open-knowledge/blob/main/reports/streaming-upload-refactor/REPORT.md)).
 
 ## Security
 

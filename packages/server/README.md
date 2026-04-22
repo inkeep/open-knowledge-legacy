@@ -241,19 +241,19 @@ Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](.
 
 | Method | Path                 | Purpose |
 | ------ | -------------------- | ------- |
-| POST   | `/api/upload`        | Upload an asset (multipart). Response: `{ok, src, deduped}` on 200; `{ok:false, error:'max-bytes', attemptedBytes, maxBytes, message}` on 413. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
-| GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `maxBytes`. |
+| POST   | `/api/upload`        | Upload an asset (multipart, streamed to disk). Response: `{ok, src, path, deduped}` on success. Error envelope: `{ok:false, error:<reason>, message}` where `reason ∈ { 'malformed-upload' (400), 'storage-full' (507), 'storage-readonly' (500), 'collision-exhaustion' (500), 'storage-error' (500) }`. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
+| GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `attachmentFolderPath`. |
 
 ### Accept-all (D-M LOCKED)
 
-Every file drop under `upload.maxBytes` is accepted. There is no MIME allowlist gate. `file-type` magic-byte sniffing is consulted only to:
+Every file drop is accepted. There is no MIME allowlist gate and, post-2026-04-22 streaming refactor, no user-facing byte cap either (uploads stream to disk via `HashingPassThrough` + `stream.pipeline`; memory footprint is O(1) regardless of file size). `file-type` magic-byte sniffing is consulted only to:
 
 1. Preserve SVG `<img>`-only routing (NFR-3 — text-based SVG can't be detected by `file-type`; the handler has a `<svg` text-sniff fallback that tags `image/svg+xml`).
 2. Recover an extension when the client filename is a generic clipboard name (`"image.png"`, `"Clipboard 2024-04-21"`).
 
-Non-sniffable bytes are accepted under the client-supplied filename. Only `upload.maxBytes` rejects.
+Non-sniffable bytes are accepted under the client-supplied filename. The only rejection axes are transport / disk failures (`malformed-upload`, `storage-full`, `storage-readonly`, `collision-exhaustion`, `storage-error`) — see `src/upload-errors.ts` for the typed union.
 
-**STOP.** Do not re-add a MIME allowlist gate — see root `AGENTS.md` §"Known Pitfalls" for the full STOP rules set. A security-focused hard-block allowlist is documented in SPEC §15 Future Work → Explored and requires a multi-tenant trigger.
+**STOP.** Do not re-add a MIME allowlist gate — see root `AGENTS.md` §"Known Pitfalls" for the full STOP rules set. Do not re-add `upload.maxBytes` or any buffer-to-memory upload pattern either — both were removed under the streaming refactor, see `reports/streaming-upload-refactor/REPORT.md` §D8.
 
 ### sanitizeFilename
 
@@ -263,7 +263,7 @@ Non-sniffable bytes are accepted under the client-supplied filename. Only `uploa
 2. Whitelist via Unicode category classes (letters, numbers, marks, punctuation, emoji pictographs). Anything outside becomes `_`.
 3. Collapse runs of `_`, trim leading dots, strip trailing dots.
 
-`writeUploadAtomic` preserves extension when adding a `-N` collision suffix. Path-escape guards (`..`, absolute, NUL bytes) run separately at request time.
+`linkTempToFinalWithCollisionRetry` (in `src/upload-streaming.ts`) preserves extension when adding a `-N` collision suffix. Path-escape guards (`..`, absolute, NUL bytes) run separately at request time.
 
 ### Same-directory sha256 dedup
 
@@ -355,8 +355,8 @@ The `MANAGED_RENAME_ORIGIN` is a paired-write origin (`context.paired: true`) so
                       ┌───────────────┼────────────────┐
                       ↓               ↓                ↓
           /api/upload handler   /api/upload-config  client ensureUploadConfig()
-          (reads maxBytes +     (returns the full   (fetches on first upload,
-           dedup.mode)           resolved subtree)   caches per-session)
+          (reads dedup.mode +   (returns the full   (fetches on first upload,
+           attachmentFolderPath) resolved subtree)   caches per-session)
 ```
 
 ### Observability

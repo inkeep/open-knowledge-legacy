@@ -27,7 +27,7 @@ Test-tier discipline: this file enumerates **acceptance-level** scenarios. Lower
 
 ## Path P1 — Dogfooder drops anything (G1, M1)
 
-Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor is dead to me for non-image assets."* — AND, after 2026-04-21 D-M flip: *"I drag my CSV in and it rejects me with a toast telling me to paste-into-a-code-fence; I just wanted a link to the file."* Post-D-M: any file drop under `maxBytes` accepts. Non-sniffable / unrecognized types become opaque markdown links (ecosystem norm: matches Obsidian, Logseq, Notion, Bear, iA, Roam, Craft). Only oversized files reject (see P1.3).
+Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor is dead to me for non-image assets."* — AND, after 2026-04-21 D-M flip: *"I drag my CSV in and it rejects me with a toast telling me to paste-into-a-code-fence; I just wanted a link to the file."* Post-D-M: any file drop accepts. Non-sniffable / unrecognized types become opaque markdown links (ecosystem norm: matches Obsidian, Logseq, Notion, Bear, iA, Roam, Craft). Post-2026-04-22 streaming amendment: no user-facing byte cap either — disk fullness (`storage-full` → 507) is the only rejection axis and it's a server-side surface, not a product experience to author. See SPEC §Post-finalization amendment.
 
 ### P1.1 Drop a PDF from Finder into an open note ★
 
@@ -82,21 +82,11 @@ Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor i
 
 ---
 
-### P1.3 Drop exceeds `maxBytes` — only rejection path ★
+### ~~P1.3 Drop exceeds `maxBytes`~~ — DELETED 2026-04-22
 
-**Setup.** Default config (25MB `maxBytes`). Temp file is a 30MB video with real MP4 magic bytes.
+Scenario deleted under the post-finalization streaming-upload amendment. `upload.maxBytes` no longer exists; there is no user-facing byte cap and therefore no rejection toast to author. The streaming pipeline bounds memory to O(1) regardless of file size (`HashingPassThrough` + `stream.pipeline`), so the OOM-guard rationale the cap represented is gone. Disk fullness surfaces as `{ error: 'storage-full' }` → HTTP 507 with a server-side message — that's a transport failure, not a product-experience scenario.
 
-**Action.** Drop into editor.
-
-**Invariants.**
-1. `POST /api/upload` returns 413 (or 400) identifying the violation (`"maxBytes"` category).
-2. Toast includes both the attempted file size AND the configured limit in the message body — not a generic "too large" phrase. (Exact copy flexibility — specific bytes must appear; exact wording is implementation choice.)
-3. No file written under content dir after rejection.
-4. No widget-decoration placeholder lingers in the editor.
-
-**Perturbation check.** If size-check fires AFTER bytes are written to disk (insecure path), invariant 3 catches the orphan file. If the toast is generic ("Too large") without specific bytes, invariant 2 catches it. Per D-M, this is now the ONLY type-based rejection path in the spec — regressions show up here directly.
-
-**Note.** Promoted to top-10 per M2 in Session 2 cycle-2 assessment. Distinct from P1.1/P1.2 bug class (size-check layer vs type-dispatch layer); not covered by any other top-10 scenario.
+See SPEC §Post-finalization amendment and `reports/streaming-upload-refactor/REPORT.md` §D8 for the full rationale. Server-side tests for `storage-full` / `malformed-upload` / `collision-exhaustion` live in `packages/server/src/api-extension.test.ts` (integration tier) and `packages/server/src/upload-streaming.test.ts` (unit tier).
 
 ---
 
@@ -183,32 +173,36 @@ Start dev server against this directory.
 
 ## Path P4 — Operator tuning (G4, M5)
 
-### P4.1 Operator bumps `maxBytes` — config-driven, no rebuild
+### P4.1 Operator tunes `attachmentFolderPath` / `emitFormat` — config-driven, no rebuild
+
+_[Amended 2026-04-22: previous P4.1 centered on `upload.maxBytes`. Post-streaming-refactor there is no byte cap to tune, so the scenario now covers the remaining operator knobs that still round-trip via FR-5. See SPEC §Post-finalization amendment.]_
 
 **Setup.** User-operator (OK is local-first; operator = user) edits `.open-knowledge/config.yml` (server off):
 ```yaml
 upload:
-  maxBytes: 104857600     # 100MB
+  attachmentFolderPath: attachments   # Obsidian-style global folder
+  emitFormat: markdown-image          # prefer ![alt](path) over ![[...]]
 ```
 Start server. Open browser.
 
 **Action.**
-1. Drop 30MB MP4 — under default 25MB this would reject; under 100MB config it should ACCEPT.
-2. Drop 110MB ZIP — still exceeds cap; should REJECT with byte-size-specific message (P1.3-class).
+1. Drop a 2MB PNG into `docs/meeting-notes.md`.
+2. Drop the same PNG into `docs/2026/q2/retrospective.md`.
 
 **Invariants.**
-1. Step 1: POST returns 200 within NFR-1. File `docs/<basename>.mp4` on disk. Inserted markdown `![[<basename>.mp4]]` (MP4 is in `wikiEmbedExtensions` default → wiki-embed emit).
-2. Step 2: POST returns 413 (or 400) with byte-size-specific toast naming both attempted size (110MB) and configured limit (100MB). No file written.
+1. Step 1: POST returns 200. File at `attachments/<basename>.png` (NOT `docs/<basename>.png` — `attachmentFolderPath: attachments` overrides co-location). Inserted markdown `![<alt>](../attachments/<basename>.png)` (relative to doc dir, `markdown-image` shape per `emitFormat`).
+2. Step 2: POST returns 200 with `deduped: true` — same bytes as Step 1 dedup even though the doc dir differs, because the dedup scope is the destination folder (`attachments/`), not the doc dir. Inserted markdown `![<alt>](../../../attachments/<basename>.png)` — relative path recomputed from the deeper doc location to the same shared asset.
 3. No rebuild of server binary needed — just config edit + restart.
 
-**Perturbation check.** If `upload.maxBytes` config isn't wired, invariant 1 fails (MP4 rejected under hardcoded 25MB). If `maxBytes` is ignored entirely, invariant 2 fails (110MB accepted when it shouldn't be).
+**Perturbation check.** If `attachmentFolderPath` config isn't wired, invariant 1 fails (file lands at `docs/<basename>.png`). If `emitFormat` config isn't wired, invariants 1/2 fail (markdown is `![[...]]` shape instead of `![alt](...)`). If relative-path computation regresses, invariant 2 produces `../attachments/<basename>.png` from the deep doc (wrong ancestor count).
 
 **Edge-case siblings.**
-- P4.1a Invalid `upload.*` config shape (e.g., `maxBytes: "not a number"`) — server startup logs Zod validation error, refuses to start with clear message. Config file unmodified.
-- P4.1b `upload.emitFormat: 'markdown-image'` override — drop PNG, emits `![foo](foo.png)` not `![[foo.png]]`.
-- P4.1c `upload.attachmentFolderPath: 'attachments'` — drop lands in `attachments/<basename>` instead of colocated.
+- P4.1a Invalid `upload.*` config shape (e.g., `emitFormat: "html-image"`) — server startup logs Zod validation error, refuses to start with clear message. Config file unmodified.
+- P4.1b `upload.emitFormat: 'markdown-image'` on non-image extension (PDF) → emits `[name](path)` markdown-link (not markdown-image — markdown has no `![alt](foo.pdf)` shape for non-images).
+- P4.1c `upload.dedup.mode: 'off'` — same-bytes drop writes a second file with collision suffix.
+- P4.1d `upload.wikiEmbedExtensions: []` — every drop emits opaque markdown-link regardless of extension.
 
-**Note on scope change.** Session 2 cycle-1 draft of P4.1 tested `allowedMimeTypes` narrow + MP4 rejection against custom allowlist. Session 2 cycle-2 removed `allowedMimeTypes` from FR-5 per D-M accept-all + no `allowedMimeTypes` config. P4.1 simplified to `maxBytes` control only.
+**Note on scope change.** Session 2 cycle-1 draft of P4.1 tested `allowedMimeTypes` narrow + MP4 rejection against custom allowlist. Session 2 cycle-2 removed `allowedMimeTypes` from FR-5 per D-M accept-all. Post-2026-04-22 streaming amendment removed `maxBytes` from FR-5 and from P4.1; the scenario now exercises the remaining live knobs.
 
 ---
 
@@ -336,7 +330,7 @@ docs/first-draft.png       # real PNG, 100KB
 ## Cross-cutting invariants (assertions embedded in the above, not standalone)
 
 - **I-roundtrip.** After any scenario that writes to the editor, serialize Y.Text to disk, re-parse, compare to pre-save Y.Text → byte-identical (NFR-5 / I1, I4, I5, I7). Asserted implicitly by reload-after-write in P1.1, P2.1, etc.
-- **I-perf-sha256.** Drop of 25MB file end-to-end <800ms (NFR-1: sha256 <200ms + network + write). Asserted inline in P1.1 / P3.1.
+- **I-perf-streaming.** Large-file drop completes with memory footprint bounded by streaming (not proportional to file size). Asserted at the unit/integration tier on the pipeline primitives — post-2026-04-22 streaming amendment supersedes the prior "sha256 <200ms on 25MB" invariant since hash is folded into the pipeline via `HashingPassThrough` rather than running as a separate pass. See `reports/streaming-upload-refactor/REPORT.md` §D9 for the O(1) memory proof.
 - **I-perf-vault.** P2.1 with synthetic 1000-file vault completes initial render <2s (NFR-1).
 - **I-security-svg.** SVG uploads render via `<img>` only, never inline DOM. Asserted in P1.1f.
 - **I-observability.** Every scenario's upload event emits server log with `{ dedup, mime, size, destPath }` per NFR-4.
@@ -351,16 +345,16 @@ In descending order of what-would-break-most-visibly-if-it-regressed:
 2. **P1.2** Drop CSV + **P1.2d** drop `.xyz` — text-ext/other boundary for D-L two-message rule.
 3. **P2.1** Obsidian vault open + **P2.1a** ambiguous resolution — G2 tent-pole + shortest-path determinism.
 4. **P3.1** Dedup same-dir (with **P3.1a** cross-dir negative) — G3 tent-pole.
-5. **P4.1** Operator config without rebuild — G4 tent-pole.
+5. **P4.1** Operator tunes `attachmentFolderPath` / `emitFormat` — G4 tent-pole (post-2026-04-22 amendment: maxBytes branch removed with the field).
 6. **P5.1** Rename with plain markdown-image ref — G5 tent-pole, Case A.
 7. **P5.1a** Rename with wiki-embed ref (NO rewrite) — distinguishes Case A.
 8. **P5.2** Wiki-embed immunity under concurrent burst — D-E architectural-immunity regression guard.
 9. **P6.1** Multi-user CRDT propagation of new embed — proves FR-3d writes through CRDT.
 10. **P6.2** Multi-user basename-index invalidation via CC1 — proves FR-6 reused the primitive correctly.
-11. **P1.3** Oversized-file rejection with byte-size-specific toast — the only rejection path in the spec post-D-M; distinct bug class (size-check layering) not covered by other scenarios. Promoted from #11 push-down to top-list per M2 in Session 2 cycle-2 assessment.
+11. ~~**P1.3** Oversized-file rejection~~ — DELETED 2026-04-22 under the streaming-upload amendment. `upload.maxBytes` no longer exists; server-side `storage-full` / `malformed-upload` / `collision-exhaustion` errors are covered in `packages/server/src/api-extension.test.ts` (integration) and `upload-streaming.test.ts` (unit) — not at E2E tier.
 12. **P5.3** Markdown-image eventual-consistency under concurrent burst — guards the F8-absorbed opt-out path (`emitFormat: 'markdown-image'`) against silent FR-7 regressions. Promoted per M4.
 
-Note: "top 10" is a soft cap; post-Session-2-cycle-2 this list is 12, reflecting M2 + M4 resolutions. If you treat it as hard, P1.3 (rare happy path) would cut before P5.3 (covers a genuine regression surface). Don't — the extra ~2 scenarios are cheap at E2E tier and cover bug classes nothing else catches.
+Note: "top 10" is a soft cap; post-2026-04-22 streaming amendment this list holds 11 (P1.3 removed). P5.3 (covers a genuine regression surface) remains a top-list candidate for the same reason it was promoted in Session 2 cycle-2.
 
 Everything else pushes to lower tiers below.
 
@@ -378,7 +372,7 @@ These would be ceremony as E2E; they belong at cheaper tiers where each test run
 - **`shortestImageRef` dirname matrix (F8)**: unit test with permutation fixtures.
 - **`managed-rename-rewrite` regex coverage**: narrow integration with real markdown fixtures.
 - **Zod config schema validation** (all `upload.*` fields + all error paths): unit test against `schema.ts`.
-- **Sha256 perf <200ms on 25MB**: standalone perf micro-benchmark, NOT inside an E2E. Guards NFR-1 without browser variance.
+- **Streaming upload pipeline primitives** (`HashingPassThrough`, `linkTempToFinalWithCollisionRetry`, `cleanupOrphanUploadTempfiles`): unit tests in `packages/server/src/upload-streaming.test.ts`. Post-2026-04-22 streaming amendment replaced the prior sha256 perf micro-benchmark — hash throughput is no longer the bottleneck under streaming (disk I/O is).
 - **CC1 signal fan-out semantics**: narrow integration at server level, no browser needed.
 
 ---
@@ -419,7 +413,7 @@ Captures the evolution of this file across two resolution cycles on 2026-04-21. 
 **Session 2 cycle-2 (PM 2026-04-21 — post-audit, user escalation resolutions):**
 
 - **D-L two-message rule → REMOVED, D-A → REFUTED by D-M.** User observed this is overengineering; no major editor does type-based rejection UX (Obsidian / Logseq / Notion / Bear / iA / Roam / Craft all accept-all). Refutation also dissolves M1 admin-narrowed case (OK is local-first; no admin distinct from user). P1.2 + P1.2d scenarios rewritten as accept-with-opaque-emit rather than rejection.
-- **M2 E2E top-10 budget** → soft cap. P1.3 promoted alongside P5.3 (now 12 scenarios; cheap at E2E tier, covers distinct bug classes).
+- **M2 E2E top-10 budget** → soft cap. P1.3 promoted alongside P5.3 (now 12 scenarios; cheap at E2E tier, covers distinct bug classes). **Post-2026-04-22 amendment:** P1.3 deleted under streaming-upload refactor (scenario targeted `upload.maxBytes`; field no longer exists). Top-list holds 11.
 - **M3 `warnBytes`** → DELETED from FR-5. No behavior contract, no journey, no dogfood signal. Future Work Explored entry added in SPEC §15.
 - **M4 P5.3 eventual-consistency** → ADDED as sibling of P5.2. Guards F8-absorbed `emitFormat: 'markdown-image'` opt-out from silent FR-7 regression under concurrent fs-event burst.
 - **L4 Phase 2 coordination** → flipped to permanent-fallback-marker pattern. P0 assertions stay as regression guards; Phase 2 adds its own scenarios in `specs/2026-04-08-typed-component-nodes/` additively.
