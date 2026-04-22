@@ -34,6 +34,7 @@ import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
+import { computeDevApiConfigResponse } from './api-config-handler.ts';
 import { runDevShadowInit } from './dev-shadow-init.ts';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
@@ -315,6 +316,31 @@ export function hocuspocusPlugin(): Plugin {
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
+          // `/api/config` — served directly by the dev plugin. In prod this
+          // lives in `ok ui` (see packages/cli/src/commands/ui.ts); here the
+          // dev server IS the UI host, so we answer with the same shape using
+          // our own bound port. Must run before the Hocuspocus onRequest
+          // dispatch so a mid-boot race (client fetch arrives before any
+          // extension has claimed routes) still resolves a valid collabUrl
+          // for the first `useCollabUrl` tick.
+          if (url === '/api/config') {
+            const addr = server.httpServer?.address();
+            const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+            const response = computeDevApiConfigResponse(req.method, port);
+            if (response) {
+              for (const [name, value] of Object.entries(response.headers)) {
+                res.setHeader(name, value);
+              }
+              res.statusCode = response.status;
+              if (response.omitBody) {
+                res.end();
+              } else {
+                res.end(response.body);
+              }
+              return;
+            }
+            // Method not GET/HEAD — fall through to the 404 JSON below.
+          }
           // Let the Hocuspocus onRequest extensions handle API routes
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
