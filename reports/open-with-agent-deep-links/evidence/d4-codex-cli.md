@@ -79,7 +79,7 @@ codex --cd <dir> exec "prompt"
 | Non-interactive | `codex exec "<prompt>"` |
 | Non-interactive via stdin | `codex exec -` reads entire prompt from stdin; `echo ... \| codex exec -` also works |
 
-**CAVEAT (MEDIUM confidence):** If a positional prompt AND stdin are supplied, a third-party empirical test (alexfazio gist, Codex 0.114.0) observed stdin is NOT forwarded — contradicting OpenAI docs which say "stdin is additional context." Flag for empirical testing before shipping combined positional+stdin flows.
+**CAVEAT (MEDIUM confidence):** If a positional prompt AND stdin are supplied, a third-party empirical test (alexfazio gist, Codex 0.114.0) observed stdin is NOT forwarded — contradicting OpenAI docs which say "stdin is additional context." Flag for empirical testing before shipping combined positional+stdin flows.<br>_[Corrected 2026-04-22 post-ship: Behavior changed on 2026-03-28 via [openai/codex#15917](https://github.com/openai/codex/pull/15917); Codex ≥ v0.122.0 appends stdin as a `<stdin>` block after the positional prompt. Authoritative fix in [`f1-empirical.md` §U3](./f1-empirical.md#u3-codex-exec--stdin--positional-prompt-major-update)._]
 
 **No `--prompt` / `-p` / `--message` flag.** Prompt is always positional or stdin.
 
@@ -159,6 +159,6 @@ Potentially useful for an "Open with Codex: reopen last session in this dir" aff
 
 ## Gaps / follow-ups
 
-- **Empirical test needed:** Stdin-vs-positional interaction when both are supplied — community observation (stdin ignored) contradicts docs (stdin is context).
+- ~~**Empirical test needed:** Stdin-vs-positional interaction when both are supplied — community observation (stdin ignored) contradicts docs (stdin is context).~~<br>_[Resolved 2026-04-22 post-ship: Behavior change landed in [openai/codex#15917](https://github.com/openai/codex/pull/15917) (2026-03-28); Codex ≥ v0.122.0 appends piped stdin to positional prompt. Authoritative details in [`f1-empirical.md` §U3](./f1-empirical.md#u3-codex-exec--stdin--positional-prompt-major-update)._]
 - **VS Code extension integration:** No documented deep link; if Codex adds one in future, it becomes a much cleaner integration path than terminal spawn.
 - **Sandbox modes for Electron:** `--sandbox read-only|workspace-write|danger-full-access` — choosing the default for `openWithAgent` is a policy question for the `/spec`.
