@@ -168,8 +168,7 @@ Research articles are discovery surfaces — they should link out to **every** r
 - **Don't hide uncertainty** — research is where uncertainty lives; be explicit about what you don't know
 - **Don't skip \`ingest\`** — always capture raw sources first, then analyze
 - **Don't overwrite existing research** — if the topic was researched before, either iterate on the existing file or create a clearly-named successor (e.g., \`crdt-alternatives-2.md\`) and mark the old one as superseded
-
-Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
+`;
 }
 
 export const DESCRIPTION = [

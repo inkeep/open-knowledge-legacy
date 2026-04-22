@@ -165,8 +165,7 @@ superseded_by: <path-to-new-canonical-article>.md
 - **Don't delete research articles** — they are the trail; keep them with a \`superseded_by\` marker
 - **Don't rewrite research prose verbatim** — canonical articles have a different voice (direct, decided) than research (exploratory, provisional)
 - **Don't skip the supersedes / superseded_by links** — the audit trail matters for future readers
-
-Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
+`;
 }
 
 export const DESCRIPTION = [

@@ -25,7 +25,7 @@ import {
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
+import { installUserSkill, isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
 import {
   app,
   BrowserWindow,
@@ -709,6 +709,23 @@ function bootPrimaryInstance(): void {
     } else {
       openNavigator();
     }
+
+    // Fire-and-forget user-global Agent Skill install per SPEC 2026-04-22
+    // (FR13 / D21). Runs on every launch — idempotent via the sidecar at
+    // `~/.open-knowledge/skill-installed-version`, so the no-op path is
+    // ~50 ms when current. Never awaited so window rendering + menu are
+    // unblocked. Failures log to main-process console and never surface to
+    // the user.
+    void installUserSkill({
+      logger: {
+        warn: (data, message) => console.warn(message, data),
+        info: (data, message) => console.info(message, data),
+      },
+    }).catch(() => {
+      /* installUserSkill is documented as never-throws; this is defense
+         against a future regression that would otherwise crash the main
+         process during the floating microtask. */
+    });
 
     // M3 auto-updater — wired as the LAST step in whenReady, after the window-
     // open branch (either openProjectOrFallbackToNavigator OR openNavigator).

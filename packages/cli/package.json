@@ -20,6 +20,7 @@
   },
   "files": [
     "dist",
+    "scripts",
     "!dist/**/*.map"
   ],
   "engines": {
@@ -30,8 +31,11 @@
   },
   "scripts": {
     "build:cli": "tsdown",
-    "build:assets": "cp -r ../app/dist dist/public",
+    "build:app": "cp -r ../app/dist dist/public",
+    "build:skill-asset": "mkdir -p dist/assets/skills/open-knowledge && cp ../server/assets/skills/open-knowledge/SKILL.md dist/assets/skills/open-knowledge/SKILL.md",
+    "build:assets": "bun run build:app && bun run build:skill-asset",
     "build": "bun run build:cli && bun run build:assets",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test"

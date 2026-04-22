@@ -175,6 +175,13 @@ export {
   type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
+export {
+  type InstallUserSkillOptions,
+  type InstallUserSkillResult,
+  installUserSkill,
+  type SkillInstallLogger,
+  type SpawnLike,
+} from './skill-install.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   acquireUiLock,
