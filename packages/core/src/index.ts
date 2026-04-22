@@ -18,6 +18,7 @@ export { OK_DIR } from './constants/ok-dir.ts';
 export {
   ALLOWED_IMAGE_MIME_TYPES,
   ASSET_EXTENSIONS,
+  DEFAULT_UPLOAD_CONFIG,
   type DedupMode,
   type DedupUIMode,
   type EmitFormat,

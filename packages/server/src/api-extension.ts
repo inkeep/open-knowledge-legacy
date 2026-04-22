@@ -30,6 +30,7 @@ import {
   ASSET_EXTENSIONS,
   applyFastDiff,
   createCodeFenceTracker,
+  DEFAULT_UPLOAD_CONFIG,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -2470,6 +2471,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  // US-015: expose the resolved `upload.*` subtree to the client editor
+  // so emit-dispatch (wikiembed vs markdown-image) honors operator
+  // overrides in `.open-knowledge/config.yml`. No auth — same local-first
+  // posture as the rest of the API; loopback binding limits blast radius.
+  async function handleUploadConfigGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const cfg = getUploadConfig ? getUploadConfig() : DEFAULT_UPLOAD_CONFIG;
+    json(res, 200, cfg);
+  }
+
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Authorization runs BEFORE method dispatch: reversing the order turns the
     // method check into a fingerprinting oracle for unauth callers (GET → 403,
@@ -4461,6 +4476,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/upload-config': handleUploadConfigGet,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,

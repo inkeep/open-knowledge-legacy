@@ -48,3 +48,34 @@ export interface UploadConfig {
   };
   wikiEmbedExtensions: string[];
 }
+
+// Canonical default. Mirrors the Zod schema default in
+// packages/cli/src/config/schema.ts. Kept here so every consumer — server
+// upload handler, `/api/upload-config` response fallback, client emit
+// dispatch — reads from the same source. If the list widens via config,
+// the server resolves at request time; this constant is only used as a
+// structural fallback when no config is wired (tests + client bootstrap
+// before the first /api/upload-config fetch completes).
+export const DEFAULT_UPLOAD_CONFIG: UploadConfig = {
+  attachmentFolderPath: './',
+  emitFormat: 'wikiembed',
+  maxBytes: 25 * 1024 * 1024,
+  dedup: { mode: 'same-dir', ui: 'toast' },
+  wikiEmbedExtensions: [
+    'png',
+    'jpg',
+    'jpeg',
+    'gif',
+    'webp',
+    'avif',
+    'svg',
+    'pdf',
+    'mp4',
+    'webm',
+    'mov',
+    'mp3',
+    'wav',
+    'ogg',
+    'm4a',
+  ],
+};

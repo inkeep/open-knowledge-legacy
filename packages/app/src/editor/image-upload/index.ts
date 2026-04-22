@@ -1,3 +1,4 @@
+import { DEFAULT_UPLOAD_CONFIG, type UploadConfig } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
@@ -133,29 +134,46 @@ export function setCurrentDocName(docName: string | null): void {
   currentDocName = docName;
 }
 
-// SPEC §6 FR-5 defaults — mirrors core's UploadConfigSchema. Hardcoded
-// here so the client emit dispatch works without a per-request config
-// fetch. Operator tunability (overriding these via /api/config) is a
-// follow-on; today the schema defaults are the user-facing contract.
-const DEFAULT_WIKI_EMBED_EXTENSIONS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'avif',
-  'svg',
-  'pdf',
-  'mp4',
-  'webm',
-  'mov',
-  'mp3',
-  'wav',
-  'ogg',
-  'm4a',
-]);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
-const DEFAULT_EMIT_FORMAT: 'wikiembed' | 'markdown-image' = 'wikiembed';
+
+// US-015: live `upload.*` config, fetched from `/api/upload-config` on
+// first upload. DEFAULT_UPLOAD_CONFIG is the fallback until the fetch
+// resolves — mirrors the cli's Zod schema default so behavior at t=0 is
+// the same as a fresh config.yml with no `upload` section.
+let cachedUploadConfig: UploadConfig = DEFAULT_UPLOAD_CONFIG;
+let uploadConfigFetchInFlight: Promise<UploadConfig> | null = null;
+
+async function fetchUploadConfig(): Promise<UploadConfig> {
+  try {
+    const res = await fetch('/api/upload-config', { headers: { Accept: 'application/json' } });
+    if (!res.ok) return cachedUploadConfig;
+    const body = (await res.json()) as UploadConfig;
+    // Trust the server-validated shape — it came through the cli's Zod
+    // schema at startup, so the only corruption risk is a user poking at
+    // the endpoint directly, which falls into "don't care" territory.
+    cachedUploadConfig = body;
+    return body;
+  } catch {
+    return cachedUploadConfig;
+  }
+}
+
+/**
+ * Ensure `cachedUploadConfig` reflects the server-resolved config before
+ * emit-dispatch runs. De-duplicates concurrent uploads onto one fetch.
+ */
+async function ensureUploadConfig(): Promise<UploadConfig> {
+  if (!uploadConfigFetchInFlight) {
+    uploadConfigFetchInFlight = fetchUploadConfig();
+  }
+  return uploadConfigFetchInFlight;
+}
+
+/** Test hook: seed the cached config so unit tests can exercise emit shapes without a fetch. */
+export function setUploadConfigForTests(cfg: UploadConfig): void {
+  cachedUploadConfig = cfg;
+  uploadConfigFetchInFlight = Promise.resolve(cfg);
+}
 
 function extensionOf(filename: string): string {
   const idx = filename.lastIndexOf('.');
@@ -167,10 +185,11 @@ interface InsertShape {
   ext: string;
 }
 
-function pickInsertShape(filename: string): InsertShape {
+export function pickInsertShape(filename: string, config: UploadConfig): InsertShape {
   const ext = extensionOf(filename);
-  if (DEFAULT_WIKI_EMBED_EXTENSIONS.has(ext)) {
-    if (DEFAULT_EMIT_FORMAT === 'wikiembed') return { kind: 'wikiembed', ext };
+  const wikiEmbedSet = new Set(config.wikiEmbedExtensions.map((e) => e.toLowerCase()));
+  if (wikiEmbedSet.has(ext)) {
+    if (config.emitFormat === 'wikiembed') return { kind: 'wikiembed', ext };
     return IMAGE_EXTENSIONS.has(ext) ? { kind: 'image', ext } : { kind: 'markdown-link', ext };
   }
   return { kind: 'markdown-link', ext };
@@ -207,6 +226,10 @@ export async function uploadAndInsert(
     return;
   }
   const uploadId = crypto.randomUUID();
+  // Prime the upload-config cache before dispatch so emit-shape honors
+  // operator overrides (US-015). Fire-and-forget the first time; later
+  // uploads reuse the cached value.
+  const uploadConfig = await ensureUploadConfig();
 
   const skeletonWidget = createSkeletonWidget();
   editor.view.dispatch(
@@ -275,7 +298,7 @@ export async function uploadAndInsert(
     toast(`Already at ${displayPath} — reusing.`);
   }
 
-  const shape = pickInsertShape(file.name);
+  const shape = pickInsertShape(file.name, uploadConfig);
 
   const { state } = editor;
   const pluginState = uploadPluginKey.getState(state);

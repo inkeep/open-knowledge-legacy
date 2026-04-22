@@ -503,6 +503,31 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
     });
     expect(res.status).toBe(200);
   });
+
+  // US-015: client-side emit-dispatch reads operator-resolved `upload.*`
+  // via this endpoint. Returning the configured values is the contract.
+  test('GET /api/upload-config returns the resolved upload config', async () => {
+    const res = await fetch(`http://localhost:${port}/api/upload-config`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      maxBytes: number;
+      emitFormat: string;
+      dedup: { mode: string; ui: string };
+      wikiEmbedExtensions: string[];
+      attachmentFolderPath: string;
+    };
+    expect(body.maxBytes).toBe(100);
+    expect(body.emitFormat).toBe('wikiembed');
+    expect(body.dedup.mode).toBe('same-dir');
+    expect(body.dedup.ui).toBe('toast');
+    expect(body.wikiEmbedExtensions).toEqual(['png']);
+    expect(body.attachmentFolderPath).toBe('./');
+  });
+
+  test('GET /api/upload-config rejects non-GET methods', async () => {
+    const res = await fetch(`http://localhost:${port}/api/upload-config`, { method: 'POST' });
+    expect(res.status).toBe(405);
+  });
 });
 
 describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
