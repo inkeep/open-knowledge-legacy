@@ -1463,11 +1463,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'summary must be a string' });
         return;
       }
-      const {
-        response: summaryResponse,
-        hint: summaryHint,
-        stored: storedSummary,
-      } = summaryResponseFields(normalizedSummary);
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
       const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -2945,7 +2942,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // blame to the caller. `summariesTruncated` is also suppressed for
       // server-generated defaults so the M2 metric reflects agent behavior.
       let summaryResponse: SummaryResponse | undefined;
-      let summaryHint = '';
       if (hasAgentId) {
         const shaShort = commitSha.slice(0, 8);
         const agentProvidedSummary = normalizedSummary.kind === 'value';
@@ -2957,7 +2953,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           agentProvidedSummary || !fields.response
             ? fields.response
             : stripDefaultPathTruncation(fields.response);
-        summaryHint = fields.hint ?? '';
         recordContributor(
           docName,
           rollbackAgentId,
@@ -3591,7 +3586,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // server-generated defaults so the M2 metric reflects agent behavior,
       // not server-template width.
       let summaryResponse: SummaryResponse | undefined;
-      let summaryHint = '';
       if (hasAgentId) {
         const agentProvidedSummary = normalizedSummary.kind === 'value';
         const effectiveNormalized = agentProvidedSummary
@@ -3602,7 +3596,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           agentProvidedSummary || !fields.response
             ? fields.response
             : stripDefaultPathTruncation(fields.response);
-        summaryHint = fields.hint ?? '';
         recordContributor(
           newDocName as string,
           renameAgentId,
