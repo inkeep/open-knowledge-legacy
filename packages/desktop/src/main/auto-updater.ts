@@ -21,7 +21,7 @@
  * same silent path with full err.stack. Zero user-visible signal per-error;
  * D12 stuck-hint closes the escape hatch after 7 consecutive failed days.
  *
- * Cadence (D10 revised): `checkForUpdatesAndNotify()` at boot, then every
+ * Cadence (D10 revised): `checkForUpdates()` at boot, then every
  * 1 hour via setInterval(60 * 60 * 1000). Singleton per app launch.
  */
 
@@ -73,7 +73,7 @@ export interface UpdaterLike {
   on(event: 'update-downloaded', listener: (info: { version?: string }) => void): this;
   on(event: 'error', listener: (err: Error & { code?: string }) => void): this;
   off(event: string, listener: (...args: unknown[]) => void): this;
-  checkForUpdatesAndNotify(): Promise<unknown>;
+  checkForUpdates(): Promise<unknown>;
   quitAndInstall(): void;
 }
 
@@ -317,12 +317,21 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     // error event will try again.
     if (!persistSafely({ ...state, stuckHintShown: true }, 'stuck-hint')) return;
 
-    broadcast('ok:update:stuck-hint', { downloadUrl: STUCK_HINT_DOWNLOAD_URL });
-    logger.warn('stuck-hint dispatched', {
-      lastSuccessfulCheckAt: state.lastSuccessfulCheckAt,
-      elapsedDays: Math.floor(elapsedMs / (24 * 60 * 60 * 1000)),
-    });
-    onDispatch?.('stuck-hint-toast-c');
+    // Defer through `whenRendererReady` for the same reason Toast A does:
+    // in dev / Tier-2 / any environment where the error fires before the
+    // editor window's `did-finish-load`, a plain broadcast would skip
+    // AFTER the state gate already marked `stuckHintShown = true`,
+    // meaning the user never sees Toast C for this installation.
+    const fireToastC = () => {
+      broadcast('ok:update:stuck-hint', { downloadUrl: STUCK_HINT_DOWNLOAD_URL });
+      logger.warn('stuck-hint dispatched', {
+        lastSuccessfulCheckAt: state.lastSuccessfulCheckAt,
+        elapsedDays: Math.floor(elapsedMs / (24 * 60 * 60 * 1000)),
+      });
+      onDispatch?.('stuck-hint-toast-c');
+    };
+    if (whenRendererReady) whenRendererReady(fireToastC);
+    else fireToastC();
   };
 
   /**
@@ -404,9 +413,24 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     // update-downloaded event. If persist fails, skip dispatch — electron-
     // updater will re-fire from its on-disk cache and we get another shot.
     if (!persistSafely({ ...state, versionPendingInstall: version }, 'update-downloaded')) return;
-    broadcast('ok:update:downloaded', { version });
-    logger.info('update-downloaded dispatched Toast A', { version });
-    onDispatch?.('update-downloaded-toast-a');
+    // Defer the broadcast through `whenRendererReady` so it lands AFTER the
+    // primary window has loaded and its renderer subscriber is attached.
+    // In dev + Tier-2 smoke the mock download completes in ~300ms — before
+    // Electron finishes `did-finish-load` on the editor window — so a plain
+    // `broadcast()` would skip with "no primary window" AFTER the state
+    // gate already armed, dropping Toast A for the rest of the installation.
+    // `whenRendererReady` handles the three timing cases (loaded / loading /
+    // no window yet — see main/index.ts) so Toast A reliably lands once
+    // there's a window to render it. Production is less affected (download
+    // takes minutes) but the scheduler is safe on the happy path too —
+    // fires immediately when the window is already ready.
+    const fireToastA = () => {
+      broadcast('ok:update:downloaded', { version });
+      logger.info('update-downloaded dispatched Toast A', { version });
+      onDispatch?.('update-downloaded-toast-a');
+    };
+    if (whenRendererReady) whenRendererReady(fireToastA);
+    else fireToastA();
   };
 
   const onError = (err: Error & { code?: string }): void => {
@@ -535,11 +559,11 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     // once per app launch (US-006). Guard against accidental re-entry.
     if (intervalHandle) return;
     intervalHandle = clock.setInterval(() => {
-      void updater.checkForUpdatesAndNotify().catch((err: unknown) => {
-        // checkForUpdatesAndNotify rejects on network / manifest errors; the
+      void updater.checkForUpdates().catch((err: unknown) => {
+        // checkForUpdates rejects on network / manifest errors; the
         // updater also emits `error` for these, so the catch here is just a
         // defensive log. Event handler runs either way.
-        logger.debug('checkForUpdatesAndNotify rejected', {
+        logger.debug('checkForUpdates rejected', {
           message: err instanceof Error ? err.message : String(err),
         });
       });
@@ -548,12 +572,12 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   if (isPackaged || forceDevBypass) {
     void updater
-      .checkForUpdatesAndNotify()
+      .checkForUpdates()
       .then(() => {
         startPeriodicChecks();
       })
       .catch((err: unknown) => {
-        logger.debug('first-launch checkForUpdatesAndNotify rejected', {
+        logger.debug('first-launch checkForUpdates rejected', {
           message: err instanceof Error ? err.message : String(err),
         });
         // Still start the interval — next fire may succeed.
@@ -561,7 +585,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
       });
   } else {
     logger.info(
-      'skipping checkForUpdatesAndNotify — app.isPackaged=false and OK_UPDATER_FORCE_DEV unset (handlers remain wired for tests + IPC)',
+      'skipping checkForUpdates — app.isPackaged=false and OK_UPDATER_FORCE_DEV unset (handlers remain wired for tests + IPC)',
     );
     onDispatch?.('skipped-dev-mode');
   }

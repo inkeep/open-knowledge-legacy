@@ -7,6 +7,10 @@ packages/*/bun.lock
 # Electron desktop build output — electron-vite output + electron-builder dist
 packages/desktop/out/
 packages/desktop/dist-desktop/
+# smoke-mock-update.mjs writes this file at keep-alive start and unlinks
+# on Ctrl+C; no one should ever commit it — it pins the updater to a
+# random local port that dies the moment the smoke server exits.
+packages/desktop/dev-app-update.yml
 
 # Turbo cache
 .turbo/

@@ -52,7 +52,7 @@ class FakeUpdater extends EventEmitter implements UpdaterLike {
   allowDowngrade = true;
   forceDevUpdateConfig = false;
   setFeedURL = mock((_urlOrOptions: string) => {});
-  checkForUpdatesAndNotify = mock(() => Promise.resolve(undefined));
+  checkForUpdates = mock(() => Promise.resolve(undefined));
   quitAndInstall = mock(() => {});
   override on(event: string, listener: (...args: unknown[]) => void): this {
     return super.on(event, listener as (...args: unknown[]) => void);
@@ -650,9 +650,9 @@ describe('first-launch post-update (Toast B — AC7, D9)', () => {
 describe('periodic check singleton (AC10, D10)', () => {
   test('registers exactly one interval after the first launch check resolves', async () => {
     const { rig } = makeRig();
-    // The module awaits checkForUpdatesAndNotify().then(startPeriodicChecks).
+    // The module awaits checkForUpdates().then(startPeriodicChecks).
     // Yield the event loop so that the then-callback fires.
-    await rig.updater.checkForUpdatesAndNotify();
+    await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
     expect(rig.clock.setInterval).toHaveBeenCalledTimes(1);
@@ -660,19 +660,19 @@ describe('periodic check singleton (AC10, D10)', () => {
     expect(rig.clock.lastMs).toBe(60 * 60 * 1000);
   });
 
-  test('interval callback calls checkForUpdatesAndNotify', async () => {
+  test('interval callback calls checkForUpdates', async () => {
     const { rig } = makeRig();
-    await rig.updater.checkForUpdatesAndNotify();
+    await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
-    rig.updater.checkForUpdatesAndNotify.mockClear();
+    rig.updater.checkForUpdates.mockClear();
     rig.clock.lastCallback?.();
-    expect(rig.updater.checkForUpdatesAndNotify).toHaveBeenCalledTimes(1);
+    expect(rig.updater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
   test('destroy() clears the interval', async () => {
     const { rig, handle } = makeRig();
-    await rig.updater.checkForUpdatesAndNotify();
+    await rig.updater.checkForUpdates();
     await Promise.resolve();
     await Promise.resolve();
     handle.destroy();
@@ -681,6 +681,58 @@ describe('periodic check singleton (AC10, D10)', () => {
 
   test('UPDATE_CHECK_INTERVAL_MS is 1 hour', () => {
     expect(UPDATE_CHECK_INTERVAL_MS).toBe(60 * 60 * 1000);
+  });
+
+  /**
+   * Regression for cloud-review Major finding (2026-04-22, commit 3edc7eab).
+   *
+   * `startAutoUpdater` kicks off with `updater.checkForUpdates()` and in its
+   * .catch() still calls `startPeriodicChecks()` so a transient first-launch
+   * failure (network down at boot, 404 on the manifest) doesn't leave the
+   * user stuck without auto-update for the entire session. Without this
+   * test, a refactor that early-returns on the catch path — or deletes the
+   * .catch entirely and falls through to the default rejection handler —
+   * would silently break the recovery guarantee and only be caught by real
+   * users on flaky networks.
+   */
+  test('first-launch check rejection still registers the periodic interval', async () => {
+    const updater = new FakeUpdater();
+    const ipc = makeFakeIpc();
+    const clock = makeFakeClock();
+    const captured: CapturedSend[] = [];
+    let state: AppState = emptyState();
+    updater.checkForUpdates = mock(() =>
+      Promise.reject(new Error('net::ERR_INTERNET_DISCONNECTED')),
+    );
+    const primaryWindow = makeFakeWindow(captured);
+    const logger = {
+      info: mock(() => {}),
+      warn: mock(() => {}),
+      error: mock(() => {}),
+      debug: mock(() => {}),
+    };
+    startAutoUpdater({
+      updater,
+      ipcMain: ipc,
+      readState: () => state,
+      writeState: (next) => {
+        state = next;
+      },
+      getPrimaryWindow: () => primaryWindow,
+      getAppVersion: () => '0.3.1',
+      isPackaged: true,
+      clock,
+      now: () => new Date(),
+      logger,
+    });
+    // Let both the rejected promise + the chained .catch() run.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(clock.setInterval).toHaveBeenCalledTimes(1);
+    expect(clock.lastMs).toBe(UPDATE_CHECK_INTERVAL_MS);
+    expect(logger.debug).toHaveBeenCalled();
   });
 });
 
@@ -721,10 +773,10 @@ describe('ok:update:relaunch-now IPC handler (AC18)', () => {
 // ————————————————————————————————————————————————————————
 
 describe('dev-mode guard (isPackaged=false)', () => {
-  test('skips first-launch checkForUpdatesAndNotify when isPackaged=false and forceDevBypass=false', async () => {
+  test('skips first-launch checkForUpdates when isPackaged=false and forceDevBypass=false', async () => {
     const { rig } = makeRig({ isPackaged: false });
     await Promise.resolve();
-    expect(rig.updater.checkForUpdatesAndNotify).not.toHaveBeenCalled();
+    expect(rig.updater.checkForUpdates).not.toHaveBeenCalled();
     expect(rig.dispatches).toContain('skipped-dev-mode' as DispatchKind);
   });
 
@@ -756,7 +808,7 @@ describe('dev-mode guard (isPackaged=false)', () => {
       },
     });
     await Promise.resolve();
-    expect(updater.checkForUpdatesAndNotify).toHaveBeenCalled();
+    expect(updater.checkForUpdates).toHaveBeenCalled();
   });
 
   test('event handlers stay wired in dev-mode so unit tests can drive them', () => {
@@ -1171,7 +1223,7 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
     expect(typeof handle?.destroy).toBe('function');
     handle?.destroy();
     // Clean teardown — no throw.
-    expect(clock.clearInterval).toHaveBeenCalled;
+    expect(clock.clearInterval).toHaveBeenCalled();
   });
 
   test('startAutoUpdater synchronous throw during wire-up is caught', async () => {
@@ -1194,7 +1246,7 @@ describe('bootAutoUpdater catch-path (Major #5)', () => {
         throw new Error('API drift — event contract changed');
       },
       off: () => hostileUpdater as unknown as UpdaterLike,
-      checkForUpdatesAndNotify: () => Promise.resolve(undefined),
+      checkForUpdates: () => Promise.resolve(undefined),
       quitAndInstall: () => {},
     } as unknown as UpdaterLike;
     const handle = await bootAutoUpdater(() => Promise.resolve({ autoUpdater: hostileUpdater }), {

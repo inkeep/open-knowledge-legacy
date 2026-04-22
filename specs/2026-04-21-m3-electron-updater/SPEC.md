@@ -63,8 +63,11 @@ One PR. Files that change:
 - `packages/desktop/src/main/state-store.ts` — extend `AppState` with `versionPendingInstall: string | null` + `lastSeenVersion: string | null` + `lastSuccessfulCheckAt: string | null` + `stuckHintShown: boolean` (D12) (F3 audit — `electron-store` is NOT installed; persistence uses the hand-rolled `state.json` atomic writer).
 - `.changeset/m3-electron-updater.md` — **NEW.** Declares `@inkeep/open-knowledge-desktop: minor` (plus other touched packages in the fixed group) for the changesets fixed-group version bump per D7 (F15 audit).
 - `packages/desktop/src/preload/index.ts` — expose `onUpdateDownloaded` + `onWhatsNew` listener wrappers per D19 typed IPC convention.
-- `packages/app/src/components/UpdateToast.tsx` — **NEW.** Renders ephemeral toast on `update-downloaded` and on "What's new" IPC events.
-- `packages/app/src/main.tsx` — mount toast component when `window.okDesktop` is present.
+- `packages/app/src/components/UpdateNotices.tsx` — **NEW** (renamed from the spec's original `UpdateToast.tsx` per D13 post-M3 UX revision). Thin renderer shell reading a module-level store via `useSyncExternalStore`. `pickActiveNotice(...)` picks the single highest-priority card for display.
+- `packages/app/src/components/UpdateNotices.shared.ts` — **NEW** (D13). Pure subscription logic (`attachUpdateSubscribers`) + canonical copy strings, split out so the module-level store and the React component can both import it without an import cycle.
+- `packages/app/src/lib/update-notices-store.ts` — **NEW** (D13). Module-level store (`installUpdateNoticesBridge` / `getNoticesSnapshot` / `subscribeToNotices` / `dismissNotice`). Attaches bridge subscribers at module-init time (BEFORE React mounts) so (a) IPC events fired before first render aren't dropped and (b) React remounts don't detach subscribers.
+- `packages/app/src/main.tsx` — call `installUpdateNoticesBridge()` at module-init time (desktop-only no-op in web/CLI) + no longer mounts `<UpdateToast />` (component lives in the sidebar footer now — D13).
+- `packages/app/src/components/FileSidebar.tsx` — mount `<UpdateNotices />` inside `<SidebarFooter>` (D13).
 - `packages/desktop/electron-builder.yml` — **add `zip` target alongside `dmg`** (required by Squirrel.Mac update path per `evidence/electron-updater-api.md` §3 — `MacUpdater.ts:89` downloads `.zip`, NOT `.dmg`). Change `mac.target: [{ target: 'dmg', arch: ['universal'] }]` → `mac.target: [{ target: 'dmg', arch: ['universal'] }, { target: 'zip', arch: ['universal'] }]`. Existing `publish: github` block unchanged.
 - `.github/workflows/desktop-release.yml` — **NEW.** Release-event-triggered workflow (no tag-shape-specific trigger — F8 audit resolved by moving to `on: release: types: [published]`) (`on: release: types: [published]` — see D8/F14) that runs signed build + uploads `.dmg`, `.dmg.blockmap`, `.zip`, `.zip.blockmap`, `latest-mac.yml` to the GitHub Release (created by `release.yml`'s `gh release create`).
 - `packages/desktop/scripts/smoke-mock-update.mjs` — **NEW.** Dev-mode dry-run harness: local HTTP server serving a fake `latest-mac.yml`, exercises `autoUpdater` code paths without real notary.
@@ -167,6 +170,23 @@ Both toasts use sonner's `duration: Infinity`. User dismisses by clicking the to
 
 Change `mac.target: [{ target: 'dmg', arch: ['universal'] }]` → `mac.target: [{ target: 'dmg', arch: ['universal'] }, { target: 'zip', arch: ['universal'] }]`. `afterPack`/`afterSign` hooks from M2 already iterate over `appOutDir`; no changes needed. The `.zip` + `.zip.blockmap` land in `latest-mac.yml`'s `files[]` automatically. Release workflow (§4) uploads both artifact families to the GitHub Release. **Why:** `MacUpdater.ts:89` (`findFile(files, "zip", ["pkg", "dmg"])`) downloads ZIP not DMG for the Squirrel.Mac swap. M2 shipped `.dmg` only because auto-update was out of M2's scope (M2 NG4); M3 is the first consumer that needs `.zip`, so the scope delta lands here rather than in a separate M2-patch PR. **Coordination note (C7 challenger):** because M2 is `Implementation Complete — pending review`, the M3 PR touching `electron-builder.yml` should coordinate with M2's reviewer — flag the `.zip` addition in the PR description so M2's review context is preserved. Splitting into a separate M2-patch PR was considered and declined per the user's "we can implement the fix as part of the M3 spec because it consumes" direction. **Source:** decision batch #1 item 8, user-confirmed.
 
+### D13 (DIRECTED, 2026-04-22, post-M3 manual-smoke). Notice primitive = sidebar-footer card + single-card priority selection; module-level store for IPC subscription
+
+Post-M3 Tier-2 manual smoke surfaced three concrete defects in the originally-specified sonner-toast primitive (D3/D9/D11 as written pre-implementation):
+
+1. **IPC race.** Toast A's `ok:update:downloaded` event can fire before the editor window's `did-finish-load`, so a plain `webContents.send` drops the message — and because the state-store arms `versionPendingInstall = v` BEFORE the broadcast, the "once per version" gate prevents the toast from ever firing again for that version. Fix: auto-updater defers Toast A (and Toast C, same shape) through the existing `whenRendererReady` scheduler so the broadcast lands after the renderer subscriber is attached.
+2. **Component remount loop dropped subscribers.** The renderer lives inside the shadcn Sidebar tree, which transparently remounts on theme toggle + sidebar width change. A subscriber wired inside `useEffect(() => ..., [])` detaches on every remount + re-attaches on re-mount — any IPC event that lands in-between is lost. Fix: move the subscription to a **module-level store** in `packages/app/src/lib/update-notices-store.ts`, attached once at `main.tsx` module-init time; the React component reads via `useSyncExternalStore`.
+3. **User explicitly rejected macOS system notifications.** The original auto-updater used `checkForUpdatesAndNotify()` which triggers a native `Notification` on `update-available` — user feedback during smoke: "I explicitly did not want Mac OS Notifications for these updates." Fix: switch to `checkForUpdates()` (no-notify variant) at both boot and the 1-hour interval; Toast A remains the single user-visible signal for downloaded updates.
+
+In parallel, the UX for the in-DOM primitive was iterated with the spec owner to:
+
+- **Sidebar-footer placement.** Permanent-until-clicked semantics (D11) fit a stable anchored location better than a floating corner — mounted in `FileSidebar.tsx` inside `<SidebarFooter>`. D2 permits renderer overlays; a sidebar-footer card is the same primitive class, just anchored.
+- **Single-card priority display.** Multiple armed states are mutually exclusive in practice (C = broken updater; A = pending install; B = just-updated) but the priority scheme handles rare overlap cleanly. Priorities (lower = more urgent): `0` stuck-hint, `1` relaunch-error, `2` update-downloaded, `3` whats-new. `pickActiveNotice(notices)` picks the min; `<UpdateNotices />` renders exactly one card.
+- **Minimal copy + muted-gray styling.** "Update downloaded" → `"Update ready"`, "Updated to vX — see what's new" → `"Updated to vX"` (the "see what's new" duplicated the action label), action button uses `text-muted-foreground` decoration to match the rest of the sidebar rather than `sidebar-primary` blue.
+- **Dev-mode dismiss-on-success.** Clicking Relaunch awaits `bridge.update.relaunchNow()`; on success the card dismisses immediately. In production the app quits before the dismiss fires (window dies with the app — harmless no-op); in dev mode where `quitAndInstall()` silently no-ops (Squirrel.Mac can't replace an unpackaged `.app`), the dismiss gives visible feedback that the click was received. On rejection an error notice (`"Relaunch failed — please restart manually"`) appears at priority `1`.
+
+**Scope:** D13 does not change the error-routing contract (D5), the stuck-hint escape hatch (D12), the cadence (D10, rescoped to `checkForUpdates`), or the AC shapes (AC6/7/17/18 satisfied identically — primitive swapped, semantics preserved). **Source:** post-M3 manual Tier-2 smoke with spec owner (2026-04-22); ASK_FIRST on copy strings in §13 met by direct approval during iteration.
+
 ### D3 (DIRECTED, 2026-04-21, revised post-audit). Notification layer = three toasts total (A/B/C)
 
 - Toast A — `"Update downloaded"` body + an explicit action button `"Relaunch now"` (sonner `action` prop) on `autoUpdater.on('update-downloaded')`. Clicking "Relaunch now" → IPC `ok:update:relaunch-now` → main calls `autoUpdater.quitAndInstall()` for immediate install (not waiting for user-initiated quit). User can still dismiss the toast without acting — install-on-quit remains active via `autoUpdater.autoInstallOnAppQuit = true`, so Cmd+Q / File→Quit still installs even if toast is dismissed.
@@ -174,6 +194,8 @@ Change `mac.target: [{ target: 'dmg', arch: ['universal'] }]` → `mac.target: [
 - Toast C (added per D12) — `"This app may not be receiving updates. Visit [inkeep.com/open-knowledge/download] to install a fresh copy."` Fires once ever, per installation, after 7 consecutive calendar days without a successful update check. Link affordance uses `shell.openExternal` via D47 scheme allowlist.
 
   All three toasts **superseded by D11** for duration behavior (`duration: Infinity`, permanent-until-clicked); D3's original "auto-dismiss after N seconds" language is historical. **Why:** satisfies both "no nag" and "signal that something happened" — closes the gap where a user who never quits the app for weeks would never notice an update had been staged. **Source:** intake §4 batch, user-confirmed with Q1 expansion (toasts added to In Scope).
+
+  **D13 revision (post-M3 manual-smoke UX review, 2026-04-22, user-approved):** the primitive changed from sonner toast to a sidebar-footer notice card AND the copy tightened to minimal form (`"Update ready"` / `"Updates paused"` / `"Updated to v${VERSION}"`, action labels `"Relaunch"` / `"Download"` / `"Release notes"`). D11's permanent-until-clicked semantics carry over unchanged. ASK_FIRST on copy strings was met — revision reviewed with the spec owner during the manual Tier-2 smoke pass before merge.
 
 ---
 
@@ -257,8 +279,11 @@ Tagged P0 (must resolve this spec — In Scope) or P2 (deferred).
 - `packages/core/src/desktop-bridge.ts` — mirror bridge-contract extensions (canonical duplication per CLAUDE.md).
 - `packages/desktop/src/preload/index.ts` — listener wrappers for three event channels + invoker for relaunch.
 - `packages/desktop/electron-builder.yml` — add `zip` target to `mac.target` (D6).
-- `packages/app/src/components/UpdateToast.tsx` — NEW. Renders Toasts A/B/C from IPC events.
-- `packages/app/src/main.tsx` — mount `<UpdateToast />` inside the existing Toaster scope when `window.okDesktop` present.
+- `packages/app/src/components/UpdateNotices.tsx` — NEW (D13; was `UpdateToast.tsx` pre-revision). Thin renderer that reads the module store via `useSyncExternalStore` + picks the highest-priority card.
+- `packages/app/src/components/UpdateNotices.shared.ts` — NEW (D13). Pure subscription logic + canonical copy — shared by store and component to avoid an import cycle.
+- `packages/app/src/lib/update-notices-store.ts` — NEW (D13). Module-level notice store; bridge subscription attached at module-init time.
+- `packages/app/src/components/FileSidebar.tsx` — mount `<UpdateNotices />` inside `<SidebarFooter>` (D13 placement revision).
+- `packages/app/src/main.tsx` — call `installUpdateNoticesBridge()` at module-init; no longer mounts `<UpdateToast />`.
 - `packages/desktop/tests/integration/auto-updater.test.ts` — NEW. Unit coverage.
 - `packages/desktop/scripts/smoke-mock-update.mjs` — NEW. Dev-mode dry-run harness.
 - `packages/desktop/README.md` — new M3 section.

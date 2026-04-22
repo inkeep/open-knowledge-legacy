@@ -1,6 +1,7 @@
 import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
 import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
+import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenuContent,
@@ -11,6 +12,7 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
@@ -109,6 +111,9 @@ function FileSidebarInner() {
       <SidebarContent>
         <FileTree ref={fileTreeRef} />
       </SidebarContent>
+      <SidebarFooter>
+        <UpdateNotices />
+      </SidebarFooter>
     </Sidebar>
   );
 }

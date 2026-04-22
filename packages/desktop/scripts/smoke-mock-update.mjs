@@ -58,7 +58,10 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
 const VERSION = process.env.MOCK_UPDATE_VERSION ?? '0.99.0-mock';
@@ -67,8 +70,16 @@ const TIMEOUT_MS = Number.parseInt(process.env.MOCK_UPDATE_TIMEOUT_MS ?? '30000'
  * `--keep-alive` skips the auto-shutdown after self-test and keeps serving
  * until the process is killed (Ctrl+C, SIGTERM). Used for the 2-terminal
  * manual Tier-2 flow where the Electron dev app needs the server to stay up.
+ * When keep-alive is set, this script also writes `dev-app-update.yml` next
+ * to `packages/desktop/package.json` with the chosen port — electron-updater
+ * reads that file at `checkForUpdates()` time (approach 1 per
+ * evidence/electron-updater-api.md §4). Cleaned up on SIGINT/SIGTERM.
  */
 const KEEP_ALIVE = process.argv.includes('--keep-alive');
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DESKTOP_ROOT = resolve(__dirname, '..');
+const DEV_APP_UPDATE_YML = resolve(DESKTOP_ROOT, 'dev-app-update.yml');
 
 /**
  * Build a minimal valid .zip archive with a single text file. The zip format
@@ -203,13 +214,17 @@ async function main() {
   const served = { manifest: false, zip: false };
 
   const server = createServer((req, res) => {
-    const url = req.url ?? '/';
-    if (url === '/latest-mac.yml' || url === '/latest-mac.yml?') {
+    // electron-updater appends `?noCache=<random>` to every request to bypass
+    // HTTP-layer caches. Strip the query string before route-matching so the
+    // exact-path checks still work (and so log lines stay readable).
+    const rawUrl = req.url ?? '/';
+    const pathname = rawUrl.split('?', 1)[0] ?? rawUrl;
+    if (pathname === '/latest-mac.yml') {
       res.writeHead(200, { 'Content-Type': 'application/x-yaml' });
       res.end(manifest);
       served.manifest = true;
       console.log(`[mock-updater] event=served path=/latest-mac.yml status=200 run=${runId}`);
-    } else if (url === `/${zipName}`) {
+    } else if (pathname === `/${zipName}`) {
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Length': String(zipBytes.length),
@@ -221,8 +236,8 @@ async function main() {
       );
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end(`not found: ${url}\n`);
-      console.log(`[mock-updater] event=404 path=${url} run=${runId}`);
+      res.end(`not found: ${pathname}\n`);
+      console.log(`[mock-updater] event=404 path=${rawUrl} run=${runId}`);
     }
 
     if (served.manifest && served.zip) {
@@ -287,10 +302,18 @@ async function main() {
       // self-test timeout so we don't auto-exit; SIGINT/SIGTERM handlers
       // below take over.
       clearTimeout(timeoutHandle);
+      // Write dev-app-update.yml so electron-updater's approach 1 (config
+      // file at app.getAppPath()) picks up our port. Without this, the
+      // updater reads its default `publish: github` block and tries to hit
+      // GitHub Releases. The dev app only needs OK_UPDATER_FORCE_DEV=1 —
+      // the file itself routes traffic here.
+      writeFileSync(
+        DEV_APP_UPDATE_YML,
+        `provider: generic\nurl: http://127.0.0.1:${port}\nupdaterCacheDirName: open-knowledge-updater-dev\n`,
+      );
+      console.log(`[mock-updater] event=dev-config-written path=${DEV_APP_UPDATE_YML}`);
       console.log(
-        '[mock-updater] event=keep-alive — server will stay up until Ctrl+C (pair with OK_UPDATER_FEED_URL=http://127.0.0.1:' +
-          port +
-          ' + OK_UPDATER_FORCE_DEV=1 on the dev app)',
+        '[mock-updater] event=keep-alive — server will stay up until Ctrl+C. Pair with: OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev',
       );
       return;
     }
@@ -304,11 +327,24 @@ async function main() {
     server.close(() => process.exit(2));
   }
 
-  // Graceful signal handling so `Ctrl+C` exits 0.
+  // Graceful signal handling so `Ctrl+C` exits 0 AND cleans up the dev-
+  // app-update.yml we wrote at keep-alive start. Without cleanup, a
+  // stale .yml pointing at a dead port poisons future `bun run dev`
+  // sessions (first `checkForUpdates()` hangs until its internal timeout).
   const handleSignal = (sig) => {
     shutdownReason = `signal-${sig}`;
     console.log(`[mock-updater] event=shutdown reason=${shutdownReason} port=${port}`);
     clearTimeout(timeoutHandle);
+    if (KEEP_ALIVE && existsSync(DEV_APP_UPDATE_YML)) {
+      try {
+        unlinkSync(DEV_APP_UPDATE_YML);
+        console.log(`[mock-updater] event=dev-config-removed path=${DEV_APP_UPDATE_YML}`);
+      } catch (err) {
+        console.warn(
+          `[mock-updater] event=dev-config-cleanup-failed message=${err?.message ?? err}`,
+        );
+      }
+    }
     server.close(() => process.exit(0));
   };
   process.on('SIGINT', () => handleSignal('sigint'));
