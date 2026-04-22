@@ -218,6 +218,15 @@ export interface WindowManagerDeps {
     warn(obj: object, msg: string): void;
     error(obj: object, msg: string): void;
   };
+  /**
+   * Post-init persistent message listener. Installed once after the
+   * init-phase `ready` handshake settles, so messages like
+   * `debug-keyring-smoke-result` (M5 US-004) are routed to their main-side
+   * consumer without competing with the init-phase listener. Invoked for
+   * every subsequent utility message regardless of shape; consumer is
+   * expected to narrow by `msg.type` and no-op on unknown shapes.
+   */
+  onUtilityMessage?(msg: unknown): void;
 }
 
 export class WindowManager {
@@ -415,6 +424,16 @@ export class WindowManager {
     });
 
     const { port, apiOrigin, didGitInit } = await ready;
+
+    // Persistent post-init message listener (M5 US-004). The init-phase
+    // listener (above) was detached by `settle()` once `ready`/`error`
+    // resolved; this new listener observes every subsequent message so
+    // main-side consumers (e.g., the debug-ipc relay's correlation map)
+    // can route replies. No-op when `onUtilityMessage` is not wired.
+    if (this.deps.onUtilityMessage) {
+      const onMessage = this.deps.onUtilityMessage;
+      utility.on('message', (msg) => onMessage(msg));
+    }
 
     // D39 post-exit liveness probe — covers the case where utilityProcess.on('exit')
     // fires but the pid is still alive (VS Code Issue #194477). This handler runs

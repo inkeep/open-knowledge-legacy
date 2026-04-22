@@ -116,6 +116,20 @@ export interface OkUpdateStuckHintInfo {
 }
 
 /**
+ * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
+ * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`.
+ * Duplicated here (not imported) because core has no dep on desktop; the two
+ * shapes are kept in sync by `tests/integration/bridge-contract.test.ts`.
+ */
+export interface OkKeyringSmokeResult {
+  ok: boolean;
+  backend?: 'keyring' | 'file';
+  error?: string;
+  durationMs?: number;
+  timestamp: string;
+}
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -260,6 +274,15 @@ export interface OkDesktopBridge {
   readonly platform: 'darwin' | 'win32' | 'linux';
   /** Electron app version (from main's `app.getVersion()`). */
   readonly appVersion: string;
+
+  /**
+   * Debug-only namespace — populated by preload ONLY when the
+   * `OK_DEBUG_KEYRING_SMOKE=1` env var is set OR the app is unpacked (dev
+   * mode). Absent in normal production runs. M5 SPEC D-M5-8.
+   */
+  debug?: {
+    keyringSmoke(): Promise<OkKeyringSmokeResult>;
+  };
 }
 
 declare global {

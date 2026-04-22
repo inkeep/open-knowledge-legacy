@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { KeyringSmokeResult } from '../../src/utility/keyring-smoke.ts';
 import { setupUtility } from '../../src/utility/server-entry.ts';
 
 /**
@@ -281,6 +282,43 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     await handle.shutdown('test-1');
     await handle.shutdown('test-2');
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  test('debug-keyring-smoke IPC: invokes injected runSmoke and echoes correlationId', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 7,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({
+          bootServer: mock(() => Promise.resolve({})),
+        } as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+    });
+
+    env.parentPort.fire({ type: 'debug-keyring-smoke', correlationId: 'abc-123' });
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(env.parentPort.postMessage).toHaveBeenCalledWith({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'abc-123',
+      result: smokeResult,
+    });
   });
 
   test('degraded subsystems are reported via separate IPC after ready', async () => {

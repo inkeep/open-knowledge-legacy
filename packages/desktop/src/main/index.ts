@@ -41,6 +41,7 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -154,6 +155,7 @@ let wm: WindowManager;
  * after destroy.
  */
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
+let debugIpc: DebugIpcHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -162,6 +164,37 @@ let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
  * absent (packaged / prod), fall back to `loadFile(rendererEntryPath)`.
  */
 const rendererDevUrl = process.env.ELECTRON_RENDERER_URL ?? null;
+
+/**
+ * Runtime gate for the debug keyring-smoke channel (SPEC D-M5-7). Returns true
+ * when the app is not packaged (dev mode) OR the opt-in env var is set.
+ */
+function isDebugKeyringSmokeAllowed(): boolean {
+  return !app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1';
+}
+
+/**
+ * Appends the `--ok-debug-keyring-smoke=1` argv flag when the gate allows it,
+ * so the preload can populate `bridge.debug` (SPEC D-M5-8). Preload reads the
+ * flag via `parseArg` just like the other window-bound config fields.
+ */
+function withDebugFlagIfAllowed(args: readonly string[]): string[] {
+  return isDebugKeyringSmokeAllowed() ? [...args, '--ok-debug-keyring-smoke=1'] : [...args];
+}
+
+function ensureDebugIpc(): DebugIpcHandle {
+  if (debugIpc) return debugIpc;
+  debugIpc = createDebugIpc({
+    resolveUtility: (sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents);
+      if (!win || !wm) return null;
+      const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+      return ctx?.utility ?? null;
+    },
+    isDebugAllowed: isDebugKeyringSmokeAllowed,
+  });
+  return debugIpc;
+}
 
 function ensureWindowManager() {
   if (wm) return;
@@ -186,7 +219,7 @@ function ensureWindowManager() {
         title: opts.title,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
-          additionalArguments: opts.additionalArguments,
+          additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),
           preload: join(__dirname, '../preload/index.js'),
         },
       });
@@ -232,6 +265,9 @@ function ensureWindowManager() {
     // a window opened via a symlinked project path. See window-manager.ts's
     // `canonicalizeKey` + `ProjectContext.canonicalKey` for the rationale.
     realpathSync: (p) => realpathSync(p),
+    onUtilityMessage: (msg) => {
+      ensureDebugIpc().handleUtilityMessage(msg);
+    },
   });
 }
 
@@ -248,7 +284,7 @@ function openNavigator() {
         height: 520,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
-          additionalArguments: opts.additionalArguments,
+          additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),
           preload: join(__dirname, '../preload/index.js'),
         },
       });
@@ -453,6 +489,10 @@ function registerIpcHandlers() {
       wm.closeProjectWindow(ctx.projectPath);
     }
     return undefined;
+  });
+
+  handle('ok:debug:keyring-smoke', async (event) => {
+    return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
 }
 

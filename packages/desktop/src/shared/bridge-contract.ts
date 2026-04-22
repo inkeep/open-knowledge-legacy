@@ -16,6 +16,10 @@
  * issue while preserving a single logical contract.
  */
 
+import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
+
+export type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
+
 /** Render mode picked by the main process when creating a BrowserWindow. */
 export type OkDesktopMode = 'editor' | 'navigator';
 
@@ -160,6 +164,21 @@ export interface OkDesktopBridge {
 
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;
+
+  /**
+   * Debug-only namespace — populated by preload ONLY when
+   * `process.env.OK_DEBUG_KEYRING_SMOKE === '1'` OR `app.isPackaged === false`
+   * (SPEC D-M5-8). Absent in normal production runs, so a typo in renderer
+   * code calling a non-existent method surfaces at TypeScript compile time.
+   */
+  debug?: {
+    /**
+     * Run the utility-process keyring smoke and return the result. Rejects
+     * with 'debug-channel disabled in production' when the runtime gate is
+     * closed (app packaged + env var unset).
+     */
+    keyringSmoke(): Promise<KeyringSmokeResult>;
+  };
 }
 
 declare global {

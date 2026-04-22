@@ -21,6 +21,9 @@
  */
 
 import type { BootedServer, BootServerOptions } from '@inkeep/open-knowledge-server';
+import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
+
+export type { KeyringSmokeResult } from './keyring-smoke.ts';
 
 /** IPC payload shapes (utility ↔ main). */
 export interface UtilityInitMessage {
@@ -33,7 +36,19 @@ export interface UtilityInitMessage {
 export interface UtilityShutdownMessage {
   type: 'shutdown';
 }
-export type UtilityIncomingMessage = UtilityInitMessage | UtilityShutdownMessage;
+/**
+ * Main → utility request to run the keyring smoke (M5 AC2, SPEC D-M5-2).
+ * `correlationId` is echoed back on the result message so concurrent requests
+ * resolve independently.
+ */
+export interface UtilityDebugKeyringSmokeMessage {
+  type: 'debug-keyring-smoke';
+  correlationId: string;
+}
+export type UtilityIncomingMessage =
+  | UtilityInitMessage
+  | UtilityShutdownMessage
+  | UtilityDebugKeyringSmokeMessage;
 
 export interface UtilityReadyMessage {
   type: 'ready';
@@ -55,10 +70,21 @@ export interface UtilityDegradedMessage {
   type: 'degraded';
   subsystems: readonly string[];
 }
+/**
+ * Utility → main keyring-smoke result. Pairs with a prior
+ * `UtilityDebugKeyringSmokeMessage`; the main-side relay matches by
+ * `correlationId`.
+ */
+export interface UtilityDebugKeyringSmokeResultMessage {
+  type: 'debug-keyring-smoke-result';
+  correlationId: string;
+  result: KeyringSmokeResult;
+}
 export type UtilityOutgoingMessage =
   | UtilityReadyMessage
   | UtilityErrorMessage
-  | UtilityDegradedMessage;
+  | UtilityDegradedMessage
+  | UtilityDebugKeyringSmokeResultMessage;
 
 /**
  * Test seam — the entry script runs `setupUtility(...)` with real `parentPort` /
@@ -90,6 +116,11 @@ export interface SetupUtilityDeps {
   setInterval: (cb: () => void, ms: number) => { unref?: () => void; clear: () => void };
   /** Poll cadence for parent-death check (ms). Default 5000. */
   parentPollMs?: number;
+  /**
+   * Keyring smoke runner — injectable for tests. Production defaults to
+   * `runKeyringSmoke` from `./keyring-smoke.ts`.
+   */
+  runSmoke?: () => Promise<KeyringSmokeResult>;
 }
 
 export interface UtilityHandle {
@@ -219,6 +250,17 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     }
   }
 
+  const runSmoke = deps.runSmoke ?? runKeyringSmoke;
+
+  async function handleDebugKeyringSmoke(msg: UtilityDebugKeyringSmokeMessage): Promise<void> {
+    const result = await runSmoke();
+    deps.parentPort?.postMessage({
+      type: 'debug-keyring-smoke-result',
+      correlationId: msg.correlationId,
+      result,
+    });
+  }
+
   // Register IPC listener
   deps.parentPort?.on('message', (event) => {
     const msg = event.data as UtilityIncomingMessage;
@@ -226,6 +268,8 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
       void handleInit(msg);
     } else if (msg?.type === 'shutdown') {
       void shutdown('shutdown-ipc');
+    } else if (msg?.type === 'debug-keyring-smoke') {
+      void handleDebugKeyringSmoke(msg);
     }
   });
 

@@ -59,6 +59,21 @@ export interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
+/**
+ * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
+ * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
+ * and `OkKeyringSmokeResult` in `packages/core/src/desktop-bridge.ts`.
+ * Duplicated across the three copies; drift caught by the m1-smoke
+ * contract-equality test.
+ */
+export interface OkKeyringSmokeResult {
+  ok: boolean;
+  backend?: 'keyring' | 'file';
+  error?: string;
+  durationMs?: number;
+  timestamp: string;
+}
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
@@ -115,6 +130,13 @@ export interface OkDesktopBridge {
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;
+  /**
+   * Debug-only namespace populated by preload when the runtime gate allows
+   * (SPEC M5 D-M5-8). Absent in production so a typo surfaces at compile time.
+   */
+  debug?: {
+    keyringSmoke(): Promise<OkKeyringSmokeResult>;
+  };
 }
 
 declare global {
