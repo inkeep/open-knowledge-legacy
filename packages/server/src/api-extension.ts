@@ -6,6 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -26,6 +27,7 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  ASSET_EXTENSIONS,
   applyFastDiff,
   createCodeFenceTracker,
   getHeadingSlug,
@@ -204,6 +206,46 @@ export function sanitizeFilename(name: string): string {
   stripped = stripped.replace(/\.+$/, '');
 
   return stripped === '' ? 'upload' : stripped;
+}
+
+function sha256Hex(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * SPEC §6 FR-2: scan `destDir` non-recursively for an existing file whose
+ * sha256 matches the buffer's. Returns the matching basename (case-preserving)
+ * or null if no match. Bounded by directory size — O(n) in sibling count, not
+ * vault size, per NFR-1. Only files with extensions in ASSET_EXTENSIONS are
+ * candidates; everything else (markdown, .git/, etc.) is skipped.
+ */
+function findDuplicateAsset(destDir: string, sha: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(destDir);
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const ext = extname(entry).slice(1).toLowerCase();
+    if (!ASSET_EXTENSIONS.has(ext)) continue;
+    const fullPath = resolve(destDir, entry);
+    let stat: ReturnType<typeof statSync>;
+    try {
+      stat = statSync(fullPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    let buf: Buffer;
+    try {
+      buf = readFileSync(fullPath);
+    } catch {
+      continue;
+    }
+    if (sha256Hex(buf) === sha) return entry;
+  }
+  return null;
 }
 
 function formatBytes(bytes: number): string {
@@ -3157,6 +3199,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
+      }
+    }
+
+    // SPEC §6 FR-2: same-dir sha256 dedup. Bounded scan over destDir,
+    // skipped entirely when upload.dedup.mode === 'off'. The dedup test
+    // happens BEFORE filename synthesis so a duplicate paste preserves
+    // the existing on-disk basename instead of producing a fresh
+    // pasted-<ts>.png stub. Server returns { deduped: true } so the
+    // client decides toast/silent/confirm per upload.dedup.ui.
+    const dedupMode = getUploadConfig?.().dedup.mode ?? 'same-dir';
+    if (dedupMode === 'same-dir') {
+      mkdirSync(destDir, { recursive: true });
+      const sha = sha256Hex(buffer);
+      const existing = findDuplicateAsset(destDir, sha);
+      if (existing) {
+        const relPath = relative(contentDir, resolve(destDir, existing));
+        console.log(
+          JSON.stringify({
+            event: 'upload',
+            endpoint: req.url ?? '/api/upload',
+            dedup: true,
+            mime: detectedMime ?? null,
+            size: buffer.length,
+            destPath: relPath,
+            httpStatus: 200,
+          }),
+        );
+        json(res, 200, { ok: true, src: existing, deduped: true });
+        return;
       }
     }
 

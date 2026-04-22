@@ -310,9 +310,12 @@ describe('handleUploadImage', () => {
     expect(body.src).toBe('diagram.svg');
   });
 
-  test('numeric suffix collision handling', async () => {
-    // Write the first file directly
-    writeFileSync(join(contentDir, 'docs', 'screenshot.png'), createPngBuffer());
+  test('numeric suffix collision handling — distinct bytes, same filename', async () => {
+    // Pre-seed a file with DIFFERENT bytes than the upload so dedup misses
+    // and the collision-suffix loop produces screenshot-1.png. Under
+    // pre-FR-2 behavior this fired even with identical bytes; post-FR-2
+    // identical-bytes dedup wins (covered separately in the dedup describe).
+    writeFileSync(join(contentDir, 'docs', 'screenshot.png'), Buffer.from('different bytes'));
     const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(res.status).toBe(200);
@@ -499,5 +502,177 @@ describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
       body: formData,
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
+  let tmpDir: string;
+  let contentDir: string;
+  let server: import('node:http').Server;
+  let port: number;
+  let dedupMode: 'off' | 'same-dir' = 'same-dir';
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'upload-dedup-'));
+    contentDir = join(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    mkdirSync(join(contentDir, 'docs'), { recursive: true });
+    mkdirSync(join(contentDir, 'archive'), { recursive: true });
+    writeFileSync(join(contentDir, 'docs', 'guide.md'), '# Guide');
+    writeFileSync(join(contentDir, 'archive', 'old.md'), '# Old');
+
+    const { Hocuspocus } = await import('@hocuspocus/server');
+    const { AgentSessionManager } = await import('./agent-sessions.ts');
+    const { createApiExtension } = await import('./api-extension.ts');
+
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const sessionManager = new AgentSessionManager(hocuspocus);
+    const ext = createApiExtension({
+      hocuspocus,
+      sessionManager,
+      contentDir,
+      getFileIndex: () => new Map(),
+      getUploadConfig: () => ({
+        attachmentFolderPath: './',
+        emitFormat: 'wikiembed',
+        maxBytes: 25 * 1024 * 1024,
+        // The mode is read per-request, so flipping the closure variable
+        // between tests is enough to exercise both branches.
+        dedup: { mode: dedupMode, ui: 'toast' },
+        wikiEmbedExtensions: ['png', 'jpg'],
+      }),
+    });
+
+    const { createServer } = await import('node:http');
+    server = createServer((req, res) => {
+      // biome-ignore lint/suspicious/noExplicitAny: test harness
+      hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
+        if (!res.writableEnded) {
+          res.writeHead(500);
+          res.end('Error');
+        }
+      });
+    });
+
+    hocuspocus.configuration.extensions.push(ext);
+
+    port = await new Promise<number>((res) => {
+      server.listen(0, () => {
+        const addr = server.address();
+        res(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+  });
+
+  afterEach(async () => {
+    dedupMode = 'same-dir';
+    await new Promise<void>((res) => server.close(() => res()));
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function pngFixture(): Buffer {
+    return Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
+      'base64',
+    );
+  }
+
+  async function postUpload(buf: Buffer, filename: string, parent: string): Promise<Response> {
+    const formData = new FormData();
+    formData.append('parentDocName', parent);
+    formData.append('file', new Blob([buf]), filename);
+    return fetch(`http://localhost:${port}/api/upload`, { method: 'POST', body: formData });
+  }
+
+  test('second upload of identical bytes into same dir → deduped:true, single file on disk', async () => {
+    const buf = pngFixture();
+    const first = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    expect(first.deduped).toBe(false);
+    expect(first.src).toBe('shot.png');
+    expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
+
+    const second = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    expect(second.deduped).toBe(true);
+    expect(second.src).toBe('shot.png');
+
+    // Disk still has exactly one file in docs/
+    expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
+    expect(existsSync(join(contentDir, 'docs', 'shot-1.png'))).toBe(false);
+  });
+
+  test('dedup matches across rename — second drop with a different filename returns the existing basename', async () => {
+    const buf = pngFixture();
+    await postUpload(buf, 'shot.png', 'docs/guide.md');
+    const second = (await (
+      await postUpload(buf, 'completely-different.png', 'docs/guide.md')
+    ).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    // Dedup is content-keyed, so second's src is the original existing basename.
+    expect(second.deduped).toBe(true);
+    expect(second.src).toBe('shot.png');
+  });
+
+  test('cross-dir upload with same bytes does NOT dedup (D-D / FR-2 same-dir scope)', async () => {
+    const buf = pngFixture();
+    const inDocs = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    const inArchive = (await (await postUpload(buf, 'shot.png', 'archive/old.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    expect(inDocs.deduped).toBe(false);
+    expect(inArchive.deduped).toBe(false);
+    // Both files exist on disk — same bytes, separate paths.
+    expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
+    expect(existsSync(join(contentDir, 'archive', 'shot.png'))).toBe(true);
+  });
+
+  test('upload.dedup.mode = "off" disables the dedup scan', async () => {
+    dedupMode = 'off';
+    const buf = pngFixture();
+    const first = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    const second = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    expect(first.src).toBe('shot.png');
+    expect(second.deduped).toBe(false);
+    // Without dedup, the collision-suffix loop produces shot-1.png.
+    expect(second.src).toBe('shot-1.png');
+    expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
+    expect(existsSync(join(contentDir, 'docs', 'shot-1.png'))).toBe(true);
+  });
+
+  test('dedup ignores non-asset files (markdown sibling does not trigger a hash hit)', async () => {
+    // Pre-seed a markdown file that hashes to anything; the dedup scanner
+    // must skip it because .md is not in ASSET_EXTENSIONS.
+    writeFileSync(join(contentDir, 'docs', 'sibling.md'), 'irrelevant');
+    const buf = pngFixture();
+    const res = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
+      ok: boolean;
+      src: string;
+      deduped: boolean;
+    };
+    expect(res.deduped).toBe(false);
   });
 });
