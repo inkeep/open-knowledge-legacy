@@ -1,12 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+// Test-only cross-package import. Main-process runtime bundle does NOT include
+// app-layer code (tree-shaken since no production handler imports from app).
+// Relative path over workspace ref per CLAUDE.md's test-file import guidance
+// (prefer direct relative imports over `@inkeep/open-knowledge-core` for tests).
+import { KNOWN_TARGETS } from '../../../app/src/lib/handoff/targets.ts';
 import { ALLOWED_SCHEMES, checkOutboundUrl } from '../../src/main/shell-allowlist.ts';
-
-// Drift-detector import — will be unskipped in US-007 once KNOWN_TARGETS exists
-// in packages/app/src/lib/handoff/targets.ts. Keep as a commented import until
-// that story lands. The drift-detector test below is `.skip`ed in the
-// meantime per specs/2026-04-21-open-in-agent-desktop/ US-003 notes.
-//
-// import { KNOWN_TARGETS } from '@inkeep/open-knowledge-app/src/lib/handoff/targets.ts';
 
 describe('checkOutboundUrl (D47 outbound scheme allowlist)', () => {
   test('allows https:', () => {
@@ -88,18 +86,15 @@ describe('checkOutboundUrl — handoff scheme coverage (specs/2026-04-21-open-in
 });
 
 describe('drift detector — KNOWN_TARGETS schemes ⊆ ALLOWED_SCHEMES', () => {
-  // Unskip this test in US-007 (specs/2026-04-21-open-in-agent-desktop/) when
-  // KNOWN_TARGETS is introduced in packages/app/src/lib/handoff/targets.ts.
-  // Uncomment the import at the top of this file and remove `.skip` below.
-  //
   // Intent: if a future spec adds a target to KNOWN_TARGETS without also
   // adding its scheme to ALLOWED_SCHEMES, this test fails at PR tier and
   // blocks the merge. Operates on the pure-data `KNOWN_TARGETS` constant
   // per specs §6.1.5 / E1-b DIRECTED (no registry type; hand-rolled switch).
-  test.skip('every KNOWN_TARGETS scheme is in ALLOWED_SCHEMES', () => {
-    // const knownSchemes = new Set(KNOWN_TARGETS.flatMap((t) => t.schemes));
-    // for (const scheme of knownSchemes) {
-    //   expect(ALLOWED_SCHEMES.has(scheme)).toBe(true);
-    // }
+  test('every KNOWN_TARGETS scheme is in ALLOWED_SCHEMES', () => {
+    const knownSchemes = new Set(KNOWN_TARGETS.flatMap((t) => t.schemes));
+    expect(knownSchemes.size).toBeGreaterThan(0);
+    for (const scheme of knownSchemes) {
+      expect(ALLOWED_SCHEMES.has(scheme)).toBe(true);
+    }
   });
 });
