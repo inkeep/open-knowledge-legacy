@@ -102,30 +102,35 @@ kv "Repo root"       "$REPO_ROOT"
 kv "Target port"     "$PORT"
 kv "Ready timeout"   "${READY_TIMEOUT_SEC}s"
 
-# --- Prerequisites ----------------------------------------------------------
-# Surface bun + node availability prominently so a missing runtime is the
-# first thing you see when you open the report — not buried under 400 lines.
-h2 "Prerequisites (bun + node must both be available)"
-missing_prereqs=()
-for bin in bun node; do
-  if command -v "$bin" >/dev/null 2>&1; then
-    kv "$bin" "OK — $(command -v "$bin") ($("$bin" --version 2>&1 | head -1))"
-  else
-    kv "$bin" "MISSING"
-    missing_prereqs+=("$bin")
-  fi
-done
+# --- Runtime availability ---------------------------------------------------
+# Surface bun presence prominently — bun IS required to start the dev server.
+# node is not: bun's `bun run` interprets `#!/usr/bin/env node` shebangs on
+# `node_modules/.bin/*` shims itself, so the Vite dev server boots even on a
+# box with no node on PATH (verified empirically — `lsof` reports the listener
+# owner as `bun`, not `node`, despite `ps` echoing the shebang argv0 as
+# `node` for compatibility). node is still reported here for completeness.
+h2 "Runtime availability"
+if command -v bun >/dev/null 2>&1; then
+  kv "bun (required)" "OK — $(command -v bun) ($(bun --version 2>&1 | head -1))"
+  bun_missing=0
+else
+  kv "bun (required)" "MISSING"
+  bun_missing=1
+fi
+if command -v node >/dev/null 2>&1; then
+  kv "node (optional — bun runs node-shebang scripts itself)" "present — $(command -v node) ($(node --version 2>&1 | head -1))"
+else
+  kv "node (optional — bun runs node-shebang scripts itself)" "not on PATH (not a blocker)"
+fi
 
-if (( ${#missing_prereqs[@]} > 0 )); then
-  p ":rotating_light: **${missing_prereqs[*]} not on PATH.** The dev server cannot start without these. If either runtime is installed via a version manager (fnm, nvm, volta, mise, asdf), the shell the script runs under may not have loaded the shim — open a fresh terminal, activate the project's node version, then re-run."
+if (( bun_missing )); then
+  p ":rotating_light: **bun not on PATH.** The dev server cannot start without bun. If bun is installed via a version manager (mise, asdf, proto) the shell the script runs under may not have loaded its shim — open a fresh terminal, activate the project's toolchain, then re-run."
   # Show the most common shims so we can tell *which* manager is in play
   h3 "Version manager shims detected"
   code text <<EOF
-fnm:   $(command -v fnm   2>/dev/null || echo '(not on PATH)')
-nvm:   $([[ -s "$HOME/.nvm/nvm.sh" ]] && echo "$HOME/.nvm/nvm.sh present" || echo '(not found)')
-volta: $(command -v volta 2>/dev/null || echo '(not on PATH)')
 mise:  $(command -v mise  2>/dev/null || echo '(not on PATH)')
 asdf:  $(command -v asdf  2>/dev/null || echo '(not on PATH)')
+proto: $(command -v proto 2>/dev/null || echo '(not on PATH)')
 EOF
 fi
 

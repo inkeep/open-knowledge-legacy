@@ -2,15 +2,15 @@
 # Open Knowledge dev-server diagnostic
 
 - **Host:** `Andrews-MacBook-Pro`
-- **Timestamp (UTC):** `20260422-205005Z`
+- **Timestamp (UTC):** `20260422-210733Z`
 - **Repo root:** `/Users/andrew/Documents/code/open-knowledge`
 - **Target port:** `5173`
 - **Ready timeout:** `120s`
 
-## Prerequisites (bun + node must both be available)
+## Runtime availability
 
-- **bun:** `OK — /Users/andrew/.bun/bin/bun (1.3.11)`
-- **node:** `OK — /Users/andrew/.local/state/fnm_multishells/46608_1776888922110/bin/node (v22.18.0)`
+- **bun (required):** `OK — /Users/andrew/.bun/bin/bun (1.3.11)`
+- **node (optional — bun runs node-shebang scripts itself):** `present — /Users/andrew/.local/state/fnm_multishells/46608_1776888922110/bin/node (v22.18.0)`
 
 ## Environment
 
@@ -39,8 +39,8 @@
 ### Git state
 
 ```text
-HEAD:    57b50335
-branch:  main
+HEAD:    0ae0389b
+branch:  chore/vite-dev-server-diagnostic
 remote:  git@github.com:inkeep/open-knowledge.git
 worktree: true
 
@@ -52,8 +52,11 @@ worktree: true
 ```text
  D packages/desktop/build/entitlements.mac.plist
  M packages/desktop/build/icon.png
+ M reports/vite-dev-server-diagnostic/REPORT.md
+ M reports/vite-dev-server-diagnostic/diagnose.sh
+ D reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
 ?? reports/orphan-process-prevention/
-?? reports/vite-dev-server-diagnostic/
+?? reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
 
 ```
 
@@ -127,7 +130,7 @@ $ dig +short localhost A; dig +short localhost AAAA
 
 Command: `VITE_PORT=5173 bun run --filter @inkeep/open-knowledge-app dev`
 
-Log file: `/Users/andrew/Documents/code/open-knowledge/reports/vite-dev-server-diagnostic/results/server-Andrews-MacBook-Pro-20260422-205005Z.log`
+Log file: `/Users/andrew/Documents/code/open-knowledge/reports/vite-dev-server-diagnostic/results/server-Andrews-MacBook-Pro-20260422-210733Z.log`
 
 - **Vite ready:** `yes`
 - **Hocuspocus /collab ready:** `yes`
@@ -142,22 +145,22 @@ Log file: `/Users/andrew/Documents/code/open-knowledge/reports/vite-dev-server-d
 ```text
 $ pgrep -af 'vite|hocus|bun run' | grep -v -i -E '(claude|cursor-agent|codex)' | head -40
 46710
-55387
-55391
-55492
-55496
-55583
+63556
+63566
+63699
+63706
+63782
 
 ```
 
 
-### ps -ef (children of 55492)
+### ps -ef (children of 63699)
 
 ```text
-$ ps -ef | awk -v p=55492 'NR==1 || $2==p || $3==p'
+$ ps -ef | awk -v p=63699 'NR==1 || $2==p || $3==p'
   UID   PID  PPID   C STIME   TTY           TIME CMD
-  501 55492 55391   0  1:50PM ??         0:00.01 bun run --filter @inkeep/open-knowledge-app dev
-  501 55496 55492   0  1:50PM ??         0:06.24 node /Users/andrew/Documents/code/open-knowledge/node_modules/.bin/vite
+  501 63699 63566   0  2:07PM ??         0:00.01 bun run --filter @inkeep/open-knowledge-app dev
+  501 63706 63699   0  2:07PM ??         0:07.60 node /Users/andrew/Documents/code/open-knowledge/node_modules/.bin/vite
 
 ```
 
@@ -170,7 +173,7 @@ $ ps -ef | awk -v p=55492 'NR==1 || $2==p || $3==p'
 ```text
 $ lsof -nP -iTCP:5173 -sTCP:LISTEN
 COMMAND   PID   USER   FD   TYPE            DEVICE SIZE/OFF NODE NAME
-node    55496 andrew   19u  IPv6 0xad8b8b105971fb6      0t0  TCP [::1]:5173 (LISTEN)
+node    63706 andrew   30u  IPv6 0xad8b8b105971fb6      0t0  TCP [::1]:5173 (LISTEN)
 
 ```
 
@@ -191,7 +194,7 @@ tcp6       0      0  ::1.5173               *.*                    LISTEN
 
 ```text
 curl: (7) Failed to connect to 127.0.0.1 port 5173 after 0 ms: Couldn't connect to server
-HTTP 000  connect=0.000000s  total=0.000209s  bytes=0  remote=:0
+HTTP 000  connect=0.000000s  total=0.000180s  bytes=0  remote=:0
 --- response headers ---
 curl: (7) Failed to connect to 127.0.0.1 port 5173 after 0 ms: Couldn't connect to server
 --- response body (first 400 bytes) ---
@@ -203,14 +206,14 @@ curl: (7) Failed to connect to 127.0.0.1 port 5173 after 0 ms: Couldn't connect 
 ### IPv6 — `http://[::1]:5173/`
 
 ```text
-HTTP 200  connect=0.000272s  total=0.009735s  bytes=672  remote=::1:5173
+HTTP 200  connect=0.000197s  total=0.009545s  bytes=672  remote=::1:5173
 --- response headers ---
 HTTP/1.1 200 OK
 Vary: Origin
 Content-Type: text/html
 Cache-Control: no-cache
 Etag: W/"2a0-GeHxsKgWcUhhHk/NSCIwD6rdWYg"
-Date: Wed, 22 Apr 2026 20:50:12 GMT
+Date: Wed, 22 Apr 2026 21:07:39 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -236,14 +239,14 @@ window.$RefreshSig$ = () => (type) => type;</script>
 ### localhost — `http://localhost:5173/`
 
 ```text
-HTTP 200  connect=0.000231s  total=0.204248s  bytes=672  remote=::1:5173
+HTTP 200  connect=0.000197s  total=0.222082s  bytes=672  remote=::1:5173
 --- response headers ---
 HTTP/1.1 200 OK
 Vary: Origin
 Content-Type: text/html
 Cache-Control: no-cache
 Etag: W/"2a0-GeHxsKgWcUhhHk/NSCIwD6rdWYg"
-Date: Wed, 22 Apr 2026 20:50:12 GMT
+Date: Wed, 22 Apr 2026 21:07:40 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -269,14 +272,14 @@ window.$RefreshSig$ = () => (type) => type;</script>
 ### API config — `http://localhost:5173/api/config`
 
 ```text
-HTTP 200  connect=0.000273s  total=0.386853s  bytes=72  remote=::1:5173
+HTTP 200  connect=0.000217s  total=0.386610s  bytes=72  remote=::1:5173
 --- response headers ---
 HTTP/1.1 200 OK
 Vary: Origin
 Content-Type: application/json
 Cache-Control: no-store
 X-Content-Type-Options: nosniff
-Date: Wed, 22 Apr 2026 20:50:13 GMT
+Date: Wed, 22 Apr 2026 21:07:40 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -302,11 +305,11 @@ curl: (7) Failed to connect to 127.0.0.1 port 5173 after 0 ms: Couldn't connect 
 ### /collab (IPv6) — `http://[::1]:5173/collab`
 
 ```text
-curl: (28) Operation timed out after 5005 milliseconds with 0 bytes received
+curl: (28) Operation timed out after 5004 milliseconds with 0 bytes received
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Accept: 8qGm2XGtwlpp+jwb4zXe+wSSGDM=
+Sec-WebSocket-Accept: fxEXKSs/73wihSFuuSgF4NAczx4=
 
 
 ```
@@ -315,11 +318,11 @@ Sec-WebSocket-Accept: 8qGm2XGtwlpp+jwb4zXe+wSSGDM=
 ### /collab (localhost) — `http://localhost:5173/collab`
 
 ```text
-curl: (28) Operation timed out after 5004 milliseconds with 0 bytes received
+curl: (28) Operation timed out after 5005 milliseconds with 0 bytes received
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Accept: 9kL5e/8hIqRTsMYayVIMaClJaW4=
+Sec-WebSocket-Accept: ae/srS5ZyQKog7sr7/mdglGYFEE=
 
 
 ```
@@ -328,11 +331,11 @@ Sec-WebSocket-Accept: 9kL5e/8hIqRTsMYayVIMaClJaW4=
 ### /collab/keepalive (localhost) — `http://localhost:5173/collab/keepalive`
 
 ```text
-curl: (28) Operation timed out after 5004 milliseconds with 0 bytes received
+curl: (28) Operation timed out after 5006 milliseconds with 0 bytes received
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Accept: 39Vp8/xvQquqClYqCFLOAKroOoY=
+Sec-WebSocket-Accept: xL87IesIGe++gOvBzIbtxEgyppg=
 
 
 ```
@@ -342,10 +345,10 @@ Sec-WebSocket-Accept: 39Vp8/xvQquqClYqCFLOAKroOoY=
 
 ```json
 {
-  "pid": 55496,
+  "pid": 63706,
   "hostname": "Andrews-MacBook-Pro.local",
   "port": 5173,
-  "startedAt": "2026-04-22T20:50:06.446Z",
+  "startedAt": "2026-04-22T21:07:33.911Z",
   "worktreeRoot": "/Users/andrew/Documents/code/open-knowledge"
 }
 ```
@@ -355,47 +358,48 @@ Sec-WebSocket-Accept: 39Vp8/xvQquqClYqCFLOAKroOoY=
 
 ```text
 @inkeep/open-knowledge-app dev: [hocuspocus] content dir: REPO
-@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=55496
+@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=63706
 @inkeep/open-knowledge-app dev: [hocuspocus] WebSocket server ready on /collab
 @inkeep/open-knowledge-app dev: [hocuspocus] Agent write API at POST /api/agent-write
 @inkeep/open-knowledge-app dev: [hocuspocus] Agent markdown write API at POST /api/agent-write-md
 @inkeep/open-knowledge-app dev: [file-watcher] Watching REPO for external .md changes (backend: parcel)
-@inkeep/open-knowledge-app dev: [shadow-lock] Stale lock detected (pid=54421, host=Andrews-MacBook-Pro.local) — replacing
+@inkeep/open-knowledge-app dev: [shadow-lock] Stale lock detected (pid=63203, host=Andrews-MacBook-Pro.local) — replacing
 @inkeep/open-knowledge-app dev: [dev] Shadow repo initialized at REPO/.git/open-knowledge
+@inkeep/open-knowledge-app dev: 2:07:38 PM [vite] (client) Re-optimizing dependencies because vite config has changed
 @inkeep/open-knowledge-app dev: 
 @inkeep/open-knowledge-app dev:   VITE v8.0.8  ready in 5409 ms
 @inkeep/open-knowledge-app dev: 
 @inkeep/open-knowledge-app dev:   ➜  Local:   http://localhost:5173/
 @inkeep/open-knowledge-app dev:   ➜  Network: use --host to expose
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=[::1]:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
 @inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=localhost:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
 @inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab/keepalive protocol=none host=localhost:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] keepalive handleUpgrade starting for /collab/keepalive
 @inkeep/open-knowledge-app dev: [collab] keepalive handshake complete for /collab/keepalive
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 
 ```
 
@@ -404,49 +408,50 @@ Sec-WebSocket-Accept: 39Vp8/xvQquqClYqCFLOAKroOoY=
 
 ```text
 @inkeep/open-knowledge-app dev: [hocuspocus] content dir: REPO
-@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=55496
+@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=63706
 @inkeep/open-knowledge-app dev: [hocuspocus] WebSocket server ready on /collab
 @inkeep/open-knowledge-app dev: [hocuspocus] Agent write API at POST /api/agent-write
 @inkeep/open-knowledge-app dev: [hocuspocus] Agent markdown write API at POST /api/agent-write-md
 @inkeep/open-knowledge-app dev: [file-watcher] Watching REPO for external .md changes (backend: parcel)
-@inkeep/open-knowledge-app dev: [shadow-lock] Stale lock detected (pid=54421, host=Andrews-MacBook-Pro.local) — replacing
+@inkeep/open-knowledge-app dev: [shadow-lock] Stale lock detected (pid=63203, host=Andrews-MacBook-Pro.local) — replacing
 @inkeep/open-knowledge-app dev: [dev] Shadow repo initialized at REPO/.git/open-knowledge
+@inkeep/open-knowledge-app dev: 2:07:38 PM [vite] (client) Re-optimizing dependencies because vite config has changed
 @inkeep/open-knowledge-app dev: 
 @inkeep/open-knowledge-app dev:   VITE v8.0.8  ready in 5409 ms
 @inkeep/open-knowledge-app dev: 
 @inkeep/open-knowledge-app dev:   ➜  Local:   http://localhost:5173/
 @inkeep/open-knowledge-app dev:   ➜  Network: use --host to expose
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=[::1]:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
 @inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=localhost:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
 @inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 @inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab/keepalive protocol=none host=localhost:5173 origin=none
 @inkeep/open-knowledge-app dev: [collab] keepalive handleUpgrade starting for /collab/keepalive
 @inkeep/open-knowledge-app dev: [collab] keepalive handshake complete for /collab/keepalive
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
-@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md
-@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
+@inkeep/open-knowledge-app dev: [file-watcher] Dispatching: update REPO/reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md
+@inkeep/open-knowledge-app dev: [file-watcher] Applied external change: reports/vite-dev-server-diagnostic/results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z
 
 ```
 
@@ -455,19 +460,19 @@ Sec-WebSocket-Accept: 39Vp8/xvQquqClYqCFLOAKroOoY=
 
 ```text
 1:@inkeep/open-knowledge-app dev: [hocuspocus] content dir: REPO
-2:@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=55496
+2:@inkeep/open-knowledge-app dev: [collab] configureServer invocation=1 pid=63706
 3:@inkeep/open-knowledge-app dev: [hocuspocus] WebSocket server ready on /collab
 4:@inkeep/open-knowledge-app dev: [hocuspocus] Agent write API at POST /api/agent-write
 5:@inkeep/open-knowledge-app dev: [hocuspocus] Agent markdown write API at POST /api/agent-write-md
-24:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=[::1]:5173 origin=none
-25:@inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
-26:@inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-31:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=localhost:5173 origin=none
-32:@inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
-33:@inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
-38:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab/keepalive protocol=none host=localhost:5173 origin=none
-39:@inkeep/open-knowledge-app dev: [collab] keepalive handleUpgrade starting for /collab/keepalive
-40:@inkeep/open-knowledge-app dev: [collab] keepalive handshake complete for /collab/keepalive
+25:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=[::1]:5173 origin=none
+26:@inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
+27:@inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
+32:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab protocol=none host=localhost:5173 origin=none
+33:@inkeep/open-knowledge-app dev: [collab] handleUpgrade starting for /collab
+34:@inkeep/open-knowledge-app dev: [collab] handshake complete for /collab (connections before=1)
+39:@inkeep/open-knowledge-app dev: [collab] upgrade received url=/collab/keepalive protocol=none host=localhost:5173 origin=none
+40:@inkeep/open-knowledge-app dev: [collab] keepalive handleUpgrade starting for /collab/keepalive
+41:@inkeep/open-knowledge-app dev: [collab] keepalive handshake complete for /collab/keepalive
 
 ```
 

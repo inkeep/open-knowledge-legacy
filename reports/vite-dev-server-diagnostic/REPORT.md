@@ -4,7 +4,7 @@ Open Knowledge MCP unavailable in this session; this file was written with nativ
 
 ## TL;DR
 
-Running `bun run --filter @inkeep/open-knowledge-app dev` on the working machine (Andrew's Mac, macOS 26.3, Darwin 25.3.0 arm64) came up clean: Vite ready in ~5 s, Hocuspocus `/collab` ready, HTTP `200` on the root, `/api/config` returns the expected JSON, and all three WebSocket paths (`/collab` over both IPv4 and IPv6, `/collab/keepalive`) return `101 Switching Protocols`. Baseline report: [results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md](results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md).
+Running `bun run --filter @inkeep/open-knowledge-app dev` on the working machine (Andrew's Mac, macOS 26.3, Darwin 25.3.0 arm64) came up clean: Vite ready in ~5 s, Hocuspocus `/collab` ready, HTTP `200` on the root, `/api/config` returns the expected JSON, and all three WebSocket paths (`/collab` over both IPv4 and IPv6, `/collab/keepalive`) return `101 Switching Protocols`. Baseline report: [results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md](results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md).
 
 The single most interesting signal from the baseline — and the leading hypothesis for why Dima's machine "doesn't fully work" — is that **the Vite listener is IPv6-only**. On the working machine:
 
@@ -109,13 +109,13 @@ Sections to read first, in order of signal:
 
 - `diagnose.sh` — the probe script.
 - `REPORT.md` — this file.
-- `results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-205005Z.md` — baseline from the working machine. (The script also writes `server-<host>-<ts>.log` beside it — the raw dev-server stdout — but `*.log` is repo-`.gitignore`d, so it only exists locally. The collab-filtered / first-60 / last-200 tails are embedded in the `.md` report itself.)
+- `results/DIAGNOSTIC-Andrews-MacBook-Pro-20260422-210733Z.md` — baseline from the working machine. (The script also writes `server-<host>-<ts>.log` beside it — the raw dev-server stdout — but `*.log` is repo-`.gitignore`d, so it only exists locally. The collab-filtered / first-60 / last-200 tails are embedded in the `.md` report itself.)
 
 ## Script layout (quick tour)
 
 The report sections are produced in this order; the first two are the ones to read first:
 
-1. **Prerequisites** — `bun` + `node` availability, with version-manager shim sniff (fnm/nvm/volta/mise/asdf) emitted only when either is missing, so "I thought I had node" is caught before the rest of the report even loads.
+1. **Runtime availability** — `bun` is required; `node` is **not** (empirically verified). `bun run` interprets `#!/usr/bin/env node` shebangs on `node_modules/.bin/*` itself, so the Vite dev server boots on a box with no node on PATH. `ps` still shows `node` in the argv because bun rewrites argv0 for compatibility, but `lsof` reports the listener owner as `bun`. The script still reports node presence for completeness, but flagging node-missing as the reason the dev server doesn't work is a red herring.
 2. **Environment** — full tool inventory, macOS version, `git` state, working-tree changes.
 3. **localhost resolution** — `dscacheutil` / `dig` / `/etc/hosts` entries for the IPv6-vs-IPv4 story.
 4. **Proxy / VPN env** — flags `HTTP_PROXY` / `ALL_PROXY` that can intercept loopback.
