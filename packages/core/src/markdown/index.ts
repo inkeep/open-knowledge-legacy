@@ -39,6 +39,7 @@ import type {
   ListItem,
   Nodes as MdastNodes,
   Parent as MdastParent,
+  Root as MdastRoot,
   Paragraph,
   Strong,
   Text,
@@ -61,6 +62,7 @@ import {
   createParseProcessor,
   createSerializeProcessor,
   parseMd,
+  parseMdToMdast,
   serializeMd,
 } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
@@ -133,6 +135,21 @@ export class MarkdownManager {
     }
     const doc = parseMd(markdown, this.parseProcessor);
     return doc.toJSON() as JSONContent;
+  }
+
+  /**
+   * Parse to mdast only (V2 SPEC FR11 / Option E backend). Returns the same
+   * mdast tree that `parse()` uses internally, but stops BEFORE the
+   * remark-prosemirror stringifier — so V2's `to-react.ts` walker can emit
+   * a React-element tree directly without a PM roundtrip. The underlying
+   * `parseMdToMdast` shares the cached parseProcessor, so parse cost is
+   * identical to `parse()` (one processor build per MarkdownManager).
+   */
+  parseToMdast(markdown: string): MdastRoot {
+    if (!markdown.trim()) {
+      return { type: 'root', children: [] };
+    }
+    return parseMdToMdast(markdown, this.parseProcessor);
   }
 
   /**

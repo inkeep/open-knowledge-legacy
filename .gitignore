@@ -45,15 +45,6 @@ packages/app/test-results/
 playwright-report/
 blob-report/
 
-# Open Knowledge shadow repo — bare git repo at `.openknowledge/` in standalone
-# mode (no project `.git/`) or at `.git/openknowledge/` in integrated mode.
-# Standalone mode MUST be gitignored at the project root: the shadow repo
-# contains binary pack objects, per-writer WIP refs naming pid/hostname/
-# worktreeRoot, and a lock file with the developer's absolute path. Integrated
-# mode is inside `.git/` which git already ignores. See `packages/server/src/
-# shadow-repo.ts` and CLAUDE.md "Shadow repo & branch runtime".
-.openknowledge/
-
 # Editor workspace files
 .vscode/
 .mcp.json
@@ -71,3 +62,8 @@ packages/core/tests/perf/results.*.json
 .open-knowledge/sync-state.json
 .open-knowledge/server.lock
 .open-knowledge/cache/
+
+# Legacy shadow-repo path (pre-#244 rename to .git/open-knowledge/). Some
+# boot paths still create this directory; it's per-workspace runtime state
+# and must never be committed.
+.openknowledge/

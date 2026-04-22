@@ -16,8 +16,17 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ProfilerBoundary } from '@/lib/perf';
 
 export function FileSidebar() {
+  return (
+    <ProfilerBoundary name="file-sidebar">
+      <FileSidebarInner />
+    </ProfilerBoundary>
+  );
+}
+
+function FileSidebarInner() {
   // Imperative handle to the FileTree — replaces the prior createTrigger seq
   // counter. Header buttons call methods directly; no useEffect on the child
   // side, no "did-I-already-handle-this-seq" bookkeeping. See FileTree.tsx.

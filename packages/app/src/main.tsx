@@ -8,6 +8,9 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
 import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
+import { installGitInitToast } from '@/lib/install-git-init-toast';
+import { initWebVitals } from '@/lib/perf';
+import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -20,6 +23,25 @@ import './globals.css';
 // the right place. No-op in web / CLI distribution (okDesktop undefined).
 if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
   installDesktopFetchRewrite({ apiOrigin: window.okDesktop.config.apiOrigin });
+}
+
+// Install cold-mount instrumentation BEFORE any editor module loads — the
+// prototype patches must be in place before the first `new Editor(...)` call.
+// Marks emit only in DEV/test; production `mark()` helper no-ops its collector
+// push (per CLAUDE.md precedent #24). Controlled via `OK_COLD_MOUNT_INSTR` env
+// flag on the Vite side for opt-out in case of overhead concerns.
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
+  installColdMountInstrumentation();
+  initWebVitals();
+}
+
+// Desktop-only: subscribe to the `git-init-notice` bridge event so the user
+// sees a sonner toast when ensureProjectGit ran `git init` during boot (SPEC
+// R5b / D10). Registered here (module-init, before React mount) so the IPC
+// listener is in place before main fires the event on dom-ready. No-op in
+// web / CLI distribution (window.okDesktop undefined).
+if (typeof window !== 'undefined') {
+  installGitInitToast({ bridge: window.okDesktop });
 }
 
 const queryClient = new QueryClient({
