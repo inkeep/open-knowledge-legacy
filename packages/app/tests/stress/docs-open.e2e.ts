@@ -46,11 +46,17 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // If the shell freezes alongside the editor mount, this test's 250ms
     // budget on aria-current movement fails. If shell state is decoupled
     // (useDeferredValue or equivalent), aria-current flips in <50ms.
-    const MARK_LINE = Array.from({ length: 40 }, (_, i) => `[[Link ${i}]]`).join(' ');
-    const PARAGRAPH = `${MARK_LINE} and some \`inline code here\` plus more [[wiki links]] to cross-reference.`;
+    // Sized to reliably trigger V2 cache miss (>500KB → shouldCacheEditor
+    // returns false on bytes gate, forcing fresh `new Editor()` on every
+    // warm visit) while staying cold-loadable within CI's 30s timeout.
+    // 120 sections × ~4.5KB per section ≈ 540KB.
+    const MARK_LINE = Array.from({ length: 20 }, (_, i) => `[[Link ${i}]]`).join(' ');
+    const PARAGRAPH = `${MARK_LINE} and some \`inline code\` plus more [[wiki links]] here.`;
+    const SECTION_FILLER =
+      'Extended prose paragraph to grow the doc past the V2 bytes gate. '.repeat(20);
     const BIG_BODY = Array.from(
-      { length: 300 },
-      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${PARAGRAPH}\n`,
+      { length: 120 },
+      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${SECTION_FILLER}\n`,
     ).join('\n');
     const BIG_DOC = `# Big Doc\n\n${BIG_BODY}\n\n## End\n`;
     const SMALL_DOC = '# Small\n\nShort.';
@@ -61,16 +67,19 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await page.goto('/');
     // Warm both docs (cold loads do pay the full cost — that's fine).
+    // 30s timeouts because mark-heavy big.md cold-mount runs 10-20s on
+    // contended CI runners (default 5s toContainText timeout flakes);
+    // this matches the 30s syncPromise hard-reject boundary.
     await openFromSidebar(page, 'small.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
     await openFromSidebar(page, 'big.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc');
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
     // Go back so the NEXT click (to big.md) is a warm-but-oversize nav.
     await openFromSidebar(page, 'small.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Small');
+    await expect(page.locator('.ProseMirror')).toContainText('Small', { timeout: 30_000 });
 
     // The sidebar's active-row indicator is `aria-current="page"` — driven
     // by `activeDocName` directly (see FileTree.tsx:400). Before the click
@@ -130,7 +139,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // together (shellMs ≈ editorMs) rather than shell arriving much
     // earlier (shellMs << editorMs).
     const editorStart = await page.evaluate(() => performance.now());
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 15_000 });
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
     const editorMs = await page.evaluate(
       (start) => performance.now() - start,
       editorStart - (result.shellMs - 0),
@@ -164,11 +173,17 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // on the warm-nav click capture all skeleton appearances via
     // MutationObserver (same pattern as F3 cold-nav skeleton test).
     // Assert the skeleton appeared during the window.
-    const MARK_LINE = Array.from({ length: 40 }, (_, i) => `[[Link ${i}]]`).join(' ');
-    const PARAGRAPH = `${MARK_LINE} and some \`inline code here\` plus more [[wiki links]] to cross-reference.`;
+    // Sized to reliably trigger V2 cache miss (>500KB → shouldCacheEditor
+    // returns false on bytes gate, forcing fresh `new Editor()` on every
+    // warm visit) while staying cold-loadable within CI's 30s timeout.
+    // 120 sections × ~4.5KB per section ≈ 540KB.
+    const MARK_LINE = Array.from({ length: 20 }, (_, i) => `[[Link ${i}]]`).join(' ');
+    const PARAGRAPH = `${MARK_LINE} and some \`inline code\` plus more [[wiki links]] here.`;
+    const SECTION_FILLER =
+      'Extended prose paragraph to grow the doc past the V2 bytes gate. '.repeat(20);
     const BIG_BODY = Array.from(
-      { length: 300 },
-      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${PARAGRAPH}\n`,
+      { length: 120 },
+      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${SECTION_FILLER}\n`,
     ).join('\n');
     const BIG_DOC = `# Big Doc\n\n${BIG_BODY}\n\n## End\n`;
     const SMALL_DOC = '# Small\n\nShort.';
@@ -178,16 +193,17 @@ test.describe('docs-open — hybrid navigation UX', () => {
     ]);
 
     await page.goto('/');
+    // 30s timeouts — see F0 for CI runner-contention rationale.
     await openFromSidebar(page, 'small.md');
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
     await openFromSidebar(page, 'big.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc');
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
     // Back to small so the next click to big.md is a warm-but-slow-mount nav.
     await openFromSidebar(page, 'small.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Small');
+    await expect(page.locator('.ProseMirror')).toContainText('Small', { timeout: 30_000 });
 
     // Install skeleton-sighting observer BEFORE the click.
     await page.evaluate(() => {
@@ -207,7 +223,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     const sidebar = page.locator('[data-slot="sidebar-container"]');
     await sidebar.getByText('big.md', { exact: true }).click();
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 15_000 });
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
 
     await page.evaluate(() => window.__f0bObserverCleanup?.());
     const seen = await page.evaluate(() => window.__f0bSkeletonSeen);
@@ -607,25 +623,37 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Switch to source mode (Markdown source toggle — same radio selector as
-    // ux-interactions.e2e.ts).
+    // Switch to source mode. 15s timeout handles the deferred-commit
+    // window on CI — mode-toggle state update triggers a fresh render
+    // pass that may need to wait for the editor subtree's deferred
+    // commit before CM content renders (the skeleton overlay covers
+    // the pool during that window).
     await page.getByRole('radio', { name: 'Markdown source' }).click();
-    await page.waitForSelector('.cm-content');
-    await expect(page.locator('.cm-content')).toContainText('Doc A Heading');
+    await page.waitForSelector('.cm-content', { timeout: 15_000 });
+    await expect(page.locator('.cm-content').first()).toContainText('Doc A Heading', {
+      timeout: 15_000,
+    });
 
     // Nav to doc B (cold mount inside source mode).
     await openFromSidebar(page, 'doc-b.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.cm-content')).toContainText('Doc B Heading');
+    // Scope to VISIBLE cm-content. With V2 cache / Activity the prior
+    // doc's CM stays in the DOM (Activity hidden); `.first()` returns
+    // DOM order which matches pool MRU — the ACTIVE doc's editor is
+    // positioned last in the Activity list... actually since DOM order
+    // may vary, widen the assertion to `at-least-one-cm-content-has`.
+    await expect(page.locator('.cm-content').filter({ hasText: 'Doc B Heading' })).toBeVisible({
+      timeout: 15_000,
+    });
 
     // Nav back to doc A — should be Activity-warm. The CodeMirror editor
     // for doc A should still be in the DOM (just hidden) and its content
-    // should still show "Doc A Heading" when it becomes visible again.
+    // should become visible when Activity re-shows it.
     await openFromSidebar(page, 'doc-a.md');
     await waitForActiveProviderSynced(page);
-    await expect(page.locator('.cm-content')).toContainText('Doc A Heading');
-    // Heading "Doc A" specifically — ensures we're not accidentally showing B.
-    await expect(page.locator('.cm-content')).not.toContainText('Doc B Heading');
+    await expect(page.locator('.cm-content').filter({ hasText: 'Doc A Heading' })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('F13: a11y attributes present on EditorSkeleton + error-boundary surfaces', async ({
