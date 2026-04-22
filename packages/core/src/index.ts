@@ -65,6 +65,21 @@ export {
   WikiLinkEmbed,
   type WikiLinkEmbedAttrs,
 } from './extensions/wiki-link-embed.ts';
+// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
+export {
+  buildClaudeAiWebUrl,
+  buildClaudeUrl,
+  buildCodexUrl,
+  buildCursorUrl,
+  composePrompt,
+  type DocContext,
+  type HandoffFailureReason,
+  type HandoffOutcome,
+  type HandoffPayload,
+  type HandoffTarget,
+  type InstallState,
+  type TargetData,
+} from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,

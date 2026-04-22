@@ -124,6 +124,11 @@ export {
   updateProcessLockPort,
 } from './process-lock.ts';
 export {
+  type EnsureProjectGitResult,
+  ensureProjectGit,
+  ProjectGitInitError,
+} from './project-git.ts';
+export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
   containsConflictMarkers,

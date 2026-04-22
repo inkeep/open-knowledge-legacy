@@ -83,7 +83,7 @@ On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then 
 
 ## Shadow repo
 
-Located at `.git/openknowledge/` (when the project has a `.git/`) or `.openknowledge/` (standalone). The shadow repo provides auto-save history and attribution without touching the project's own git state.
+Located at `<projectRoot>/.git/open-knowledge/`. If the project has no `.git/` when the server starts, `ensureProjectGit` auto-runs `git init --initial-branch=main` before the shadow is created (fail-fast on git missing). The shadow repo provides auto-save history and attribution without touching the project's own git state.
 
 It contains:
 

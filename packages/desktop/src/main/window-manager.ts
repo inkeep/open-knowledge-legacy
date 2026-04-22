@@ -28,6 +28,7 @@
 
 import { basename, resolve } from 'node:path';
 import type { UploadConfig } from '@inkeep/open-knowledge-core';
+import { sendToRenderer } from '../shared/ipc-send.ts';
 import { loadResolvedUploadConfig } from './upload-config-load.ts';
 
 /**
@@ -49,6 +50,7 @@ export interface BrowserWindowLike {
   on(event: 'closed', cb: () => void): void;
   webContents: {
     send(channel: string, ...args: unknown[]): void;
+    once(event: 'dom-ready', cb: () => void): void;
   };
   loadFile(filePath: string): Promise<void>;
   loadURL(url: string): Promise<void>;
@@ -257,42 +259,51 @@ export class WindowManager {
     // implementation's lack of this guard as a Major issue.
     const INIT_TIMEOUT_MS = this.deps.utilityInitTimeoutMs ?? 15_000;
 
-    const ready = new Promise<{ port: number; apiOrigin: string }>((resolveReady, reject) => {
-      let settled = false;
-      const settle = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        // Detach BOTH listeners so no dead code fires after ready — the post-
-        // await lifecycle handler (see below) is the sole exit subscriber
-        // once the window is up.
-        utility.removeListener?.('message', onMessage);
-        utility.removeListener?.('exit', onExit);
-        fn();
-      };
-      const onMessage = (msg: unknown) => {
-        const m = msg as { type?: string; port?: number; apiOrigin?: string; message?: string };
-        if (m.type === 'ready' && typeof m.port === 'number' && typeof m.apiOrigin === 'string') {
-          const port = m.port;
-          const apiOrigin = m.apiOrigin;
-          settle(() => resolveReady({ port, apiOrigin }));
-        } else if (m.type === 'error') {
-          settle(() => reject(new Error(m.message ?? 'utility init failed')));
-        }
-      };
-      // Reject on early utility exit (utility died before posting ready/error).
-      const onExit = (code: number | null) => {
-        settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
-      };
-      utility.on('message', onMessage);
-      utility.on('exit', onExit);
+    const ready = new Promise<{ port: number; apiOrigin: string; didGitInit: boolean }>(
+      (resolveReady, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          // Detach BOTH listeners so no dead code fires after ready — the post-
+          // await lifecycle handler (see below) is the sole exit subscriber
+          // once the window is up.
+          utility.removeListener?.('message', onMessage);
+          utility.removeListener?.('exit', onExit);
+          fn();
+        };
+        const onMessage = (msg: unknown) => {
+          const m = msg as {
+            type?: string;
+            port?: number;
+            apiOrigin?: string;
+            message?: string;
+            didGitInit?: boolean;
+          };
+          if (m.type === 'ready' && typeof m.port === 'number' && typeof m.apiOrigin === 'string') {
+            const port = m.port;
+            const apiOrigin = m.apiOrigin;
+            const didGitInit = m.didGitInit === true;
+            settle(() => resolveReady({ port, apiOrigin, didGitInit }));
+          } else if (m.type === 'error') {
+            settle(() => reject(new Error(m.message ?? 'utility init failed')));
+          }
+        };
+        // Reject on early utility exit (utility died before posting ready/error).
+        const onExit = (code: number | null) => {
+          settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
+        };
+        utility.on('message', onMessage);
+        utility.on('exit', onExit);
 
-      // Timeout guard — final defense against spawn-phase hangs. The scheduled
-      // callback calls `settle(...)` which no-ops if ready/error/exit already
-      // settled the promise, so late-firing timers are harmless.
-      this.deps.setTimeout(() => {
-        settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
-      }, INIT_TIMEOUT_MS);
-    });
+        // Timeout guard — final defense against spawn-phase hangs. The scheduled
+        // callback calls `settle(...)` which no-ops if ready/error/exit already
+        // settled the promise, so late-firing timers are harmless.
+        this.deps.setTimeout(() => {
+          settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
+        }, INIT_TIMEOUT_MS);
+      },
+    );
 
     // Major-2 fix: resolve `upload.*` from YAML + Obsidian vault + defaults
     // and pass it through the init IPC. Without this thread-through,
@@ -322,7 +333,7 @@ export class WindowManager {
       },
     });
 
-    const { port, apiOrigin } = await ready;
+    const { port, apiOrigin, didGitInit } = await ready;
 
     // D39 post-exit liveness probe — covers the case where utilityProcess.on('exit')
     // fires but the pid is still alive (VS Code Issue #194477). This handler runs
@@ -359,6 +370,21 @@ export class WindowManager {
       ],
       title: formatEditorTitle(projectName),
     });
+
+    // SPEC R5b / D10 — dispatch `git-init-notice` to the renderer so it can
+    // surface a sonner toast. Register the `dom-ready` listener BEFORE awaiting
+    // `loadURL` / `loadFile` because their returned promises resolve on
+    // `did-finish-load`, which fires AFTER `dom-ready` — registering after the
+    // await would silently miss the one-shot event and the toast would never
+    // fire. Deferring to `dom-ready` (rather than firing synchronously) also
+    // ensures the renderer's bridge subscriber has mounted before the event
+    // lands (defeats the SPEC §14 subscriber-mount race).
+    if (didGitInit) {
+      const gitDir = resolve(projectPath, '.git');
+      window.webContents.once('dom-ready', () => {
+        sendToRenderer(window.webContents, 'ok:git-init-notice', { gitDir });
+      });
+    }
 
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);

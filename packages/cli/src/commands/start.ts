@@ -239,6 +239,8 @@ export interface BootedStartServer {
   uiSpawnDecision: UiSpawnDecision;
   /** `true` if `runInit` scaffolded `.open-knowledge/` during this boot. */
   didAutoInit: boolean;
+  /** `true` if `ensureProjectGit` ran `git init` during this boot. */
+  didGitInit: boolean;
 }
 
 /**
@@ -260,9 +262,14 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
   const { resolveUploadConfig } = await import('@inkeep/open-knowledge-core');
-  const { bootServer, detectObsidianVault, getLogger, isProcessAlive, readUiLock } = await import(
-    '@inkeep/open-knowledge-server'
-  );
+  const {
+    bootServer,
+    detectObsidianVault,
+    ensureProjectGit,
+    getLogger,
+    isProcessAlive,
+    readUiLock,
+  } = await import('@inkeep/open-knowledge-server');
   const { resolveContentDir } = await import('../config/paths.ts');
 
   const log = opts.log ?? getLogger('start');
@@ -379,6 +386,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     idleShutdownMs: idleThresholdMs,
     skipAutoInit,
     autoInitFn,
+    // Fail-fast auto-git-init hook (SPEC R2 / D12). Errors propagate out of
+    // bootServer so the Commander action's catch surfaces the R6 message.
+    ensureProjectGitFn: skipAutoInit ? undefined : () => ensureProjectGit(cwd),
     spawnUiSiblingFn,
     idleShutdownHandler: (destroyServer) =>
       buildIdleShutdownHandler({
@@ -410,6 +420,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     degraded: booted.degraded,
     uiSpawnDecision,
     didAutoInit: booted.didAutoInit,
+    didGitInit: booted.didGitInit,
   };
 }
 
@@ -438,6 +449,20 @@ export function startCommand(getConfig: () => Config): Command {
           skipAutoInit: opts.init === false,
         });
       } catch (err) {
+        // R6: surface a dedicated message when the auto-git-init hook fails
+        // (git missing, permission denied) — never fall back to a degraded mode.
+        const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
+        if (err instanceof ProjectGitInitError) {
+          console.error(
+            error(
+              "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.",
+            ),
+          );
+          if (err.stderr) {
+            console.error(dim(err.stderr.trim()));
+          }
+          process.exit(1);
+        }
         console.error(
           `${error('Failed to start:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         );
@@ -517,20 +542,34 @@ export function startCommand(getConfig: () => Config): Command {
             console.log();
           }
 
-          if (booted.didAutoInit) {
-            try {
-              const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
-              const preview = previewContent({
-                projectDir: cwd,
-                contentDir: booted.contentDir,
-                include: config.content.include,
-                exclude: config.content.exclude,
-              });
-              console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
-            } catch (e) {
-              console.warn(
-                `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          // Preview block — renders when EITHER auto-init scaffolded or
+          // ensureProjectGit ran `git init` (closes audit finding 5). The
+          // git-init disclosure is shown regardless of didAutoInit.
+          if (booted.didAutoInit || booted.didGitInit) {
+            if (booted.didGitInit) {
+              console.log(
+                `\n  ${info('✓')} Initialized git repo at ${cwd}/.git/ (default branch: main)`,
               );
+            }
+            if (booted.didAutoInit) {
+              try {
+                const { previewContent, formatPreviewBlock } = await import(
+                  '../content/preview.ts'
+                );
+                const preview = previewContent({
+                  projectDir: cwd,
+                  contentDir: booted.contentDir,
+                  include: config.content.include,
+                  exclude: config.content.exclude,
+                });
+                console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
+              } catch (e) {
+                console.warn(
+                  `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              }
+            } else {
+              console.log();
             }
           }
 
