@@ -65,6 +65,32 @@ The server's bidirectional bridge keeps the two Y types continuously in sync, so
 
 Three-way merge for content preservation has moved to the bridge layer itself: when an inbound CRDT update arrives during local Y.XmlFragment editing, Observer A's Path B uses the hybrid diff3+DMP `mergeThreeWay` algorithm (`@inkeep/open-knowledge-core/bridge`) with a content-preservation post-condition (`assertContentPreservation`). On post-condition violation, the production policy is to (a) emit a structured `bridge-merge-content-loss` log, (b) write a silent named version-history checkpoint via `saveInMemoryCheckpoint` (rendered in `TimelinePanel` so users can recover via the existing Restore UI), and (c) apply the merge as-computed so the editor keeps responding. Dev/test re-throws so integration suites fail loudly; conversion-class regressions are caught at PR tier by the deterministic fidelity PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`). The bridge-convergence fuzz is preserved for ad-hoc sampling via `bun run measure:fuzz` (see `specs/2026-04-19-ci-signal-quality/` for the CI signal quality rationale). See `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R1/R7 for the full contract and `packages/server/src/server-observers.ts` for the wiring.
 
+## Attribution journal (summaries)
+
+Each agent-write API call records a contributor entry in the in-memory accumulator `pendingContributors: Map<agentId, ContributorEntry>` (`packages/server/src/contributor-tracker.ts`). The optional fifth argument to `recordContributor(docName, agentId, displayName, colorSeed, summary?)` appends a summary to the contributor's flat `summaries: string[]` array, preserving insertion order across the L2 debounce window.
+
+On the 15-30s L2 debounce, `swapContributors()` drains the accumulator and `formatContributorsFrom(snapshot)` emits one `ok-contributors:` JSON line per contributor into the shadow-repo commit body:
+
+```
+ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","colorSeed":"...","docs":["foo.md","bar.md"],"summaries":["Fixed token-refresh race","Added example block"]}
+```
+
+The `summaries` field is flat (per-contributor, not per-doc) and omitted entirely when no summaries were recorded — legacy commits and summary-less writes are byte-identical to pre-feature behavior. The JSON line stays at `v: 1`; the field is purely additive (precedent #9).
+
+**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. The five API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename`, `/api/rollback`) each call it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
+
+**Attribution guard for rename and rollback.** `handleRename` and `handleRollback` only call `extractAgentIdentity` + `recordContributor` when the request body carries an explicit `agentId` field. The in-editor Restore button (`EditorPane.tsx`) posts with no identity and therefore stays anonymous on the timeline — the "positive externality" of MCP-driven rename/rollback attribution does not leak to human-driven UI calls. This is a LOCKED behavior contract.
+
+**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
+
+**Parser tolerance.** `parseContributors` in `packages/core/src/shadow-repo-layout.ts` accepts both legacy (no `summaries` field) and new commits. A malformed `summaries` value drops just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip policy applied to other optional fields, because decorative loss beats attribution loss.
+
+**Consumers.**
+
+- `TimelinePanel` renders summaries as a collapsible bulleted list under the author line (first bullet inline, remainder behind a "Show N more" expander). The full doc list stays visible as ground truth.
+- `exec` / `read_document` enrichment output carries the field through automatically via `history.contributors[*].summaries`, so agents reading prior timeline state see intent alongside identity.
+- Metrics counters in `packages/server/src/metrics.ts`: `agentWriteCalls` (denominator), `summariesProvided` (numerator for M1 adoption rate), and `summariesTruncated` (M2 cap-efficacy) — all surfaced via `GET /api/metrics/reconciliation`.
+
 ## Agent simulator
 
 The CLI tool supports both write modes:
