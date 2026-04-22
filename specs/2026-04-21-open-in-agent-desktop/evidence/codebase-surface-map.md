@@ -33,7 +33,7 @@ Read-only inventory of what exists on `main` as of baseline commit `a1e74cb8` (E
 'ok:project:close':        { args: []; result: undefined };
 ```
 
-8 channels total. Scale-match trigger (FU-3 in that file's docstring): at >20 channels, migrate to `@electron-toolkit/typed-ipc`. This spec adds 1 channel (see §Spec-additions below), bringing the total to 9 — well within the hand-rolled budget.
+8 channels total. Scale-match trigger (FU-3 in that file's docstring): at >20 channels, migrate to `@electron-toolkit/typed-ipc`. This spec adds **2 channels** (see §Spec-additions below — updated 2026-04-21 post-audit L9), bringing the total to 10 — well within the hand-rolled budget.
 
 ### Spec-additions to IPC channels
 
@@ -194,3 +194,10 @@ Matches XQ4 ASSUMED — format confirmed here; exact date stamps at ship time.
 - No existing URL-builder pattern to mirror. Prior art is external (Mintlify switch-case, Linear `AIActions.js`).
 - No existing install-detection helper on web-host side. `/api/installed-agents` is a new endpoint class.
 - No existing `CFBundleDocumentTypes` / `folder=` path resolution pattern in OK's codebase. The "what's this doc's folder?" question is spec-to-decide (SQ4 in the /spec outline message).
+
+---
+
+## Post-audit notes (2026-04-21)
+
+- **Channel count (audit L9):** spec now adds 2 channels (not 1), total 10.
+- **installUrl values (audit L10):** `https://claude.com/download`, `https://openai.com/codex`, `https://cursor.com/` used in `BUILT_IN_TARGETS` are not pinned in upstream research evidence. Spot-check via `curl -I` at implementation time before ship. OQ-B tracks the longer-term decision between vendor-page links vs OK-hosted install-hint docs.
