@@ -13,8 +13,8 @@
  * `packages/app/src/main.tsx`).
  */
 
-import { FolderOpenIcon, Loader2Icon, type LucideIcon, PlusIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
+import { type ComponentType, useEffect, useState } from 'react';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import {
   resolveErrorMessage,
@@ -131,7 +131,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           description="Bring a remote repository onto this machine."
           onClick={onClone}
           dataTestId="nav-clone"
-          Icon={GithubIcon as LucideIcon}
+          Icon={GithubIcon}
         />
         <NavigatorCard
           title="Open folder on disk"
@@ -197,7 +197,7 @@ interface NavigatorCardProps {
   description: string;
   onClick: () => void;
   dataTestId?: string;
-  Icon?: LucideIcon;
+  Icon?: ComponentType<{ className?: string }>;
 }
 
 function NavigatorCard({ title, description, onClick, dataTestId, Icon }: NavigatorCardProps) {
