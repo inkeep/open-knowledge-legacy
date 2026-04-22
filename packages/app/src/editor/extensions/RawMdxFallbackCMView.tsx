@@ -18,6 +18,7 @@
 import { Compartment } from '@codemirror/state';
 import { EditorView as CMEditorView, keymap } from '@codemirror/view';
 import type { NodeViewProps } from '@tiptap/core';
+import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Selection as PmSelection } from '@tiptap/pm/state';
 import { NodeSelection, Selection } from '@tiptap/pm/state';
 import { NodeViewWrapper } from '@tiptap/react';
@@ -26,6 +27,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 import { markUserTyping } from '../observers';
 import { getYDoc } from '../utils/get-ydoc';
+import { getSharedMarkdownManager } from '../utils/md-singleton';
 import { classifySeverity, SEVERITY_STYLES } from '../utils/severity';
 import { createNestedCMExtensions, darkTheme, lightTheme } from './nested-cm-extensions';
 
@@ -117,6 +119,40 @@ export function computeCMSelectionForwarding(opts: {
   }
 
   return { kind: 'noop' };
+}
+
+/**
+ * Attempt to upgrade a `rawMdxFallback`'s source back to its parsed form.
+ * Given the current CM source and the PM schema, returns a PM Node to
+ * replace the rawMdxFallback with, or `null` if the upgrade shouldn't
+ * happen.
+ *
+ * Called on CM blur — matches Obsidian's S3 live-preview cursor-exit
+ * trigger, which for our nested-CM architecture collapses to browser
+ * blur because nested CM focus IS the source reveal (see
+ * `reports/codemirror-markdown-source-view-rendering/REPORT.md:47` +
+ * `reports/cm-in-pm-nested-editor-architecture/REPORT.md:672`).
+ *
+ * Returns `null` (= no-op, preserve the existing rawMdxFallback) when:
+ *   - Parse produces zero blocks (empty source)
+ *   - Parse produces more than one block (user typed a multi-block split
+ *     mid-edit — defer to a future enhancement; don't make a decision
+ *     here, leaving the fallback intact lets them keep editing)
+ *   - Parse result is still a `rawMdxFallback` (source still invalid —
+ *     no point churning Y.XmlElement identity for a same-kind swap;
+ *     see Precedent #10 on Item-preservation)
+ *
+ * The caller must guard dispatch with `updatingRef` to prevent feedback
+ * loops — this function is pure state inspection.
+ */
+export function tryParseUpgrade(source: string, schema: Schema): PmNode | null {
+  const mgr = getSharedMarkdownManager();
+  const json = mgr.parseWithFallback(source);
+  const doc = schema.nodeFromJSON(json);
+  if (doc.childCount !== 1) return null;
+  const first = doc.child(0);
+  if (first.type.name === 'rawMdxFallback') return null;
+  return first;
 }
 
 /**
@@ -303,6 +339,38 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
           try {
             pmView.dispatch(
               pmView.state.tr.setSelection(NodeSelection.create(pmView.state.doc, pos)),
+            );
+          } catch (err) {
+            updatingRef.current = false;
+            throw err;
+          }
+          updatingRef.current = false;
+        }
+        // On-blur upgrade: when the nested CM loses focus, re-parse the
+        // current source. If it now parses to a single non-fallback block,
+        // replace the rawMdxFallback in the outer PM doc with the parsed
+        // node. See `tryParseUpgrade` header for the no-op cases — the
+        // user keeps the fallback CM mid-edit when the source isn't yet
+        // committable. Mirrors Obsidian Live Preview's cursor-exit commit
+        // trigger (Obsidian uses cursor-range-overlap because its source
+        // reveal is inline; our nested-CM source reveal collapses
+        // cursor-exit to browser blur).
+        if (update.focusChanged && !update.view.hasFocus && !updatingRef.current) {
+          const pos = typeof getPos === 'function' ? getPos() : undefined;
+          if (typeof pos !== 'number') return;
+          const pmView = editor.view;
+          if (!pmView) return;
+          const currentNode = pmView.state.doc.nodeAt(pos);
+          if (!currentNode || currentNode.type.name !== 'rawMdxFallback') return;
+
+          const source = update.view.state.doc.toString();
+          const replacement = tryParseUpgrade(source, pmView.state.schema);
+          if (!replacement) return;
+
+          updatingRef.current = true;
+          try {
+            pmView.dispatch(
+              pmView.state.tr.replaceWith(pos, pos + currentNode.nodeSize, replacement),
             );
           } catch (err) {
             updatingRef.current = false;
