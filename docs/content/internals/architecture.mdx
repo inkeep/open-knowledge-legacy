@@ -2,8 +2,9 @@
 title: Architecture
 description: Foundation architecture validated through the init spike -- TipTap, Hocuspocus, Yjs, CodeMirror, and git auto-persistence.
 ---
+
 <Callout type="warn" title="Init spike architecture">
-This page describes the architecture as validated during the init spike (March 2026). The codebase has evolved since -- history repo, ContentFilter, branch parking, agent identity attribution, and page CRUD APIs have been added. For the current production topology, see [Service Topology](/internals/service-topology).
+This page describes the architecture as validated during the init spike (March 2026). The codebase has evolved since -- shadow repo, ContentFilter, branch parking, and page CRUD APIs have been added. For the current production topology, see [Service Topology](/internals/service-topology).
 </Callout>
 
 The architecture was validated through a structured spike with seven targeted validations (V1--V7). Six passed, one failed (V7 -- Yjs v14 delta protocol), which confirmed the expected fallback path.
@@ -37,12 +38,12 @@ Browser (Vite)                        Server (embedded in Vite)
 TipTap v3 with ProseMirror provides the WYSIWYG editing surface. Key extensions:
 
 - **Collaboration** (`@tiptap/extension-collaboration`) -- binds Y.Doc from Hocuspocus provider to the editor via y-prosemirror
-- **Frontmatter** -- regex strip before parse, re-prepend after serialize (\~25 LOC)
+- **Frontmatter** -- regex strip before parse, re-prepend after serialize (~25 LOC)
 - **Image** (`@tiptap/extension-image`) -- built-in markdown support in TipTap v3
 - **Task lists** (`TaskList` + `TaskItem`) -- native markdown round-trip in v3
 - **JsxComponent** -- custom void node extension for embedding React components as fenced code blocks with `jsx-component` info string
 
-Markdown round-trip fidelity: zero semantic loss after \~80 LOC of fixes. Convergence confirmed (cycle 2 byte-identical to cycle 1).
+Markdown round-trip fidelity: zero semantic loss after ~80 LOC of fixes. Convergence confirmed (cycle 2 byte-identical to cycle 1).
 
 ## CRDT layer
 

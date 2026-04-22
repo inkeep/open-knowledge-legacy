@@ -2,6 +2,7 @@
 title: Timeline
 description: Open Knowledge's Timeline panel — every revision, auto-save, and silent recovery checkpoint for the current document.
 ---
+
 Every document in Open Knowledge has a Timeline. It's the single surface that answers "what did this document used to look like?" — covering user-triggered Save Versions, per-writer work-in-progress commits, upstream `git pull` imports, and the automatic checkpoints the editor writes when a concurrent-edit race trips the CRDT's structural limit.
 
 The panel lives next to the editor. Open it from the document header (the clock icon) or with the keyboard shortcut shown there.
@@ -13,8 +14,8 @@ Each row shows an author, a relative timestamp (e.g. "3 min ago"), and a kind-sp
 - **Diamond — "Save Version"**. A user-triggered snapshot. Click to preview the state at that version; the **Restore** action writes that snapshot over the current document as a new edit.
 - **Amber alert-triangle — "Auto-saved before a concurrent edit (size)"**. The editor wrote this checkpoint automatically right before a concurrent-edit merge finalized. If you notice a paragraph blink or lost text, this is where it's preserved. See [[collaboration-recovery]] for the full flow.
 - **Sky file-archive — "Recovered from an external change (size)"**. An external writer (another process, a `git checkout`, a file-watcher sync) overrode an in-memory draft. The draft is preserved under this entry.
-- **Writer chip (bullet + color)** — a per-writer WIP (work-in-progress) auto-commit. Each agent session, each browser principal, and each classified writer (`file-system`, `git-upstream`, `openknowledge-service`) gets its own chip; the Timeline folds consecutive same-writer runs into a single expandable row. See [[agent-write-path]] for the writer-ID taxonomy.
-- **Upstream arrow** — a `git pull` or equivalent brought new content in from outside the editor. Credited to the `git-upstream` classified writer.
+- **Writer chip (bullet + color)** — a per-writer WIP (work-in-progress) auto-commit. Individually noisy; the Timeline folds consecutive same-writer runs.
+- **Upstream arrow** — a `git pull` or equivalent brought new content in from outside the editor.
 
 ## Restoring
 
@@ -30,15 +31,6 @@ Restores are always additive — the current state becomes the snapshot's state 
 - **Save Version** checkpoints are retained indefinitely — they're the permanent history of your document.
 - **Auto-saved** checkpoints (both kinds above) are retained at most **50 per kind per branch** and **30 days**, whichever is more generous. Older auto-saves garbage-collect themselves so the Timeline stays readable.
 - **Writer WIP** commits are consolidated into the nearest Save Version as the branch progresses; orphaned WIP (branch deleted) is cleaned up after 24 hours.
-
-## Save Version and your git log
-
-When you hit **Save Version**, Open Knowledge creates two commits in parallel:
-
-1. A shadow-repo checkpoint under `refs/checkpoints/<branch>/<sha>` that carries the full `ok-actor:` JSON structure for every contributing session.
-2. A project-git commit (only when the project dir is a git repo — skipped gracefully otherwise, per SPEC D45) with `Author: <your git identity>` and one `Co-Authored-By: <agent-name> <agent@openknowledge.local>` trailer per agent session that contributed since the last checkpoint. GitHub, GitLab, and git log render these trailers natively, so "co-authored by Claude" is a first-class signal in your existing tooling.
-
-Reconnecting an MCP subprocess always creates a fresh agent session (SPEC D29) — a new connectionId, a new chip color, a new `refs/wip/<branch>/agent-<connectionId>` ref. The Timeline keeps each session discoverable via `git log refs/wip/<branch>/agent-<connectionId>` in the history repo.
 
 ## See also
 

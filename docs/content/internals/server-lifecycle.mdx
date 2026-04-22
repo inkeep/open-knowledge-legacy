@@ -23,7 +23,7 @@ createServer(options)          ← synchronous, returns ServerInstance
   ├─ Persistence extension     ← immediate (hooks registered)
   ├─ API extension             ← immediate (HTTP routes registered)
   └─ ready = initAsync()       ← async background init
-       ├─ History repo init    ← git plumbing (~50-200ms)
+       ├─ Shadow repo init     ← git plumbing (~50-200ms)
        ├─ HEAD-drift check     ← compare last-known-head vs current HEAD;
        │                         commitUpstreamImport() if diverged
        ├─ File watcher start   ← @parcel/watcher subscribe
@@ -49,7 +49,7 @@ destroy()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
   ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
   ├─ Phase 4.5: SyncEngine     ← syncEngine.destroy() — persists state to sync-state.json
-  ├─ Phase 5: History release  ← write last-known-head + destroyShadowRepo() — always runs
+  ├─ Phase 5: Shadow release   ← write last-known-head + destroyShadowRepo() — always runs
   └─ Phase 6: Server lock      ← releaseServerLock() — LAST, in finally block
 ```
 
@@ -58,7 +58,7 @@ destroy()
 - **Phase 1 before Phase 3:** Watchers must stop before L1 writes hit disk, otherwise the file watcher detects the persistence write as an "external change" and triggers a reconciliation loop.
 - **Phase 2 before Phase 3:** Agent sessions hold DirectConnections to Y.Docs. Closing sessions first ensures no new writes arrive during the drain.
 - **Phase 3 before Phase 4:** L1 (`onStoreDocument`) writes markdown to disk and schedules the L2 git-commit timer. Running L2 before L1 would drain an empty commit queue, causing silent data loss.
-- **Phase 5 before Phase 6:** The history writer lock protects git plumbing; release it before the process-level server lock so a restart sees a clean history root even if Phase 6 throws.
+- **Phase 5 before Phase 6:** The shadow writer lock protects git plumbing; release it before the process-level server lock so a restart sees a clean shadow root even if Phase 6 throws.
 - **Phase 6 in finally:** The server lock is the final release and is wrapped in a `try/finally` around all prior phases. A mid-shutdown throw in Phase 1–5 must still release `server.lock`, otherwise the next start would see a stale lock from a process that cleanly exited. Ownership-guarded — only a process whose pid matches the lock's removes it.
 
 ### L1 drain: `flushAllStoresAndWait()`
@@ -76,7 +76,7 @@ A `Promise.race` with a configurable timeout (`destroyTimeoutMs`, default 10 sec
 
 ### Rescue buffer on flush timeout
 
-When `flushAllStoresAndWait()` hits its `destroyTimeoutMs` ceiling with documents still loaded, each pending document's in-memory Y.Doc state is dumped to `<history-gitDir>/rescue/<docName>.md` before the timeout error propagates. The rationale: a timeout means `onStoreDocument` did not complete, so the in-memory Y.Doc is the only remaining record of the user's recent edits. Unlike the reconciliation-path rescue (which dumps only when the in-memory state diverges from the last reconciled base), the destroy-timeout rescue writes unconditionally — every still-loaded document gets a rescue file.
+When `flushAllStoresAndWait()` hits its `destroyTimeoutMs` ceiling with documents still loaded, each pending document's in-memory Y.Doc state is dumped to `<shadow-gitDir>/rescue/<docName>.md` before the timeout error propagates. The rationale: a timeout means `onStoreDocument` did not complete, so the in-memory Y.Doc is the only remaining record of the user's recent edits. Unlike the reconciliation-path rescue (which dumps only when the in-memory state diverges from the last reconciled base), the destroy-timeout rescue writes unconditionally — every still-loaded document gets a rescue file.
 
 Rescue writes are best-effort per document: a serialization or `writeFile` failure for one document is logged via `getLogger('server')` under the `[rescue]` category and does not prevent the others from being rescued. The Phase 3 timeout error message names which documents were rescued versus lost, so operators can correlate the warn-level shutdown log with the on-disk rescue files:
 
@@ -85,7 +85,7 @@ flushAllStoresAndWait timeout after 10000ms — 2/3 docs did not unload: [my-not
   — rescued [my-notes], lost [drafts]
 ```
 
-If the history repo failed to initialize (the `shadowRef.current` closure is nullish), rescue writes are skipped entirely and all still-loaded documents are reported as lost.
+If the shadow repo failed to initialize (the `shadowRef.current` closure is nullish), rescue writes are skipped entirely and all still-loaded documents are reported as lost.
 
 Users can recover rescued content via the existing `GET /api/rescue` (list) and `GET /api/rescue/:docName` (retrieve) endpoints. Rescue files older than 24 hours are cleaned up automatically.
 
@@ -129,12 +129,12 @@ This option is on the programmatic `ServerOptions` interface, not the YAML confi
 
 ## Data-loss guarantee boundary
 
-After a successful `destroy()`, all writes that reached the server-side Y.Doc are flushed to disk (L1) and committed to the history git repo (L2). The guarantee boundary is:
+After a successful `destroy()`, all writes that reached the server-side Y.Doc are flushed to disk (L1) and committed to the shadow git repo (L2). The guarantee boundary is:
 
 | Layer                                  | Guaranteed by `destroy()` |
 | -------------------------------------- | ------------------------- |
 | Server Y.Doc → markdown on disk (L1)   | Yes                       |
-| Disk → history git commit (L2)         | Yes                       |
+| Disk → shadow git commit (L2)          | Yes                       |
 | Client WebSocket buffer → server Y.Doc | No -- out of scope        |
 
 The client-side transmission buffer (\~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this client-side residual window is negligible compared to the server-side guarantees above. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.

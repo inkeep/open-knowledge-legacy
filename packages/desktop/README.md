@@ -30,7 +30,7 @@ M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-buil
   │  - Navigator mode       │   │  - createServer +            │
   │    (launcher) OR        │   │    acquireServerLock         │
   │    Editor mode (doc)    │   │  - @parcel/watcher           │
-  │                         │   │  - simple-git (history repo) │
+  │                         │   │  - simple-git (shadow repo)  │
   │ Connects to             │   │  - @napi-rs/keyring          │
   │ ws://localhost:<port>   │   │  - macOS parent-death poll   │
   │ /collab                 │   │                              │

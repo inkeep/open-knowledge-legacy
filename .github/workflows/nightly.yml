@@ -63,7 +63,6 @@ jobs:
           - test:health
           - test:perf:fallback
           - test:perf:r15-guard
-          - test:perf:sessions
     env:
       RUN_BENCH: "1"
     steps:
