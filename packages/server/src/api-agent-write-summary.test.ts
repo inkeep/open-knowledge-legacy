@@ -105,7 +105,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(true);
       expect(parsed.summary).toBeUndefined();
-      expect(parsed.hint).toBeUndefined();
+      expect(parsed.summaryHint).toBeUndefined();
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(1);
       expect(m.summariesProvided).toBe(0);
@@ -131,7 +131,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary).toEqual({ value: 'Fixed token-refresh race' });
-      expect(parsed.hint).toBeUndefined();
+      expect(parsed.summaryHint).toBeUndefined();
       const m = getMetrics();
       expect(m.summariesProvided).toBe(1);
       expect(m.summariesTruncated).toBe(0);
@@ -178,7 +178,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const parsed = JSON.parse(response.body);
       expect(parsed.summary.truncatedFrom).toBe(100);
       expect(parsed.summary.value).toBe(`${'x'.repeat(79)}…`);
-      expect(parsed.hint).toBe('Summary truncated from 100 chars to 80 (max 80).');
+      expect(parsed.summaryHint).toBe('Summary truncated from 100 chars to 80 (max 80).');
       expect(getMetrics().summariesTruncated).toBe(1);
     });
 
@@ -244,7 +244,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary).toBeUndefined();
-      expect(parsed.hint).toBeUndefined();
+      expect(parsed.summaryHint).toBeUndefined();
       const m = getMetrics();
       expect(m.summariesProvided).toBe(0);
       expect(m.summariesTruncated).toBe(0);
@@ -348,7 +348,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary.truncatedFrom).toBe(100);
-      expect(parsed.hint).toContain('truncated');
+      expect(parsed.summaryHint).toContain('truncated');
       expect(getMetrics().agentWriteCalls).toBe(1);
       expect(getMetrics().summariesProvided).toBe(1);
       expect(getMetrics().summariesTruncated).toBe(1);

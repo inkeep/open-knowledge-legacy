@@ -168,10 +168,10 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
       expect(recordedRequest?.body).not.toHaveProperty('summary');
     });
 
-    test('server response summary surfaces in structuredContent; hint in text', async () => {
+    test('server response summary surfaces in structuredContent; summaryHint in text', async () => {
       mockResponse = {
         summary: { value: 'fixed', truncatedFrom: 200 },
-        hint: 'Summary truncated from 200 chars to 80 (max 80).',
+        summaryHint: 'Summary truncated from 200 chars to 80 (max 80).',
       };
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());

@@ -242,11 +242,13 @@ interface SummaryBulletsProps {
  * `<button>` is invalid HTML; see EntryRow comment). The expander's
  * onClick stops propagation so the row's onSelect doesn't also fire.
  *
- * Keys for the bullet list use the bullet text itself (with a stable
- * dedup prefix) — the bullet list is append-only within a debounce window
- * and order never reorders, so the text is an acceptable identity key. The
- * prefixed index-based approach biome flags is genuinely not a reorder risk
- * here, but using the text directly sidesteps the rule entirely.
+ * Keys combine the bullet's positional index with its text. The contributor
+ * accumulator explicitly permits duplicate summaries within a debounce window
+ * (`contributor-tracker.ts:87-91` — "No dedup: an agent may legitimately log
+ * the same summary twice"), so a text-only key would collide on duplicates
+ * and trigger React's "two children with the same key" warning + subtly wrong
+ * reconciliation. The list is append-only with no reorder within a row, so a
+ * positional component is safe.
  */
 function SummaryBullets({ summaries }: SummaryBulletsProps) {
   const [expanded, setExpanded] = useState(false);
@@ -274,8 +276,9 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
           </button>
           {expanded && (
             <ul className="mt-0.5 list-none">
-              {rest.map((s) => (
-                <li key={s} className="text-xs text-foreground/90">
+              {rest.map((s, idx) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: bullet list is append-only within a debounce window — no reorder, no insertion, no deletion. Index in the composite key is needed because contributor-tracker.ts:87-91 explicitly permits duplicate summaries (text-only key collides on dupes and breaks React reconciliation).
+                <li key={`${idx}-${s}`} className="text-xs text-foreground/90">
                   <span aria-hidden="true">• </span>
                   {s}
                 </li>

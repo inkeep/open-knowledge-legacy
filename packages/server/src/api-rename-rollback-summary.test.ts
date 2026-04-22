@@ -130,7 +130,7 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(getMetrics().summariesProvided).toBe(0);
     const parsed = JSON.parse(response.body);
     expect(parsed.summary).toBeUndefined();
-    expect(parsed.hint).toBeUndefined();
+    expect(parsed.summaryHint).toBeUndefined();
   });
 
   test('with agentId, no summary → default "Renamed X → Y" bullet attributed to new doc only', async () => {
@@ -208,8 +208,34 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     });
     const parsed = JSON.parse(response.body);
     expect(parsed.summary.truncatedFrom).toBe(100);
-    expect(parsed.hint).toBe('Summary truncated from 100 chars to 80 (max 80).');
+    expect(parsed.summaryHint).toBe('Summary truncated from 100 chars to 80 (max 80).');
     expect(getMetrics().summariesTruncated).toBe(1);
+  });
+
+  test('no agentId + wrong-type summary → 400 (validation runs unconditionally; D22 attribution still skipped)', async () => {
+    // Defensive validation: even though the rename has no UI call site today,
+    // we want any future MCP-client identity-passthrough regression to surface
+    // as a loud 400 rather than a silent attribution drop. The D22 contract
+    // (no agentId → no attribution) is unchanged — this test asserts that
+    // type-checking the summary happens before that branch even runs, so a
+    // malformed summary body never accidentally lands as a 200 with the
+    // summary silently ignored.
+    writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: 'src',
+      newDocName: 'dst',
+      summary: 42,
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    // File must NOT have been renamed — validation runs before the rename.
+    expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
+    // D22: no attribution side-effects either (no agentId means no contributor
+    // entry would have been recorded even on the success path).
+    expect(formatContributors()).toBe('');
+    expect(getMetrics().agentWriteCalls).toBe(0);
   });
 });
 

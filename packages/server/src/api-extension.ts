@@ -1517,7 +1517,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         subscriberCount,
         ...(hints ? { hints } : {}),
         ...(summaryResponse ? { summary: summaryResponse } : {}),
-        ...(summaryHint ? { hint: summaryHint } : {}),
+        ...(summaryHint ? { summaryHint } : {}),
       });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
@@ -2110,7 +2110,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         timestamp,
         subscriberCount,
         ...(summaryResponse ? { summary: summaryResponse } : {}),
-        ...(summaryHint ? { hint: summaryHint } : {}),
+        ...(summaryHint ? { summaryHint } : {}),
       });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
@@ -2820,11 +2820,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
     // defaults would attribute every human Restore to Claude. Only when the
     // caller explicitly sends `agentId` do we attribute + record a summary.
+    //
+    // Validation runs unconditionally (independent of `hasAgentId`) so a
+    // malformed `summary: 42` returns 400 even when identity is absent — this
+    // surfaces MCP-client identity-passthrough regressions loudly instead of
+    // silently dropping the summary on the floor. The attribution semantics
+    // (D22) are unchanged: `recordContributor` still only fires when
+    // `hasAgentId` is true.
     const bodyObj = body as Record<string, unknown>;
     const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-    const normalizedSummary = hasAgentId
-      ? normalizeSummary(bodyObj.summary)
-      : { kind: 'absent' as const };
+    const normalizedSummary = normalizeSummary(bodyObj.summary);
     if (normalizedSummary.kind === 'invalid') {
       json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
@@ -2979,7 +2984,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         restoredFrom: commitSha,
         timestamp,
         ...(summaryResponse ? { summary: summaryResponse } : {}),
-        ...(summaryHint ? { hint: summaryHint } : {}),
+        ...(summaryHint ? { summaryHint } : {}),
       });
     } catch (e) {
       console.error('[rollback]', e);
@@ -3508,11 +3513,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // UI call site, adding the guard up front keeps the pattern uniform
       // with `handleRollback` and prevents `extractAgentIdentity` defaults
       // from silently attributing future UI paths to Claude.
+      //
+      // Validation runs unconditionally (independent of `hasAgentId`) so a
+      // malformed `summary: 42` returns 400 even when identity is absent —
+      // this surfaces MCP-client identity-passthrough regressions loudly
+      // instead of silently dropping the summary on the floor. The
+      // attribution semantics (D22) are unchanged.
       const bodyObj = body as Record<string, unknown>;
       const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-      const normalizedSummary = hasAgentId
-        ? normalizeSummary(bodyObj.summary)
-        : { kind: 'absent' as const };
+      const normalizedSummary = normalizeSummary(bodyObj.summary);
       if (normalizedSummary.kind === 'invalid') {
         json(res, 400, { ok: false, error: 'summary must be a string' });
         return;
@@ -3574,7 +3583,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renamed: result.renamed,
         rewrittenDocs: result.rewrittenDocs,
         ...(summaryResponse ? { summary: summaryResponse } : {}),
-        ...(summaryHint ? { hint: summaryHint } : {}),
+        ...(summaryHint ? { summaryHint } : {}),
       });
     } catch (e) {
       console.error('[rename]', e);

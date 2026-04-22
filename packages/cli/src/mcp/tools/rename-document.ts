@@ -167,7 +167,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
         result.summary && typeof result.summary === 'object'
           ? (result.summary as { value: string; truncatedFrom?: number })
           : undefined;
-      const summaryHint = typeof result.hint === 'string' ? result.hint : undefined;
+      const summaryHint = typeof result.summaryHint === 'string' ? result.summaryHint : undefined;
 
       const structured: RenameDocumentSuccess = {
         ok: true,
