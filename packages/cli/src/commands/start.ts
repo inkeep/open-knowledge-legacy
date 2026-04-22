@@ -109,7 +109,7 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   }
 }
 
-interface AwaitUiSiblingPortDeps {
+interface AwaitUiSiblingPortInput {
   /** Read the current ui.lock contents. Returns null when absent/stale. */
   readUiLock: () => { port: number } | null;
   /** Virtual clock. Production: `Date.now`. */
@@ -135,7 +135,7 @@ interface AwaitUiSiblingPortDeps {
  * are injected so `start.test.ts` can drive the loop with a virtual clock
  * without touching the filesystem.
  */
-export async function awaitUiSiblingPort(deps: AwaitUiSiblingPortDeps): Promise<number | null> {
+export async function awaitUiSiblingPort(deps: AwaitUiSiblingPortInput): Promise<number | null> {
   const deadline = deps.now() + deps.timeoutMs;
   while (deps.now() < deadline) {
     const lock = deps.readUiLock();

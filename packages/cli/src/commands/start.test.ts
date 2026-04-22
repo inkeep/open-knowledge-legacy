@@ -904,8 +904,16 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
     expect(booted.resolvedUiPort).not.toBeNull();
     expect(booted.resolvedUiPort).not.toBe(3000);
     // Wait for the fire-and-forget in-process UI handle to settle so
-    // afterEach can tear it down; also lets us cross-check ports.
-    while (uiHandle === null) await new Promise((r) => setTimeout(r, 10));
+    // afterEach can tear it down; also lets us cross-check ports. The
+    // explicit deadline produces a specific failure message if the handle
+    // never populates, instead of relying on Bun's generic test timeout.
+    const handleDeadline = Date.now() + 5_000;
+    while (uiHandle === null) {
+      if (Date.now() > handleDeadline) {
+        throw new Error('in-process UI handle never settled within 5s');
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(booted.resolvedUiPort).toBe(uiHandle.port);
 
     // End-to-end proof: the port bootStartServer reports as `resolvedUiPort`
