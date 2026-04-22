@@ -1,15 +1,18 @@
 /**
  * `/api/config` client — fetches the UI's collab-bootstrap payload.
  *
- * Served by `ok ui` (FR-1.13) post-lifecycle-split: `{collabUrl, previewUrl,
- * port}` where `collabUrl` is `ws://localhost:<collab-port>/collab` when
- * `server.lock` is alive, else `null`. In `bun run dev` mode everything is
- * same-origin on one port so this endpoint is absent — the fetch will 404.
+ * Served by `ok ui` post-lifecycle-split AND by the Vite dev plugin
+ * (`packages/app/src/server/api-config-handler.ts`) — both answer with the
+ * same shape `{collabUrl, previewUrl, port}` where `collabUrl` is
+ * `ws://localhost:<port>/collab` when a collab server is bound, else `null`.
  *
  * Result classification:
  *   - `{ status: 'ok', config }` — endpoint responded with a valid shape.
- *   - `{ status: 'absent' }`      — 404 / 501. Caller should fall through to
- *                                   same-origin (`bun run dev` pattern).
+ *   - `{ status: 'absent' }`      — 404 / 501. Retained as defense-in-depth
+ *                                   for unusual deployments (misconfigured
+ *                                   proxy, mixed-version upgrade) that drop
+ *                                   the endpoint; caller falls back to the
+ *                                   same-origin WS URL.
  *   - `{ status: 'error', code }` — 5xx, network failure, or malformed body.
  *                                   Caller retries with backoff.
  *

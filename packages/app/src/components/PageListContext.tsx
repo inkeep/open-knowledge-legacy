@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
+import { setPageListCache } from '@/editor/page-list-cache';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { deriveKnownFolderPaths } from './navigation-targets';
 
@@ -163,6 +164,14 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
   const folderPaths = deriveKnownFolderPaths(pages);
+
+  // Publish to the page-list-cache side-channel so plain-DOM chip consumers
+  // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
+  // state without React context. `setPageListCache` absorbs no-op calls via
+  // Set-content equality — safe to call every render.
+  useEffect(() => {
+    setPageListCache({ pages, folderPaths });
+  }, [pages, folderPaths]);
 
   return (
     <PageListContext

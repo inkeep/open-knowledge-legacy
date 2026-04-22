@@ -1212,6 +1212,8 @@ Per D51 (macOS-only day-0), the shipping bar for v0 is "signed + notarized + sel
 
 ### M3 — Auto-update (install-on-quit)
 
+**Status (2026-04-21):** Scaffolding landed — `electron-updater@6.8.4` main-process module, `AppState` version fields, IPC surface (3 events + 1 request), `UpdateToast` renderer, and release-event-triggered `desktop-release.yml` are all shipped. End-state DOD bullets 4 and 5 (AC15 / AC16 smokes) remain creds-gated on M2 publishing a real signed DMG to GitHub Releases. Scope, decisions, and deferrals: [`specs/2026-04-21-m3-electron-updater/SPEC.md`](../2026-04-21-m3-electron-updater/SPEC.md). Operational detail: [`packages/desktop/README.md`](../../packages/desktop/README.md) §M3.
+
 **Scope:** Shipped DMG can update itself from GitHub Releases.
 
 **Definition of done:**
@@ -1238,7 +1240,7 @@ Per D51 (macOS-only day-0), the shipping bar for v0 is "signed + notarized + sel
 
 ### M5 — `@napi-rs/keyring` end-to-end in packaged build
 
-**Scope:** GitHub Device Flow + token storage round-trip works in a signed, notarized build.
+**Scope:** GitHub Device Flow + token storage round-trip works in a signed, notarized build.<br>_[Status 2026-04-21 post-ship: verification layer landed on `feat/m5-keyring-packaged-e2e` (3 commits; auto-smoke, debug IPC relay, runbook, unsigned-DMG driver). AC1–AC3 + AC8–AC10 green; AC4–AC7 creds-gated on notarization. Authoritative follow-up spec: [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](../2026-04-21-m5-keyring-packaged-e2e/SPEC.md)._]
 
 **Definition of done:**
 - In a signed DMG on fresh Mac: Device Flow → token received → `keyring.setPassword('open-knowledge', 'github-user', token)` succeeds; first-access shows *"Open Knowledge wants to access your keychain"* prompt (app name from `CFBundleDisplayName`, not utility process name — R16 verified).

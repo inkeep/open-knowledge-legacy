@@ -160,6 +160,7 @@ None new — M5's decisions (D31 substrate inheritance, R15 utilityProcess compa
 
 ## 11) References
 
+- [meta/investigation-findings.md](./meta/investigation-findings.md) — OQ-1 substrate read + D-M5-1 through D-M5-8 design decisions produced during implementer's codebase investigation. Read this before /decompose — it enumerates every file the implementer will create/modify, reconciles the `fallback-yaml.ts` aspirational name, and captures IPC/relay/correlation-ID decisions.
 - [Parent: specs/2026-04-11-electron-desktop-app/SPEC.md](../2026-04-11-electron-desktop-app/SPEC.md) — §14 M5 DOD, D31, D33 (postinstall rebuild), R15 (utilityProcess compat), R16 (prompt UX).
 - [reports/electron-ai-coding-agent-development/REPORT.md](../../reports/electron-ai-coding-agent-development/REPORT.md) — T1 research on `@napi-rs/keyring` + Apple Keychain prompt semantics.
 - [PR #166](https://github.com/inkeep/open-knowledge/pull/166) — merged `986ebafe` 2026-04-17 — GitHub-collaboration substrate including the `@napi-rs/keyring` + plaintext YAML fallback shape this spec verifies.

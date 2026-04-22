@@ -1,7 +1,6 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import type { Metadata } from 'next';
 import { DM_Sans } from 'next/font/google';
-import type { ReactNode } from 'react';
 import './global.css';
 
 const dmSans = DM_Sans({
@@ -19,7 +18,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function Layout({ children }: { children: ReactNode }) {
+export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" suppressHydrationWarning className={dmSans.variable}>
       <body>

@@ -75,14 +75,14 @@ describe('POST /api/agent-patch', () => {
     const sessionManager = new AgentSessionManager(hocuspocus);
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
-      const ytext = dc.document.getText('source');
+      const session = await sessionManager.getSession('test-doc');
+      const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
       // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
       // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
@@ -117,14 +117,14 @@ describe('POST /api/agent-patch', () => {
     const sessionManager = new AgentSessionManager(hocuspocus);
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
-      const ytext = dc.document.getText('source');
+      const session = await sessionManager.getSession('test-doc');
+      const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
       // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
       // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
@@ -156,14 +156,14 @@ describe('POST /api/agent-patch', () => {
     const sessionManager = new AgentSessionManager(hocuspocus);
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
-      const ytext = dc.document.getText('source');
+      const session = await sessionManager.getSession('test-doc');
+      const ytext = session.dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
       // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
       // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, initial, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callAgentPatch(hocuspocus, sessionManager, contentDir, {

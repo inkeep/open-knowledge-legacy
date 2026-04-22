@@ -1,3 +1,11 @@
+// Burst-grouping utility (FR-12, D20)
+export {
+  type Burst,
+  bucketIntoBursts,
+  type HumanEdit,
+  type SessionTransaction,
+} from './burst-grouping.ts';
+
 // Markdown pipeline (new unified+remark)
 
 // Re-export VFileMessage for Observer B's error classification (instanceof check
@@ -16,7 +24,6 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
-
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -41,6 +48,21 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
+export {
+  buildClaudeAiWebUrl,
+  buildClaudeUrl,
+  buildCodexUrl,
+  buildCursorUrl,
+  composePrompt,
+  type DocContext,
+  type HandoffFailureReason,
+  type HandoffOutcome,
+  type HandoffPayload,
+  type HandoffTarget,
+  type InstallState,
+  type TargetData,
+} from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,
@@ -95,13 +117,15 @@ export {
   type Scheduler,
 } from './bridge/index.ts';
 // Types
+export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
-  ActivityEntry,
+  AgentFlashEntry,
   AgentFocusEntry,
   AwarenessState,
   AwarenessUser,
 } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
+export type { Principal } from './types/principal.ts';
 export type {
   DiffLine,
   DiffLineType,
