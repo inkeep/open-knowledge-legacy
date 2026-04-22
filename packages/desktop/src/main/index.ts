@@ -41,7 +41,13 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
+import {
+  type DriverUtilityLike,
+  isDriverBootSmokeMode,
+  runDriverBootSmoke,
+} from './driver-boot-smoke.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
@@ -154,6 +160,7 @@ let wm: WindowManager;
  * after destroy.
  */
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
+let debugIpc: DebugIpcHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -162,6 +169,54 @@ let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
  * absent (packaged / prod), fall back to `loadFile(rendererEntryPath)`.
  */
 const rendererDevUrl = process.env.ELECTRON_RENDERER_URL ?? null;
+
+/**
+ * Runtime gate for the debug keyring-smoke channel (SPEC D-M5-7). Returns true
+ * when the app is not packaged (dev mode) OR the opt-in env var is set.
+ */
+function isDebugKeyringSmokeAllowed(): boolean {
+  return !app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1';
+}
+
+function runDriverBootSmokeInProduction(): void {
+  runDriverBootSmoke({
+    fork: (entry) => utilityProcess.fork(entry, [], {}) as unknown as DriverUtilityLike,
+    quit: () => {
+      try {
+        app.quit();
+      } catch {
+        // already quitting
+      }
+    },
+    setTimeout: (fn, ms) => {
+      setTimeout(fn, ms);
+    },
+    utilityEntryPath: join(__dirname, 'utility/server-entry.js'),
+  });
+}
+
+/**
+ * Appends the `--ok-debug-keyring-smoke=1` argv flag when the gate allows it,
+ * so the preload can populate `bridge.debug` (SPEC D-M5-8). Preload reads the
+ * flag via `parseArg` just like the other window-bound config fields.
+ */
+function withDebugFlagIfAllowed(args: readonly string[]): string[] {
+  return isDebugKeyringSmokeAllowed() ? [...args, '--ok-debug-keyring-smoke=1'] : [...args];
+}
+
+function ensureDebugIpc(): DebugIpcHandle {
+  if (debugIpc) return debugIpc;
+  debugIpc = createDebugIpc({
+    resolveUtility: (sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents);
+      if (!win || !wm) return null;
+      const ctx = wm.getContextForBrowserWindow(win as unknown as BrowserWindowLike);
+      return ctx?.utility ?? null;
+    },
+    isDebugAllowed: isDebugKeyringSmokeAllowed,
+  });
+  return debugIpc;
+}
 
 function ensureWindowManager() {
   if (wm) return;
@@ -186,7 +241,7 @@ function ensureWindowManager() {
         title: opts.title,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
-          additionalArguments: opts.additionalArguments,
+          additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),
           preload: join(__dirname, '../preload/index.js'),
         },
       });
@@ -232,6 +287,12 @@ function ensureWindowManager() {
     // a window opened via a symlinked project path. See window-manager.ts's
     // `canonicalizeKey` + `ProjectContext.canonicalKey` for the rationale.
     realpathSync: (p) => realpathSync(p),
+    onUtilityMessage: (msg) => {
+      ensureDebugIpc().handleUtilityMessage(msg);
+    },
+    onUtilityExit: (utility) => {
+      ensureDebugIpc().cancelPendingForUtility(utility);
+    },
   });
 }
 
@@ -248,7 +309,7 @@ function openNavigator() {
         height: 520,
         webPreferences: {
           ...DEFAULT_WIN_OPTS.webPreferences,
-          additionalArguments: opts.additionalArguments,
+          additionalArguments: withDebugFlagIfAllowed(opts.additionalArguments),
           preload: join(__dirname, '../preload/index.js'),
         },
       });
@@ -454,6 +515,10 @@ function registerIpcHandlers() {
     }
     return undefined;
   });
+
+  handle('ok:debug:keyring-smoke', async (event) => {
+    return ensureDebugIpc().requestKeyringSmoke(event.sender);
+  });
 }
 
 /**
@@ -545,13 +610,28 @@ function installLocalhostCorsInjector() {
 // argv to the primary via the `second-instance` listener registered below.
 // If we fail to acquire the lock we ARE the duplicate — exit without
 // registering any of the boot-time handlers below.
-const GOT_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
-if (!GOT_SINGLE_INSTANCE_LOCK) {
-  app.quit();
-}
+//
+// AC8 driver-mode exception (SPEC M5 D-M5-9): when the env triplet
+// `OK_DEBUG_KEYRING_SMOKE=1 + OK_DEBUG_KEYRING_SMOKE_EXIT=1` is set, the
+// packaged app is being launched by the `verify-keyring-in-packaged-dmg.mjs`
+// driver for a creds-free packaged-DMG smoke. Short-circuit at the top of
+// boot — spawn a standalone utility, wait for its auto-smoke + self-exit,
+// then `app.quit()`. No single-instance lock, no Navigator, no window
+// creation. The utility's auto-smoke writes `KeyringSmokeResult` JSON to
+// `OK_DEBUG_KEYRING_SMOKE_OUT` before exiting; the driver reads the file.
+if (isDriverBootSmokeMode(process.env)) {
+  app.whenReady().then(() => {
+    runDriverBootSmokeInProduction();
+  });
+} else {
+  const GOT_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
+  if (!GOT_SINGLE_INSTANCE_LOCK) {
+    app.quit();
+  }
 
-if (GOT_SINGLE_INSTANCE_LOCK) {
-  bootPrimaryInstance();
+  if (GOT_SINGLE_INSTANCE_LOCK) {
+    bootPrimaryInstance();
+  }
 }
 
 function bootPrimaryInstance(): void {

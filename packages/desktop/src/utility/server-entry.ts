@@ -20,7 +20,11 @@
  * is the human-side reminder.
  */
 
+import { rename, writeFile } from 'node:fs/promises';
 import type { BootedServer, BootServerOptions } from '@inkeep/open-knowledge-server';
+import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
+
+export type { KeyringSmokeResult } from './keyring-smoke.ts';
 
 /** IPC payload shapes (utility ↔ main). */
 export interface UtilityInitMessage {
@@ -33,7 +37,19 @@ export interface UtilityInitMessage {
 export interface UtilityShutdownMessage {
   type: 'shutdown';
 }
-export type UtilityIncomingMessage = UtilityInitMessage | UtilityShutdownMessage;
+/**
+ * Main → utility request to run the keyring smoke (M5 AC2, SPEC D-M5-2).
+ * `correlationId` is echoed back on the result message so concurrent requests
+ * resolve independently.
+ */
+export interface UtilityDebugKeyringSmokeMessage {
+  type: 'debug-keyring-smoke';
+  correlationId: string;
+}
+export type UtilityIncomingMessage =
+  | UtilityInitMessage
+  | UtilityShutdownMessage
+  | UtilityDebugKeyringSmokeMessage;
 
 export interface UtilityReadyMessage {
   type: 'ready';
@@ -55,10 +71,21 @@ export interface UtilityDegradedMessage {
   type: 'degraded';
   subsystems: readonly string[];
 }
+/**
+ * Utility → main keyring-smoke result. Pairs with a prior
+ * `UtilityDebugKeyringSmokeMessage`; the main-side relay matches by
+ * `correlationId`.
+ */
+export interface UtilityDebugKeyringSmokeResultMessage {
+  type: 'debug-keyring-smoke-result';
+  correlationId: string;
+  result: KeyringSmokeResult;
+}
 export type UtilityOutgoingMessage =
   | UtilityReadyMessage
   | UtilityErrorMessage
-  | UtilityDegradedMessage;
+  | UtilityDegradedMessage
+  | UtilityDebugKeyringSmokeResultMessage;
 
 /**
  * Test seam — the entry script runs `setupUtility(...)` with real `parentPort` /
@@ -90,6 +117,24 @@ export interface SetupUtilityDeps {
   setInterval: (cb: () => void, ms: number) => { unref?: () => void; clear: () => void };
   /** Poll cadence for parent-death check (ms). Default 5000. */
   parentPollMs?: number;
+  /**
+   * Keyring smoke runner — injectable for tests. Production defaults to
+   * `runKeyringSmoke` from `./keyring-smoke.ts`.
+   */
+  runSmoke?: () => Promise<KeyringSmokeResult>;
+  /**
+   * Environment provider — `process.env` in production. Tests inject a
+   * plain object so `OK_DEBUG_KEYRING_SMOKE*` can be toggled per test
+   * without leaking into sibling tests.
+   */
+  env?: Record<string, string | undefined>;
+  /**
+   * Atomic file writer for the boot-time smoke output (SPEC US-005).
+   * Production writes via `fs.promises.writeFile` to a tmp path then
+   * `rename` to the final path. Tests inject a spy so output filename and
+   * payload can be asserted without touching the filesystem.
+   */
+  writeSmokeResult?: (path: string, contents: string) => Promise<void>;
 }
 
 export interface UtilityHandle {
@@ -219,15 +264,81 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     }
   }
 
-  // Register IPC listener
-  deps.parentPort?.on('message', (event) => {
-    const msg = event.data as UtilityIncomingMessage;
-    if (msg?.type === 'init') {
-      void handleInit(msg);
-    } else if (msg?.type === 'shutdown') {
-      void shutdown('shutdown-ipc');
+  const runSmoke = deps.runSmoke ?? runKeyringSmoke;
+  const env = deps.env ?? (process.env as Record<string, string | undefined>);
+  const writeSmokeResult = deps.writeSmokeResult ?? defaultWriteSmokeResult;
+
+  async function handleDebugKeyringSmoke(msg: UtilityDebugKeyringSmokeMessage): Promise<void> {
+    const result = await runSmoke();
+    deps.parentPort?.postMessage({
+      type: 'debug-keyring-smoke-result',
+      correlationId: msg.correlationId,
+      result,
+    });
+  }
+
+  function registerMessageListener(): void {
+    deps.parentPort?.on('message', (event) => {
+      const msg = event.data as UtilityIncomingMessage;
+      if (msg?.type === 'init') {
+        void handleInit(msg);
+      } else if (msg?.type === 'shutdown') {
+        void shutdown('shutdown-ipc');
+      } else if (msg?.type === 'debug-keyring-smoke') {
+        void handleDebugKeyringSmoke(msg);
+      }
+    });
+  }
+
+  async function runBootAutoSmoke(): Promise<void> {
+    const result = await runSmoke();
+    const outPath = env.OK_DEBUG_KEYRING_SMOKE_OUT;
+    if (outPath && outPath.length > 0) {
+      try {
+        await writeSmokeResult(outPath, `${JSON.stringify(result)}\n`);
+      } catch (err) {
+        // Non-fatal: log + continue so a permissions failure on the output
+        // path doesn't leave the driver hung waiting for an exit that never
+        // comes. The driver's missing-output-file branch (US-006 AC) will
+        // surface this on its side.
+        console.warn('[utility] auto-smoke write failed', {
+          err: (err as Error).message,
+          outPath,
+        });
+      }
     }
-  });
+    // Observability-only IPC for the dev-mode auto-smoke path — `correlationId:
+    // 'auto-boot'` will never match a pending entry in the main-side relay's
+    // correlation Map (the renderer doesn't register 'auto-boot' as a pending
+    // id), so `handleUtilityMessage` drops it on the floor. We still post it
+    // because: (a) SPEC US-005 mandates the IPC regardless of EXIT mode, (b)
+    // an existing test pins the shape, and (c) a future DevTools listener
+    // that wants to watch auto-boot results can filter on the sentinel id
+    // without a server-entry code change. Under EXIT=1 the post is best-effort
+    // fire-and-forget (the process is about to exit); the driver script reads
+    // the OUT file, not this IPC.
+    deps.parentPort?.postMessage({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'auto-boot',
+      result,
+    });
+    if (env.OK_DEBUG_KEYRING_SMOKE_EXIT === '1') {
+      deps.exit(0);
+      return;
+    }
+    registerMessageListener();
+  }
+
+  // SPEC D-M5-6 — when OK_DEBUG_KEYRING_SMOKE=1 is set, the utility runs the
+  // smoke ONCE at boot, BEFORE the `init` message is dispatched. Node.js
+  // buffers messages posted to parentPort until a listener is registered, so
+  // delaying `registerMessageListener()` until after the smoke completes
+  // guarantees the ordering without dropping messages.
+  if (env.OK_DEBUG_KEYRING_SMOKE === '1') {
+    void runBootAutoSmoke();
+  } else {
+    registerMessageListener();
+  }
 
   // Signal handlers
   deps.onSignal('SIGTERM', () => void shutdown('SIGTERM'));
@@ -241,6 +352,17 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
     stopParentPoll,
     shutdown,
   };
+}
+
+/**
+ * Default atomic file writer for the smoke output — write to `<path>.tmp`
+ * then `rename` to `<path>`, so a reader never sees a partially-written
+ * payload. The driver script (US-006) is the primary consumer.
+ */
+async function defaultWriteSmokeResult(path: string, contents: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, contents, { encoding: 'utf-8' });
+  await rename(tmp, path);
 }
 
 // Production entry — auto-runs when imported by `utilityProcess.fork(<this-file>)`.

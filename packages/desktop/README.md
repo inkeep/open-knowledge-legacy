@@ -6,7 +6,11 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. M4 shipped (`openknowledge://` URL scheme deep-linking on macOS — see ["Deep linking"](#deep-linking-openknowledge-url-scheme) below). See SPEC §14 for M3, M5–M7.
+M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. M4 shipped (`openknowledge://` URL scheme deep-linking on macOS — see ["Deep linking"](#deep-linking-openknowledge-url-scheme) below).
+
+M3 shipped (electron-updater wiring + toasts + release workflow — see ["M3 — Auto-update"](#m3--auto-update-electron-updater--install-on-quit) below). M5 keyring packaged-E2E verification layer landed — utility-process `runKeyringSmoke`, main↔utility debug IPC relay, boot-time auto-smoke mode, unsigned-DMG driver, 11-step signed runbook. Creds-free ACs (AC1–AC3, AC8–AC10) are green; signed-build ACs (AC4–AC7) are executable via the [manual runbook](#signed-dmg-manual-runbook-creds-gated) once Apple Developer credentials are on the test machine. See [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](../../specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md) and [`#keychain--auth-m5`](#keychain--auth-m5) for full detail.
+
+See SPEC §14 for the remaining M6 + M7 milestones.
 
 ## Process model
 
@@ -205,14 +209,17 @@ This is how MCP tool responses (e.g. `write_document` returning a `previewUrl`) 
 | `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
 | `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
 | `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
-| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path                        |
+| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path; M5 `ok:debug:keyring-smoke` routing to per-window utility |
 | `tests/main/url-scheme-handler.test.ts`                      | M4 handler: queue-then-flush retry loop, argv scan, dev-mode `setAsDefaultProtocolClient`, routing dispatch          |
 | `src/main/url-scheme.test.ts`                                | M4 parser: valid/malformed/null-byte/path-traversal fixtures for `parseOpenKnowledgeUrl`                            |
 | `src/main/utility-fork-env.test.ts`                          | M4 env injection: `buildUtilityForkEnv` sets `OK_ELECTRON_PROTOCOL_HOST=1` without bleeding to other forks           |
+| `src/main/debug-ipc.test.ts`                                 | M5 main↔utility debug IPC relay: correlation-ID map, 10 s default timeout, clean-on-resolve / clean-on-timeout        |
 | `tests/smoke/deep-link.e2e.ts`                               | M4 warm-start smoke (opt-in via `OK_DESKTOP_E2E_SMOKE=1` + `bun run build:desktop`)                                  |
 | `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
-| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit                                                           |
+| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit, M5 `debug-request` dispatcher + boot-time auto-smoke      |
+| `src/utility/keyring-smoke.test.ts`                          | M5 `runKeyringSmoke(deps?)` primitive: success round-trip + cleanup, error shapes, injectable-dep YAML-fallback path |
 | `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
+| `tests/unit/verify-keyring-driver.test.mjs`                  | M5 `scripts/verify-keyring-in-packaged-dmg.mjs` driver: exit-code mapping (0/1/2/3), arg parsing, env-var plumbing   |
 
 Run the full gate from the repo root (`bun run check`) or scope to this package with `cd packages/desktop && bun test`.
 
@@ -400,6 +407,71 @@ Real-world error telemetry (Sentry integration) is deferred to FW5 — promote w
 
 Both verified once M2 FU-1 + FU-2 close and the first signed DMG lands. Workflow files (`desktop-release.yml`) are committed and lint-validated; dispatch path is gated on creds.
 
+## Keychain + auth (M5)
+
+Open Knowledge stores GitHub OAuth tokens via `@napi-rs/keyring` → macOS Keychain (the substrate was merged as PR #166). M5 wires up the end-to-end verification that proves the binding loads + round-trips in the packaged, signed, notarized build. Full spec: [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](../../specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md).
+
+### Prompt UX — `CFBundleDisplayName` contract (R16)
+
+The first-access Keychain ACL prompt reads **"Open Knowledge" wants to use your confidential information…**. The string comes from `CFBundleDisplayName` in `Info.plist`, which electron-builder auto-derives from `productName: Open Knowledge` in [`electron-builder.yml`](./electron-builder.yml). **Do not rename the product in only one place** — a mismatch between the signed bundle's internal name and the user-visible Keychain prompt is what the R16 test guards against.
+
+- If a future cosmetic rename is proposed (e.g. marketing wants "Open Knowledge Desktop"), update `productName` in `electron-builder.yml` ONLY and re-run the full M5 signed runbook — every user who already authenticated under the old name will see a new first-access prompt even though the token is preserved (the ACL grant is keyed by `appId`, not `CFBundleDisplayName`).
+
+### Bundle-ID stability contract
+
+The `appId: com.inkeep.open-knowledge` in `electron-builder.yml` is **LOCKED forever**. Changing it breaks every existing user's Keychain access — their token stays in the keychain (keyed by `com.inkeep.open-knowledge`), but the newly-signed app bundle with the new ID cannot read it. Users appear signed out on next launch, with no recoverable state.
+
+Changing the Apple Developer Team ID (e.g. migrating between Apple Developer accounts) triggers the same break: macOS treats a bundle signed under a different Team ID as a different app for ACL purposes. Any future Team ID change requires a data-migration plan (re-auth flow, preserved session cookies, or silent Device Flow); that's explicitly not covered here.
+
+The `electron-version` contract test (`tests/unit/scaffold.test.ts`) enforces version-pin consistency mechanically. An `appId` stability test is not yet wired up because the value is referenced in exactly one place; if the appId ever gets split across multiple source files, add a similar drift catcher.
+
+### Dev-vs-release coexistence (OQ-4)
+
+If a developer runs both a signed release DMG and an unsigned local build on the same Mac, macOS may treat them as different apps for ACL purposes (the signing identity is part of the chain-of-trust check). Result: the dev build prompts independently on first Keychain access even though both bundles share `appId: com.inkeep.open-knowledge`.
+
+This is intentional. `appId` identifies the user-perceived app; the code-signing identity differentiates release-quality from dev-quality for security policy.
+
+### Debugging locally
+
+The utility process exposes a namespace-scoped keyring smoke (service `open-knowledge-smoke`, account `test-user` — distinct from production's `open-knowledge`/`<host>` so they cannot collide). Run it in dev mode:
+
+```bash
+bun run --filter=@inkeep/open-knowledge-desktop dev
+# In the editor window's DevTools Console:
+await window.okDesktop.debug.keyringSmoke()
+// → { ok: true, backend: 'keyring', durationMs: N, timestamp: '2026-…' }
+```
+
+The `bridge.debug` namespace only exists when the runtime gate allows it: app is NOT packaged (dev mode is always open), OR `OK_DEBUG_KEYRING_SMOKE=1` is set in the environment that launched the app. In normal packaged runs, `window.okDesktop.debug` is `undefined` and a typo like `window.okDesktop.debug.keyringSmoke()` surfaces at TypeScript compile time — not at runtime in production.
+
+### Headless / CI smoke — unsigned DMG
+
+For creds-free pre-flight before the manual signed runbook, use the driver:
+
+```bash
+# Against an .app directly (fastest):
+bun run --cwd packages/desktop build:mac:unsigned
+node scripts/verify-keyring-in-packaged-dmg.mjs \
+  packages/desktop/dist-desktop/mac/Open\ Knowledge.app
+
+# Against an .dmg (mounts + copies + detaches + launches):
+node scripts/verify-keyring-in-packaged-dmg.mjs \
+  packages/desktop/dist-desktop/Open\ Knowledge-<version>-universal.dmg
+```
+
+Exit codes:
+
+- `0` — smoke reported `ok:true` (backend loaded + round-trip succeeded)
+- `1` — smoke reported `ok:false` (binding failed, read mismatch, etc.)
+- `2` — app did not exit within the 30 s timeout (stuck on boot, or bad args)
+- `3` — app exited without writing the output file (pre-smoke crash)
+
+The driver sets `OK_DEBUG_KEYRING_SMOKE=1 + OK_DEBUG_KEYRING_SMOKE_EXIT=1 + OK_DEBUG_KEYRING_SMOKE_OUT=<tmp>` in the child environment, so the utility auto-runs the smoke at boot (before the `init` IPC) and the app exits after writing JSON. This is the only creds-free way to prove the native binding works under the packaged hardened-runtime environment — dev mode doesn't exercise the entitlements + fuses + signed-binary loader path.
+
+### Signed-DMG manual runbook (creds-gated)
+
+See [`tests/smoke/keyring-e2e.md`](./tests/smoke/keyring-e2e.md) for the 11-step procedure covering the four AC4–AC7 proof points: CFBundleDisplayName prompt UX, relaunch persistence, v0.1.0→v0.1.1 upgrade persistence, `log show` caller-attribution evidence. Runnable once Apple Developer credentials (`CSC_LINK`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) are available on the test machine.
+
 ## Scope boundary
 
-This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme). Work that belongs to M5–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the CLI-on-PATH menu item (M6) and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification. Work that belongs to M6–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the CLI-on-PATH menu item (M6) and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.

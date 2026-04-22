@@ -218,6 +218,24 @@ export interface WindowManagerDeps {
     warn(obj: object, msg: string): void;
     error(obj: object, msg: string): void;
   };
+  /**
+   * Post-init persistent message listener. Installed once after the
+   * init-phase `ready` handshake settles, so messages like
+   * `debug-keyring-smoke-result` (M5 US-004) are routed to their main-side
+   * consumer without competing with the init-phase listener. Invoked for
+   * every subsequent utility message regardless of shape; consumer is
+   * expected to narrow by `msg.type` and no-op on unknown shapes.
+   */
+  onUtilityMessage?(msg: unknown): void;
+  /**
+   * Notified whenever a utility process emits `exit` (normal shutdown OR
+   * crash). The debug-ipc relay uses this to cancel any pending
+   * `debug-keyring-smoke` requests that were posted to this utility —
+   * otherwise those entries sit in the pending Map until their per-request
+   * timeout fires. Called with the same `utility` reference that was passed
+   * to `onUtilityMessage`, so the consumer can identity-match.
+   */
+  onUtilityExit?(utility: UtilityProcessLike): void;
 }
 
 export class WindowManager {
@@ -416,6 +434,16 @@ export class WindowManager {
 
     const { port, apiOrigin, didGitInit } = await ready;
 
+    // Persistent post-init message listener (M5 US-004). The init-phase
+    // listener (above) was detached by `settle()` once `ready`/`error`
+    // resolved; this new listener observes every subsequent message so
+    // main-side consumers (e.g., the debug-ipc relay's correlation map)
+    // can route replies. No-op when `onUtilityMessage` is not wired.
+    if (this.deps.onUtilityMessage) {
+      const onMessage = this.deps.onUtilityMessage;
+      utility.on('message', (msg) => onMessage(msg));
+    }
+
     // D39 post-exit liveness probe — covers the case where utilityProcess.on('exit')
     // fires but the pid is still alive (VS Code Issue #194477). This handler runs
     // for the lifetime of the window; the init-phase exit handler above wired a
@@ -424,6 +452,11 @@ export class WindowManager {
     utility.on('exit', (code) => {
       this.deps.log?.info({ pid: utility.pid, code }, 'utility exited');
       this.windowsByPath.delete(canonicalKey);
+      // Reject any in-flight debug-IPC requests bound to this utility so
+      // pending entries don't linger for the full timeout window after a
+      // crash. Same utility reference used by `onUtilityMessage`, enabling
+      // identity-match in the consumer's pending Map.
+      this.deps.onUtilityExit?.(utility);
       const pid = utility.pid;
       if (typeof pid === 'number') {
         this.deps.setTimeout(() => {

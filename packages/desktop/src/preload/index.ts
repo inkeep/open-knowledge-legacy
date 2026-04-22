@@ -133,4 +133,14 @@ const bridge: OkDesktopBridge = {
   appVersion: parseArg('app-version') ?? '0.0.0',
 };
 
+// Debug namespace — populated ONLY when main decided the runtime gate is
+// open (SPEC D-M5-8). When the flag is absent, `bridge.debug` stays
+// undefined so a typo in renderer code calling the method surfaces at
+// TypeScript compile time.
+if (parseArg('debug-keyring-smoke') === '1') {
+  bridge.debug = {
+    keyringSmoke: () => invoke('ok:debug:keyring-smoke'),
+  };
+}
+
 contextBridge.exposeInMainWorld('okDesktop', bridge);
