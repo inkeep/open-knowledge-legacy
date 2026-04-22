@@ -2901,7 +2901,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
       // — which also skips the following `scheduleGitCommit()`, orphaning any
       // `recordContributor(...)` entry we add below into the next unrelated
-      // write's L2 commit (BUG-1 from the agent-write-summaries QA run).
+      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
       // Letting `onStoreDocument` fire naturally writes disk AND updates the
       // reconciled base (line 497 of persistence.ts), which is the correct order.
 
@@ -2943,7 +2943,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
       // the shared `flushDocToGit` helper (same pattern as the three
       // agent-write handlers) rather than a raw `flushGitCommit()` which
-      // no-ops when no L2 timer is set yet (BUG-1 fix).
+      // no-ops when no L2 timer is set yet.
       flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
@@ -3576,6 +3576,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // `flushDocToGit(newDocName, ...)` because the source doc may no
         // longer be open after `_performManagedRename` closed it.
         flushDocToGit(newDocName as string, 'rename');
+      }
+
+      // Flush the shadow-repo WIP commit so the rename attribution lands on
+      // the commit produced by `_performManagedRename`'s `unloadDocument`
+      // path (which schedules `scheduleGitCommit` via `onStoreDocument` on
+      // source unload) rather than orphaning into the next unrelated write's
+      // commit. Parallels the `flushDocToGit(...)` call in `handleRollback`
+      // above; uses `flushDocToGit(newDocName, ...)` because the source doc
+      // is already unloaded (its debouncer entry is cleared), and the
+      // fallback path is just `flushGitCommit?.()` which drains the
+      // already-scheduled timer with the now-populated contributor entry.
+      if (hasAgentId) {
+        flushDocToGit(newDocName, 'rename');
       }
 
       json(res, 200, {

@@ -73,17 +73,45 @@ function buildBacklinkIndex(contentDir: string): BacklinkIndex {
   return index;
 }
 
+/** Captures calls to the `flushGitCommit` hook so the leak-fix regression
+ *  test can assert that handleRename / handleRollback drain pending
+ *  contributors into their own L2 commit instead of leaking into the next
+ *  unrelated write's commit (BUG-1 from /qa Phase 7, fixed on feat/agent-write-summaries). */
+type FlushGitCommitSpy = {
+  readonly calls: ReadonlyArray<number>;
+  fn: () => Promise<void>;
+};
+
+function createFlushGitCommitSpy(): FlushGitCommitSpy {
+  const calls: number[] = [];
+  const fn = async (): Promise<void> => {
+    calls.push(Date.now());
+  };
+  return { calls, fn };
+}
+
 async function callApi(
   contentDir: string,
   url: string,
   body: unknown,
   backlinkIndex?: BacklinkIndex,
+  flushGitCommit?: () => Promise<void>,
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {
       documents: new Map(),
       closeConnections() {},
       unloadDocument: async () => {},
+      // Minimal debouncer stub — flushDocToGit (called by rollback/rename
+      // post-fix) reads hocuspocus.debouncer.isDebounced. In this unit
+      // harness there are no loaded docs and no pending debounced writes,
+      // so `isDebounced` always returns false and `executeNow` is never
+      // invoked. The real behavior under a live Hocuspocus instance is
+      // covered end-to-end by summary-e2e.test.ts.
+      debouncer: {
+        isDebounced: () => false,
+        executeNow: async () => undefined,
+      },
     } as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {
       closeSession: async () => {},
@@ -92,6 +120,7 @@ async function callApi(
     contentDir,
     getFileIndex: () => buildFileIndex(contentDir),
     backlinkIndex: backlinkIndex ?? buildBacklinkIndex(contentDir),
+    ...(flushGitCommit ? { flushGitCommit } : {}),
   });
   const req = makeReq(url, 'POST', body);
   const { res, captured } = makeRes();
@@ -284,5 +313,97 @@ describe('handleRollback — D22 agentId-guarded attribution (regression gate)',
     expect(response.status).toBe(400);
     expect(formatContributors()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
+  });
+});
+
+describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
+  // Prior to the fix: handleRollback called `setReconciledBase(docName, markdown)`
+  // BEFORE `onStoreDocument` fired, which tripped persistence's
+  // "skip write when serialized === currentBase" guard and dropped the L1 disk
+  // write (and thus its `scheduleGitCommit()` call). The pending contributor
+  // entry from `recordContributor(...)` then stayed in `pendingContributors`
+  // until the next UNRELATED write's onStoreDocument fired — polluting that
+  // commit's `ok-contributors:` line with stale "Restored to <sha>" bullets
+  // and stale docs. handleRename had a parallel leak because
+  // `_performManagedRename` does sync fs writes that bypass Hocuspocus's
+  // onStoreDocument entirely, and the handler did not explicitly flush L2.
+  //
+  // Fix: both handlers now call `flushDocToGit(<docName>, <label>)` after
+  // `recordContributor`. That helper forces the per-doc L1 debouncer
+  // (`onStoreDocument-<docName>`) via `executeNow`, then calls
+  // `flushGitCommit?.()` to drain any pending L2 timer synchronously —
+  // ensuring the rename/rollback's own commit carries its own attribution.
+
+  test('handleRename with agentId triggers flushGitCommit after recordContributor', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    const spy = createFlushGitCommitSpy();
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+        agentId: 'claude-1',
+        agentName: 'Claude',
+      },
+      undefined,
+      spy.fn,
+    );
+
+    expect(response.status).toBe(200);
+    // The fix calls flushDocToGit which ultimately calls flushGitCommit.
+    // Note: flushDocToGit chains `l1.then(() => flushGitCommit?.())` —
+    // the flush is kicked but not awaited by the handler. Give the
+    // microtask queue a beat to resolve.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(spy.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('handleRename WITHOUT agentId does NOT trigger flushGitCommit (no attribution → no flush needed)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    const spy = createFlushGitCommitSpy();
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+      },
+      undefined,
+      spy.fn,
+    );
+
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setImmediate(resolve));
+    // UI-driven rename path should not kick a flush on its behalf — the
+    // flush is there to drain newly-added attribution; no agentId → no
+    // attribution → no flush. This also keeps UI-driven paths as lean
+    // as they were pre-feature.
+    expect(spy.calls.length).toBe(0);
+  });
+
+  test('handleRename WITH wrong-type summary does NOT trigger flushGitCommit (early-return 400)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    const spy = createFlushGitCommitSpy();
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+        agentId: 'claude-1',
+        summary: 42,
+      },
+      undefined,
+      spy.fn,
+    );
+
+    expect(response.status).toBe(400);
+    await new Promise((resolve) => setImmediate(resolve));
+    // 400 path short-circuits before recordContributor / flushDocToGit.
+    expect(spy.calls.length).toBe(0);
   });
 });
