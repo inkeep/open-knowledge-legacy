@@ -6,7 +6,7 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. See SPEC §14 for M3–M7.
+M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. M4 shipped (`openknowledge://` URL scheme deep-linking on macOS — see ["Deep linking"](#deep-linking-openknowledge-url-scheme) below). See SPEC §14 for M3, M5–M7.
 
 ## Process model
 
@@ -54,7 +54,9 @@ packages/desktop/
 │   │   ├── navigator-window.ts    # createNavigatorWindow — persistent launcher
 │   │   ├── state-store.ts         # electron-store for recents + window bounds
 │   │   ├── shell-allowlist.ts     # shell.openExternal scheme allowlist (D47 + Open-in-Agent)
-│   │   └── ipc-handlers.ts        # pure handlers: detect-protocol, spawn-cursor, record-handoff
+│   │   ├── ipc-handlers.ts        # pure handlers: detect-protocol, spawn-cursor, record-handoff
+│   │   ├── url-scheme.ts          # openknowledge:// parser + queue-then-flush handler (M4)
+│   │   └── utility-fork-env.ts    # OK_ELECTRON_PROTOCOL_HOST=1 injection for utility fork (M4)
 │   ├── preload/
 │   │   └── index.ts               # contextBridge.exposeInMainWorld('okDesktop', ...)
 │   ├── utility/
@@ -132,6 +134,69 @@ The Cursor two-step step 1 is wired on the Electron host only — the web host r
 
 The editor renderer is the existing `packages/app/` Vite bundle, loaded through `webPreferences.additionalArguments` which injects `window.okDesktop.config` at preload-exposure time. The app's `useCollabUrl` hook (`packages/app/src/lib/use-collab-url.ts`) short-circuits on `window.okDesktop?.config.collabUrl` and skips the `/api/config` poll path used by the web/CLI distribution. When `mode === 'navigator'`, `packages/app/src/main.tsx` mounts `NavigatorApp` instead of the editor shell.
 
+## Deep linking (`openknowledge://` URL scheme)
+
+Any app (Terminal, Mail, Slack, Claude Desktop) can deep-link into a project window on macOS via:
+
+```
+openknowledge://open?project=<absolute-project-path>&doc=<doc-name>
+```
+
+Both query values are URL-encoded. `project` must be an absolute path; `doc` is a relative name inside the project (no `..`, no `/`, no `\`). The `open` host is the only one recognized in v0 — other hosts silent-drop. URL shape is LOCKED by parent spec D43 (it is the MCP contract M6 depends on).
+
+### Terminal smoke
+
+```bash
+open "openknowledge://open?project=/abs/path/to/project&doc=example.md"
+```
+
+- **Cold-start** (app not running): OK launches → editor window spawns for the project → renderer navigates to the doc.
+- **Warm-start, same project** already open: existing window focuses + navigates. No duplicate.
+- **Warm-start, different project**: a new editor window spawns. D24 — every project pick spawns its own window.
+
+### Validation & silent-drop
+
+URL parsing is in `src/main/url-scheme.ts`. Malformed URLs emit a single `[url-scheme] dropped malformed URL` warn-log and otherwise do nothing — no error dialog, no window spawn. Reject triggers:
+
+- Null bytes anywhere in the raw input (including layered encodings like `%2500`).
+- Protocol other than `openknowledge:` or host other than `open`.
+- `project` or `doc` missing, empty, or fails URL-decoding.
+- `project` is not absolute, or contains `..` segments (checked on the decoded-but-unnormalized path — `path.resolve` / `path.normalize` would silently flatten traversal and are not safe gates).
+- `doc` contains `/`, `\`, or equals `..`.
+
+### macOS cold-start queue-then-flush
+
+`open-url` Apple Events can fire before `app.whenReady()` on macOS ([electron/electron#32600](https://github.com/electron/electron/issues/32600)). `registerProtocolHandler` is called synchronously at the top of `src/main/index.ts` — BEFORE `whenReady` — and enqueues URLs until the first BrowserWindow is ready. The drain loop retries 10 × 500 ms (the VS Code [`ElectronURLListener`](https://github.com/microsoft/vscode/blob/main/src/vs/platform/url/electron-main/electronUrlListener.ts) convention) before flushing unconditionally.
+
+CLI / dev launches (e.g. `Open\ Knowledge.app/Contents/MacOS/Open\ Knowledge openknowledge://...`) deliver the URL via `process.argv` rather than firing an Apple Event, so `app.on('second-instance', ...)` also scans argv for `openknowledge://` strings.
+
+### Dev mode
+
+Unpackaged Electron's `Info.plist` belongs to the Electron shell, not this app — so Launch Services has no OS-level binding to forward Apple Events at dev time. `registerProtocolHandler` calls `app.setAsDefaultProtocolClient('openknowledge')` automatically when `app.isPackaged === false`, writing a runtime binding so `open openknowledge://...` targets the dev instance. Packaged builds rely on the `CFBundleURLTypes` declaration already in `electron-builder.yml` (shipped at M1 scaffolding time).
+
+### Playwright smoke test
+
+`tests/smoke/deep-link.e2e.ts` exercises the warm-start delivery path via `execSync('open -g "openknowledge://..."')` — this dispatches through macOS Launch Services like a real user click. Gated by `OK_DESKTOP_E2E_SMOKE=1` (default-off so `bunx playwright test` on the full repo doesn't try to launch Electron on headless CI):
+
+```bash
+bun run build:desktop
+OK_DESKTOP_E2E_SMOKE=1 bunx playwright test packages/desktop/tests/smoke/deep-link.e2e.ts
+```
+
+The test polls `app.windows()` for a hash ending in the target doc, with a 5s budget. Passes in ~2.3s locally.
+
+**Cold-start Apple-Event simulation is a documented deferred gap.** Playwright's `_electron.launch({ args: [url] })` delivers the URL via `process.argv` (exercising the `second-instance` argv path), NOT via an `open-url` Apple Event. True cold-start Apple-Event simulation requires a signed/notarized DMG so macOS Launch Services binds the scheme to this specific bundle instead of the generic Electron shell — tracked alongside the M2 packaged-build harness.
+
+### MCP `previewUrl` integration
+
+The CLI's `preview-url.ts` helper has a highest-precedence `electron-protocol` source: when `OK_ELECTRON_PROTOCOL_HOST=1` is set in the server environment (the desktop main process injects it at `utilityProcess.fork` time via `buildUtilityForkEnv`), and the content dir's `realpathSync` resolves, the helper emits `openknowledge://open?project=<realpath>&doc=<docName>` instead of `http://localhost:<port>/#/<docName>`. CLI / `bunx` servers never set the flag, so they keep the HTTP preview URL behavior.
+
+This is how MCP tool responses (e.g. `write_document` returning a `previewUrl`) deep-link the user back into the exact doc an agent just touched, routed through the main-process URL handler to the correct project window.
+
+### Renderer subscriber
+
+`packages/app/src/lib/install-deep-link-listener.ts` subscribes to the `ok:deep-link` bridge event during `main.tsx` module init (before React mount, so the first event can't race). On receipt it sets `window.location.hash = '#/' + encodeURIComponent(doc)` — the existing hash-route listener in `App` then opens the doc. No-op in web / CLI distributions (`window.okDesktop` undefined).
+
 ## Testing
 
 | File                                                         | What it covers                                                                                                      |
@@ -140,7 +205,11 @@ The editor renderer is the existing `packages/app/` Vite bundle, loaded through 
 | `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
 | `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
 | `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
-| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch                                                                     |
+| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path                        |
+| `tests/main/url-scheme-handler.test.ts`                      | M4 handler: queue-then-flush retry loop, argv scan, dev-mode `setAsDefaultProtocolClient`, routing dispatch          |
+| `src/main/url-scheme.test.ts`                                | M4 parser: valid/malformed/null-byte/path-traversal fixtures for `parseOpenKnowledgeUrl`                            |
+| `src/main/utility-fork-env.test.ts`                          | M4 env injection: `buildUtilityForkEnv` sets `OK_ELECTRON_PROTOCOL_HOST=1` without bleeding to other forks           |
+| `tests/smoke/deep-link.e2e.ts`                               | M4 warm-start smoke (opt-in via `OK_DESKTOP_E2E_SMOKE=1` + `bun run build:desktop`)                                  |
 | `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
 | `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit                                                           |
 | `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
@@ -333,4 +402,4 @@ Both verified once M2 FU-1 + FU-2 close and the first signed DMG lands. Workflow
 
 ## Scope boundary
 
-This package is M1 + M2-scaffolding + M3-auto-update-scaffolding. Work that belongs to M4–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the `openknowledge://` protocol handler (M4), do not implement the CLI-on-PATH menu item (M6), and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme). Work that belongs to M5–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the CLI-on-PATH menu item (M6) and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
