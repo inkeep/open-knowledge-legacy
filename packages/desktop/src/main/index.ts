@@ -39,8 +39,8 @@ import {
 } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
-import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
   detectProtocol as detectProtocolImpl,

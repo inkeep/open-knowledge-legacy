@@ -351,16 +351,26 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     await flushPromises();
 
     // First flush attempt schedules a retry because no window exists yet.
-    // Walk 10 retries, none should dispatch the route.
-    for (let i = 0; i < 10; i++) {
+    // Walk retries 1..9, asserting each rescheduled another retry without
+    // draining. Retry 10 is handled separately below — its tick is the
+    // final-attempt boundary where drain MUST fire regardless of window state.
+    for (let retryIndex = 1; retryIndex <= 9; retryIndex++) {
       expect(env.timers.length).toBe(1);
       expect(env.timers[0]?.ms).toBe(500);
       expect(env.openProject).not.toHaveBeenCalled();
       tickTimer(env);
       await flushPromises();
+      // After retries 1..9 fired, still no drain — just another 500ms retry scheduled.
+      expect(env.openProject).not.toHaveBeenCalled();
     }
-    // 10th tick is the final attempt — drain fires regardless. Cold-path
-    // always threads pendingDeepLinkDoc through openProject.
+    // Retry 10 is the final attempt. Before we tick it, drain has NOT fired.
+    expect(env.timers.length).toBe(1);
+    expect(env.timers[0]?.ms).toBe(500);
+    expect(env.openProject).not.toHaveBeenCalled();
+    tickTimer(env);
+    await flushPromises();
+    // After retry 10, drain fires unconditionally (even with no ready window).
+    // Cold-path always threads pendingDeepLinkDoc through openProject.
     expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
   });
 

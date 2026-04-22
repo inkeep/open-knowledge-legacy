@@ -62,7 +62,6 @@ if (typeof window !== 'undefined') {
   installDeepLinkListener({ bridge: window.okDesktop });
 }
 
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, staleTime: 10_000 },

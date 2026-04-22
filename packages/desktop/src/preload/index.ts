@@ -103,7 +103,6 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:deep-link', listener);
   },
 
-
   dialog: {
     openFolder: () => invoke('ok:dialog:open-folder'),
     createFolder: () => invoke('ok:dialog:create-folder'),
