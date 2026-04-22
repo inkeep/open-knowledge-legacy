@@ -2816,6 +2816,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
+    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
+    // defaults would attribute every human Restore to Claude. Only when the
+    // caller explicitly sends `agentId` do we attribute + record a summary.
+    const bodyObj = body as Record<string, unknown>;
+    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+    const normalizedSummary = hasAgentId
+      ? normalizeSummary(bodyObj.summary)
+      : { kind: 'absent' as const };
+    if (normalizedSummary.kind === 'invalid') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
+
     const resolvedContentRoot = contentRoot ?? 'content';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
@@ -2876,27 +2890,56 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
-      recordContributor(
-        docName,
-        rollbackAgentId,
-        rollbackAgentName,
-        rollbackColorSeed,
-        formatRollbackSubject(docName, commitSha),
-        buildAgentActor({
-          clientName: rollbackClientName,
-          clientVersion: rollbackClientVersion,
-          label: rollbackLabel,
-        }),
-      );
-      setReconciledBase(docName, markdown);
+      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
+      // here. Setting the base before `onStoreDocument` has fired would trip the
+      // "skip write when serialized === currentBase" guard at
+      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
+      // — which also skips the following `scheduleGitCommit()`, orphaning any
+      // `recordContributor(...)` entry we add below into the next unrelated
+      // write's L2 commit (BUG-1 from the agent-write-summaries QA run).
+      // Letting `onStoreDocument` fire naturally writes disk AND updates the
+      // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // Force-flush L2 git commit so the restored version appears in the
-      // timeline immediately, rather than waiting for the 30s debounce.
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          console.warn('[rollback] flush git commit failed:', e);
-        });
+      // D22 LOCKED: attribute + record summary ONLY when caller supplied
+      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
+      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
+      // applies when agent-supplied summary was absent; the default goes through
+      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
+      let summaryResponse: { value: string; truncatedFrom?: number } | undefined;
+      let summaryHint = '';
+      if (hasAgentId) {
+        const shaShort = commitSha.slice(0, 8);
+        const effectiveNormalized =
+          normalizedSummary.kind === 'value'
+            ? normalizedSummary
+            : normalizeSummary(`Restored to ${shaShort}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse = fields.response;
+        summaryHint = fields.hint ?? '';
+        recordContributor(
+          docName,
+          rollbackAgentId,
+          rollbackAgentName,
+          rollbackColorSeed,
+          formatRollbackSubject(docName, commitSha),
+          buildAgentActor({
+            clientName: rollbackClientName,
+            clientVersion: rollbackClientVersion,
+            label: rollbackLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized);
       }
+
+      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
+      // restored version + attribution appear in the timeline within ~100ms
+      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
+      // the shared `flushDocToGit` helper (same pattern as the three
+      // agent-write handlers) rather than a raw `flushGitCommit()` which
+      // no-ops when no L2 timer is set yet (BUG-1 fix).
+      flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
       console.log(
@@ -2919,14 +2962,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-        agentName: rollbackAgentName,
-        currentDoc: docName,
-        writeKind: 'rollback-apply',
-        ts: Date.now(),
-      });
+      // D22: only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (no agentId) must not
+      // trigger a cross-client push-nav as if Claude-1 did the rollback.
+      if (hasAgentId) {
+        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
+          agentName: rollbackAgentName,
+          currentDoc: docName,
+          writeKind: 'rollback-apply',
+          ts: Date.now(),
+        });
+      }
 
-      json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
+      json(res, 200, {
+        ok: true,
+        restoredFrom: commitSha,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+        ...(summaryHint ? { hint: summaryHint } : {}),
+      });
     } catch (e) {
       console.error('[rollback]', e);
       const message = e instanceof Error ? e.message : String(e);
@@ -3448,6 +3502,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      // D22 LOCKED 1-way door: only attribute when the caller explicitly
+      // supplies agentId. Any future UI-driven rename (no agentId) stays
+      // anonymous as today — even though the rename handler has no existing
+      // UI call site, adding the guard up front keeps the pattern uniform
+      // with `handleRollback` and prevents `extractAgentIdentity` defaults
+      // from silently attributing future UI paths to Claude.
+      const bodyObj = body as Record<string, unknown>;
+      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+      const normalizedSummary = hasAgentId
+        ? normalizeSummary(bodyObj.summary)
+        : { kind: 'absent' as const };
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
       if (!existsSync(sourcePath)) {
@@ -3460,19 +3530,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
-      recordContributor(
-        docName as string,
-        renameAgentId,
-        renameAgentName,
-        renameColorSeed,
-        formatRenameSubject(docName as string, newDocName as string),
-        buildAgentActor({
-          clientName: renameClientName,
-          clientVersion: renameClientVersion,
-          label: renameLabel,
-        }),
-      );
-      json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
+
+      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
+      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
+      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
+      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
+      // avoid "Claude renamed X → Y" noise on every inbound doc.
+      let summaryResponse: { value: string; truncatedFrom?: number } | undefined;
+      let summaryHint = '';
+      if (hasAgentId) {
+        const effectiveNormalized =
+          normalizedSummary.kind === 'value'
+            ? normalizedSummary
+            : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse = fields.response;
+        summaryHint = fields.hint ?? '';
+        recordContributor(
+          newDocName as string,
+          renameAgentId,
+          renameAgentName,
+          renameColorSeed,
+          formatRenameSubject(docName as string, newDocName as string),
+          buildAgentActor({
+            clientName: renameClientName,
+            clientVersion: renameClientVersion,
+            label: renameLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized);
+        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
+        // pendingContributors entry into its own L2 shadow commit. Parallels
+        // the `flushDocToGit(...)` call in `handleRollback` above; uses
+        // `flushDocToGit(newDocName, ...)` because the source doc may no
+        // longer be open after `_performManagedRename` closed it.
+        flushDocToGit(newDocName as string, 'rename');
+      }
+
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+        ...(summaryHint ? { hint: summaryHint } : {}),
+      });
     } catch (e) {
       console.error('[rename]', e);
       json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
