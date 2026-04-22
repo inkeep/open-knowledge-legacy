@@ -383,9 +383,9 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
  * HTTP status differentiates transient-yet-retry (500) from full-disk
  * (507) per RFC 4918.
  */
-export { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
-
 import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
+
+export { UploadWriteError, type UploadWriteReason };
 
 interface UploadResult {
   filename: string;
