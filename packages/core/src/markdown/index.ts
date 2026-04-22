@@ -75,6 +75,34 @@ interface MarkdownManagerOptions {
   extensions: Extensions;
 }
 
+/**
+ * Per-call context consulted by handlers during `parse()`. Threads the
+ * wiki-embed basename resolver + source docName through the pipeline
+ * without rebuilding the processor on every call.
+ *
+ * The handlers close over the holder object (not its `current` value), so
+ * they read live context at invocation time. `parse()` sets `current`
+ * before dispatching and clears it in a `finally` block — see US-013.
+ */
+export interface ParseContext {
+  /**
+   * Resolver used by `handlers.wikiLinkEmbed` to map an embed target
+   * (e.g. `photo.png`) to a disk-relative path (`attachments/photo.png`).
+   * When omitted OR when the resolver returns `null`, the handler falls
+   * back to the literal target — browsers surface missing assets via
+   * `<img onerror>` (SPEC FR-3b "broken-ref placeholder" requirement).
+   */
+  resolveEmbed?: (target: string, sourcePath: string) => string | null;
+  /**
+   * docName of the document being parsed — used as the second argument
+   * to `resolveEmbed` for shortest-path computation. Omitted on client
+   * parses where the resolver is null anyway.
+   */
+  sourcePath?: string;
+}
+
+type ParseContextHolder = { current: ParseContext };
+
 export class MarkdownManager {
   private schema: Schema;
   private handlers: RemarkProseMirrorOptions['handlers'];
@@ -85,10 +113,13 @@ export class MarkdownManager {
   // anti-pattern (per-parse processor reconstruction).
   private parseProcessor: Processor;
   private serializeProcessor: Processor;
+  // US-013: live per-call context. Handlers close over this holder so they
+  // see whatever `parse()` set immediately before running the pipeline.
+  private parseCtx: ParseContextHolder = { current: {} };
 
   constructor(options: MarkdownManagerOptions) {
     this.schema = getSchema(options.extensions);
-    this.handlers = buildMdastToPmHandlers(this.schema);
+    this.handlers = buildMdastToPmHandlers(this.schema, this.parseCtx);
     const { nodeHandlers, markHandlers } = buildPmToMdastHandlers(this.schema);
     this.pmNodeHandlers = nodeHandlers;
     this.pmMarkHandlers = markHandlers;
@@ -120,15 +151,20 @@ export class MarkdownManager {
    * prevents the more severe class of crash (bare unmatched `<` and `{` that
    * cause "Unexpected end of file" errors).
    */
-  parse(markdown: string): JSONContent {
+  parse(markdown: string, opts?: ParseContext): JSONContent {
     if (!markdown.trim()) {
       return {
         type: 'doc',
         content: [{ type: 'paragraph', content: [] }],
       };
     }
-    const doc = parseMd(markdown, this.parseProcessor);
-    return doc.toJSON() as JSONContent;
+    this.parseCtx.current = opts ?? {};
+    try {
+      const doc = parseMd(markdown, this.parseProcessor);
+      return doc.toJSON() as JSONContent;
+    } finally {
+      this.parseCtx.current = {};
+    }
   }
 
   /**
@@ -151,11 +187,11 @@ export class MarkdownManager {
    * Supersedes the prior `parseSafe` API (removed as a redundant alias —
    * one name per function, per greenfield precedent).
    */
-  parseWithFallback(markdown: string): JSONContent {
+  parseWithFallback(markdown: string, opts?: ParseContext): JSONContent {
     if (!markdown.trim()) {
       return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
     }
-    return parseWithFallback(markdown, { parse: (md) => this.parse(md) });
+    return parseWithFallback(markdown, { parse: (md) => this.parse(md, opts) });
   }
 
   /**
@@ -257,7 +293,39 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 // Tier A passthrough + basic Tier B (enough for plain markdown).
 // Full handler table populated in US-004.
 
-function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handlers'] {
+// SPEC §6 FR-3c emit-dispatch matrix — partitions embed extensions into
+// image vs non-image renderable categories. Extensions outside both sets
+// are "opaque" (dispatch as a plain markdown link with literal href).
+//
+// These lists mirror the `wikiEmbedExtensions` default in the
+// `ConfigSchema` (packages/cli/src/config/schema.ts) at the boundary
+// between image-ext (native <img>) and non-image-ext (Phase 2 typed
+// component nodes — Video/Audio/PDFViewer — per D-F read-time promotion).
+// Keep these in sync with the cli schema default whenever the allowlist
+// widens.
+const WIKI_EMBED_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg']);
+const WIKI_EMBED_NON_IMAGE_EXTS = new Set([
+  'pdf',
+  'mp4',
+  'webm',
+  'mov',
+  'mp3',
+  'wav',
+  'ogg',
+  'm4a',
+]);
+
+function extensionOf(target: string): string {
+  const basename = target.split('/').pop() ?? target;
+  const idx = basename.lastIndexOf('.');
+  if (idx < 0 || idx === basename.length - 1) return '';
+  return basename.slice(idx + 1).toLowerCase();
+}
+
+function buildMdastToPmHandlers(
+  schema: Schema,
+  parseCtx: ParseContextHolder,
+): RemarkProseMirrorOptions['handlers'] {
   const n = schema.nodes;
   const m = schema.marks;
 
@@ -597,19 +665,85 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       });
   }
 
-  // SPEC §6 FR-3c: wiki-embed mdast → PM. Storage shape is attrs-only —
-  // the renderer decides image vs plain-link vs typed-component (Phase 2
-  // per D-F) based on target extension at render time. The mdast→PM path
-  // does not consult the basename index; `resolved` defaults false and
-  // the server-side renderer flips it once the index lookup succeeds.
+  // SPEC §6 FR-3c: wiki-embed mdast → PM with extension-based dispatch
+  // (US-013). Three branches, in priority order:
+  //
+  //   (a) image extension (png/jpg/jpeg/gif/webp/avif/svg) → PM `image`
+  //       node tagged `sourceForm='wikiembed'` with resolved `src`. Native
+  //       TipTap image renderer shows it inline.
+  //
+  //   (b) non-image extension in the wiki-embed allowlist (pdf/mp4/…)    →
+  //       PM text with a link mark tagged `sourceForm='wikiembed'`.
+  //       Preserves target/anchor/alias on the mark so round-trip is
+  //       byte-identical; Phase 2 typed-component-nodes swaps in
+  //       Video/Audio/PDFViewer at render time (D-F read-time promotion).
+  //
+  //   (c) opaque extension (not in either set) → PM text with a plain
+  //       link mark (no `sourceForm`). `![[archive.zip]]` round-trips to
+  //       `[archive.zip](archive.zip)` — intentional normalization per
+  //       §6 emit-dispatch matrix.
+  //
+  // The server-side mdast→PM path never emits the `wikiLinkEmbed` PM
+  // node — that node type is client-insert-only (transient, produced by
+  // `pickInsertShape` at drop time). US-014 wires the TipTap NodeView
+  // that renders it pre-round-trip.
   if (n.wikiLinkEmbed) {
-    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast) =>
-      n.wikiLinkEmbed.createAndFill({
-        target: node.data?.target ?? '',
-        alias: node.data?.alias ?? null,
-        anchor: node.data?.anchor ?? null,
+    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast) => {
+      const target = node.data?.target ?? '';
+      const alias = node.data?.alias ?? null;
+      const anchor = node.data?.anchor ?? null;
+      const ext = extensionOf(target);
+      const { resolveEmbed, sourcePath } = parseCtx.current;
+      const resolved =
+        resolveEmbed && sourcePath ? (resolveEmbed(target, sourcePath) ?? null) : null;
+
+      if (WIKI_EMBED_IMAGE_EXTS.has(ext) && n.image) {
+        return n.image.createAndFill({
+          src: resolved ?? target,
+          alt: alias ?? target,
+          title: null,
+          sourceForm: 'wikiembed',
+          target,
+          anchor,
+        });
+      }
+
+      const label = alias || (anchor ? `${target}#${anchor}` : target);
+      if (WIKI_EMBED_NON_IMAGE_EXTS.has(ext) && m.link) {
+        const href = resolved ?? target;
+        const linkMark = m.link.create({
+          href,
+          title: null,
+          linkStyle: 'inline',
+          refLabel: null,
+          sourceForm: 'wikiembed',
+          target,
+          anchor,
+          alias,
+        });
+        return schema.text(label, [linkMark]);
+      }
+
+      if (m.link) {
+        const linkMark = m.link.create({
+          href: target,
+          title: null,
+          linkStyle: 'inline',
+          refLabel: null,
+        });
+        return schema.text(label, [linkMark]);
+      }
+
+      // Defensive fallback only hit if the schema somehow lacks both
+      // `image` node and `link` mark — not reachable under
+      // sharedExtensions. Preserve the pre-US-013 behavior for safety.
+      return n.wikiLinkEmbed.createAndFill({
+        target,
+        alias,
+        anchor,
         resolved: false,
       });
+    };
   }
 
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
@@ -792,14 +926,43 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
   if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
 
-  // Image
+  // Image — US-013 dispatches `sourceForm='wikiembed'` tagged images back
+  // to `wikiLinkEmbed` mdast so the wiki-embed round-trip is byte-identical
+  // (handlers.wikiLinkEmbed on the forward side emits PM image with this
+  // tag when target is an image extension). Plain markdown images (no
+  // `sourceForm`) keep their existing passthrough shape.
   if (n.image) {
-    nodeHandlers.image = (pmNode: PmNode) => ({
-      type: 'image' as const,
-      url: pmNode.attrs.src,
-      alt: pmNode.attrs.alt,
-      title: pmNode.attrs.title,
-    });
+    nodeHandlers.image = (pmNode: PmNode) => {
+      if (pmNode.attrs.sourceForm === 'wikiembed') {
+        const target =
+          typeof pmNode.attrs.target === 'string' && pmNode.attrs.target.length > 0
+            ? pmNode.attrs.target
+            : (pmNode.attrs.src ?? '');
+        const alias: string | null =
+          typeof pmNode.attrs.alt === 'string' && pmNode.attrs.alt.length > 0
+            ? pmNode.attrs.alt === target
+              ? null
+              : pmNode.attrs.alt
+            : null;
+        const anchor: string | null =
+          typeof pmNode.attrs.anchor === 'string' && pmNode.attrs.anchor.length > 0
+            ? pmNode.attrs.anchor
+            : null;
+        const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+        return {
+          type: 'wikiLinkEmbed' as const,
+          value: label,
+          data: { target, anchor, alias },
+          children: [{ type: 'text' as const, value: label }],
+        } as unknown as MdastNodes;
+      }
+      return {
+        type: 'image' as const,
+        url: pmNode.attrs.src,
+        alt: pmNode.attrs.alt,
+        title: pmNode.attrs.title,
+      };
+    };
   }
 
   // HTML block — content attr (HtmlBlockFidelity extension)
@@ -956,6 +1119,32 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   if (m.link) {
     markHandlers.link = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
+      // US-013: when the link mark was produced by `handlers.wikiLinkEmbed`
+      // for a non-image wiki-embed, `sourceForm='wikiembed'` is set and
+      // the mark carries the original `target`/`anchor`/`alias` separately
+      // from the (possibly resolver-remapped) `href`. Re-emit as an atomic
+      // `wikiLinkEmbed` mdast node — round-trip is byte-identical.
+      if (mark.attrs.sourceForm === 'wikiembed') {
+        const target =
+          typeof mark.attrs.target === 'string' && mark.attrs.target.length > 0
+            ? mark.attrs.target
+            : (mark.attrs.href ?? '');
+        const anchor: string | null =
+          typeof mark.attrs.anchor === 'string' && mark.attrs.anchor.length > 0
+            ? mark.attrs.anchor
+            : null;
+        const alias: string | null =
+          typeof mark.attrs.alias === 'string' && mark.attrs.alias.length > 0
+            ? mark.attrs.alias
+            : null;
+        const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+        return {
+          type: 'wikiLinkEmbed' as const,
+          value: label,
+          data: { target, anchor, alias },
+          children: [{ type: 'text' as const, value: label }],
+        } as unknown as MdastNodes;
+      }
       const style = mark.attrs.linkStyle;
       // Autolink form: serialize as <url>
       if (style === 'autolink') {

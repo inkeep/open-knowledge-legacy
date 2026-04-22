@@ -187,6 +187,15 @@ export function createServer(options: ServerOptions): ServerInstance {
   // are cheap so no disk persistence.
   const basenameIndex: BasenameIndex = createBasenameIndex();
 
+  // US-013 FR-3b: `![[photo.png]]` embed refs resolve via the basename index.
+  // Shared by persistence (onLoadDocument), server Observer B (Y.Text →
+  // XmlFragment), the agent-write path, and external-change (disk → CRDT),
+  // so wherever markdown is parsed into the Y.Doc the embed's PM src/href
+  // reflects the current vault state. Returns null on unknown basename —
+  // the PM dispatch falls back to the literal target (broken-ref placeholder).
+  const resolveEmbed = (basename: string, sourcePath: string): string | null =>
+    basenameIndex.resolveEmbed(basename, sourcePath);
+
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
   let backlinkIndex: BacklinkIndex;
@@ -221,6 +230,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      resolveEmbed,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -262,6 +272,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
       projectDir,
+      resolveEmbed,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -272,6 +283,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         shadowRef,
         contentRoot,
         getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+        resolveEmbed,
       }),
     );
   } catch (err) {
@@ -303,7 +315,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
   const applyToDoc = (docName: string, content: string): void =>
-    applyExternalChange(hocuspocus, docName, content);
+    applyExternalChange(hocuspocus, docName, content, resolveEmbed);
 
   /** Helper to extract a logging label from any DiskEvent variant. */
   function diskEventLabel(event: DiskEvent): string {

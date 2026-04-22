@@ -568,6 +568,13 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * US-013 FR-3b: basename-index resolver for `![[photo.png]]` wiki-embed
+   * refs. Threaded into every server-side `mdManager.parseWithFallback`
+   * call (managed-rename body rewrite, rollback content apply) so the
+   * resulting PM image/link carries the resolved src/href.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -959,7 +966,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // updateYFragment (preserves user-content Items at matching positions) →
       // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
-      const parsedJson = mdManager.parseWithFallback(body);
+      const parseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       updateYFragment(document, xmlFragment, pmNode, {
         mapping: new Map(),
@@ -1175,7 +1185,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
+          applyAgentMarkdownWrite(
+            dc.document,
+            `${content}\n`,
+            'append',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(agentId, {
@@ -1260,7 +1277,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, markdown, position);
+          applyAgentMarkdownWrite(
+            dc.document,
+            markdown,
+            position,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+              : undefined,
+          );
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(agentId, {
@@ -1795,7 +1819,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (newFm !== currentFm) {
             metaMap.set('frontmatter', newFm);
           }
-          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+          applyAgentMarkdownWrite(
+            dc.document,
+            newBody,
+            'replace',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(agentId, {
@@ -2352,7 +2383,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parseWithFallback(mdBody);
+      const rollbackParseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 

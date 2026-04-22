@@ -32,6 +32,13 @@ export interface ServerObserverExtensionOptions {
   getCurrentBranch?: () => string | null;
   /** Absolute content root used to place the rescue blob inside the commit tree. */
   contentRoot?: string;
+  /**
+   * US-013 FR-3b: basename-index resolver for `![[photo.png]]` wiki-embed
+   * refs, threaded into Observer B's `mdManager.parse` call so the
+   * resulting PM image/link carries the resolved src/href. Omit in unit
+   * tests — handler falls back to literal target.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
 }
 
 /**
@@ -68,6 +75,7 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
               ? () => opts.getCurrentBranch?.() ?? 'main'
               : undefined,
             contentRoot: opts.contentRoot,
+            resolveEmbed: opts.resolveEmbed,
           });
           cleanups.set(documentName, unsubscribe);
           return true;

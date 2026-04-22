@@ -1,19 +1,28 @@
 /**
  * Fidelity invariants for wiki-embed `![[file.ext]]` round-trip through
  * the full mdManager parse/serialize pipeline (mdast → PM → mdast →
- * markdown). This is the cross-path invariant set US-010 closes:
+ * markdown). This is the cross-path invariant set US-010 + US-013 close:
  *
  *   I1 (Identity)        — `serialize(parse(md)) === md` byte-identical
  *   I4 (Idempotence)     — `serialize(parse(X))` applied twice equals once
  *   I5 (Layer A === B)   — mdManager's path agrees with the mdast-util-only
  *                           path tested in wiki-link-micromark.test.ts
- *   I7 (Cross-path)      — drop-emit shape (FR-3d) and hand-authored shape
- *                           produce equivalent mdast + PM
+ *   I7 (Cross-path)      — drop-emit shape (FR-3d — client builds a PM
+ *                           `wikiLinkEmbed` node directly, serializes
+ *                           through mdManager) and hand-authored shape
+ *                           (user types `![[photo.png]]`, mdManager parses)
+ *                           produce equivalent mdast + PM.
+ *
+ * US-013: mdast→PM dispatches by extension — image extensions materialize
+ * as PM `image` nodes with `sourceForm='wikiembed'`; non-image extensions
+ * materialize as PM link-marked text with `sourceForm='wikiembed'`;
+ * opaque extensions materialize as plain link-marked text.
  *
  * Tier-2 1K samples; tier-3 10K via `STRESS_FIDELITY=1`.
  */
 
 import { describe, expect, test } from 'bun:test';
+import type { JSONContent } from '@tiptap/core';
 import * as fc from 'fast-check';
 import { assertAcrossSeeds, mdManager, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
@@ -26,6 +35,7 @@ const imageExt = fc.constantFrom('png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 's
 const nonImageExt = fc.constantFrom('pdf', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a');
 const opaqueExt = fc.constantFrom('zip', 'docx', 'xyz', 'csv');
 
+const renderableExt = fc.oneof(imageExt, nonImageExt);
 const allExts = fc.oneof(imageExt, nonImageExt, opaqueExt);
 
 const anchor = fc.option(fc.stringMatching(/^[a-zA-Z0-9_=-]{1,12}$/), { nil: null });
@@ -38,16 +48,27 @@ function buildEmbed(s: string, e: string, a: string | null, l: string | null): s
   return `${out}]]`;
 }
 
-const embedMd = fc
+const renderableEmbedMd = fc
+  .tuple(stem, renderableExt, anchor, alias)
+  .map(([s, e, a, l]) => buildEmbed(s, e, a, l));
+const anyEmbedMd = fc
   .tuple(stem, allExts, anchor, alias)
   .map(([s, e, a, l]) => buildEmbed(s, e, a, l));
 
 describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
   test(
-    'I1 — parse → serialize is byte-identical',
+    'I1 — parse → serialize is byte-identical for renderable extensions (image + non-image wikiembed)',
     () => {
+      // Scope: extensions in the `wikiEmbedExtensions` allowlist (images +
+      // pdf/video/audio). US-013 dispatches these to PM image / link-marked
+      // text with `sourceForm='wikiembed'`, which round-trips byte-identical
+      // through nodeHandlers.image / markHandlers.link.
+      //
+      // Opaque extensions (zip, docx, …) are NOT covered here — per SPEC §6
+      // emit-dispatch matrix they normalize to `[name.ext](name.ext)` on
+      // round-trip (documented deviation; see opaque test below).
       assertAcrossSeeds(
-        fc.property(embedMd, (md) => {
+        fc.property(renderableEmbedMd, (md) => {
           const out = normalize(mdRoundTrip(md));
           expect(out).toBe(md);
         }),
@@ -57,10 +78,14 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
   );
 
   test(
-    'I4 — double round-trip is stable',
+    'I4 — double round-trip is stable across all extension classes',
     () => {
+      // Idempotence holds for every extension class. For renderable exts,
+      // the first round-trip is a no-op (byte-identical). For opaque exts
+      // the first round-trip normalizes `![[name.zip]]` → `[name.zip](name.zip)`
+      // and the second round-trip is stable on that normalized form.
       assertAcrossSeeds(
-        fc.property(embedMd, (md) => {
+        fc.property(anyEmbedMd, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
@@ -70,40 +95,150 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     PBT_TIMEOUT_MS,
   );
 
-  test('PM shape carries target/anchor/alias attrs at every render path', () => {
-    // Spot-check three representative shapes — image, non-image, opaque —
-    // to assert the wikiLinkEmbed PM node is created with the right attrs
-    // regardless of extension class. The renderer uses these attrs to
-    // dispatch to image/plain-link/Phase-2-component.
-    const cases = [
-      { md: '![[photo.png]]', target: 'photo.png', anchor: null, alias: null },
-      { md: '![[draft.pdf#page=3]]', target: 'draft.pdf', anchor: 'page=3', alias: null },
-      {
-        md: '![[archive.zip|Download archive]]',
-        target: 'archive.zip',
-        anchor: null,
-        alias: 'Download archive',
-      },
-    ];
-    for (const c of cases) {
-      const json = mdManager.parse(c.md);
-      const para = json.content?.[0];
-      expect(para?.type).toBe('paragraph');
-      const node = para?.content?.[0];
-      expect(node?.type).toBe('wikiLinkEmbed');
-      expect(node?.attrs?.target).toBe(c.target);
-      expect(node?.attrs?.anchor).toBe(c.anchor);
-      expect(node?.attrs?.alias).toBe(c.alias);
-    }
+  test('opaque wikiembed round-trip normalizes to plain markdown link', () => {
+    // Per SPEC §6 emit-dispatch matrix: opaque extensions (not in
+    // `wikiEmbedExtensions`) materialize as plain markdown links and lose
+    // the `![[...]]` source form on save. Users who want wikiembed for a
+    // custom extension add it to `upload.wikiEmbedExtensions` config.
+    expect(normalize(mdRoundTrip('![[archive.zip]]'))).toBe('[archive.zip](archive.zip)');
+    expect(normalize(mdRoundTrip('![[archive.zip|Download]]'))).toBe('[Download](archive.zip)');
   });
 
-  test('I7 — hand-authored and drop-emitted forms produce equivalent PM', () => {
-    // FR-3d emits `![[name.ext]]` at drop time (US-011 client). A user can
-    // also hand-author the same string. Both paths must produce the same
-    // PM node so the storage shape is interchangeable.
-    const handAuthored = '![[diagram.svg]]';
-    const dropEmitted = '![[diagram.svg]]';
-    expect(mdManager.parse(handAuthored)).toEqual(mdManager.parse(dropEmitted));
+  test('US-013 — image-extension embed dispatches to PM image with sourceForm=wikiembed', () => {
+    // Image extensions materialize as PM `image` nodes so the native
+    // TipTap renderer shows them inline. Target/anchor are preserved on
+    // attrs so the PM→mdast reverse path round-trips byte-identical.
+    const json = mdManager.parse('![[photo.png]]');
+    const para = json.content?.[0];
+    expect(para?.type).toBe('paragraph');
+    const node = para?.content?.[0];
+    expect(node?.type).toBe('image');
+    expect(node?.attrs?.sourceForm).toBe('wikiembed');
+    expect(node?.attrs?.target).toBe('photo.png');
+    expect(node?.attrs?.src).toBe('photo.png'); // resolver omitted → literal fallback
+  });
+
+  test('US-013 — non-image wikiembed dispatches to PM link-marked text with sourceForm=wikiembed', () => {
+    // pdf/mp4/etc. are in `wikiEmbedExtensions` but not image-ext — they
+    // render as clickable link text (Phase 2 promotes to typed-component
+    // nodes at render time).
+    const json = mdManager.parse('![[draft.pdf#page=3|Draft]]');
+    const para = json.content?.[0];
+    expect(para?.type).toBe('paragraph');
+    const text = para?.content?.[0];
+    expect(text?.type).toBe('text');
+    expect(text?.text).toBe('Draft');
+    const linkMark = text?.marks?.find((mk) => mk.type === 'link');
+    expect(linkMark).toBeDefined();
+    expect(linkMark?.attrs?.sourceForm).toBe('wikiembed');
+    expect(linkMark?.attrs?.target).toBe('draft.pdf');
+    expect(linkMark?.attrs?.anchor).toBe('page=3');
+    expect(linkMark?.attrs?.alias).toBe('Draft');
+  });
+
+  test('US-013 — opaque extensions dispatch to plain link (no sourceForm)', () => {
+    // .zip is not in the `wikiEmbedExtensions` allowlist — renders as a
+    // plain markdown link. Round-trip normalizes to `[archive.zip](archive.zip)`
+    // on serialize (documented deviation per SPEC §6 emit-dispatch matrix).
+    const json = mdManager.parse('![[archive.zip]]');
+    const para = json.content?.[0];
+    const text = para?.content?.[0];
+    expect(text?.type).toBe('text');
+    const linkMark = text?.marks?.find((mk) => mk.type === 'link');
+    expect(linkMark).toBeDefined();
+    expect(linkMark?.attrs?.sourceForm).toBeNull();
+    expect(linkMark?.attrs?.href).toBe('archive.zip');
+  });
+
+  test('US-013 — resolveEmbed callback overrides the literal target for src/href', () => {
+    // When the caller passes a resolver (server-side Observer B path), the
+    // resolved disk-relative path replaces the literal target in src/href.
+    // Target/anchor/alias attrs still carry the original target for reverse
+    // round-trip.
+    const resolved = mdManager.parse('![[photo.png]]', {
+      resolveEmbed: (target) => (target === 'photo.png' ? 'attachments/photo.png' : null),
+      sourcePath: 'docs/meeting.md',
+    });
+    const image = resolved.content?.[0]?.content?.[0];
+    expect(image?.type).toBe('image');
+    expect(image?.attrs?.src).toBe('attachments/photo.png');
+    expect(image?.attrs?.target).toBe('photo.png');
+
+    // Non-image case: href is the resolved path, target keeps the literal.
+    const resolvedLink = mdManager.parse('![[draft.pdf]]', {
+      resolveEmbed: (target) => (target === 'draft.pdf' ? 'attachments/draft.pdf' : null),
+      sourcePath: 'docs/meeting.md',
+    });
+    const text = resolvedLink.content?.[0]?.content?.[0];
+    const linkMark = text?.marks?.find((mk) => mk.type === 'link');
+    expect(linkMark?.attrs?.href).toBe('attachments/draft.pdf');
+    expect(linkMark?.attrs?.target).toBe('draft.pdf');
+  });
+
+  test('US-013 — unresolvable target falls back to literal (broken-ref placeholder)', () => {
+    // When `resolveEmbed` returns null, the PM `src`/`href` is the literal
+    // target. Browsers surface the missing asset via `<img onerror>` / the
+    // link 404s on click — no thrown error.
+    const json = mdManager.parse('![[unknown.png]]', {
+      resolveEmbed: () => null,
+      sourcePath: 'docs/meeting.md',
+    });
+    const image = json.content?.[0]?.content?.[0];
+    expect(image?.type).toBe('image');
+    expect(image?.attrs?.src).toBe('unknown.png');
+  });
+
+  test('I7 — hand-authored parse and drop-emitted serialize→parse produce equivalent PM', () => {
+    // FR-3d emits `![[name.ext]]` at drop time: the client-side
+    // `pickInsertShape` builds a PM `wikiLinkEmbed` node directly. That
+    // node-handler path (US-010 nodeHandlers.wikiLinkEmbed) serializes
+    // to `![[...]]` markdown, which then round-trips through mdManager.
+    // The resulting PM (via the server-side handlers.wikiLinkEmbed
+    // dispatch) must be equivalent to hand-authored `![[...]]` parsed
+    // directly.
+    //
+    // This is what makes storage interchangeable — a doc written by the
+    // drop path is indistinguishable from a doc written by hand once it
+    // lands back on disk and re-loads.
+    const cases = [
+      '![[photo.png]]',
+      '![[draft.pdf]]',
+      '![[song.mp3]]',
+      '![[archive.zip]]',
+      '![[diagram.svg]]',
+    ];
+    for (const md of cases) {
+      // Path A: hand-authored — user types the string, mdManager parses.
+      const handPm = mdManager.parse(md);
+
+      // Path B: drop-emitted — client builds the intermediate PM
+      // `wikiLinkEmbed` node (matches pickInsertShape output in US-011),
+      // then mdManager serializes it back to markdown, then parses again
+      // through mdManager to reach the canonical PM shape.
+      const target = md.slice(3, -2); // strip leading `![[` + trailing `]]`
+      const dropPm: JSONContent = {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'wikiLinkEmbed',
+                attrs: { target, alias: null, anchor: null, resolved: false },
+              },
+            ],
+          },
+        ],
+      };
+      const dropMd = mdManager.serialize(dropPm);
+      const dropPmCanonical = mdManager.parse(dropMd);
+
+      // The serialize output ends with a trailing newline from remark-stringify;
+      // the hand-authored literal doesn't. Normalize strips that so the
+      // comparison is about content equivalence, not whitespace.
+      expect(normalize(dropMd)).toBe(md);
+      expect(dropPmCanonical).toEqual(handPm);
+    }
   });
 
   test('coexistence with wikiLink — same body, neither captures the other', () => {

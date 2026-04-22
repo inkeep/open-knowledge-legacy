@@ -94,6 +94,16 @@ export function applyAgentMarkdownWrite(
   document: Document,
   markdown: string,
   position: 'append' | 'prepend' | 'replace',
+  /**
+   * US-013 FR-3b embed-resolver context. When provided, `mdManager.parse`
+   * uses `resolveEmbed(target, sourcePath)` to map `![[photo.png]]` → disk
+   * path before PM dispatch. Omit in tests that don't exercise the embed
+   * path — the handler falls back to literal target.
+   */
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
 ): void {
   try {
     const xmlFragment = document.getXmlFragment('default');
@@ -136,7 +146,7 @@ export function applyAgentMarkdownWrite(
 
     // 4. Apply composed body to XmlFragment via structural diff
     //    (preserves user-content Items at matching positions).
-    const parsedJson = mdManager.parseWithFallback(newBody);
+    const parsedJson = mdManager.parseWithFallback(newBody, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);

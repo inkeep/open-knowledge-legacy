@@ -43,6 +43,13 @@ export interface PersistenceOptions {
   backlinkIndex?: BacklinkIndex;
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
+  /**
+   * US-013 FR-3b: resolves `![[photo.png]]` embed targets to disk-relative
+   * paths before PM dispatch. Consumed by `onLoadDocument`'s
+   * `mdManager.parseWithFallback` call so image-extension embeds materialize
+   * as PM `image` nodes with the resolved `src` (not the literal target).
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -347,7 +354,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // structure. On position-less error, splits at blank-line boundaries
       // per-block. Only falls through to whole-doc raw text when every block
       // fails — strictly better than parse() throwing on broken MDX.
-      const json = mdManager.parseWithFallback(body);
+      const parseOpts = options?.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+        : undefined;
+      const json = mdManager.parseWithFallback(body, parseOpts);
 
       const xmlFragment = document.getXmlFragment('default');
       log.info(

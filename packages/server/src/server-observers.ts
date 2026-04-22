@@ -220,6 +220,18 @@ export interface SetupServerObserversOpts {
   /** Absolute content root (used to place the blob inside the checkpoint tree). */
   contentRoot?: string;
   /**
+   * US-013 FR-3b: basename-index resolver used by `mdManager.parse` so
+   * `![[photo.png]]` wiki-embed refs resolve to the right disk path before
+   * dispatch to the PM image / link node. When omitted OR when the
+   * resolver returns `null`, the handler falls back to the literal target
+   * (broken-ref placeholder via `<img onerror>` / `<a href>` — browsers
+   * surface missing assets without throwing).
+   *
+   * Resolver signature matches `packages/core/src/utils/path-resolve.ts`:
+   * `(basename, sourcePath) => path | null`.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Test-only dispatch hook. Omitted in production. When provided, called
    * once per drain (from inside `afterAllTransactions`) with the dispatch
    * decision the settlement handler made.
@@ -516,8 +528,12 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       }
 
       let parsedJson: ReturnType<typeof mdManager.parse>;
+      const parseOpts =
+        opts.resolveEmbed && opts.docName
+          ? { resolveEmbed: opts.resolveEmbed, sourcePath: opts.docName }
+          : undefined;
       try {
-        parsedJson = mdManager.parse(body);
+        parsedJson = mdManager.parse(body, parseOpts);
       } catch (parseErr) {
         // Transient parse errors from remark-mdx/acorn while user is mid-edit.
         // XmlFragment keeps its last valid state; next keystroke retriggers.

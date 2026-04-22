@@ -98,6 +98,15 @@
         },
         "height": {
           "hasDefault": true
+        },
+        "sourceForm": {
+          "hasDefault": true
+        },
+        "target": {
+          "hasDefault": true
+        },
+        "anchor": {
+          "hasDefault": true
         }
       },
       "content": "",
