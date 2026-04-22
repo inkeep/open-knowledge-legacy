@@ -4,9 +4,11 @@
  *
  * Repo convention (STOP_IF rules out adding @testing-library/react + happy-dom):
  * UI helpers are unit-tested at the pure-function altitude; render/mount
- * behavior — Activity mode flips, dual-editor concurrent mount, StrictMode
- * idempotence — is covered by Playwright E2E in US-011 (F1 warm nav,
- * F2 cold-nav continuity) and US-013 (F10 source-editor parity, F16 StrictMode).
+ * behavior — Activity mode flips, source-editor warm remount after first load,
+ * StrictMode idempotence — is covered by Playwright E2E in US-011 (F1 warm
+ * nav, F2 cold-nav continuity) and US-013 (F10 source-editor parity, F16
+ * StrictMode). The bundle-split contract itself is pinned in
+ * `EditorActivityPool.lazy.test.ts`.
  *
  * What the pure helper guarantees (and what these tests pin):
  *   1. System docs (`__system__`) never appear in the mount list.

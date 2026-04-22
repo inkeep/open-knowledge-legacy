@@ -13,9 +13,10 @@
  * for TipTap + CodeMirror) without preventing the pool from holding warm
  * providers (≈5-10MB each) for fast Suspense-gated remount on revisit.
  *
- * The dual-editor mount pattern (both `SourceEditor` and `TiptapEditor` rendered
- * concurrently with `display:none` toggle) is preserved per spec §9 + audit A2 —
- * mode swap stays CSS-only so neither editor's effect lifecycle re-runs.
+ * `TiptapEditor` stays on the initial path; `SourceEditor` is lazy-loaded the
+ * first time a doc actually enters source mode. After that first source visit,
+ * the doc keeps both editors mounted behind a `display:none` toggle so
+ * subsequent mode swaps stay CSS-only for that Activity.
  *
  * ERROR + SUSPENSE SCOPING (per-Activity, not global).
  *   Each `<Activity>` wraps its own `<DocumentErrorBoundary>` + `<Suspense>`.
@@ -39,15 +40,16 @@
 import {
   Activity,
   Fragment,
+  lazy,
   type ReactNode,
   Suspense,
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
 } from 'react';
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { isSystemDoc } from '@/editor/is-system-doc';
-import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
@@ -69,6 +71,15 @@ import { usePageList } from './PageListContext';
  * coupled by design. If one moves, audit the other for sympathetic impact.
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
+
+export function loadSourceEditorModule() {
+  return import('@/editor/SourceEditor');
+}
+
+const LazySourceEditor = lazy(async () => {
+  const mod = await loadSourceEditorModule();
+  return { default: mod.SourceEditor };
+});
 
 interface EditorActivityPoolProps {
   activeDocName: string;
@@ -279,6 +290,43 @@ function ScrollPreservingContainer({
   );
 }
 
+function SourceEditorSlot({
+  entry,
+  isActive,
+  isSourceMode,
+  editorPlaceholder,
+}: {
+  entry: PoolEntrySnapshot;
+  isActive: boolean;
+  isSourceMode: boolean;
+  editorPlaceholder?: string;
+}) {
+  const sourceModeRequested = isActive && isSourceMode;
+  const [hasLoadedSourceEditor, setHasLoadedSourceEditor] = useState(sourceModeRequested);
+
+  useEffect(() => {
+    if (sourceModeRequested) {
+      setHasLoadedSourceEditor(true);
+    }
+  }, [sourceModeRequested]);
+
+  if (!hasLoadedSourceEditor && !sourceModeRequested) {
+    return null;
+  }
+
+  return (
+    <Suspense fallback={<EditorSkeleton />}>
+      <LazySourceEditor
+        docName={entry.docName}
+        ytext={entry.provider.document.getText('source')}
+        provider={entry.provider}
+        placeholder={editorPlaceholder}
+        isSourceModeActive={sourceModeRequested}
+      />
+    </Suspense>
+  );
+}
+
 function renderActivity({
   entry,
   isActive,
@@ -312,15 +360,15 @@ function renderActivity({
         >
           <Suspense fallback={<EditorSkeleton />}>
             <DocumentBoundary docName={entry.docName} provider={entry.provider}>
-              {/* Dual-editor concurrent mount preserved per spec §9 + audit A2 — both
-                  SourceEditor and TiptapEditor render with display:none toggle so mode
-                  switches don't trigger effect re-runs (and don't recreate the
-                  CodeMirror EditorView or the TipTap editor instance). */}
+              {/* Tiptap stays eager; SourceEditor lazy-loads the first time this doc
+                  is shown in source mode, then remains mounted behind the display
+                  toggle so later source/wysiwyg swaps stay CSS-only. */}
               <div className={isSourceMode ? 'h-full' : 'hidden'}>
-                <SourceEditor
-                  ytext={entry.provider.document.getText('source')}
-                  provider={entry.provider}
-                  placeholder={editorPlaceholder}
+                <SourceEditorSlot
+                  entry={entry}
+                  isActive={isActive}
+                  isSourceMode={isSourceMode}
+                  editorPlaceholder={editorPlaceholder}
                 />
               </div>
               <div className={isSourceMode ? 'hidden' : 'h-full'}>

@@ -215,11 +215,11 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
 
       {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
           Outer display:none keeps the editor DOM alive when in diff mode.
-          Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
-          inner display:none toggle) is preserved inside EditorActivityPool
-          per spec §9 + audit A2. Each Activity entry owns its own scroll
-          container so scroll position is DOM-local to that doc's subtree
-          and survives the Activity hidden-mode mount/unmount cycle.
+          EditorActivityPool keeps Tiptap eager and lazy-loads SourceEditor on
+          the first source-mode visit for each doc, then preserves the per-doc
+          display:none toggle after that initial load. Each Activity entry owns
+          its own scroll container so scroll position is DOM-local to that
+          doc's subtree and survives the Activity hidden-mode mount/unmount cycle.
 
           Error + Suspense scoping lives INSIDE EditorActivityPool — each
           Activity wraps its own DocumentErrorBoundary + Suspense so a

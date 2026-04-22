@@ -8,8 +8,8 @@ import { NodeViewWrapper } from '@tiptap/react';
  * "this block couldn't be parsed — open source mode to fix."
  *
  * Click handler dispatches RAW_MDX_NAV_EVENT which EditorPane listens for
- * to switch to source mode. SourceEditor listens for the same event to
- * scroll CodeMirror to the originalSpan region.
+ * to switch to source mode and stash the target offset until SourceEditor
+ * is mounted for the active doc.
  */
 
 export const RAW_MDX_NAV_EVENT = 'raw-mdx-nav';

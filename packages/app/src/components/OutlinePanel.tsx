@@ -9,6 +9,7 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { useActiveHeading } from '@/hooks/useActiveHeading';
 import { cn } from '@/lib/utils';
 
@@ -115,6 +116,9 @@ export function OutlinePanel({
       slug,
       mode: isSourceMode ? 'source' : 'wysiwyg',
     };
+    if (detail.mode === 'source') {
+      rememberPendingSourceNavigation(docName, { kind: 'outline', detail });
+    }
     window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
   }
 
