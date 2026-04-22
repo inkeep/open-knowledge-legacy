@@ -45,6 +45,15 @@ function formatEditorTitle(projectName: string): string {
 /** Subset of `electron.BrowserWindow` we use — keeps tests Electron-free. */
 export interface BrowserWindowLike {
   focus(): void;
+  /**
+   * Present the window if hidden + restore if minimized. Optional because not
+   * every consumer exercises the URL-scheme deep-link path that needs them
+   * (the pre-M4 focus-only flow in `createProjectWindow` doesn't). Missing at
+   * runtime → silently skipped.
+   */
+  show?(): void;
+  restore?(): void;
+  isMinimized?(): boolean;
   on(event: 'closed', cb: () => void): void;
   webContents: {
     send(channel: string, ...args: unknown[]): void;
@@ -180,6 +189,31 @@ export class WindowManager {
   /** Read-only snapshot for tests + the J7b dialog handler. */
   getWindowFor(projectPath: string): ProjectContext | undefined {
     return this.windowsByPath.get(projectPath);
+  }
+
+  /**
+   * Narrow focus-only lookup used by the `openknowledge://` URL scheme router
+   * (M4). If a window already owns `projectPath`, surface it (restore if
+   * minimized, show if hidden) + return it for the caller to push a deep-link
+   * event to. Returns `null` when no window matches.
+   *
+   * Complements `createProjectWindow`, which is the find-or-spawn helper —
+   * this one is find-or-nothing, leaving the "spawn new window for a not-yet-
+   * open project" decision to the caller (SPEC D24: every project pick spawns
+   * a new window; only the same-project warm deep-link case reuses).
+   *
+   * Path matching is exact on `path.resolve(projectPath)` — the same
+   * canonicalization `createProjectWindow` applies before storing in
+   * `windowsByPath`.
+   */
+  focusWindowForProject(projectPath: string): BrowserWindowLike | null {
+    const ctx = this.windowsByPath.get(resolve(projectPath));
+    if (!ctx) return null;
+    const win = ctx.window;
+    if (win.isMinimized?.()) win.restore?.();
+    win.show?.();
+    win.focus();
+    return win;
   }
 
   /**

@@ -34,6 +34,7 @@ import {
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import { sendToRenderer } from '../shared/ipc-send.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -51,6 +52,8 @@ import {
   parseAppState,
   saveAppStateToDir,
 } from './state-store.ts';
+import { registerProtocolHandler } from './url-scheme.ts';
+import { buildUtilityForkEnv } from './utility-fork-env.ts';
 import {
   type BrowserWindowLike,
   type UtilityProcessLike,
@@ -193,8 +196,14 @@ function ensureWindowManager() {
       return win as unknown as BrowserWindowLike;
     },
     forkUtility: (entry, opts) => {
+      // Inject OK_ELECTRON_PROTOCOL_HOST=1 so the `preview-url.ts` helper
+      // running inside this utility emits `openknowledge://` URLs for MCP
+      // consumers instead of `http://localhost:...` (M4 SPEC AC8). CLI /
+      // bunx invocations don't fork through here, so the flag never bleeds
+      // into those consumers.
       const child = utilityProcess.fork(entry, [], {
         ...opts,
+        env: buildUtilityForkEnv(process.env),
       } as unknown as Parameters<typeof utilityProcess.fork>[2]);
       return child as unknown as UtilityProcessLike;
     },
@@ -517,6 +526,49 @@ function installLocalhostCorsInjector() {
     },
   );
 }
+
+// URL-scheme handler (M4) — register BEFORE `whenReady` so macOS cold-start
+// `open-url` Apple Events are caught even if they fire before the ready hook.
+// Listener registration is synchronous; the actual routing defers URLs into a
+// queue and drains them after `whenReady` + the first BrowserWindow exists.
+// Also wires `second-instance` for CLI / dev invocations that deliver the URL
+// via argv rather than Apple Events.
+registerProtocolHandler({
+  app: {
+    on: (event, cb) => {
+      // electron's `app.on` is overloaded — inject our typed shape by casting at
+      // the call site. The `url-scheme` module owns the narrowing; this is just
+      // the dispatch plumbing.
+      app.on(event as Parameters<typeof app.on>[0], cb as Parameters<typeof app.on>[1]);
+    },
+    whenReady: () => app.whenReady(),
+    isPackaged: app.isPackaged,
+    setAsDefaultProtocolClient: (scheme) => app.setAsDefaultProtocolClient(scheme),
+  },
+  focusWindowForProject: (projectPath) => {
+    if (!wm) return null;
+    return wm.focusWindowForProject(projectPath) as unknown as object | null;
+  },
+  openProject: async (projectPath) => {
+    await openProject(projectPath);
+    ensureWindowManager();
+    const ctx = wm.getWindowFor(projectPath);
+    if (!ctx) throw new Error(`openProject succeeded but no window found for ${projectPath}`);
+    return ctx.window as unknown as object;
+  },
+  sendDeepLink: (win, payload) => {
+    const w = win as BrowserWindowLike;
+    sendToRenderer(w.webContents, 'ok:deep-link', payload);
+  },
+  getAnyReadyWindow: () => {
+    const first = BrowserWindow.getAllWindows()[0];
+    return first ? (first as unknown as object) : null;
+  },
+  log: {
+    warn: (obj, msg) => console.warn(msg, obj),
+    info: (obj, msg) => console.info(msg, obj),
+  },
+});
 
 app.whenReady().then(async () => {
   appState = loadAppState();

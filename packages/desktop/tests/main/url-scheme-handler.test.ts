@@ -1,0 +1,333 @@
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { registerProtocolHandler } from '../../src/main/url-scheme.ts';
+
+/**
+ * Unit tests for `registerProtocolHandler`'s queue-then-flush behavior.
+ *
+ * Uses a fake `app` that captures listeners + exposes a trigger surface so
+ * tests can drive the cold-start / warm / argv paths deterministically. No
+ * real `electron` import — the pure `app` dep interface is tested against a
+ * stub.
+ */
+
+type AppEvent = 'open-url' | 'second-instance';
+type OpenUrlListener = (event: { preventDefault: () => void }, url: string) => void;
+type SecondInstanceListener = (event: unknown, argv: readonly string[]) => void;
+
+interface FakeApp {
+  on: ReturnType<typeof mock>;
+  whenReady: () => Promise<void>;
+  isPackaged: boolean;
+  setAsDefaultProtocolClient: ReturnType<typeof mock>;
+  fireOpenUrl: (url: string) => void;
+  fireSecondInstance: (argv: readonly string[]) => void;
+  resolveReady: () => void;
+}
+
+function makeFakeApp(opts?: { isPackaged?: boolean }): FakeApp {
+  const listeners = new Map<AppEvent, OpenUrlListener | SecondInstanceListener>();
+  let resolveReadyFn: (() => void) | null = null;
+  const whenReady = () =>
+    new Promise<void>((resolve) => {
+      resolveReadyFn = resolve;
+    });
+  const on = mock((event: AppEvent, cb: OpenUrlListener | SecondInstanceListener) => {
+    listeners.set(event, cb);
+  });
+  return {
+    on,
+    whenReady,
+    isPackaged: opts?.isPackaged ?? true,
+    setAsDefaultProtocolClient: mock(() => true),
+    fireOpenUrl: (url) => {
+      const cb = listeners.get('open-url') as OpenUrlListener | undefined;
+      if (!cb) throw new Error('open-url listener not registered');
+      const event = { preventDefault: mock(() => {}) };
+      cb(event, url);
+    },
+    fireSecondInstance: (argv) => {
+      const cb = listeners.get('second-instance') as SecondInstanceListener | undefined;
+      if (!cb) throw new Error('second-instance listener not registered');
+      cb({}, argv);
+    },
+    resolveReady: () => {
+      if (!resolveReadyFn) throw new Error('whenReady not awaited yet');
+      resolveReadyFn();
+    },
+  };
+}
+
+interface FakeWindowHandle {
+  id: string;
+}
+
+interface TestEnv {
+  app: FakeApp;
+  focusWindowForProject: ReturnType<typeof mock>;
+  openProject: ReturnType<typeof mock>;
+  sendDeepLink: ReturnType<typeof mock>;
+  getAnyReadyWindow: ReturnType<typeof mock>;
+  timers: Array<{ cb: () => void; ms: number }>;
+  warnLog: Array<{ obj: object; msg: string }>;
+  existingWindows: Map<string, FakeWindowHandle>;
+  readyWindow: FakeWindowHandle | null;
+}
+
+function makeEnv(opts?: { isPackaged?: boolean }): TestEnv {
+  const existingWindows = new Map<string, FakeWindowHandle>();
+  let readyWindow: FakeWindowHandle | null = null;
+  const timers: Array<{ cb: () => void; ms: number }> = [];
+  const warnLog: Array<{ obj: object; msg: string }> = [];
+  return {
+    app: makeFakeApp(opts),
+    focusWindowForProject: mock((p: string) => existingWindows.get(p) ?? null),
+    openProject: mock(async (p: string) => {
+      const win: FakeWindowHandle = { id: `win-${p}` };
+      existingWindows.set(p, win);
+      if (!readyWindow) readyWindow = win;
+      return win;
+    }),
+    sendDeepLink: mock(() => {}),
+    getAnyReadyWindow: mock(() => readyWindow),
+    timers,
+    warnLog,
+    existingWindows,
+    get readyWindow() {
+      return readyWindow;
+    },
+    set readyWindow(w: FakeWindowHandle | null) {
+      readyWindow = w;
+    },
+  } as unknown as TestEnv;
+}
+
+/** Flush pending microtasks/promises so then-chains observable downstream. */
+async function flushPromises() {
+  // Two await ticks to settle nested .then in the handler's flush loop.
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+/** Tick scheduler: fires the next enqueued timer in env.timers. */
+function tickTimer(env: TestEnv): void {
+  const next = env.timers.shift();
+  if (!next) throw new Error('no timer to tick');
+  next.cb();
+}
+
+describe('registerProtocolHandler — setAsDefaultProtocolClient', () => {
+  test('calls setAsDefaultProtocolClient in dev mode (!isPackaged)', () => {
+    const env = makeEnv({ isPackaged: false });
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    expect(env.app.setAsDefaultProtocolClient).toHaveBeenCalledWith('openknowledge');
+  });
+
+  test('does NOT call setAsDefaultProtocolClient in packaged builds', () => {
+    const env = makeEnv({ isPackaged: true });
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    expect(env.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerProtocolHandler — queue-then-flush', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = makeEnv();
+  });
+
+  test('queues URLs received before whenReady resolves', async () => {
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
+    // Not yet flushed — routing should not have happened.
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
+
+  test('flushes queued URLs after whenReady when a window is already ready', async () => {
+    env.readyWindow = { id: 'pre-existing' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
+    env.app.resolveReady();
+    await flushPromises();
+
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/p');
+    // sendDeepLink fires after openProject resolves (the spawn path awaits).
+    await flushPromises();
+    expect(env.sendDeepLink).toHaveBeenCalled();
+  });
+
+  test('retries flush up to 10 × 500ms while no window is up, then drains anyway', async () => {
+    env.readyWindow = null;
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=a.md');
+    env.app.resolveReady();
+    await flushPromises();
+
+    // First flush attempt schedules a retry because no window exists yet.
+    // Walk 10 retries, none should dispatch the route.
+    for (let i = 0; i < 10; i++) {
+      expect(env.timers.length).toBe(1);
+      expect(env.timers[0]?.ms).toBe(500);
+      expect(env.openProject).not.toHaveBeenCalled();
+      tickTimer(env);
+      await flushPromises();
+    }
+    // 10th tick is the final attempt — drain fires regardless.
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/p');
+  });
+
+  test('silent-drops malformed URLs with a single warn log line', async () => {
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+    env.readyWindow = { id: 'pre-existing' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: {
+        warn: (obj, msg) => warnLog.push({ obj, msg }),
+      },
+    });
+    env.app.fireOpenUrl('openknowledge://open?doc=a.md'); // missing project
+    env.app.resolveReady();
+    await flushPromises();
+
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+    expect(warnLog).toHaveLength(1);
+    expect(warnLog[0]?.msg).toContain('dropped malformed URL');
+  });
+
+  test('focuses existing window when project is already open (warm same-project)', async () => {
+    const existingWin: FakeWindowHandle = { id: 'existing' };
+    env.existingWindows.set('/tmp/p', existingWin);
+    env.readyWindow = existingWin;
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/p&doc=b.md');
+    await flushPromises();
+
+    expect(env.focusWindowForProject).toHaveBeenCalledWith('/tmp/p');
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).toHaveBeenCalledWith(existingWin, { doc: 'b.md' });
+  });
+
+  test('spawns new window when project is not yet open (warm different-project)', async () => {
+    env.existingWindows.set('/tmp/A', { id: 'A' });
+    env.readyWindow = { id: 'A' };
+
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireOpenUrl('openknowledge://open?project=/tmp/B&doc=x.md');
+    await flushPromises();
+    await flushPromises();
+
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/B');
+    expect(env.sendDeepLink).toHaveBeenCalled();
+  });
+});
+
+describe('registerProtocolHandler — second-instance argv parsing', () => {
+  test('extracts openknowledge:// entries from second-instance argv', async () => {
+    const env = makeEnv();
+    env.readyWindow = { id: 'primary' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireSecondInstance([
+      '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge',
+      'openknowledge://open?project=/tmp/si&doc=readme.md',
+    ]);
+    await flushPromises();
+    await flushPromises();
+
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/si');
+  });
+
+  test('ignores argv entries that are not openknowledge:// URLs', async () => {
+    const env = makeEnv();
+    env.readyWindow = { id: 'primary' };
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    env.app.resolveReady();
+    await flushPromises();
+
+    env.app.fireSecondInstance(['--some-flag', 'random-positional', 'https://example.com']);
+    await flushPromises();
+
+    expect(env.openProject).not.toHaveBeenCalled();
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
+  });
+});

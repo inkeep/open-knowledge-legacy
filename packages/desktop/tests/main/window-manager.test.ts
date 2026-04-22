@@ -41,14 +41,20 @@ function makeUtility(pid: number): MockUtility {
   };
 }
 
-function makeWindow(): BrowserWindowLike & {
+function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
   fireClose: () => void;
   fireDomReady: () => void;
 } {
   let closeHandler: (() => void) | null = null;
   let domReadyHandler: (() => void) | null = null;
+  let minimized = opts?.minimized ?? false;
   return {
     focus: mock(() => {}),
+    show: mock(() => {}),
+    restore: mock(() => {
+      minimized = false;
+    }),
+    isMinimized: mock(() => minimized),
     on: mock((_event: 'closed', cb: () => void) => {
       closeHandler = cb;
     }) as BrowserWindowLike['on'],
@@ -602,5 +608,63 @@ describe('WindowManager', () => {
       expect(onceCalled).toBe(true);
       expect(onceCalledBeforeLoadResolved).toBe(true);
     });
+  });
+});
+
+describe('WindowManager.focusWindowForProject (M4 URL-scheme warm-start)', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('returns null when no window is open for the project', () => {
+    const wm = new WindowManager(env.deps);
+    expect(wm.focusWindowForProject('/tmp/never-opened')).toBeNull();
+  });
+
+  test('returns the window when a project is open + calls focus+show', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/warm-proj' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51200, apiOrigin: 'http://localhost:51200' });
+    const ctx = await p;
+
+    const win = wm.focusWindowForProject('/tmp/warm-proj');
+    expect(win).toBe(ctx.window);
+    expect(ctx.window.focus).toHaveBeenCalled();
+    expect(ctx.window.show).toHaveBeenCalled();
+  });
+
+  test('restores a minimized window before focusing', async () => {
+    // Replace createWindow with one that returns a pre-minimized mock so
+    // `isMinimized()` returns true. The first (+ only) createProjectWindow
+    // call will receive this pre-minimized window.
+    const w = makeWindow({ minimized: true });
+    env.deps.createWindow = () => {
+      env.createWindowOpts.push({ additionalArguments: [], title: '' });
+      env.windows.push(w);
+      return w;
+    };
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/min-proj' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51201, apiOrigin: 'http://localhost:51201' });
+    await p;
+
+    const result = wm.focusWindowForProject('/tmp/min-proj');
+    expect(result).toBe(w);
+    expect(w.isMinimized).toHaveBeenCalled();
+    expect(w.restore).toHaveBeenCalled();
+    expect(w.focus).toHaveBeenCalled();
+  });
+
+  test('canonicalizes project path before lookup (resolve equivalence)', async () => {
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/canon' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51202, apiOrigin: 'http://localhost:51202' });
+    await p;
+
+    // A variant path that `path.resolve` would canonicalize to the same
+    // storage key must match. `/tmp/canon/.` resolves to `/tmp/canon`.
+    expect(wm.focusWindowForProject('/tmp/canon/.')).not.toBeNull();
   });
 });

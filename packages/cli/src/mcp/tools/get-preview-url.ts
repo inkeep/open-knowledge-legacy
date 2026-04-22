@@ -16,7 +16,7 @@
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import { resolvePreviewUrl } from './preview-url.ts';
+import { type PreviewUrlSource, resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
 import {
   type ConfigOrResolver,
@@ -44,7 +44,7 @@ interface GetPreviewUrlDeps {
 
 interface GetPreviewUrlResult {
   previewUrl: string | null;
-  previewUrlSource?: 'env' | 'lock' | 'config';
+  previewUrlSource?: PreviewUrlSource;
 }
 
 export async function buildGetPreviewUrlResult(
@@ -92,6 +92,7 @@ export async function buildGetPreviewUrlResult(
   const resolved = resolvePreviewUrl(docName, {
     config,
     lockDir,
+    contentDir,
   });
   if (!resolved) {
     return {

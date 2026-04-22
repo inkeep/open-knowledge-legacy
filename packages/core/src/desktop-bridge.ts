@@ -158,6 +158,13 @@ export interface OkDesktopBridge {
    * M3 Toast C.
    */
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `ok:deep-link` — fired when an `openknowledge://open?project=…
+   * &doc=<name>` URL routed to this window (M4 SPEC 2026-04-21-m4-url-scheme).
+   * Renderer updates `location.hash` to open the target doc via the existing
+   * hash-route listener. Returns unsubscribe.
+   */
+  onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
 
   /** Native folder-picker dialog surfaces. */
   dialog: {

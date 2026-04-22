@@ -97,6 +97,13 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:update:stuck-hint', listener);
   },
 
+  onDeepLink(cb: (evt: { doc: string }) => void) {
+    const listener = (_event: IpcRendererEvent, evt: { doc: string }) => cb(evt);
+    ipcRenderer.on('ok:deep-link', listener);
+    return () => ipcRenderer.removeListener('ok:deep-link', listener);
+  },
+
+
   dialog: {
     openFolder: () => invoke('ok:dialog:open-folder'),
     createFolder: () => invoke('ok:dialog:create-folder'),
