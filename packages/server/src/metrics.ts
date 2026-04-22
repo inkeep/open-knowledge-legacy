@@ -51,6 +51,8 @@ export interface ReconciliationMetrics {
   /** Count of legacy WIP refs deleted by the allowlist-based sweep in
    *  initHistoryRepo on first run post-upgrade (US-018, NFR-6, D35). */
   historyMigrationLegacyRefsDeleted: number;
+  /** Count of captureEffect failures (US-022, D37). Prod swallows; dev/test throws. */
+  effectDiffCaptureFailures: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -77,6 +79,7 @@ const counters: ReconciliationMetrics = {
   collabSocketEpipeCount: 0,
   collabSocketEconnresetCount: 0,
   historyMigrationLegacyRefsDeleted: 0,
+  effectDiffCaptureFailures: 0,
 };
 
 export function incrementReconcile(): void {
@@ -192,6 +195,10 @@ export function incrementHistoryMigrationLegacyRefsDeleted(count: number): void 
   counters.historyMigrationLegacyRefsDeleted += count;
 }
 
+export function incrementEffectDiffCaptureFailures(): void {
+  counters.effectDiffCaptureFailures++;
+}
+
 export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
     incrementCollabSocketFilteredError(err.code);
@@ -232,4 +239,5 @@ export function resetMetrics(): void {
   counters.collabSocketEpipeCount = 0;
   counters.collabSocketEconnresetCount = 0;
   counters.historyMigrationLegacyRefsDeleted = 0;
+  counters.effectDiffCaptureFailures = 0;
 }

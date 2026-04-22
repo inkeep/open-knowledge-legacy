@@ -75,18 +75,18 @@ describe('readShadowLog — single writer ref', () => {
     expect(commits[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  test('human-prefixed writer id → classification=human', async () => {
+  test('principal-prefixed writer id → classification=principal, isAgent=false (D34)', async () => {
     const project = await bootstrapProject();
     const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
     mkdirSync(contentDir, { recursive: true });
     writeFileSync(resolve(contentDir, 'auth.md'), '# v1\n');
-    const writer: WriterIdentity = { id: 'human-tim', name: 'Tim', email: 't@t.test' };
+    const writer: WriterIdentity = { id: 'principal-tim', name: 'Tim', email: 't@t.test' };
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
     await commitWip(shadow, writer, contentDir, 'human edit', branch);
 
     const { commits } = await readShadowLog(project, 'content/auth.md', 5);
-    expect(commits[0].writerClassification).toBe('human');
+    expect(commits[0].writerClassification).toBe('principal');
     expect(commits[0].isAgent).toBe(false);
   });
 });
@@ -101,13 +101,13 @@ describe('readShadowLog — multi-writer merge', () => {
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
     const agent: WriterIdentity = { id: 'agent-a', name: 'A', email: 'a@t.test' };
-    const human: WriterIdentity = { id: 'human-b', name: 'B', email: 'b@t.test' };
+    const principal: WriterIdentity = { id: 'principal-b', name: 'B', email: 'b@t.test' };
 
     writeFileSync(authPath, '# v1\n');
     await commitWip(shadow, agent, contentDir, 'agent first', branch);
     await new Promise((r) => setTimeout(r, 1100));
     writeFileSync(authPath, '# v2\n');
-    await commitWip(shadow, human, contentDir, 'human second', branch);
+    await commitWip(shadow, principal, contentDir, 'principal second', branch);
     await new Promise((r) => setTimeout(r, 1100));
     writeFileSync(authPath, '# v3\n');
     await commitWip(shadow, agent, contentDir, 'agent third', branch);
@@ -116,8 +116,8 @@ describe('readShadowLog — multi-writer merge', () => {
     expect(commits.length).toBe(3);
     expect(commits[0].message).toBe('agent third');
     expect(commits[0].writerClassification).toBe('agent');
-    expect(commits[1].message).toBe('human second');
-    expect(commits[1].writerClassification).toBe('human');
+    expect(commits[1].message).toBe('principal second');
+    expect(commits[1].writerClassification).toBe('principal');
     expect(commits[2].message).toBe('agent first');
     expect(commits[0].date > commits[1].date).toBe(true);
     expect(commits[1].date > commits[2].date).toBe(true);
@@ -146,7 +146,7 @@ describe('readShadowLog — multi-writer merge', () => {
 });
 
 describe('readShadowLog — upstream and empty cases', () => {
-  test('upstream-imported commit → classification=upstream, isAgent=null', async () => {
+  test('upstream-imported commit → classification=classified-git-upstream, isAgent=null (D34)', async () => {
     const project = await bootstrapProject();
     const shadow = await initHistoryRepo(project);
     const contentDir = resolve(project, 'content');
@@ -159,10 +159,10 @@ describe('readShadowLog — upstream and empty cases', () => {
 
     const { commits } = await readShadowLog(project, 'content/auth.md', 5);
     expect(commits.length).toBe(1);
-    expect(commits[0].writerId).toBe('upstream');
-    expect(commits[0].writerClassification).toBe('upstream');
+    expect(commits[0].writerId).toBe('git-upstream');
+    expect(commits[0].writerClassification).toBe('classified-git-upstream');
     expect(commits[0].isAgent).toBe(null);
-    expect(commits[0].message).toBe('upstream: import from a1b2c3d4..f0e1d2c3');
+    expect(commits[0].message).toBe('import: from a1b2c3d4..f0e1d2c3');
   });
 
   test('shadow repo present but no edits on path → source="shadow-repo", commits=[]', async () => {

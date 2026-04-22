@@ -282,7 +282,7 @@ function formatFileEntry(m: EnrichedMeta): string {
       const who =
         h.writerClassification === 'agent'
           ? `agent: ${h.writerName}`
-          : h.writerClassification === 'human'
+          : h.writerClassification === 'principal'
             ? `human: ${h.writerName}`
             : `${h.writerClassification}: ${h.writerName}`;
       return `${h.hash.slice(0, 7)} [${who}] ${h.message}`;

@@ -1,3 +1,11 @@
+// Burst-grouping utility (FR-12, D20)
+export {
+  type Burst,
+  bucketIntoBursts,
+  type HumanEdit,
+  type SessionTransaction,
+} from './burst-grouping.ts';
+
 // Markdown pipeline (new unified+remark)
 
 // Re-export VFileMessage for Observer B's error classification (instanceof check

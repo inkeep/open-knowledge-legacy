@@ -109,6 +109,7 @@ export class ProviderPool {
   private readonly wsUrl: string;
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
+  private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
 
   constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
@@ -117,6 +118,17 @@ export class ProviderPool {
     // before the pool is instantiated. Callers must not pass an empty string.
     this.wsUrl = wsUrl;
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+  }
+
+  /**
+   * Set the browser tab's identity (principalId + tabSessionId) after the
+   * principal has been fetched from the server. New provider opens will
+   * include this as a JSON `token` in the HocuspocusProvider so the server's
+   * `onAuthenticate` hook can set `connection.context.principalId` for
+   * correct writer attribution (D50, US-024).
+   */
+  setTabIdentity(identity: { principalId: string; tabSessionId: string }): void {
+    this.tabIdentity = identity;
   }
 
   /** Register a callback that fires whenever pool state changes. */
@@ -161,6 +173,7 @@ export class ProviderPool {
       url: this.wsUrl,
       name: docName,
       forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
+      ...(this.tabIdentity !== null ? { token: JSON.stringify(this.tabIdentity) } : {}),
     });
 
     const entry: PoolEntry = {
