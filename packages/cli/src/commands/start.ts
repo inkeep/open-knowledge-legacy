@@ -259,7 +259,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const { bootServer, getLogger, isProcessAlive, readUiLock } = await import(
+  const { bootServer, detectObsidianVault, getLogger, isProcessAlive, readUiLock } = await import(
     '@inkeep/open-knowledge-server'
   );
   const { resolveContentDir } = await import('../config/paths.ts');
@@ -272,6 +272,27 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   if (!existsSync(contentDir)) {
     mkdirSync(contentDir, { recursive: true });
     log.info({ contentDir }, 'Created content directory');
+  }
+
+  // SPEC §6 FR-4: non-destructive Obsidian vault detection. The user's
+  // .open-knowledge/config.yml wins on every key (already loaded into
+  // `config.upload`), so the vault partial only fills in fields the user
+  // hasn't set explicitly. Missing app.json or unparseable JSON resolves
+  // to null and the user config alone is used.
+  const vaultPartial = detectObsidianVault(contentDir);
+  const uploadConfig = vaultPartial
+    ? {
+        ...config.upload,
+        attachmentFolderPath:
+          vaultPartial.attachmentFolderPath ?? config.upload.attachmentFolderPath,
+        emitFormat: vaultPartial.emitFormat ?? config.upload.emitFormat,
+      }
+    : config.upload;
+  if (vaultPartial) {
+    log.info(
+      { vault: vaultPartial },
+      '[start] detected Obsidian vault — pre-populated upload defaults',
+    );
   }
 
   // Track whether the upcoming auto-init actually scaffolded anything — the
@@ -352,6 +373,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     maxDebounce: config.persistence.maxDebounceMs,
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
+    uploadConfig,
     onAgentWrite,
     // Pass the exact runtime that started this server so /api/local-op/* can
     // spawn additional CLI processes without needing open-knowledge on PATH.

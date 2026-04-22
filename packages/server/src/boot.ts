@@ -50,6 +50,7 @@ export interface BootServerOptions
     | 'onAgentWrite'
     | 'shadowRepo'
     | 'enableTestRoutes'
+    | 'uploadConfig'
   > {
   /**
    * If false, `bootServer` does NOT run the pre-createServer `autoInitFn` or
@@ -163,6 +164,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     destroyTimeoutMs: opts.destroyTimeoutMs,
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,
+    uploadConfig: opts.uploadConfig,
   });
 
   const { hocuspocus, destroy: destroyHocuspocus, ready, degraded, lockDir } = serverInstance;
