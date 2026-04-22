@@ -1,5 +1,5 @@
 import type { OutlineNavDetail } from '@/components/OutlinePanel';
-import type { RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 
 export type PendingSourceNavigation =
   | { kind: 'outline'; detail: OutlineNavDetail }

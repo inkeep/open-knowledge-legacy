@@ -8,12 +8,13 @@ import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
-import type { RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { createSourceClipboardExtension } from './clipboard/index.ts';
+import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
 import { codeLanguages } from './markdown-code-languages';
 import { markUserTyping } from './observers';
 import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
@@ -108,6 +109,9 @@ export function SourceEditor({
 }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Mount failures rethrow into DocumentErrorBoundary (review Minor #26).
+  const [mountError, setMountError] = useState<Error | null>(null);
+  if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
   // Keep awareness aligned with the currently visible editor for this doc.
@@ -120,72 +124,124 @@ export function SourceEditor({
     };
   }, [provider, isSourceModeActive]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedTheme is intentionally excluded — the second effect (below) reconfigures the theme Compartment on change. Adding it here would trigger a full editor remount on every theme switch, which is exactly what Compartment is designed to avoid (per spec D6/D16).
+  // V2 EDITOR CACHE WIRING (US-008)
+  //
+  // Replaces the inline `new EditorView({ parent })` + `view.destroy()` on
+  // unmount with mountCmEditor + parkCmEditor (precedent #18(g) — H1 12/12
+  // probe). The view's DOM is reparented across Activity flips instead of
+  // being destroyed, which preserves selection / undo / yCollab binding /
+  // Y.Text identity / scroll position (cm6-reparent-contract.md §7).
+  //
+  // Cache key is the docName from provider.configuration.name — same key
+  // EditorActivityPool uses for setActivityMountList. Park never destroys;
+  // only evictCmEditor (LRU) does.
+  //
+  // The DOM listener for markUserTyping (R7 fix) attaches to the cached
+  // view's contentDOM exactly once per editor lifetime — the listeners
+  // survive reparent (W3C spec; CM6 cm6-reparent-contract §8). On park
+  // they remain wired; on evict the editor.destroy() in evictCmEditor
+  // removes them with the contentDOM.
+  //
+  // resolvedTheme is intentionally excluded from the deps array below — the
+  // second effect (below) reconfigures the theme Compartment on change.
+  // Adding it here would trigger a full editor remount on every theme switch,
+  // which is exactly what Compartment is designed to avoid.
+  const cmEntryRef = useRef<CmCacheEntry | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
-    // markdown AND text/html canonical rendered HTML via the shared
-    // mdast-to-html pipeline; paste routes through a 4-branch dispatcher
-    // parallel to the WYSIWYG 5-branch. The dispatcher needs only the
-    // ydoc + ytext — serialisation uses `markdownToHtml(string)` which
-    // runs its own unified pipeline and has no MarkdownManager dependency.
-    const sourceClipboard = createSourceClipboardExtension({
-      ydoc: provider.document,
-      ytext,
-    });
+    const docName = provider.configuration.name ?? '';
 
-    const state = EditorState.create({
-      doc: ytext.toString(),
-      extensions: [
-        basicSetup,
-        // Tab inserts indentation instead of escaping focus. CM6's default is
-        // to let Tab move focus (WCAG "no keyboard trap") — for a code-style
-        // editor this is unexpected UX. Users who need to escape focus can
-        // press Esc → Tab, or Ctrl+M (Shift+Alt+M on macOS) to toggle tab-
-        // focus mode. Upstream convention per codemirror.net/examples/tab/.
-        keymap.of([indentWithTab]),
-        markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
-        yCollab(ytext, provider.awareness),
-        createAgentFlashSourceExtension(provider.document),
-        createWikiLinkSourceExtension(),
-        createMdLinkSourceExtension(),
-        createSourcePolishExtension(),
-        sourceClipboard,
-        themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
-        placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
-        EditorView.lineWrapping,
-        EditorView.theme({
-          '&': {
-            height: '100%',
-          },
-        }),
-      ],
-    });
-
-    const view = new EditorView({
-      state,
-      parent: containerRef.current,
-    });
-    viewRef.current = view;
-
-    // Mirror the TiptapEditor DOM listeners so Observer B's typing-defer
-    // window applies uniformly regardless of which editor has focus (R7 fix).
+    let entry: CmCacheEntry | null = null;
     const mark = () => markUserTyping();
-    const dom = view.contentDOM;
-    dom.addEventListener('keydown', mark);
-    dom.addEventListener('paste', mark);
-    dom.addEventListener('drop', mark);
-    dom.addEventListener('cut', mark);
+
+    try {
+      // FR3 size-aware cache gate driven at the consumer call site (review
+      // Pass-2 Major #4). CM6 has no per-view expensive NodeView concept
+      // so viewCount=0 is accurate (not an approximation); the bytes gate
+      // is the sole protection for multi-MB docs.
+      const bytes = ytext.length;
+      const sizeStats = { viewCount: 0, bytes };
+      entry = mountCmEditor({
+        docName,
+        container,
+        sizeStats,
+        factory: (el) => {
+          // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
+          // markdown AND text/html canonical rendered HTML via the shared
+          // mdast-to-html pipeline; paste routes through a 4-branch dispatcher
+          // parallel to the WYSIWYG 5-branch.
+          const sourceClipboard = createSourceClipboardExtension({
+            ydoc: provider.document,
+            ytext,
+          });
+          const state = EditorState.create({
+            doc: ytext.toString(),
+            extensions: [
+              basicSetup,
+              keymap.of([indentWithTab]),
+              markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
+              yCollab(ytext, provider.awareness),
+              createAgentFlashSourceExtension(provider.document),
+              createWikiLinkSourceExtension(),
+              createMdLinkSourceExtension(),
+              createSourcePolishExtension(),
+              sourceClipboard,
+              themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+              placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
+              EditorView.lineWrapping,
+              EditorView.theme({
+                '&': {
+                  height: '100%',
+                },
+              }),
+            ],
+          });
+          const view = new EditorView({ state, parent: el });
+          // Wire markUserTyping listeners on first construction. They survive
+          // reparent (W3C MutationObserver / addEventListener bind to the DOM
+          // node, not its position).
+          const dom = view.contentDOM;
+          dom.addEventListener('keydown', mark);
+          dom.addEventListener('paste', mark);
+          dom.addEventListener('drop', mark);
+          dom.addEventListener('cut', mark);
+          return {
+            view,
+            ydoc: provider.document,
+            ytext,
+            provider,
+          };
+        },
+      });
+      cmEntryRef.current = entry;
+      viewRef.current = entry.view;
+    } catch (err) {
+      // Surface mount failures through DocumentErrorBoundary (review Minor #26).
+      console.error('[SourceEditor] mountCmEditor failed', err);
+      cmEntryRef.current = null;
+      viewRef.current = null;
+      setMountError(err instanceof Error ? err : new Error(String(err)));
+    }
 
     return () => {
-      dom.removeEventListener('keydown', mark);
-      dom.removeEventListener('paste', mark);
-      dom.removeEventListener('drop', mark);
-      dom.removeEventListener('cut', mark);
-      view.destroy();
+      const cur = cmEntryRef.current;
+      if (cur) {
+        parkCmEditor(cur);
+      }
+      // Listener cleanup is implicit when evictCmEditor calls view.destroy().
+      // We do NOT remove listeners here because the view is still alive in
+      // the cache (just parked). Pre-V2 destroyed the view here; V2 does not.
+      cmEntryRef.current = null;
       viewRef.current = null;
     };
+    // `placeholder` is intentionally NOT in the deps array (review Pass-2
+    // Major #7). The separate effect below uses `placeholderCompartment.
+    // reconfigure` to hot-swap the placeholder text without tearing down
+    // the view — including `placeholder` here would defeat that by
+    // triggering a full park+remount on every placeholder change.
   }, [ytext, provider]);
 
   useEffect(() => {

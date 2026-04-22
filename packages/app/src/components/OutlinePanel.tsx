@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { usePageList } from '@/components/PageListContext';
 import {
   Panel,
@@ -9,9 +10,20 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { useActiveHeading } from '@/hooks/useActiveHeading';
+import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
+
+/**
+ * Debounce window for Y.Doc update → page-headings invalidation. Matches the
+ * `TYPING_DEFER_MS` convention from precedent #11 — a 300 ms trailing-edge
+ * window coalesces bursts of keystrokes into a single fetch while still
+ * updating the outline fast enough to feel live. Matches the 300 ms debounce
+ * `stories/wiki-links-next/STORY.md` §S4.TQ3 lands on for similar reasons.
+ */
+const OUTLINE_INVALIDATE_DEBOUNCE_MS = 300;
 
 interface HeadingEntry {
   level: number;
@@ -84,7 +96,19 @@ export interface OutlineNavDetail {
 
 export const OUTLINE_NAV_EVENT = 'open-knowledge:outline-nav';
 
-export function OutlinePanel({
+export function OutlinePanel(props: {
+  docName: string;
+  isSourceMode: boolean;
+  className?: string;
+}) {
+  return (
+    <ProfilerBoundary name="outline-panel">
+      <OutlinePanelInner {...props} />
+    </ProfilerBoundary>
+  );
+}
+
+function OutlinePanelInner({
   docName,
   isSourceMode,
   className = '',
@@ -94,6 +118,8 @@ export function OutlinePanel({
   className?: string;
 }) {
   const { pages, loading } = usePageList();
+  const queryClient = useQueryClient();
+  const { activeProvider, activeDocName } = useDocumentContext();
   const {
     data: headings = [],
     isLoading,
@@ -102,9 +128,40 @@ export function OutlinePanel({
     queryKey: ['page-headings', docName],
     queryFn: () => fetchHeadings(docName),
     enabled: !loading && pages.has(docName),
-    refetchInterval: 2000,
-    refetchIntervalInBackground: false,
+    // The Y.Doc `update` subscription below is authoritative for freshness —
+    // background refetch on window-focus/reconnect would add wasted fetches
+    // for data already guaranteed-current. Per TkDodo (TanStack Query
+    // maintainer) guidance for subscription-source-authoritative queries:
+    // https://tkdodo.eu/blog/using-web-sockets-with-react-query
+    staleTime: Number.POSITIVE_INFINITY,
   });
+
+  // Precise-trigger invalidation (US-006, spec §6 D9 LOCKED). The active doc's
+  // Y.Doc `update` event fires on every mutation — local typing, remote peer
+  // edits arriving via WebSocket, and agent writes — so the outline stays
+  // fresh without polling. We gate on `activeDocName === docName` because
+  // `OutlinePanel` may briefly render for a doc that isn't the active one
+  // during a navigation transition; in that case the initial query fetch is
+  // sufficient and there's no point subscribing to a provider for a different
+  // doc. `DocPanel` in practice only mounts one `OutlinePanel` at a time, but
+  // the guard keeps this robust under future layout changes.
+  useEffect(() => {
+    if (!activeProvider || activeDocName !== docName) return;
+    const doc = activeProvider.document;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const onUpdate = () => {
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void queryClient.invalidateQueries({ queryKey: ['page-headings', docName] });
+      }, OUTLINE_INVALIDATE_DEBOUNCE_MS);
+    };
+    doc.on('update', onUpdate);
+    return () => {
+      doc.off('update', onUpdate);
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+    };
+  }, [activeProvider, activeDocName, docName, queryClient]);
 
   const slugs = headings.map((h) => h.slug);
   const activeSlug = useActiveHeading(slugs, isSourceMode);

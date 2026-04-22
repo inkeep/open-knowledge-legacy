@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="bun-types" />
 
 declare namespace globalThis {
   import type { HocuspocusProvider } from '@hocuspocus/provider';

@@ -14,8 +14,9 @@
  * this entry wires it into Electron lifecycle + IPC handlers.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname as osHostname } from 'node:os';
+import { spawn } from 'node:child_process';
+import { existsSync, promises as fsPromises, readFileSync, writeFileSync } from 'node:fs';
+import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
@@ -32,7 +33,13 @@ import {
 } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { promptForFolder } from './dialog-helpers.ts';
+import {
+  detectProtocol as detectProtocolImpl,
+  recordHandoff as recordHandoffImpl,
+  spawnCursor as spawnCursorImpl,
+} from './ipc-handlers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { checkOutboundUrl } from './shell-allowlist.ts';
@@ -63,48 +70,81 @@ const DEFAULT_WIN_OPTS = {
   },
 };
 
+/**
+ * Quarantine a corrupt `state.json` to a timestamped sibling and log so
+ * operations can correlate "recents disappeared" reports to the corruption
+ * event. Pure I/O — the return value is `emptyState()` either way; the
+ * side effects are the log line and the `state.json.corrupt-<ts>` file.
+ * Extracted so both the JSON-parse-failure branch and the schema-invalid
+ * branch (Review Pass 4 Major #4) route through the same treatment.
+ */
+function quarantineCorruptState(statePath: string, reason: string, err?: unknown): void {
+  console.warn('[main] state.json corrupt — quarantining and starting fresh', {
+    reason,
+    ...(err ? { err: (err as Error).message } : {}),
+    statePath,
+  });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  try {
+    const corruptPath = `${statePath}.corrupt-${stamp}`;
+    const buf = readFileSync(statePath);
+    writeFileSync(corruptPath, buf);
+    console.warn('[main] corrupt state.json backed up', { corruptPath });
+  } catch (backupErr) {
+    console.warn('[main] corrupt state.json backup failed', {
+      err: (backupErr as Error).message,
+    });
+  }
+}
+
 function loadAppState(): AppState {
   const statePath = join(app.getPath('userData'), 'state.json');
   if (!existsSync(statePath)) return emptyState();
+  let raw: unknown;
   try {
-    const raw = JSON.parse(readFileSync(statePath, 'utf-8'));
-    return parseAppState(raw) ?? emptyState();
+    raw = JSON.parse(readFileSync(statePath, 'utf-8'));
   } catch (err) {
-    // Corrupt state — rename + start fresh per OQ-G. Log so operations teams
-    // can correlate "recents disappeared" reports to a corruption event
-    // instead of staring at a silent file swap.
-    console.warn('[main] state.json parse failed — quarantining and starting fresh', {
-      err: (err as Error).message,
-      statePath,
-    });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    try {
-      const corruptPath = `${statePath}.corrupt-${stamp}`;
-      const buf = readFileSync(statePath);
-      writeFileSync(corruptPath, buf);
-      console.warn('[main] corrupt state.json backed up', { corruptPath });
-    } catch (backupErr) {
-      console.warn('[main] corrupt state.json backup failed', {
-        err: (backupErr as Error).message,
-      });
-    }
+    // Unparseable JSON (truncated write, manual hand-edit gone wrong).
+    quarantineCorruptState(statePath, 'unparseable-json', err);
     return emptyState();
   }
+  // Schema-invalid (parseable JSON but wrong root type / missing required
+  // fields). Review Pass 4 Major #4: route through the same quarantine
+  // treatment as the unparseable branch so silent-fallback-on-corrupt-state
+  // doesn't lose recents + M3 gates without a trace. Left-unquarantined
+  // would re-arm Toast B on the next update for a version the user has
+  // been running for months.
+  const parsed = parseAppState(raw);
+  if (!parsed) {
+    quarantineCorruptState(statePath, 'schema-invalid');
+    return emptyState();
+  }
+  return parsed;
 }
 
 /**
  * Persist app state atomically via the pure helper in `state-store.ts` —
  * separation so the atomic-write behavior can be unit-tested without
  * Electron's `app` module (`app.getPath('userData')` is the sole Electron
- * dependency).
+ * dependency). Returns the disk-persist success boolean so callers that
+ * need it (M3 writeState rollback) can distinguish in-memory-only updates
+ * from fully-persisted ones; callers that don't care get the same silent
+ * behavior by ignoring the return.
  */
-function saveAppState(state: AppState) {
-  saveAppStateToDir(app.getPath('userData'), state);
+function saveAppState(state: AppState): boolean {
+  return saveAppStateToDir(app.getPath('userData'), state);
 }
 
 let appState: AppState = emptyState();
 let navigatorWindow: BrowserWindowLike | null = null;
 let wm: WindowManager;
+/**
+ * M3 auto-updater handle — single instance per app launch. Wired at the
+ * end of `app.whenReady()` and torn down on `app.on('will-quit')` per
+ * parent D40 canonical shutdown ordering. Null before whenReady and
+ * after destroy.
+ */
+let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -292,6 +332,72 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:shell:detect-protocol', async (_event, scheme) => {
+    return detectProtocolImpl(
+      {
+        platform: process.platform,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+      },
+      scheme,
+    );
+  });
+
+  handle('ok:shell:spawn-cursor', async (event, path) => {
+    // Scope the spawn to the caller window's project directory (Review M5).
+    // A BrowserWindow without a ProjectContext (e.g. the Navigator, before it
+    // spawns an editor) should never reach this handler, but we treat that
+    // case as "no project scope" — a missing `projectPath` passes through to
+    // `spawnCursorImpl` which gates on the presence of the field. The
+    // validateSpawnPath + isPathWithinProject checks inside the impl refuse
+    // any out-of-scope path when a project IS bound.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    return spawnCursorImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+        spawn: (exec, args, timeoutMs) =>
+          new Promise((resolve) => {
+            try {
+              const child = spawn(exec, [...args], {
+                shell: false,
+                timeout: timeoutMs,
+                stdio: ['ignore', 'ignore', 'pipe'],
+              });
+              // Drain stderr so a chatty child can't block on a full pipe buffer.
+              child.stderr?.on('data', () => {});
+              // `spawn` event fires once the process is successfully launched —
+              // that's the success criterion per SPEC (not a clean exit). The
+              // macOS `/usr/bin/open` helper exits immediately after handing
+              // off to Launch Services, but the `spawn` event still resolves
+              // before exit, so this remains correct under the open-a routing.
+              child.once('spawn', () => resolve({ ok: true }));
+              child.once('error', () => resolve({ ok: false, reason: 'spawn-error' }));
+            } catch {
+              resolve({ ok: false, reason: 'spawn-error' });
+            }
+          }),
+      },
+      path,
+    );
+  });
+
+  handle('ok:shell:record-handoff', async (_event, line) => {
+    await recordHandoffImpl(
+      {
+        homedir: osHomedir,
+        appendFile: (path, content) => fsPromises.appendFile(path, content, 'utf-8'),
+        mkdir: (path) => fsPromises.mkdir(path, { recursive: true }).then(() => undefined),
+      },
+      line,
+    );
+    return undefined;
+  });
+
   handle('ok:clipboard:write-text', async (_event, text) => {
     clipboard.writeText(text);
     return undefined;
@@ -412,7 +518,7 @@ function installLocalhostCorsInjector() {
   );
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   appState = loadAppState();
   installLocalhostCorsInjector();
   registerIpcHandlers();
@@ -428,6 +534,121 @@ app.whenReady().then(() => {
   } else {
     openNavigator();
   }
+
+  // M3 auto-updater — wired as the LAST step in whenReady, after the window-
+  // open branch (either openProjectOrFallbackToNavigator OR openNavigator).
+  // F2 audit: not gated on createNavigatorWindow specifically — Navigator
+  // only opens on the Option-held / no-last-project path, but the updater
+  // must run on every boot path. `electron-updater` is imported dynamically
+  // so unit tests that import main/index.ts indirectly don't pull in the
+  // Electron-only runtime dependency.
+  //
+  // Routed through `bootAutoUpdater` — a thin testable wrapper that
+  // centralizes the dynamic-import + startAutoUpdater try/catch contract
+  // (Review Pass 4 Major #5). A silent dynamic-import failure (bundling
+  // drift, corrupt node_modules, future Electron upgrade that desyncs the
+  // electron-updater version) would leave the app session un-updateable
+  // with no signal; the wrapper logs the failure at `error` level so
+  // operators see it in the packaged-app console output and returns null
+  // so `autoUpdaterHandle` stays null (destroy on will-quit no-ops).
+  autoUpdaterHandle = await bootAutoUpdater(() => import('electron-updater'), {
+    ipcMain,
+    readState: () => appState,
+    writeState: (next) => {
+      // Rollback in-memory on disk-save failure so persistSafely-false in
+      // auto-updater.ts truly means "no gate armed" (Review Pass 1
+      // Finding #1). `saveAppStateToDir` returns a success boolean — on
+      // failure it has already logged + cleaned up; we just revert the
+      // in-memory commit and throw so persistSafely's catch registers
+      // the failure, skips the broadcast, and leaves memory + disk
+      // agreeing on "nothing armed." `saveAppStateToDir` itself never
+      // throws, so the rollback path is reached purely via the return
+      // value.
+      const prev = appState;
+      appState = next;
+      const ok = saveAppState(appState);
+      if (!ok) {
+        appState = prev;
+        throw new Error('saveAppState failed — rolled back in-memory state');
+      }
+    },
+    // Target exactly one window per update event (D24 multi-window fix).
+    // Prefer the currently-focused window so the toast lands on the window
+    // the user is looking at; fall back to the first open window when none
+    // is focused (e.g., editor minimized); return null when no window is
+    // open so the broadcast helper no-ops.
+    getPrimaryWindow: () => {
+      const focused = BrowserWindow.getFocusedWindow();
+      if (focused) return focused;
+      const all = BrowserWindow.getAllWindows();
+      return all[0] ?? null;
+    },
+    getAppVersion: () => app.getVersion(),
+    isPackaged: app.isPackaged,
+    forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+    // Tier-2 smoke override: point the updater at a local mock HTTP server
+    // that serves a hand-crafted `latest-mac.yml` + fake .zip with valid
+    // sha512. Production leaves this unset and reads `publish: github`
+    // from `app-update.yml`. Paired with `OK_UPDATER_FORCE_DEV=1` (above)
+    // so the `checkForUpdates()` gate actually hits the network in a dev
+    // build. See `packages/desktop/scripts/smoke-mock-update.mjs --keep-alive`
+    // for the server side.
+    feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
+    // Toast B renderer-mount race (Review Pass 4 Major #1 part B) —
+    // defer the dispatch until the primary window's renderer has
+    // finished loading so its `<UpdateToast/>` subscribers are
+    // attached. Without this, `webContents.send` sent from this very
+    // `app.whenReady()` handler is dropped on the floor (Electron does
+    // NOT buffer renderer-bound events before `did-finish-load`). If
+    // the primary window has already loaded by the time Toast B fires
+    // (rare — updater wires before loadURL resolves), fire immediately.
+    whenRendererReady: (fn) => {
+      // Three cases, all must deliver Toast B eventually because
+      // `lastSeenVersion` has already advanced at the call site and the
+      // AC7 contract ("user sees a toast on first launch post-update")
+      // does not allow silent-drop (Review Pass 5 Minor #3 — close the
+      // `lastSeenVersion`-advanced-but-broadcast-lost gap that the
+      // original Pass 4 Major #1 fix left open for the no-window race).
+      //
+      //   1. Window exists + already loaded → fire immediately.
+      //   2. Window exists + still loading  → wait for did-finish-load.
+      //   3. No window yet                  → wait for the next
+      //      `browser-window-created` event, then recurse into cases
+      //      1/2 against the fresh window.
+      //
+      // Electron emits `browser-window-created` synchronously inside
+      // `new BrowserWindow(opts)`; `once` self-detaches after the first
+      // firing so this listener can't leak across future spawns. If
+      // the user quits the app before any window ever opens (pathological
+      // — macOS doesn't dispatch Cmd+Q without a window), the listener is
+      // garbage-collected alongside the `app` object at process exit.
+      const tryFire = (win: BrowserWindow): void => {
+        if (win.webContents.isLoading()) {
+          win.webContents.once('did-finish-load', fn);
+        } else {
+          fn();
+        }
+      };
+      const focused = BrowserWindow.getFocusedWindow();
+      const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
+      if (existing) {
+        tryFire(existing);
+        return;
+      }
+      app.once('browser-window-created', (_event, createdWin) => {
+        tryFire(createdWin as BrowserWindow);
+      });
+    },
+  });
+});
+
+// F17 audit: cleared on `will-quit` (parent D40 canonical ordering — NOT
+// `before-quit`, which fires earlier in the shutdown sequence). The handle
+// is safe to call multiple times via `?.destroy()` in case of spurious
+// will-quit emissions.
+app.on('will-quit', () => {
+  autoUpdaterHandle?.destroy();
+  autoUpdaterHandle = null;
 });
 
 app.on('window-all-closed', () => {

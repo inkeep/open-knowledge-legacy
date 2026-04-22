@@ -83,9 +83,7 @@ function errorDocName(error: unknown): string | null {
  * Copy discipline: the user-facing vocabulary is "load"/"loading", not
  * "sync"/"syncing". "Sync" is internal jargon (Y.js/Hocuspocus); the product
  * is a document editor where the user mental model is always "opening a
- * document." NavigationPendingBar uses the same vocabulary ("Loading…" /
- * "Still loading…") so the progression from pending-bar to error-boundary
- * stays in one voice.
+ * document."
  */
 export function errorCopy(error: unknown): ErrorCopy {
   if (error instanceof SyncTimeoutError) {

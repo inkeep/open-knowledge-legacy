@@ -9,6 +9,9 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { installGitInitToast } from '@/lib/install-git-init-toast';
+import { initWebVitals } from '@/lib/perf';
+import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
+import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -23,6 +26,16 @@ if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
   installDesktopFetchRewrite({ apiOrigin: window.okDesktop.config.apiOrigin });
 }
 
+// Install cold-mount instrumentation BEFORE any editor module loads — the
+// prototype patches must be in place before the first `new Editor(...)` call.
+// Marks emit only in DEV/test; production `mark()` helper no-ops its collector
+// push (per CLAUDE.md precedent #24). Controlled via `OK_COLD_MOUNT_INSTR` env
+// flag on the Vite side for opt-out in case of overhead concerns.
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
+  installColdMountInstrumentation();
+  initWebVitals();
+}
+
 // Desktop-only: subscribe to the `git-init-notice` bridge event so the user
 // sees a sonner toast when ensureProjectGit ran `git init` during boot (SPEC
 // R5b / D10). Registered here (module-init, before React mount) so the IPC
@@ -31,6 +44,14 @@ if (typeof window !== 'undefined' && window.okDesktop?.config.apiOrigin) {
 if (typeof window !== 'undefined') {
   installGitInitToast({ bridge: window.okDesktop });
 }
+
+// Desktop-only: attach the M3 update-notice bridge subscribers at module-init
+// time (BEFORE React mounts) so IPC events fired before first render aren't
+// dropped, AND so renderer remounts don't detach the subscribers. The
+// module-level store in `update-notices-store` buffers notices; the
+// `<UpdateNotices />` component reads them via `useSyncExternalStore`.
+// No-op in web/CLI distribution (window.okDesktop undefined).
+installUpdateNoticesBridge();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +81,12 @@ createRoot(root).render(
         <TooltipProvider>
           {isNavigator && window.okDesktop ? <NavigatorApp bridge={window.okDesktop} /> : <App />}
         </TooltipProvider>
+        {/*
+         * Sonner toaster for ad-hoc status/error toasts (clone dialog, file
+         * tree, etc.). M3 auto-update notices are NOT routed here — they live
+         * in the sidebar footer via <UpdateNotices /> for a persistent home
+         * that matches their permanent-until-clicked semantics.
+         */}
         <Toaster richColors />
       </ThemeProvider>
     </QueryClientProvider>

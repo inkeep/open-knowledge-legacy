@@ -151,36 +151,56 @@ describe('M1 smoke', () => {
 
     const { readFileSync } = await import('node:fs');
     /**
-     * Extract the TOP-LEVEL member names from an `OkDesktopBridge` interface
-     * declaration. Walks by brace depth so we don't conflate nested members
-     * (e.g., `dialog.openFolder`) with top-level ones (`dialog`, `project`).
+     * Extract member names from an `OkDesktopBridge` interface declaration,
+     * INCLUDING one level of nesting. Top-level members (`dialog`, `shell`,
+     * `project`, …) are captured by their name; members inside those nested
+     * blocks are captured as `<parent>.<name>` (e.g. `shell.detectProtocol`).
+     *
+     * Two-level capture (not arbitrary depth) is deliberate — the contract
+     * is flat-by-convention apart from the grouped surfaces, and a bounded
+     * walker is easier to reason about than a generic recursive one. If a
+     * future surface ever grows a third level, add another nesting tier
+     * here rather than reworking the depth bookkeeping.
      */
     const extractBridgeMembers = (src: string): Set<string> => {
       const names = new Set<string>();
       const lines = src.split('\n');
       let inInterface = false;
-      let depth = 0;
+      let braceDepth = 0;
+      // Paren depth guards against false positives from multi-line method
+      // signatures like `spawnCursor(\n  path: string,\n): Promise<…>` —
+      // without this, the continuation line `path: string,` would match the
+      // member regex and leak "path" as a phantom sub-member.
+      let parenDepth = 0;
+      let currentParent: string | null = null;
       for (const line of lines) {
         if (!inInterface) {
           if (/interface\s+OkDesktopBridge\s*\{/.test(line)) {
             inInterface = true;
-            // Starting depth = `{`-count on this line so the interface's own
-            // opening brace pushes us to depth 1 before we examine members.
-            depth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+            braceDepth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+            parenDepth = (line.match(/\(/g) ?? []).length - (line.match(/\)/g) ?? []).length;
           }
           continue;
         }
         const opens = (line.match(/\{/g) ?? []).length;
         const closes = (line.match(/\}/g) ?? []).length;
-        // Only extract at exact top-level of the interface (depth === 1).
-        // Nested blocks (dialog, shell, clipboard, project) have depth >= 2.
-        if (depth === 1) {
-          const trimmed = line.trim();
-          const memberMatch = trimmed.match(/^(?:readonly\s+)?(\w+)\s*[:(?]/);
-          if (memberMatch?.[1]) names.add(memberMatch[1]);
+        const parenOpens = (line.match(/\(/g) ?? []).length;
+        const parenCloses = (line.match(/\)/g) ?? []).length;
+        const trimmed = line.trim();
+        const memberMatch = trimmed.match(/^(?:readonly\s+)?(\w+)\s*[:(?]/);
+        const canCapture = parenDepth === 0;
+        if (braceDepth === 1) {
+          if (canCapture && memberMatch?.[1]) {
+            names.add(memberMatch[1]);
+            if (opens > closes) currentParent = memberMatch[1];
+          }
+        } else if (braceDepth === 2 && currentParent) {
+          if (canCapture && memberMatch?.[1]) names.add(`${currentParent}.${memberMatch[1]}`);
         }
-        depth += opens - closes;
-        if (depth === 0) break;
+        braceDepth += opens - closes;
+        parenDepth += parenOpens - parenCloses;
+        if (braceDepth === 1 && currentParent) currentParent = null;
+        if (braceDepth === 0) break;
       }
       return names;
     };
@@ -194,6 +214,35 @@ describe('M1 smoke', () => {
     expect(coreMembers.size).toBeGreaterThan(0);
     expect(desktopMembers.size).toBeGreaterThan(0);
     expect(appMembers.size).toBeGreaterThan(0);
+
+    // Positive regression: the nested walker must actually find sub-members
+    // of the `shell` block. If it silently fell back to top-level-only, this
+    // test would quietly succeed while missing an entire class of drift.
+    //
+    // Assert every shell.* sub-member shipped by the 2026-04-21 Open in Agent
+    // Desktop spec (§5.1 bridge-contract rows). A walker regression that drops
+    // one of these — say, the paren-depth guard degrading on a signature with
+    // a generic type parameter — would silently lose the drift signal for that
+    // method. Explicit membership makes the signal load-bearing (US-012).
+    const REQUIRED_SHELL_MEMBERS = [
+      'shell.openExternal', // M1 baseline
+      'shell.detectProtocol', // 2026-04-21 US-004 (Open in Agent)
+      'shell.spawnCursor', // 2026-04-21 US-004 (Open in Agent)
+      'shell.recordHandoff', // 2026-04-21 US-008 (Open in Agent telemetry)
+    ] as const;
+    for (const [label, members] of [
+      ['core', coreMembers],
+      ['desktop', desktopMembers],
+      ['app', appMembers],
+    ] as const) {
+      expect(members.has('shell')).toBe(true);
+      for (const required of REQUIRED_SHELL_MEMBERS) {
+        expect(members.has(required)).toBe(true);
+        if (!members.has(required)) {
+          throw new Error(`${label} extractor missed ${required} — walker broken`);
+        }
+      }
+    }
 
     // Set equality pairwise. If any pair diverges, surface WHICH members
     // are missing from which copy so the fix is clear.

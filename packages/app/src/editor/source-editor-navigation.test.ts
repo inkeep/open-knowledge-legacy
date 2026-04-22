@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  clearPendingSourceNavigation,
   clearPendingSourceNavigationsForTest,
   consumePendingSourceNavigation,
   peekPendingSourceNavigation,
@@ -46,5 +47,14 @@ describe('source-editor-navigation', () => {
       kind: 'raw-mdx',
       detail: { offset: 99 },
     });
+  });
+
+  test('clearPendingSourceNavigation removes entry without returning it', () => {
+    rememberPendingSourceNavigation('doc-a', {
+      kind: 'raw-mdx',
+      detail: { offset: 1 },
+    });
+    clearPendingSourceNavigation('doc-a');
+    expect(consumePendingSourceNavigation('doc-a')).toBeNull();
   });
 });
