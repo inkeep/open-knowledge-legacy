@@ -95,16 +95,25 @@ export function initialTargetStates(opts: {
  * Electron probe strategy — one IPC call per unique scheme, in parallel.
  * Per-scheme rejection is caught and treated as `installed: false` so one
  * flaky scheme doesn't sink the whole refresh.
+ *
+ * IPC contract: `detectProtocol` expects the scheme NAME without trailing
+ * colon (e.g. `'claude'` not `'claude:'`). The main-process handler's
+ * shell-injection sanitizer (`^[a-z][a-z0-9+.-]*$`) rejects any scheme
+ * containing a colon before `getApplicationInfoForProtocol` is called —
+ * matching the Linux `xdg-mime query default x-scheme-handler/<name>`
+ * shell-command form. `KNOWN_TARGETS.schemes` carries the colonful form
+ * (matches `URL.protocol` + `ALLOWED_SCHEMES`), so we strip here.
  */
 export async function probeViaElectron(deps: {
-  detectProtocol: (scheme: string) => Promise<SchemeProbeResult>;
+  detectProtocol: (schemeName: string) => Promise<SchemeProbeResult>;
   schemes?: ReadonlyArray<string>;
 }): Promise<SchemeStates> {
   const schemes = deps.schemes ?? UNIQUE_SCHEMES;
   const entries = await Promise.all(
     schemes.map(async (scheme) => {
+      const schemeName = scheme.replace(/:$/, '');
       try {
-        const result = await deps.detectProtocol(scheme);
+        const result = await deps.detectProtocol(schemeName);
         return [scheme, result] as const;
       } catch {
         return [scheme, { installed: false } as SchemeProbeResult] as const;

@@ -57,6 +57,13 @@ export interface OkDesktopBridge {
   };
   shell: {
     openExternal(url: string): Promise<void>;
+    /**
+     * Scheme format contract: `scheme` is the scheme NAME without trailing
+     * colon (e.g. `'claude'`, not `'claude:'`). Matches the main-process
+     * shell-injection sanitizer and the Linux `xdg-mime` shell-command form
+     * — callers with a colonful scheme MUST strip the trailing `:` first.
+     * See `packages/desktop/src/shared/bridge-contract.ts` for canonical JSDoc.
+     */
     detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
     spawnCursor(
       path: string,

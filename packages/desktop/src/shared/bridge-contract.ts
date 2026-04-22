@@ -76,6 +76,12 @@ export interface OkDesktopBridge {
      * Used by the "Open in Agent Desktop" dropdown (SPEC 2026-04-21) to
      * render disabled-with-tooltip rows when the target app isn't installed.
      * Returns `{installed: false}` on timeout or platform-API error.
+     *
+     * **Scheme format contract:** `scheme` is the scheme NAME without
+     * trailing colon (e.g. `'claude'`, not `'claude:'`). Matches the Linux
+     * `xdg-mime query default x-scheme-handler/<name>` shell-command form
+     * and the main-process shell-injection sanitizer — callers with a
+     * colonful scheme MUST strip the trailing `:` first.
      */
     detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
     /**

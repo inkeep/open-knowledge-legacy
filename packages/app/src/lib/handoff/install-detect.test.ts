@@ -119,23 +119,42 @@ describe('initialTargetStates', () => {
 });
 
 describe('probeViaElectron', () => {
-  test('fans out one IPC call per unique scheme, in parallel', async () => {
+  test('fans out one IPC call per unique scheme, in parallel, stripping trailing colon', async () => {
     const calls: string[] = [];
-    const detector = async (scheme: string) => {
-      calls.push(scheme);
-      return { installed: true, displayName: `App-${scheme}` };
+    const detector = async (schemeName: string) => {
+      calls.push(schemeName);
+      return { installed: true, displayName: `App-${schemeName}` };
     };
     const out = await probeViaElectron({ detectProtocol: detector });
-    expect(new Set(calls)).toEqual(new Set(['claude:', 'codex:', 'cursor:']));
+    // The IPC contract is scheme NAME (no colon) — the handler's shell-injection
+    // sanitizer at packages/desktop/src/main/ipc-handlers.ts rejects `:`. This
+    // assertion is the regression guard for the PR-hotfix where the hook used
+    // to pass the colonful form and every row rendered "Not installed".
+    expect(new Set(calls)).toEqual(new Set(['claude', 'codex', 'cursor']));
     expect(calls.length).toBe(3);
+    // But the output map is still keyed by the colonful scheme to align with
+    // `KNOWN_TARGETS.schemes` + the `URL.protocol` / `ALLOWED_SCHEMES` convention.
     expect(out['claude:']?.installed).toBe(true);
     expect(out['codex:']?.installed).toBe(true);
     expect(out['cursor:']?.installed).toBe(true);
   });
 
+  test('IPC contract: detector receives no-colon scheme name (shell-injection sanitizer matches)', async () => {
+    // Tight regression test: if the hook ever regresses to passing `'claude:'`,
+    // the main-process handler's `^[a-z][a-z0-9+.-]*$` sanitizer would return
+    // `{installed:false}` short-circuit and the dropdown would render every
+    // row disabled in production (PR hotfix repro). Lock in the stripped form.
+    const detector = async (schemeName: string) => {
+      expect(schemeName).not.toContain(':');
+      expect(/^[a-z][a-z0-9+.-]*$/i.test(schemeName)).toBe(true);
+      return { installed: true };
+    };
+    await probeViaElectron({ detectProtocol: detector });
+  });
+
   test('per-scheme rejection is caught and treated as installed:false', async () => {
-    const detector = async (scheme: string) => {
-      if (scheme === 'codex:') throw new Error('ipc-boom');
+    const detector = async (schemeName: string) => {
+      if (schemeName === 'codex') throw new Error('ipc-boom');
       return { installed: true };
     };
     const out = await probeViaElectron({ detectProtocol: detector });
@@ -145,9 +164,9 @@ describe('probeViaElectron', () => {
   });
 
   test('displayName passthrough from detector result', async () => {
-    const detector = async (scheme: string) => ({
+    const detector = async (schemeName: string) => ({
       installed: true,
-      displayName: scheme === 'claude:' ? 'Claude' : 'OtherApp',
+      displayName: schemeName === 'claude' ? 'Claude' : 'OtherApp',
     });
     const out = await probeViaElectron({ detectProtocol: detector });
     expect(out['claude:']?.displayName).toBe('Claude');

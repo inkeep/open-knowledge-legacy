@@ -81,6 +81,15 @@ export interface RequestChannels {
    * the "Open in Agent Desktop" dropdown to render disabled-with-tooltip rows
    * when the target app is not installed. Returns `{installed: false}` on any
    * failure (timeout, platform-API error) — conservative default per SPEC §6.4.
+   *
+   * **Scheme format contract:** `scheme` is the scheme NAME without trailing
+   * colon (e.g. `'claude'`, not `'claude:'`). This matches the Linux
+   * `xdg-mime query default x-scheme-handler/<name>` shell-command form AND
+   * the main-process handler's shell-injection sanitizer `^[a-z][a-z0-9+.-]*$`
+   * which rejects colons by design. Callers with a colonful scheme (as in
+   * `KNOWN_TARGETS.schemes` / `URL.protocol` / `ALLOWED_SCHEMES`) must strip
+   * the trailing `:` before invoking — see `probeViaElectron` in
+   * `packages/app/src/lib/handoff/install-detect.ts`.
    */
   'ok:shell:detect-protocol': {
     args: [scheme: string];
@@ -99,8 +108,13 @@ export interface RequestChannels {
    * Zero phone-home (XQ3 LOCKED). Resolves on success; resolves (without
    * throwing) when HOME is unwritable so the dispatch path is never affected
    * by telemetry failure (SPEC 2026-04-21 §13.1 / E5b).
+   *
+   * Channel name is `ok:shell:record-handoff` (not `ok:handoff:record`) so it
+   * matches the `ok:<surface>:<verb>` convention that maps 1:1 to the
+   * `shell.recordHandoff` bridge location. Grep-based channel-to-handler
+   * navigation stays within one namespace (`ok:shell:*`).
    */
-  'ok:handoff:record': { args: [line: HandoffStatsLine]; result: undefined };
+  'ok:shell:record-handoff': { args: [line: HandoffStatsLine]; result: undefined };
   /** Clipboard text write (IPC-relay — renderer is sandboxed). */
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   /** Read the current window's config (projectPath, collabUrl, etc.). */
