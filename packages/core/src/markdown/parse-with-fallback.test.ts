@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { getParseHealth, resetParseHealth } from '../metrics/parse-health.ts';
 import { loadPerfFixture } from './fixtures/index.ts';
@@ -24,6 +24,7 @@ const BENCH_ENABLED = process.env.RUN_BENCH === '1' || process.env.RUN_BENCH ===
 const describeBench = BENCH_ENABLED ? describe : describe.skip;
 
 describe('parseWithFallback (R6)', () => {
+  beforeEach(() => resetParseHealth());
   afterEach(() => resetParseHealth());
 
   test('valid markdown parses clean (no fallback)', () => {

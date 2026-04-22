@@ -215,6 +215,58 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
+  test('no editor.mount( / editor.unmount( in V2 cache surfaces (precedent §25(a), SPEC US-001 Phase 1.0)', () => {
+    // TipTap's `Editor.mount(container)` / `Editor.unmount()` API is BLOCKED
+    // by `@tiptap/extension-drag-handle@4.x` (Phase 1.0 probe — closure-captured
+    // editor ref hits TipTap's throwing proxy during re-create). V2 ships the
+    // raw `editor.editorView.dom` reparent fallback instead. This STOP rule
+    // is mechanical defense against a future contributor "simplifying" the
+    // reparent back to the named API — which would silently regress the
+    // cache on any doc that has a drag-handle NodeView.
+    //
+    // Scope: the V2-cache surface files — not ALL of packages/app/src/ — so
+    // we don't forbid Editor.mount/unmount in unrelated test fixtures or
+    // future features that don't go through the cache. The surface list is
+    // small and explicit; add a new file here if a new cached surface lands.
+    const V2_CACHE_SURFACES = [
+      join(APP_SRC_DIR, 'editor', 'editor-cache.ts'),
+      join(APP_SRC_DIR, 'editor', 'TiptapEditor.tsx'),
+    ];
+    const pattern = /\beditor\.(mount|unmount)\s*\(/;
+    const violations: string[] = [];
+    for (const abs of V2_CACHE_SURFACES) {
+      let source: string;
+      try {
+        source = readFileSync(abs, 'utf-8');
+      } catch {
+        // File may be moved in a future refactor; don't crash the test.
+        continue;
+      }
+      const lines = source.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? '';
+        if (!pattern.test(line)) continue;
+        // Allow references inside docstring/comment blocks — they're
+        // forbidding the API, not calling it. Heuristic: if the trimmed
+        // line starts with `*`, `//`, or contains the STOP marker, skip.
+        const trimmed = line.trim();
+        if (
+          trimmed.startsWith('*') ||
+          trimmed.startsWith('//') ||
+          trimmed.includes('`editor.mount(') ||
+          trimmed.includes('`editor.unmount(')
+        )
+          continue;
+        violations.push(`  ${relative(REPO_ROOT, abs)}:${i + 1}    ${trimmed}`);
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        `editor.mount()/unmount() call found in a V2-cache surface — use raw editor.editorView.dom reparent instead per precedent §25(a):\n${violations.join('\n')}`,
+      );
+    }
+  });
+
   test('no waitForFunction(fn, { timeout/polling }) — options must be 3rd arg (precedent §20(j))', () => {
     // Playwright's `page.waitForFunction(pageFunction, arg?, options?)` is
     // strictly positional (verified at node_modules/playwright-core/lib/

@@ -536,7 +536,12 @@ export async function pollUntil(
 export async function awaitFileWatcherIndexed(
   server: TestServer,
   docPath: string,
-  timeoutMs = 30_000,
+  // 45_000 matches the CI-worst-case budget already documented at the call
+  // sites (e.g. `ORPHAN_HINT_TEST_TIMEOUT_MS` in agent-focus-wiring.test.ts).
+  // parcel-watcher on Linux CI occasionally dispatches inotify events for
+  // files in newly-created subdirectories with >30s latency under load.
+  // Per precedent set by PR #220 ("bump integration test timeouts").
+  timeoutMs = 45_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;

@@ -1,0 +1,135 @@
+{
+  "baselineDate": "2026-04-19",
+  "purpose": "pre-fix",
+  "capturedAt": "2026-04-20T05:15:17.510Z",
+  "metadata": {
+    "commitSha": "4721c98904a372b8abff94a8bfce24874fe4bd23",
+    "branch": "perf/investigation",
+    "bunVersion": "1.3.11",
+    "nodeVersion": "24.3.0",
+    "platform": "darwin-arm64 (MacBook-Pro-79.local)",
+    "viewport": "1440x900",
+    "headed": false,
+    "hardwareClass": "Apple-silicon laptop (MacBook-Pro-79.local)",
+    "targetUrl": "http://localhost:5174",
+    "devServerWorktree": "playwright-stability",
+    "note": "Captured against a dev server started on VITE_PORT=5174 from the playwright-stability worktree. The repo's default :5173 dev server in this environment is owned by a different worktree, so a second isolated instance was spawned for this capture. The commitSha/branch reflect this worktree's head at capture time; platform metadata reflects the profile.ts driver's process.versions.node (24.3.0), which is bun's bundled node runtime."
+  },
+  "docs": {
+    "README": { "sizeBytes": 5583, "lines": 116 },
+    "CLAUDE": { "sizeBytes": 149623, "lines": 1051, "note": "symlink -> AGENTS.md" },
+    "AGENTS": { "sizeBytes": 149623, "lines": 1051 },
+    "PROJECT": {
+      "sizeBytes": 3252966,
+      "lines": 8364,
+      "note": "PROJECT.md in this worktree is 3.25 MB / 8364 lines (vs the 9.7 MB / 25K-line doc in the original symptom measurements). The symptoms still reproduce at AC-required magnitudes, just scaled to the doc size in this worktree."
+    }
+  },
+  "scenarios": {
+    "cold-load-big-doc": {
+      "sourceResult": "results/cold-load-big-doc.2026-04-20T05-13-14-929Z.json",
+      "docName": "PROJECT",
+      "wallClockMs": 20570.69,
+      "coldLoadMs": 11175,
+      "rendered": true,
+      "proseMirrorTextLen": 1494078,
+      "observedLongTaskCount": 6,
+      "observedLongestTaskMs": 8310,
+      "trace": {
+        "eventCount": 1365738,
+        "longTaskCount": 6,
+        "longestTaskMs": 9500.95,
+        "taskDurationMs": 13580.65,
+        "styleMs": 492.85,
+        "layoutMs": 1094.95,
+        "scriptMs": 8925.19,
+        "paintEvents": 86,
+        "userTimingMarkCount": 81529,
+        "cumulativeLayoutShift": 0.0016
+      },
+      "vitals": [{ "name": "FCP", "value": 272, "rating": "good" }],
+      "markCount": 106,
+      "onRenderCount": 94,
+      "interpretation": "S1 reproduced. 11.2s to ProseMirror-visible with 1.5M rendered chars on a 3.25 MB doc. The 9.5s longest task and 8.9s script ms concentrate the main-thread block reported in /tmp/ok-perf/FINDINGS.md. At PROJECT=9.7MB in the original environment the numbers scaled to 15.8s single task / 20.2s TTI; in this worktree's 3.25 MB doc the pattern holds at lower absolute magnitudes."
+    },
+    "warm-switch": {
+      "sourceResult": "results/warm-switch.2026-04-20T05-14-06-633Z.json",
+      "smallDoc": "README",
+      "bigDoc": "PROJECT",
+      "wallClockMs": 32031.25,
+      "warmSwitchMs": 737,
+      "trace": {
+        "eventCount": 1435337,
+        "longTaskCount": 10,
+        "longestTaskMs": 9503.59,
+        "taskDurationMs": 14746.83,
+        "styleMs": 523.23,
+        "layoutMs": 1142.93,
+        "scriptMs": 9870.18,
+        "paintEvents": 191,
+        "userTimingMarkCount": 87614,
+        "cumulativeLayoutShift": 0.0065
+      },
+      "interpretation": "S2 reproduced. 737 ms blocking on click-back to the small README doc after visiting PROJECT — consistent with the 1.1s block in the original /tmp/ok-perf/FINDINGS.md (scaled to this worktree's smaller PROJECT). The ACTIVITY_MOUNT_LIMIT=3 subtree re-render dominates: every mode flip walks all mounted editors and Y.js observers keep processing in hidden Activity subtrees (precedent #18(c))."
+    },
+    "mode-toggle": {
+      "sourceResult": "results/mode-toggle.2026-04-20T05-14-42-959Z.json",
+      "docName": "PROJECT",
+      "wallClockMs": 12569.37,
+      "toSourceMs": 164,
+      "modeToggleMs": 609,
+      "modeToggleLayoutMs": 2038.25,
+      "modeToggleLayoutMsSource": "trace.layoutMs + trace.styleMs (scenario-wide upper bound; see note below)",
+      "trace": {
+        "eventCount": 1388892,
+        "longTaskCount": 7,
+        "longestTaskMs": 9463.37,
+        "taskDurationMs": 14366.36,
+        "styleMs": 658.31,
+        "layoutMs": 1379.94,
+        "scriptMs": 9461.68,
+        "paintEvents": 112,
+        "userTimingMarkCount": 82268,
+        "cumulativeLayoutShift": 0.005
+      },
+      "interpretation": "S3 reproduced. Source→Visual toggle wall-clock 609 ms on PROJECT. The scenario-wide layout+style aggregate (2038 ms) is an upper bound — the scenario was designed with a 500 ms pre-ready breather so toggle-owned layout/style dominates the sum; the toggle's true contribution is between the 609 ms wall-clock and this upper bound, both above the AC-required 300 ms. The deferred browser style/layout recalc on display:none→visible for a 25K-node PM DOM is the pre-mount-both editors architectural cost (precedent #18(b))."
+    },
+    "outline-polling": {
+      "sourceResult": "results/outline-polling.2026-04-20T05-15-17-510Z.json",
+      "docName": "README",
+      "wallClockMs": 31515.14,
+      "idleMs": 30002,
+      "initialRequestCount": 1,
+      "apiCallCount": 13,
+      "expectedPollIntervalMs": 2000,
+      "interpretation": "S4 reproduced. 13 /api/page-headings calls over the 30s idle window matches the 2s refetchInterval hardcoded in OutlinePanel.tsx (line ~104). The initial request fires on component mount; the 13 subsequent polls are pure waste while the doc isn't changing. US-006 replaces this with a provider-update-event subscription."
+    }
+  },
+  "acceptance": {
+    "S1-cold-load": {
+      "threshold": "coldLoadMs >= 10000",
+      "actual": 11175,
+      "passed": true,
+      "acId": "AC12"
+    },
+    "S2-warm-switch": {
+      "threshold": "warmSwitchMs >= 500",
+      "actual": 737,
+      "passed": true,
+      "acId": "AC13"
+    },
+    "S3-mode-toggle": {
+      "threshold": "modeToggleLayoutMs >= 300",
+      "actual": 2038.25,
+      "passed": true,
+      "acId": "AC14",
+      "note": "Upper bound from trace.layoutMs + trace.styleMs; wall-clock modeToggleMs=609 ms is a stricter lower bound and also clears 300 ms."
+    },
+    "S4-outline-polling": {
+      "threshold": "apiCallCount >= 10",
+      "actual": 13,
+      "passed": true,
+      "acId": "AC15"
+    }
+  }
+}

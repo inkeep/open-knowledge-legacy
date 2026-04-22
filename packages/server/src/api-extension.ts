@@ -496,10 +496,16 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function json(res: ServerResponse, status: number, data: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }

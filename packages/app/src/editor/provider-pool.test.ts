@@ -428,6 +428,52 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   });
 });
 
+describe('ProviderPool prewarm (V2 SPEC FR12 / Option G)', () => {
+  test('prewarm admits a cold doc and returns its entry', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const entry = pool.prewarm('prewarm-doc');
+    expect(entry).not.toBeNull();
+    expect(pool.has('prewarm-doc')).toBe(true);
+    pool.dispose();
+  });
+
+  test('prewarm places new entry at LRU-oldest — it is the first evicted', () => {
+    const pool = new ProviderPool(3, 'ws://localhost:9999');
+    // User-initiated opens — go to MRU (LRU-newest).
+    pool.open('user-a');
+    pool.open('user-b');
+    pool.setActive('user-b'); // Pin active to prevent eviction
+
+    // Prewarm should go to LRU-oldest.
+    pool.prewarm('prewarm-c');
+    expect(pool.has('prewarm-c')).toBe(true);
+
+    // Next user-initiated open at capacity → should evict the prewarm first.
+    pool.open('user-d');
+    expect(pool.has('prewarm-c')).toBe(false);
+    expect(pool.has('user-a')).toBe(true);
+    expect(pool.has('user-b')).toBe(true);
+    expect(pool.has('user-d')).toBe(true);
+    pool.dispose();
+  });
+
+  test('prewarm is idempotent — re-prewarming an existing doc returns same entry', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const first = pool.prewarm('idempotent-doc');
+    const second = pool.prewarm('idempotent-doc');
+    expect(second).toBe(first);
+    pool.dispose();
+  });
+
+  test('prewarm rejects system docs (__system__)', () => {
+    const pool = new ProviderPool(10, 'ws://localhost:9999');
+    const entry = pool.prewarm('__system__');
+    expect(entry).toBeNull();
+    expect(pool.has('__system__')).toBe(false);
+    pool.dispose();
+  });
+});
+
 describe('ProviderPool admission filter (__system__, DX7)', () => {
   test('open("__system__") returns null and does not add the pseudo-doc to the pool', () => {
     pool = new ProviderPool(3, DUMMY_WS);
@@ -572,5 +618,201 @@ describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
     // sync-promise.ts lifecycle docstring (subsequent React renders need to
     // see the same .status='rejected' thenable so the boundary catches).
     expect(__syncPromiseCacheSize()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review Critical #2 (2026-04-21): pool destroy must evict the V2 editor
+// cache before tearing down the provider. Otherwise the next cache-hit mount
+// returns an Editor bound to an orphaned Y.Doc (split-brain typing, no
+// sync, no persistence, no error boundary fires).
+//
+// Bun unit env has no DOM — we shape fake nodes that match the narrow
+// HTMLElement surface the cache touches, mirroring editor-cache.test.ts.
+// ---------------------------------------------------------------------------
+interface FakeContainer {
+  parentElement: FakeContainer | null;
+  scrollTop: number;
+  children: FakeContainer[];
+  appendChild(child: FakeContainer): FakeContainer;
+  removeChild(child: FakeContainer): FakeContainer;
+  setAttribute(key: string, value: string): void;
+  style: Record<string, string>;
+}
+
+function makeFakeNode(): FakeContainer {
+  const node: FakeContainer = {
+    parentElement: null,
+    scrollTop: 0,
+    children: [],
+    style: {},
+    setAttribute() {
+      // no-op
+    },
+    appendChild(child) {
+      if (child.parentElement) child.parentElement.removeChild(child);
+      node.children.push(child);
+      child.parentElement = node;
+      return child;
+    },
+    removeChild(child) {
+      const idx = node.children.indexOf(child);
+      if (idx !== -1) node.children.splice(idx, 1);
+      child.parentElement = null;
+      return child;
+    },
+  };
+  return node;
+}
+
+describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () => {
+  test('close() evicts both TipTap + CM cache entries before destroying the provider', async () => {
+    const cacheModule = await import('./editor-cache');
+    cacheModule.__resetCacheForTests();
+    const fakeTipDom = makeFakeNode();
+    const fakeCmDom = makeFakeNode();
+    const fakeEditor = {
+      editorView: { dom: fakeTipDom, scrollDOM: fakeTipDom },
+      commands: { focus: mock(() => {}) },
+      destroy: mock(() => {}),
+    } as unknown as import('@tiptap/core').Editor;
+    const fakeView = {
+      dom: fakeCmDom,
+      scrollDOM: fakeCmDom,
+      focus: mock(() => {}),
+      destroy: mock(() => {}),
+    } as unknown as import('@codemirror/view').EditorView;
+    const makeProv = () =>
+      ({
+        destroy: mock(() => {}),
+        document: { destroy: mock(() => {}) } as unknown as import('yjs').Doc,
+        awareness: null,
+      }) as unknown as import('@hocuspocus/provider').HocuspocusProvider;
+    const fakeYDoc = { destroy: mock(() => {}) } as unknown as import('yjs').Doc;
+    const fakeYText = { toString: () => '' } as unknown as import('yjs').Text;
+
+    cacheModule.mountTiptapEditor({
+      docName: 'doc-eviction-regression',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({
+        editor: fakeEditor,
+        ydoc: fakeYDoc,
+        ytext: fakeYText,
+        provider: makeProv(),
+      }),
+    });
+    cacheModule.mountCmEditor({
+      docName: 'doc-eviction-regression',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({ view: fakeView, ydoc: fakeYDoc, ytext: fakeYText, provider: makeProv() }),
+    });
+    expect(cacheModule.__peekTiptap('doc-eviction-regression')).toBeDefined();
+    expect(cacheModule.__peekCm('doc-eviction-regression')).toBeDefined();
+
+    // Now open + close through the pool. close() → destroyEntry() →
+    // evictTiptapEditor + evictCmEditor should fire.
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc-eviction-regression');
+    pool.close('doc-eviction-regression');
+
+    expect(cacheModule.__peekTiptap('doc-eviction-regression')).toBeUndefined();
+    expect(cacheModule.__peekCm('doc-eviction-regression')).toBeUndefined();
+  });
+
+  test('recycle() also evicts both caches (used by Try-Again retry path)', async () => {
+    const cacheModule = await import('./editor-cache');
+    cacheModule.__resetCacheForTests();
+    const fakeTipDom = makeFakeNode();
+    const fakeCmDom = makeFakeNode();
+    const fakeEditor = {
+      editorView: { dom: fakeTipDom, scrollDOM: fakeTipDom },
+      commands: { focus: mock(() => {}) },
+      destroy: mock(() => {}),
+    } as unknown as import('@tiptap/core').Editor;
+    const fakeView = {
+      dom: fakeCmDom,
+      scrollDOM: fakeCmDom,
+      focus: mock(() => {}),
+      destroy: mock(() => {}),
+    } as unknown as import('@codemirror/view').EditorView;
+    const makeProv = () =>
+      ({
+        destroy: mock(() => {}),
+        document: { destroy: mock(() => {}) } as unknown as import('yjs').Doc,
+        awareness: null,
+      }) as unknown as import('@hocuspocus/provider').HocuspocusProvider;
+    const fakeYDoc = { destroy: mock(() => {}) } as unknown as import('yjs').Doc;
+    const fakeYText = { toString: () => '' } as unknown as import('yjs').Text;
+    cacheModule.mountTiptapEditor({
+      docName: 'doc-recycle-regression',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({
+        editor: fakeEditor,
+        ydoc: fakeYDoc,
+        ytext: fakeYText,
+        provider: makeProv(),
+      }),
+    });
+    cacheModule.mountCmEditor({
+      docName: 'doc-recycle-regression',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({ view: fakeView, ydoc: fakeYDoc, ytext: fakeYText, provider: makeProv() }),
+    });
+
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc-recycle-regression');
+    pool.recycle('doc-recycle-regression');
+
+    expect(cacheModule.__peekTiptap('doc-recycle-regression')).toBeUndefined();
+    expect(cacheModule.__peekCm('doc-recycle-regression')).toBeUndefined();
+  });
+
+  test('dispose() evicts all cached editors across all pool entries', async () => {
+    const cacheModule = await import('./editor-cache');
+    cacheModule.__resetCacheForTests();
+    const makeProv = () =>
+      ({
+        destroy: mock(() => {}),
+        document: { destroy: mock(() => {}) } as unknown as import('yjs').Doc,
+        awareness: null,
+      }) as unknown as import('@hocuspocus/provider').HocuspocusProvider;
+    const makeFakeEditor = () => {
+      const dom = makeFakeNode();
+      return {
+        editorView: { dom, scrollDOM: dom },
+        commands: { focus: mock(() => {}) },
+        destroy: mock(() => {}),
+      } as unknown as import('@tiptap/core').Editor;
+    };
+    const fakeYText = { toString: () => '' } as unknown as import('yjs').Text;
+
+    cacheModule.mountTiptapEditor({
+      docName: 'dispose-a',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({
+        editor: makeFakeEditor(),
+        ydoc: { destroy: mock(() => {}) } as unknown as import('yjs').Doc,
+        ytext: fakeYText,
+        provider: makeProv(),
+      }),
+    });
+    cacheModule.mountTiptapEditor({
+      docName: 'dispose-b',
+      container: makeFakeNode() as unknown as HTMLElement,
+      factory: () => ({
+        editor: makeFakeEditor(),
+        ydoc: { destroy: mock(() => {}) } as unknown as import('yjs').Doc,
+        ytext: fakeYText,
+        provider: makeProv(),
+      }),
+    });
+
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('dispose-a');
+    pool.open('dispose-b');
+    pool.dispose();
+
+    expect(cacheModule.__peekTiptap('dispose-a')).toBeUndefined();
+    expect(cacheModule.__peekTiptap('dispose-b')).toBeUndefined();
   });
 });

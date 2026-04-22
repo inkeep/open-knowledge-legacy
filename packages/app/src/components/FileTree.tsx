@@ -72,6 +72,7 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
 
 function navigateTo(targetPath: string) {
   window.location.hash = hashFromDocName(targetPath);
@@ -226,6 +227,8 @@ const FileTreeNode: FC<{
   /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
   workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
   onNavigate: (targetPath: string) => void;
+  /** Hover-intent prewarm trigger (V2 Option G). Safe-no-op when not wired. */
+  prewarm: (docName: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
   onCommitRename: (target: FileTreeTarget) => void;
@@ -250,6 +253,7 @@ const FileTreeNode: FC<{
   busyPath,
   workspace,
   onNavigate,
+  prewarm,
   onStartRename,
   onEditingValueChange,
   onCommitRename,
@@ -302,6 +306,25 @@ const FileTreeNode: FC<{
    * rows render them as muted-foreground/50.
    */
   const iconClass = 'size-3.5 shrink-0 text-muted-foreground/50!';
+
+  // Hover-intent prewarm (review Major #7 / V2 SPEC FR12 Option G). Files
+  // only — hovering a folder row doesn't trigger a prewarm. The 80ms
+  // intent threshold + 3-concurrent cap live in `sidebar-hover-prewarm`;
+  // here we just wire mouseenter/mouseleave to it. The prewarm opens a
+  // cold HocuspocusProvider via `prewarm(docName)` so the target doc's
+  // Y.Doc sync starts before the user clicks. Idempotent + rate-limited.
+  const onRowEnter = isFile
+    ? () => {
+        scheduleHoverPrewarm(node.path, (docName) => {
+          prewarm(docName);
+        });
+      }
+    : undefined;
+  const onRowLeave = isFile
+    ? () => {
+        cancelHoverPrewarm(node.path);
+      }
+    : undefined;
 
   const displayContent = (
     <>
@@ -408,7 +431,23 @@ const FileTreeNode: FC<{
     <ComponentToUse>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
+          {/*
+            The accessible widget is the button inside `triggerContent`
+            (SidebarMenuButton); it already carries role/aria + keyboard
+            affordances. This <div> is a pointer/ARIA passthrough — the
+            mouseenter/mouseleave handlers fire hover-intent prewarm
+            (Major #7) across the whole row. `role="presentation"`
+            declares the div has no semantics of its own.
+          */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-intent wrapper for ContextMenuTrigger; accessible target is the SidebarMenuButton inside triggerContent (review Major #7 wiring) */}
+          <div
+            role="presentation"
+            ref={isActive ? activeRowRef : undefined}
+            onMouseEnter={onRowEnter}
+            onMouseLeave={onRowLeave}
+          >
+            {triggerContent}
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent
           onCloseAutoFocus={(e) => {
@@ -537,6 +576,7 @@ const FileTreeNode: FC<{
               busyPath={busyPath}
               workspace={workspace}
               onNavigate={onNavigate}
+              prewarm={prewarm}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
               onCommitRename={onCommitRename}
@@ -570,7 +610,7 @@ export interface FileTreeHandle {
 }
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1100,6 +1140,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             onNavigate={(targetPath) => {
               navigateTo(targetPath);
             }}
+            prewarm={prewarm}
             onStartRename={(target) => {
               setEditingPath(target.path);
               setEditingValue(target.name);
