@@ -20,6 +20,58 @@ export const FolderRuleSchema = z
 export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
+// Upload/asset surface config. SPEC §6 FR-5, D-M accept-all (2026-04-21).
+// `dedup` is a nested object because SPEC declares the YAML path
+// `upload.dedup.ui` — that requires `dedup` to be an object, not a string.
+// The mode enum ('off' | 'same-dir') lives on `dedup.mode`.
+const DEFAULT_WIKI_EMBED_EXTENSIONS = [
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'avif',
+  'svg',
+  'pdf',
+  'mp4',
+  'webm',
+  'mov',
+  'mp3',
+  'wav',
+  'ogg',
+  'm4a',
+] as const;
+
+const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+export const UploadDedupSchema = z
+  .object({
+    mode: z.enum(['off', 'same-dir']).default('same-dir'),
+    ui: z.enum(['silent', 'toast', 'confirm']).default('toast'),
+  })
+  .default({ mode: 'same-dir', ui: 'toast' });
+
+export const UploadConfigSchema = z
+  .object({
+    attachmentFolderPath: z.string().default('./'),
+    emitFormat: z.enum(['wikiembed', 'markdown-image']).default('wikiembed'),
+    maxBytes: z.number().int().min(0).default(DEFAULT_MAX_UPLOAD_BYTES),
+    dedup: UploadDedupSchema,
+    wikiEmbedExtensions: z.array(z.string()).default([...DEFAULT_WIKI_EMBED_EXTENSIONS]),
+  })
+  .default({
+    attachmentFolderPath: './',
+    emitFormat: 'wikiembed',
+    maxBytes: DEFAULT_MAX_UPLOAD_BYTES,
+    dedup: { mode: 'same-dir', ui: 'toast' },
+    wikiEmbedExtensions: [...DEFAULT_WIKI_EMBED_EXTENSIONS],
+  });
+
+export type UploadConfig = z.infer<typeof UploadConfigSchema>;
+export type EmitFormat = UploadConfig['emitFormat'];
+export type DedupMode = UploadConfig['dedup']['mode'];
+export type DedupUIMode = UploadConfig['dedup']['ui'];
+
 export const ConfigSchema = z.object({
   content: z
     .object({
@@ -91,6 +143,7 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   folders: z.array(FolderRuleSchema).default([]),
+  upload: UploadConfigSchema,
   mcp: z
     .object({
       // Controls whether `ok mcp` detach-spawns `ok start` when `server.lock`

@@ -197,3 +197,150 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('ConfigSchema.upload (FR-5)', () => {
+  test('upload section omitted: all defaults populate', () => {
+    const config = ConfigSchema.parse({});
+    expect(config.upload.attachmentFolderPath).toBe('./');
+    expect(config.upload.emitFormat).toBe('wikiembed');
+    expect(config.upload.maxBytes).toBe(25 * 1024 * 1024);
+    expect(config.upload.dedup.mode).toBe('same-dir');
+    expect(config.upload.dedup.ui).toBe('toast');
+    expect(config.upload.wikiEmbedExtensions).toEqual([
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'avif',
+      'svg',
+      'pdf',
+      'mp4',
+      'webm',
+      'mov',
+      'mp3',
+      'wav',
+      'ogg',
+      'm4a',
+    ]);
+  });
+
+  test('partial upload override preserves other defaults', () => {
+    const config = ConfigSchema.parse({
+      upload: { maxBytes: 104857600 },
+    });
+    expect(config.upload.maxBytes).toBe(104857600);
+    expect(config.upload.emitFormat).toBe('wikiembed');
+    expect(config.upload.dedup.mode).toBe('same-dir');
+  });
+
+  test('upload.maxBytes with string value fails with a Zod error naming the field', () => {
+    const result = ConfigSchema.safeParse({
+      upload: { maxBytes: 'big' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'));
+      expect(paths.some((p) => p.includes('maxBytes'))).toBe(true);
+    }
+  });
+
+  test('upload.maxBytes with non-integer fails', () => {
+    const result = ConfigSchema.safeParse({
+      upload: { maxBytes: 10.5 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('upload.maxBytes with negative number fails', () => {
+    const result = ConfigSchema.safeParse({
+      upload: { maxBytes: -1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('upload.emitFormat accepts markdown-image', () => {
+    const config = ConfigSchema.parse({
+      upload: { emitFormat: 'markdown-image' },
+    });
+    expect(config.upload.emitFormat).toBe('markdown-image');
+  });
+
+  test('upload.emitFormat rejects unknown values', () => {
+    const result = ConfigSchema.safeParse({
+      upload: { emitFormat: 'html-image' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('upload.dedup.mode accepts off', () => {
+    const config = ConfigSchema.parse({
+      upload: { dedup: { mode: 'off' } },
+    });
+    expect(config.upload.dedup.mode).toBe('off');
+    expect(config.upload.dedup.ui).toBe('toast');
+  });
+
+  test('upload.dedup.ui accepts silent (D-B escape hatch)', () => {
+    const config = ConfigSchema.parse({
+      upload: { dedup: { ui: 'silent' } },
+    });
+    expect(config.upload.dedup.ui).toBe('silent');
+    expect(config.upload.dedup.mode).toBe('same-dir');
+  });
+
+  test('upload.dedup.ui accepts confirm (D-B escape hatch)', () => {
+    const config = ConfigSchema.parse({
+      upload: { dedup: { ui: 'confirm' } },
+    });
+    expect(config.upload.dedup.ui).toBe('confirm');
+  });
+
+  test('upload.dedup.ui rejects unknown values', () => {
+    const result = ConfigSchema.safeParse({
+      upload: { dedup: { ui: 'loud' } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('upload.attachmentFolderPath accepts Obsidian-style values', () => {
+    // Per D-J, this is a free-form string matching Obsidian's literal schema.
+    // "/" (vault root), "./" (co-located), "./subdir", "attachments" (global).
+    const cases = ['/', './', './attachments', 'attachments'];
+    for (const value of cases) {
+      const config = ConfigSchema.parse({
+        upload: { attachmentFolderPath: value },
+      });
+      expect(config.upload.attachmentFolderPath).toBe(value);
+    }
+  });
+
+  test('upload.wikiEmbedExtensions accepts a custom allowlist', () => {
+    const config = ConfigSchema.parse({
+      upload: { wikiEmbedExtensions: ['png', 'pdf', 'mp4'] },
+    });
+    expect(config.upload.wikiEmbedExtensions).toEqual(['png', 'pdf', 'mp4']);
+  });
+
+  test('upload.wikiEmbedExtensions accepts empty array', () => {
+    // Empty allowlist is a valid operator choice — every drop emits as
+    // opaque markdown-link, which is a defensible posture for strict vaults.
+    const config = ConfigSchema.parse({
+      upload: { wikiEmbedExtensions: [] },
+    });
+    expect(config.upload.wikiEmbedExtensions).toEqual([]);
+  });
+
+  test('D-M no longer exposes allowedMimeTypes (removed 2026-04-21)', () => {
+    // Operator cannot tune a MIME allowlist post-D-M accept-all. If this
+    // test fails because the schema accepts the field, D-M was reversed
+    // without updating this guard — reopen the decision.
+    const config = ConfigSchema.parse({
+      // biome-ignore lint/suspicious/noExplicitAny: intentional cast to assert shape
+      upload: { allowedMimeTypes: ['image/png'] } as any,
+    });
+    // Zod strip mode silently drops unknown keys by default; assert the
+    // parsed output does NOT carry the removed field.
+    expect(Object.hasOwn(config.upload, 'allowedMimeTypes')).toBe(false);
+  });
+});
