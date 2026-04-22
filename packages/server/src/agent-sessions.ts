@@ -467,19 +467,17 @@ export class AgentSessionManager {
   /** Close all sessions for a given agent (across all docs). */
   async closeAllForAgent(agentId: string): Promise<void> {
     const suffix = `\0${agentId}`;
-    for (const [key, session] of this.sessions) {
-      if (key.endsWith(suffix)) {
-        try {
-          session.dc.document.awareness.setLocalState(null);
-          session.um.destroy();
-          await session.dc.disconnect();
-          this.sessions.delete(key);
-        } catch (err) {
-          log.error(
-            { err, agentId },
-            `[agent-session] Failed to close session for agent ${agentId}`,
-          );
-        }
+    const keys = [...this.sessions.keys()].filter((k) => k.endsWith(suffix));
+    for (const key of keys) {
+      const session = this.sessions.get(key);
+      if (!session) continue;
+      try {
+        session.dc.document.awareness.setLocalState(null);
+        session.um.destroy();
+        await session.dc.disconnect();
+        this.sessions.delete(key);
+      } catch (err) {
+        log.error({ err, agentId }, `[agent-session] Failed to close session for agent ${agentId}`);
       }
     }
   }
@@ -487,16 +485,17 @@ export class AgentSessionManager {
   /** Close all sessions for a given document (all agents). */
   async closeAllForDoc(docName: string): Promise<void> {
     const prefix = `${docName}\0`;
-    for (const [key, session] of this.sessions) {
-      if (key.startsWith(prefix)) {
-        try {
-          session.dc.document.awareness.setLocalState(null);
-          session.um.destroy();
-          await session.dc.disconnect();
-          this.sessions.delete(key);
-        } catch (err) {
-          log.error({ err, docName }, `[agent-session] Failed to close session for doc ${docName}`);
-        }
+    const keys = [...this.sessions.keys()].filter((k) => k.startsWith(prefix));
+    for (const key of keys) {
+      const session = this.sessions.get(key);
+      if (!session) continue;
+      try {
+        session.dc.document.awareness.setLocalState(null);
+        session.um.destroy();
+        await session.dc.disconnect();
+        this.sessions.delete(key);
+      } catch (err) {
+        log.error({ err, docName }, `[agent-session] Failed to close session for doc ${docName}`);
       }
     }
   }
