@@ -5,8 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { Config } from '../config/schema.ts';
+import { type Config, ConfigSchema } from '../config/schema.ts';
 import {
+  awaitUiSiblingPort,
   type BootedStartServer,
   bootStartServer,
   buildIdleShutdownHandler,
@@ -14,6 +15,7 @@ import {
   spawnOkUi,
   type UiSpawnDecision,
 } from './start.ts';
+import { closeHttpServers, startUiServer, type UiServerHandle } from './ui.ts';
 
 describe('decideUiSpawn', () => {
   test('absent lock → spawn(absent)', () => {
@@ -719,5 +721,269 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
 
     // Error fired BEFORE listen() bound a port — no dangling server
     expect(existsSync(join(tmpDir, '.git'))).toBe(false);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// awaitUiSiblingPort — pure poll helper
+// ----------------------------------------------------------------------------
+
+describe('awaitUiSiblingPort', () => {
+  test('returns the bound port immediately when ui.lock has port > 0 on first read', async () => {
+    const port = await awaitUiSiblingPort({
+      readUiLock: () => ({ port: 51887 }),
+      // `now` stays constant — the first read returns a good value so the
+      // loop exits before the deadline is re-checked.
+      now: () => 0,
+      sleep: async () => {},
+      timeoutMs: 3000,
+      pollIntervalMs: 50,
+    });
+    expect(port).toBe(51887);
+  });
+
+  test('returns null when the lock never populates before the timeout', async () => {
+    let t = 0;
+    const port = await awaitUiSiblingPort({
+      readUiLock: () => null,
+      now: () => t,
+      // Virtual clock: every sleep advances `t` by exactly its duration, so
+      // the poll deterministically hits the deadline in a bounded number of
+      // iterations without any real wall-clock wait.
+      sleep: async (ms) => {
+        t += ms;
+      },
+      timeoutMs: 200,
+      pollIntervalMs: 50,
+    });
+    expect(port).toBeNull();
+  });
+
+  test('skips port=0 sentinel (child is binding) and returns once port > 0', async () => {
+    let t = 0;
+    let reads = 0;
+    const port = await awaitUiSiblingPort({
+      readUiLock: () => {
+        reads++;
+        if (reads === 1) return null; //                lock not written yet
+        if (reads === 2) return { port: 0 }; //         acquired, not bound
+        return { port: 9999 }; //                        bound
+      },
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+      },
+      timeoutMs: 1000,
+      pollIntervalMs: 50,
+    });
+    expect(port).toBe(9999);
+    expect(reads).toBeGreaterThanOrEqual(3);
+  });
+
+  test('reads once more after the loop exits, catching a lock that lands in the grace window', async () => {
+    let t = 0;
+    let reads = 0;
+    const port = await awaitUiSiblingPort({
+      readUiLock: () => {
+        reads++;
+        // First two reads in-loop return null; after the deadline check
+        // exits the loop the post-loop read sees the populated lock.
+        return reads >= 3 ? { port: 4444 } : null;
+      },
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+      },
+      // Loop runs ~twice (50ms sleeps vs 100ms budget), then falls through
+      // to the final read which returns the populated lock.
+      timeoutMs: 100,
+      pollIntervalMs: 50,
+    });
+    expect(port).toBe(4444);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Regression: "unable to get any documents to load" on packaged CLI
+// ----------------------------------------------------------------------------
+//
+// Slack report (2026-04-22) — against `main` at 58317bbb — running
+//     $ bun run packages/cli/dist/cli.mjs start
+// produced a banner pointing the user at http://localhost:3000, but
+// nothing listened there. Documents never loaded because the React app
+// never loaded.
+//
+// Empirical repro:
+//   1. ok start auto-spawns ok ui via `spawnOkUi`, which strips PORT from
+//      the child env (start.ts:91). The child resolves its bind port via
+//      `resolveRequestedPort` → undefined flag + undefined env → 0 (D-033
+//      default, kernel-allocated).
+//   2. Kernel assigns a free port to ok ui (e.g. 54281) and writes it to
+//      `<contentDir>/.open-knowledge/ui.lock`.
+//   3. Meanwhile ok start's banner had hardcoded port 3000 on the spawn
+//      branch — leftover from before D-033 changed ok ui's default to 0.
+//   4. Banner prints http://localhost:3000; user follows it; ECONNREFUSED.
+//
+// Fix: bootStartServer now polls `ui.lock` after spawn and exposes
+// `resolvedUiPort` on `BootedStartServer`. The banner uses that instead
+// of a hardcoded default, so the printed URL always reaches the port the
+// child actually bound (or falls back to the API URL on timeout).
+//
+// The `bun run dev` path is unaffected because the Vite plugin serves
+// everything same-origin on one port — no banner mismatch possible.
+
+describe('bootStartServer — resolvedUiPort tracks the port ok ui actually binds', () => {
+  let tmpDir: string;
+  let booted: BootedStartServer | null = null;
+  let uiHandle: UiServerHandle | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-banner-'));
+    booted = null;
+    uiHandle = null;
+  });
+
+  afterEach(async () => {
+    if (booted) {
+      try {
+        await booted.destroy();
+      } catch {
+        // idempotent
+      }
+      booted = null;
+    }
+    if (uiHandle) {
+      uiHandle.release();
+      await closeHttpServers(uiHandle.httpServers);
+      uiHandle = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('auto-spawn path: resolvedUiPort matches the in-process ok ui that the fake spawn brought up', async () => {
+    // Simulate the production detached-spawn flow hermetically: the `spawn`
+    // hook, instead of execing a real `ok ui` subprocess, fires up ok ui
+    // IN-PROCESS against the same lockDir. The in-process UI writes ui.lock
+    // with a kernel-assigned port (D-033 default), so bootStartServer's new
+    // `awaitUiSiblingPort` poll sees a real port appear.
+    const cfg = ConfigSchema.parse({});
+    const fakeSpawn: typeof NativeSpawn = ((_cmd: string, args: readonly string[]) => {
+      const lastArg = args[args.length - 1];
+      if (lastArg === 'ui') {
+        // Fire-and-forget — production spawn also returns immediately and
+        // the child binds asynchronously. We record the handle so afterEach
+        // can tear it down.
+        void startUiServer({
+          config: cfg,
+          cwd: tmpDir,
+          port: 0,
+          host: '127.0.0.1',
+          safetyNetMs: 0,
+        }).then((handle) => {
+          uiHandle = handle;
+        });
+      }
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      } as unknown as ReturnType<typeof NativeSpawn>;
+    }) as never;
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      spawn: fakeSpawn,
+      // Generous timeout in case the CI event loop is under load — typical
+      // in-process bind is <50 ms.
+      uiBindTimeoutMs: 10_000,
+    });
+
+    expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
+    expect(booted.resolvedUiPort).not.toBeNull();
+    expect(booted.resolvedUiPort).not.toBe(3000);
+    // Wait for the fire-and-forget in-process UI handle to settle so
+    // afterEach can tear it down; also lets us cross-check ports.
+    while (uiHandle === null) await new Promise((r) => setTimeout(r, 10));
+    expect(booted.resolvedUiPort).toBe(uiHandle.port);
+
+    // End-to-end proof: the port bootStartServer reports as `resolvedUiPort`
+    // is a working UI — /api/config returns the shape the React app boots
+    // from. This is the invariant the banner URL depends on.
+    const configRes = await fetch(`http://127.0.0.1:${booted.resolvedUiPort}/api/config`);
+    expect(configRes.status).toBe(200);
+    const configBody = (await configRes.json()) as { port: number };
+    expect(configBody.port).toBe(booted.resolvedUiPort);
+  });
+
+  test('skip path: resolvedUiPort reflects the pre-existing ok ui lock port', async () => {
+    // Pre-populate ui.lock with a live pid (this process) + a non-zero port.
+    // decideUiSpawn returns {action: 'skip', ...} and bootStartServer
+    // short-circuits the poll, using the lock's port directly.
+    const lockDir = join(tmpDir, '.open-knowledge');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      join(lockDir, 'ui.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        port: 57890,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: tmpDir,
+      }),
+    );
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+    });
+
+    expect(booted.uiSpawnDecision).toEqual({
+      action: 'skip',
+      reason: 'alive',
+      pid: process.pid,
+      port: 57890,
+    });
+    expect(booted.resolvedUiPort).toBe(57890);
+  });
+
+  test('spawn-skipped path: resolvedUiPort is null when skipUiAutoSpawn=true and no prior sibling', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+    });
+
+    // Decision is still 'spawn(absent)' — the gate is only on the ACTION —
+    // but no UI was actually started, so there's no port to report.
+    expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
+    expect(booted.resolvedUiPort).toBeNull();
+  });
+
+  test('timeout path: resolvedUiPort is null when the spawned UI never binds in time', async () => {
+    // The fake spawn never starts an in-process UI, so ui.lock never gains
+    // a port. bootStartServer's poll should give up cleanly and report null
+    // — the banner falls back to the API URL.
+    const silentSpawn: typeof NativeSpawn = ((_cmd: string, _args: readonly string[]) => {
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      } as unknown as ReturnType<typeof NativeSpawn>;
+    }) as never;
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      spawn: silentSpawn,
+      uiBindTimeoutMs: 200,
+    });
+
+    expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
+    expect(booted.resolvedUiPort).toBeNull();
   });
 });
