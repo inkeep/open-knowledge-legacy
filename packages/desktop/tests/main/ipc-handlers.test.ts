@@ -212,29 +212,78 @@ describe('spawnCursor', () => {
   });
 
   test('uses Electron-resolved path first (never trusts $PATH on its own)', async () => {
-    let spawnedBinary: string | null = null;
-    let spawnedUserPath: string | null = null;
+    let spawnedExec: string | null = null;
+    let spawnedArgs: ReadonlyArray<string> | null = null;
     const result = await spawnCursor(
       {
         platform: 'darwin',
         getApplicationInfoForProtocol: async () => ({
           name: 'Cursor',
+          // Inner Mach-O binary — spawn directly since it's a real executable.
           path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
         }),
         resolveCursorBinary: async () => {
           throw new Error('fallback must not run when Electron succeeds');
         },
-        spawn: async (binaryPath, userPath) => {
-          spawnedBinary = binaryPath;
-          spawnedUserPath = userPath;
+        spawn: async (exec, args) => {
+          spawnedExec = exec;
+          spawnedArgs = args;
           return { ok: true };
         },
       },
       '/Users/x/project',
     );
     expect(result).toEqual({ ok: true });
-    expect(spawnedBinary).toBe('/Applications/Cursor.app/Contents/MacOS/Cursor');
-    expect(spawnedUserPath).toBe('/Users/x/project');
+    expect(spawnedExec).toBe('/Applications/Cursor.app/Contents/MacOS/Cursor');
+    expect(spawnedArgs).toEqual(['/Users/x/project']);
+  });
+
+  test('darwin bundle path is routed through `/usr/bin/open -a <bundle>` (spawn cannot exec a .app directory)', async () => {
+    // Regression for the hotfix: `app.getApplicationInfoForProtocol('cursor://').path`
+    // actually returns `/Applications/Cursor.app` (the BUNDLE, a directory) in
+    // production — not the inner Mach-O binary. Unix `exec()` requires a real
+    // binary, so direct spawn on the bundle fails with EACCES. Route through
+    // macOS's `/usr/bin/open -a <bundle> <userPath>` which asks Launch Services
+    // to resolve the bundle to its registered executable.
+    let spawnedExec: string | null = null;
+    let spawnedArgs: ReadonlyArray<string> | null = null;
+    const result = await spawnCursor(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => ({
+          name: 'Cursor',
+          path: '/Applications/Cursor.app',
+        }),
+        spawn: async (exec, args) => {
+          spawnedExec = exec;
+          spawnedArgs = args;
+          return { ok: true };
+        },
+      },
+      '/Users/x/project',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawnedExec).toBe('/usr/bin/open');
+    expect(spawnedArgs).toEqual(['-a', '/Applications/Cursor.app', '/Users/x/project']);
+  });
+
+  test('darwin bundle path with trailing slash is normalized before routing through `open -a`', async () => {
+    let spawnedArgs: ReadonlyArray<string> | null = null;
+    await spawnCursor(
+      {
+        platform: 'darwin',
+        getApplicationInfoForProtocol: async () => ({
+          name: 'Cursor',
+          path: '/Applications/Cursor.app/',
+        }),
+        spawn: async (_exec, args) => {
+          spawnedArgs = args;
+          return { ok: true };
+        },
+      },
+      '/Users/x/project',
+    );
+    expect(spawnedArgs).toEqual(['-a', '/Applications/Cursor.app', '/Users/x/project']);
   });
 
   test('falls back to resolveCursorBinary when Electron throws', async () => {
@@ -245,8 +294,9 @@ describe('spawnCursor', () => {
           throw new Error('unsupported on linux');
         },
         resolveCursorBinary: async () => '/usr/local/bin/cursor',
-        spawn: async (binaryPath) => {
-          expect(binaryPath).toBe('/usr/local/bin/cursor');
+        spawn: async (exec, args) => {
+          expect(exec).toBe('/usr/local/bin/cursor');
+          expect(args).toEqual(['/home/x/project']);
           return { ok: true };
         },
       },
@@ -291,15 +341,15 @@ describe('spawnCursor', () => {
     let seenTimeout: number | null = null;
     await spawnCursor(
       {
-        platform: 'darwin',
+        platform: 'linux',
         getApplicationInfoForProtocol: async () => ({ name: 'C', path: '/c' }),
-        spawn: async (_b, _u, t) => {
+        spawn: async (_exec, _args, t) => {
           seenTimeout = t;
           return { ok: true };
         },
         spawnTimeoutMs: 1234,
       },
-      '/Users/x/project',
+      '/home/x/project',
     );
     expect(seenTimeout).toBe(1234);
   });

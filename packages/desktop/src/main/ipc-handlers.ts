@@ -142,16 +142,49 @@ export interface SpawnCursorDeps {
    */
   resolveCursorBinary?: (timeoutMs: number) => Promise<string | null>;
   /**
-   * Spawns the resolved binary with `[userPath]` argv. Must pass `shell:false`
-   * and an argv array (not a command string). Resolves `{ok:true}` on
-   * successful spawn (not on process exit) or `{ok:false, reason}` otherwise.
+   * Spawns the resolved `exec` with `args` argv. Must pass `shell:false` and
+   * an argv array (not a command string). Resolves `{ok:true}` on successful
+   * spawn (not on process exit) or `{ok:false, reason}` otherwise.
    */
-  spawn: (binaryPath: string, userPath: string, timeoutMs: number) => Promise<SpawnOutcome>;
+  spawn: (exec: string, args: ReadonlyArray<string>, timeoutMs: number) => Promise<SpawnOutcome>;
   platform: NodeJS.Platform;
   /** Resolve-phase timeout. Defaults to `WHICH_TIMEOUT_MS`. */
   resolveTimeoutMs?: number;
   /** Spawn-phase timeout. Defaults to `SPAWN_TIMEOUT_MS`. */
   spawnTimeoutMs?: number;
+}
+
+/**
+ * Compute the `(exec, args)` pair that `child_process.spawn` should receive
+ * to launch `resolvedPath` with `userPath` as the first positional argument.
+ *
+ * On macOS, `app.getApplicationInfoForProtocol('cursor://').path` returns
+ * the `.app` BUNDLE PATH (a directory), not an executable. `spawn` with
+ * `shell:false` cannot exec a directory — Unix `exec()` requires a real
+ * binary. The canonical fix is to route the invocation through the system
+ * `/usr/bin/open` command with the `-a <bundle>` flag, which asks Launch
+ * Services to open `userPath` using the named application. This preserves
+ * the no-shell-interpolation guarantee (argv array, `shell:false`) while
+ * correctly resolving bundles to their registered main binary.
+ *
+ * On Windows and Linux, `getApplicationInfoForProtocol` returns an
+ * executable path directly (or the `which cursor` fallback does). Direct
+ * spawn works — no normalization needed.
+ *
+ * Pure function for test coverage of the macOS bundle-routing branch.
+ */
+export function resolveSpawnInvocation(
+  resolvedPath: string,
+  userPath: string,
+  platform: NodeJS.Platform,
+): { exec: string; args: ReadonlyArray<string> } {
+  if (platform === 'darwin' && /\.app\/?$/.test(resolvedPath)) {
+    // Normalize a trailing slash so `open -a` matches Launch Services'
+    // registered bundle identifier regardless of path shape.
+    const bundle = resolvedPath.replace(/\/$/, '');
+    return { exec: '/usr/bin/open', args: ['-a', bundle, userPath] };
+  }
+  return { exec: resolvedPath, args: [userPath] };
 }
 
 /** Reject non-absolute paths, null bytes, and empties. Shared with tests. */
@@ -216,7 +249,8 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
     return { ok: false, reason: 'not-installed' };
   }
 
-  return deps.spawn(binaryPath, path, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
+  const { exec, args } = resolveSpawnInvocation(binaryPath, path, deps.platform);
+  return deps.spawn(exec, args, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
 }
 
 /**

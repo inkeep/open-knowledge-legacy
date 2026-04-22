@@ -313,18 +313,21 @@ function registerIpcHandlers() {
       {
         platform: process.platform,
         getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
-        spawn: (binaryPath, userPath, timeoutMs) =>
+        spawn: (exec, args, timeoutMs) =>
           new Promise((resolve) => {
             try {
-              const child = spawn(binaryPath, [userPath], {
+              const child = spawn(exec, [...args], {
                 shell: false,
                 timeout: timeoutMs,
                 stdio: ['ignore', 'ignore', 'pipe'],
               });
-              // Drain stderr so a chatty Cursor binary can't block on a full pipe buffer.
+              // Drain stderr so a chatty child can't block on a full pipe buffer.
               child.stderr?.on('data', () => {});
               // `spawn` event fires once the process is successfully launched —
-              // that's the success criterion per SPEC (not a clean exit).
+              // that's the success criterion per SPEC (not a clean exit). The
+              // macOS `/usr/bin/open` helper exits immediately after handing
+              // off to Launch Services, but the `spawn` event still resolves
+              // before exit, so this remains correct under the open-a routing.
               child.once('spawn', () => resolve({ ok: true }));
               child.once('error', () => resolve({ ok: false, reason: 'spawn-error' }));
             } catch {
@@ -336,7 +339,7 @@ function registerIpcHandlers() {
     );
   });
 
-  handle('ok:handoff:record', async (_event, line) => {
+  handle('ok:shell:record-handoff', async (_event, line) => {
     await recordHandoffImpl(
       {
         homedir: osHomedir,

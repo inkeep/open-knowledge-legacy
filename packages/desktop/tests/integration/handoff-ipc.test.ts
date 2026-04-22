@@ -222,8 +222,8 @@ describe("'ok:shell:detect-protocol' round-trips install state", () => {
 describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
   test('valid path + successful spawn resolves to {ok:true}', async () => {
     const { handle, invoke } = setupRig();
-    let spawnedBinary: string | null = null;
-    let spawnedUserPath: string | null = null;
+    let spawnedExec: string | null = null;
+    let spawnedArgs: ReadonlyArray<string> | null = null;
     handle('ok:shell:spawn-cursor', async (_event, path) => {
       return spawnCursorImpl(
         {
@@ -232,9 +232,9 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
             name: 'Cursor',
             path: '/Applications/Cursor.app/Contents/MacOS/Cursor',
           }),
-          spawn: async (binaryPath, userPath) => {
-            spawnedBinary = binaryPath;
-            spawnedUserPath = userPath;
+          spawn: async (exec, args) => {
+            spawnedExec = exec;
+            spawnedArgs = args;
             return { ok: true };
           },
         },
@@ -244,8 +244,8 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
 
     const result = await invoke('ok:shell:spawn-cursor', '/Users/x/project');
     expect(result).toEqual({ ok: true });
-    expect(spawnedBinary).toBe('/Applications/Cursor.app/Contents/MacOS/Cursor');
-    expect(spawnedUserPath).toBe('/Users/x/project');
+    expect(spawnedExec).toBe('/Applications/Cursor.app/Contents/MacOS/Cursor');
+    expect(spawnedArgs).toEqual(['/Users/x/project']);
   });
 
   test('empty path resolves to {ok:false, reason:"invalid-path"} (no spawn, no resolve)', async () => {
@@ -313,12 +313,12 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
   });
 });
 
-describe("'ok:handoff:record' round-trips the stats append", () => {
+describe("'ok:shell:record-handoff' round-trips the stats append", () => {
   test('append success resolves the invoke promise to undefined', async () => {
     const { handle, invoke } = setupRig();
     const appendCalls: Array<{ path: string; content: string }> = [];
     const mkdirCalls: string[] = [];
-    handle('ok:handoff:record', async (_event, line) => {
+    handle('ok:shell:record-handoff', async (_event, line) => {
       await recordHandoffImpl(
         {
           homedir: () => '/Users/test',
@@ -340,7 +340,7 @@ describe("'ok:handoff:record' round-trips the stats append", () => {
       outcome: 'ok',
       ts: '2026-04-22T03:30:00.000Z',
     };
-    const result = await invoke('ok:handoff:record', line);
+    const result = await invoke('ok:shell:record-handoff', line);
     expect(result).toBeUndefined();
     expect(mkdirCalls).toEqual(['/Users/test/.open-knowledge']);
     expect(appendCalls).toHaveLength(1);
@@ -351,7 +351,7 @@ describe("'ok:handoff:record' round-trips the stats append", () => {
   test('HOME unwritable (appendFile throws EACCES) resolves to undefined — no wire-level throw', async () => {
     const { handle, invoke } = setupRig();
     const warnings: string[] = [];
-    handle('ok:handoff:record', async (_event, line) => {
+    handle('ok:shell:record-handoff', async (_event, line) => {
       await recordHandoffImpl(
         {
           homedir: () => '/Users/test',
@@ -377,7 +377,7 @@ describe("'ok:handoff:record' round-trips the stats append", () => {
     };
     // Telemetry failure MUST NOT reject across the wire — dispatch path relies on
     // recordHandoff never taking down the renderer.
-    await expect(invoke('ok:handoff:record', line)).resolves.toBeUndefined();
+    await expect(invoke('ok:shell:record-handoff', line)).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('EACCES');
   });
@@ -385,7 +385,7 @@ describe("'ok:handoff:record' round-trips the stats append", () => {
   test('schema carries the optional `reason` field on error rows verbatim', async () => {
     const { handle, invoke } = setupRig();
     let capturedLine: HandoffStatsLine | null = null;
-    handle('ok:handoff:record', async (_event, line) => {
+    handle('ok:shell:record-handoff', async (_event, line) => {
       await recordHandoffImpl(
         {
           homedir: () => '/Users/test',
@@ -406,7 +406,7 @@ describe("'ok:handoff:record' round-trips the stats append", () => {
       ts: '2026-04-22T03:32:00.000Z',
       reason: 'web-host-cursor-unsupported',
     };
-    await invoke('ok:handoff:record', line);
+    await invoke('ok:shell:record-handoff', line);
     expect(capturedLine).toEqual(line);
   });
 });
@@ -433,7 +433,7 @@ describe('wire-level invariants', () => {
   test('positional args survive the roundtrip in order', async () => {
     const { handle, invoke } = setupRig();
     let captured: unknown;
-    handle('ok:handoff:record', async (_event, line) => {
+    handle('ok:shell:record-handoff', async (_event, line) => {
       captured = line;
       return undefined;
     });
@@ -444,7 +444,7 @@ describe('wire-level invariants', () => {
       outcome: 'ok',
       ts: '2026-04-22T03:33:00.000Z',
     };
-    await invoke('ok:handoff:record', line);
+    await invoke('ok:shell:record-handoff', line);
     expect(captured).toEqual(line);
   });
 });
