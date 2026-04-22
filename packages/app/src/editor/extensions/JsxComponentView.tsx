@@ -16,7 +16,7 @@
  * Three render branches:
  *   Branch 1 (Wildcard `'*'`): does NOT render a persistent chip — the
  *     NodeView immediately schedules a rAF-auto-convert into an editable
- *     `rawMdxFallback` (nested CodeMirror source editor, Precedent #14 /
+ *     `rawMdxFallback` (nested CodeMirror source editor, Precedent #28 /
  *     #26). A transient "Unknown component: X — source editable below"
  *     placeholder flashes for at most one frame while the conversion
  *     dispatch lands.
@@ -26,14 +26,15 @@
  *     `rawMdxFallback` — the error boundary catches, logs a structured
  *     `jsx-render-failure` event, and the NodeView replaces itself with
  *     the source editor. Identical UX shape to Branch 1 by design
- *     (Precedent #14: parse failures AND render failures surface the same
+ *     (Precedent #28: parse failures AND render failures surface the same
  *     embedded source editor).
  *
- * Per Precedent #26: NodeViewContent is ALWAYS rendered, never display:none.
+ * Per Precedent #28: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
 import {
   incrementJsxAutoConvertFailed,
+  incrementJsxAutoConvertSucceeded,
   incrementJsxRenderFailure,
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
@@ -90,9 +91,12 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
         // aggregation — always one of the 17 registered descriptor names
         // OR the literal string 'wildcard'. The unbounded user-authored
         // name goes in `rawComponentName` so debugging stays possible
-        // without making it a grouping key.
+        // without making it a grouping key. Capped at 200 chars to match
+        // the slicing pattern in `parseWithFallback.errorPayload` — MDX
+        // permits arbitrarily-long dotted-namespace tags that would
+        // otherwise produce multi-KB log entries per error.
         component: this.props.descriptorName,
-        rawComponentName: this.props.rawComponentName,
+        rawComponentName: String(this.props.rawComponentName ?? '').slice(0, 200),
         error: String(error),
         stack: info.componentStack,
       }),
@@ -177,6 +181,16 @@ export function extractPrimitiveProps(
 
 // ── Main NodeView ───────────────────────────────────────────────────────
 
+/**
+ * How many times the auto-convert effect retries its `replaceWith` dispatch
+ * before falling through to the stuck-state UX. Observed failure shapes are
+ * all transient position races (remote peer edit shifts the target range,
+ * Observer B re-parse lands mid-flight), so three attempts over ~350ms is
+ * long enough to clear every realistic contention window without keeping
+ * the user on a dead placeholder if something deeper is wrong.
+ */
+const MAX_AUTO_CONVERT_RETRIES = 3;
+
 export function JsxComponentView({ node, editor, getPos, selected }: NodeViewProps) {
   const descriptor = getDescriptor(node.attrs.componentName as string);
   const [renderError, setRenderError] = useState<Error | null>(null);
@@ -209,7 +223,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const canMoveUp = isChildOfComponent && siblingIndex > 0;
   const canMoveDown = isChildOfComponent && siblingIndex < siblingCount - 1;
 
-  // Selection layer (Precedent #27): read canonical block-selection state
+  // Selection layer (Precedent #29): read canonical block-selection state
   // from SelectionStatePlugin and derive this wrapper's role.
   //
   //  - isInnermostSelected: THIS wrapper is the selected block. Paints halo.
@@ -217,7 +231,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   //                         Gets `data-has-child-selected` so the CSS layer
   //                         can hide its own halo in favor of the innermost
   //                         (Gutenberg-style innermost-wins, store-driven
-  //                         rather than `:has()`-based — Precedent #30).
+  //                         rather than `:has()`-based — Precedent #32).
   //  - selectionOrigin:     How the user arrived at this selection
   //                         ('keyboard' | 'pointer' | 'programmatic').
   //                         Plumbed-through for future keyboard-only focus-
@@ -314,10 +328,21 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // the first dispatch succeeds; the second sees `cancelled === true` from
   // its own cleanup and skips. Local to the effect invocation, so a
   // cancelled first run doesn't block a subsequent run's dispatch.
+  //
+  // Bounded retry: on dispatch failure (position went stale under a remote
+  // peer edit, Observer B re-parse, etc.) we schedule up to MAX_AUTO_CONVERT_RETRIES
+  // backoff attempts before giving up. Without a retry schedule, nothing
+  // guarantees a subsequent re-render fires — a quiescent doc with a latent
+  // failing condition would leave the user on the non-editable placeholder
+  // forever (no retry signal, no React re-render trigger). After retries
+  // exhaust, the placeholder swaps to a stuck-state UX with Delete + Copy
+  // source affordances so the user can recover without blaming the editor.
   const needsConversion = descriptor.name === '*' || renderError !== null;
   const convertedRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const [stuck, setStuck] = useState(false);
   useEffect(() => {
-    if (!needsConversion || convertedRef.current) return;
+    if (!needsConversion || convertedRef.current || stuck) return;
 
     const p = typeof getPos === 'function' ? getPos() : undefined;
     if (typeof p !== 'number') return;
@@ -334,16 +359,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     );
 
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    // Defer to next frame to avoid dispatching during render. Tracked +
-    // cancelled on cleanup so an unmount between schedule and fire (e.g.,
-    // parent tree replaced by a remote peer edit, or StrictMode's
-    // intentional unmount-remount) does not dispatch against a stale view.
-    const frameId = requestAnimationFrame(() => {
+    const dispatchOnce = () => {
       if (cancelled) return;
       try {
         editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
         convertedRef.current = true;
+        const clampedComponent = descriptor.name === '*' ? 'wildcard' : descriptor.name;
+        incrementJsxAutoConvertSucceeded(clampedComponent);
       } catch (err) {
         // Position may have changed if other transactions fired.
         // Log as a structured event so recurring failures are visible in
@@ -355,21 +379,106 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             event: 'jsx-component-auto-convert-failed',
             // Low-cardinality label for aggregation — always registered
             // descriptor name or literal 'wildcard'. Raw user text goes in
-            // rawComponentName (see also ComponentErrorBoundary).
+            // rawComponentName (see also ComponentErrorBoundary). Capped at
+            // 200 chars to match the slicing pattern used elsewhere for
+            // user-authored names in log payloads.
             component: clampedComponent,
-            rawComponentName: node.attrs.componentName,
-            reason: err instanceof Error ? err.message : String(err),
+            rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+            reason: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+            retry: retryCountRef.current,
           }),
         );
         incrementJsxAutoConvertFailed(clampedComponent);
+
+        retryCountRef.current += 1;
+        if (retryCountRef.current < MAX_AUTO_CONVERT_RETRIES) {
+          // Exponential-ish backoff: 50ms, 150ms, 350ms. Short enough to
+          // feel instant in the typical case where a concurrent tx cleared
+          // on the next tick; long enough to not hammer the event loop.
+          const delay = 50 * (2 ** retryCountRef.current - 1);
+          timeoutId = setTimeout(() => {
+            if (cancelled) return;
+            dispatchOnce();
+          }, delay);
+        } else {
+          // Retries exhausted — surface the stuck-state UX so the user
+          // can Delete / Copy source instead of sitting on a dead placeholder.
+          if (!cancelled) setStuck(true);
+        }
       }
-    });
+    };
+
+    // Defer to next frame to avoid dispatching during render. Tracked +
+    // cancelled on cleanup so an unmount between schedule and fire (e.g.,
+    // parent tree replaced by a remote peer edit, or StrictMode's
+    // intentional unmount-remount) does not dispatch against a stale view.
+    const frameId = requestAnimationFrame(dispatchOnce);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(frameId);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     };
-  }, [needsConversion, node, editor, getPos, descriptor, renderError]);
+  }, [needsConversion, node, editor, getPos, descriptor, renderError, stuck]);
+
+  // Stuck-state UX: retries exhausted. The user sees a durable placeholder
+  // with "Delete" and "Copy source" affordances so they can recover without
+  // being trapped on a dead placeholder. Precedent #28 is preserved — the
+  // source bytes are available via Copy source even when the auto-convert
+  // can't land.
+  if (stuck) {
+    const label =
+      descriptor.name === '*'
+        ? `Unknown component: ${node.attrs.componentName as string} — could not open source editor`
+        : `${descriptor.displayName ?? descriptor.name} — could not open source editor`;
+    const copySource = () => {
+      try {
+        const src = reconstructSource(node);
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(src);
+        }
+      } catch {
+        // Clipboard API may be unavailable (permissions, test env). Silently
+        // ignore — the Delete affordance still works, and the source bytes
+        // are safe in the underlying node regardless of clipboard access.
+      }
+    };
+    const deleteNode = () => {
+      const p = typeof getPos === 'function' ? getPos() : undefined;
+      if (typeof p !== 'number') return;
+      try {
+        editor.chain().focus().setNodeSelection(p).deleteSelection().run();
+      } catch {
+        // Position may have shifted; the NodeView will re-render when the
+        // underlying doc updates and the user can retry.
+      }
+    };
+    return (
+      <NodeViewWrapper className="jsx-component-wrapper my-2">
+        <div
+          className="text-xs font-mono text-muted-foreground px-2 py-2 border border-destructive/40 rounded bg-destructive/5 flex items-center gap-2"
+          contentEditable={false}
+        >
+          <span className="flex-1">{label}</span>
+          <button
+            type="button"
+            className="text-xs underline hover:no-underline"
+            onClick={copySource}
+          >
+            Copy source
+          </button>
+          <button
+            type="button"
+            className="text-xs underline hover:no-underline"
+            onClick={deleteNode}
+          >
+            Delete
+          </button>
+        </div>
+        <NodeViewContent className="component-children" />
+      </NodeViewWrapper>
+    );
+  }
 
   // Show placeholder while the auto-convert rAF (above) dispatches. This
   // usually flashes for < 1 frame and is invisible; a slow hot-reload on
@@ -683,8 +792,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           BubbleMenu, and all PM features for descendants. Instead, a
           filterTransaction plugin (TypedChildrenGuard) rejects unwanted
           insertions at the PM transaction level. */}
+      {/*
+        Reset mechanism: rely on `componentDidUpdate`'s resetKey-comparison
+        branch (L107) to clear `errored` state when primitive props change.
+        Previously we also set `key={resetKey}`, which forced a full remount
+        of the live fumadocs subtree on every prop edit — losing component-
+        local state (ImageZoom's zoom level, in-flight Radix animations)
+        and making `componentDidUpdate` unreachable (key-remount always
+        produces a fresh instance where prevProps === props). Keeping only
+        the prop-comparison reset preserves component state on healthy
+        renders and still clears the error path when the user fixes a
+        prop that was causing the render to throw.
+      */}
       <ComponentErrorBoundary
-        key={resetKey}
         resetKey={resetKey}
         onError={setRenderError}
         descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
@@ -719,11 +839,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             focusInsertedComponent(editor, insertPos, getDescriptor(childName));
           }}
         >
-          <span>
-            {node.childCount === 0
-              ? `Click to add a ${(descriptor.emptyChildName as string).toLowerCase()}`
-              : `+ Add ${descriptor.emptyChildName}`}
-          </span>
+          <span>+ Add {descriptor.emptyChildName}</span>
         </button>
       )}
     </NodeViewWrapper>

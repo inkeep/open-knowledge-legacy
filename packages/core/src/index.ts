@@ -53,6 +53,8 @@ export {
   getParseHealth,
   incrementBlockFallback,
   incrementJsxAutoConvertFailed,
+  incrementJsxAutoConvertSucceeded,
+  incrementJsxPropDropped,
   incrementJsxRenderFailure,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,

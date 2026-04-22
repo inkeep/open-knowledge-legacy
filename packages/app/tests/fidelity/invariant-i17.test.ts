@@ -1,7 +1,7 @@
 /**
  * Invariant I17 — Content-visibility invariant (static STOP rule).
  *
- * AGENTS.md Precedent #26 requires: "All user content visible and editable
+ * AGENTS.md Precedent #28 requires: "All user content visible and editable
  * (no hidden content). No `display: none` on `NodeViewContent`, no
  * read-only chrome covering user content, no `data-*` attribute hiding."
  *
@@ -36,7 +36,7 @@
  *
  * Every NodeView file must not contain source patterns that hide
  * `NodeViewContent` or the wrapping container. Documented exemptions are
- * permitted only when the comment block cites Precedent #26 by number
+ * permitted only when the comment block cites Precedent #28 by number
  * (enforcement: the exemption-strip regex requires the literal phrase).
  *
  * SPEC §7.1 I17.
@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * NodeView source files governed by Precedent #26 — every file that renders
+ * NodeView source files governed by Precedent #28 — every file that renders
  * user content through the `<NodeViewContent>` JSX element.
  *
  * Other NodeViews in the codebase (RawMdxFallbackCMView, compound-wrappers)
@@ -65,14 +65,14 @@ const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NODE_VIEW_SOURCES = ['src/editor/extensions/JsxComponentView.tsx'];
 
 /**
- * Strip blocks of code preceded by a comment citing Precedent #26 as a
+ * Strip blocks of code preceded by a comment citing Precedent #28 as a
  * documented exemption. The exemption must name the precedent by number —
  * a bare "this is fine" comment does not pass. The exemption window covers
  * ~20 lines of following code (enough for a typical render body).
  */
 function stripDocumentedExemptions(src: string): string {
   return src.replace(
-    /documented exemption from Precedent #26[\s\S]{1,2000}?\n(?:\n|$)/g,
+    /documented exemption from Precedent #28[\s\S]{1,2000}?\n(?:\n|$)/g,
     '\n/* EXEMPT */\n',
   );
 }
@@ -109,7 +109,7 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; re: RegExp }> = [
   },
 ];
 
-describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #26)', () => {
+describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #28)', () => {
   for (const rel of NODE_VIEW_SOURCES) {
     test(`${rel}: no NodeViewContent hiding`, () => {
       const full = join(APP_ROOT, rel);
@@ -118,20 +118,20 @@ describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #26)', () =>
       for (const { name, re } of FORBIDDEN_PATTERNS) {
         expect(
           re.test(scanned),
-          `${rel}: forbidden pattern "${name}" — hides user content. See AGENTS.md Precedent #26.`,
+          `${rel}: forbidden pattern "${name}" — hides user content. See AGENTS.md Precedent #28.`,
         ).toBe(false);
       }
     });
   }
 
-  test('exemption discipline: tab-panel exemption documents Precedent #26', () => {
+  test('exemption discipline: tab-panel exemption documents Precedent #28', () => {
     // Pin: compound-wrappers.tsx EditorTab uses `data-[state=inactive]:hidden`
     // — the sole documented exemption (standard tab UX hides inactive panels;
     // content is accessible by clicking the trigger). Enforce that the
-    // exemption comment cites Precedent #26 so future readers find the why.
+    // exemption comment cites Precedent #28 so future readers find the why.
     const src = readFileSync(join(APP_ROOT, 'src/editor/components/compound-wrappers.tsx'), 'utf8');
     expect(src.includes('data-[state=inactive]:hidden')).toBe(true);
-    expect(src.includes('documented exemption from Precedent #26')).toBe(true);
+    expect(src.includes('documented exemption from Precedent #28')).toBe(true);
   });
 
   test('NodeView source list: audit-complete (no new NodeView files missed)', () => {

@@ -50,9 +50,10 @@ function surfaceRejection(containerName: string, insertedType: string): void {
   lastRejectionAt.set(key, now);
 
   const descriptor = getDescriptor(containerName);
+  const containerLabel = descriptor.displayName ?? containerName;
   const allowed = descriptor.emptyChildName ?? 'component';
-  toast.info(`<${containerName}> only accepts <${allowed}> children`, {
-    description: `Ignored "${insertedType}" — try inserting a ${allowed} via the + button or \`/${allowed.toLowerCase()}\`.`,
+  toast.info(`${containerLabel} only accepts ${allowed} items`, {
+    description: `Use the "Add ${allowed}" button at the bottom of this block, or type /${allowed.toLowerCase()}.`,
     duration: 3500,
   });
 }
@@ -114,11 +115,13 @@ export function shouldRejectTypedChildrenInsertion(
                 insertedSlice.content.forEach((insertedNode) => {
                   if (insertedNode.type.name !== 'jsxComponent') {
                     console.warn(
-                      '[TypedChildrenGuard] REJECTED:',
-                      insertedNode.type.name,
-                      'inside',
-                      componentName,
-                      `(posDepth=${$pos.depth}, containerDepth=${depth})`,
+                      JSON.stringify({
+                        event: 'typed-children-rejected',
+                        container: componentName,
+                        inserted: insertedNode.type.name,
+                        posDepth: $pos.depth,
+                        containerDepth: depth,
+                      }),
                     );
                     dominated = true;
                     if (onReject) {

@@ -29,10 +29,17 @@ with the real fumadocs styles inside the editor.
 | Component | Purpose |
 |---|---|
 | `Callout` | Admonition box (`info` / `warning` / `error` / …) |
-| `Card` | Linked card with title, description, icon |
-| `Cards` | Grid of `Card` children |
 | `Steps` | Numbered list of `Step` children |
 | `Step` | A single step inside `Steps` |
+| `Banner` | Full-width notice strip |
+| `Inline TOC` | Inline table of contents |
+
+**Layout**
+
+| Component | Purpose |
+|---|---|
+| `Card` | Linked card with title, description, icon |
+| `Cards` | Grid of `Card` children |
 | `Tabs` | Tabbed switcher over `Tab` children |
 | `Tab` | A single tab panel |
 | `Accordions` | Collapsible group of `Accordion` children |
@@ -40,16 +47,19 @@ with the real fumadocs styles inside the editor.
 | `Files` | File-tree layout |
 | `Folder` | Folder row inside `Files` |
 | `File` | Leaf file inside `Files` or `Folder` |
-| `Banner` | Full-width notice strip |
-| `InlineTOC` | Inline table of contents |
-| `TypeTable` | API/type documentation table |
 
 **Media**
 
 | Component | Purpose |
 |---|---|
-| `ImageZoom` | Click-to-zoom image |
+| `Image Zoom` | Click-to-zoom image |
 | `Audio` | Audio player |
+
+**Data**
+
+| Component | Purpose |
+|---|---|
+| `Type Table` | API/type documentation table |
 
 ## Editing props
 
@@ -60,9 +70,10 @@ with four icons:
    container (only shown for children of container components — Steps,
    Cards, Tabs, Accordions, Files).
 2. **Delete** — remove the component (and its children).
-3. **Settings (gear)** — open the floating **PropPanel**.
+3. **Settings (gear)** — open the floating **settings panel**.
 
-The PropPanel is auto-generated from the component's TypeScript interface:
+The settings panel is auto-generated from the component's TypeScript
+interface:
 
 - **String props** render as text inputs.
 - **Boolean props** render as toggle switches.
@@ -78,10 +89,14 @@ and every keystroke propagates to other connected clients.
 
 | Action | Shortcut |
 |---|---|
-| Open PropPanel (when a block is NodeSelected) | <kbd>Enter</kbd> or <kbd>Space</kbd> |
-| Close PropPanel and return focus to the block | <kbd>Esc</kbd> |
+| Open settings panel (when a component is selected) | <kbd>Enter</kbd> or <kbd>Space</kbd> |
+| Close settings panel and return focus to the component | <kbd>Esc</kbd> |
 | Move selection between blocks | <kbd>↑</kbd> / <kbd>↓</kbd> |
-| Reorder a child inside a container | <kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
+| Move a top-level block up / down | <kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
+
+To reorder a child inside a container (e.g. swap two `Step`s inside
+`Steps`), select the child and use the **Move up** / **Move down** icons
+in the chrome bar.
 
 ## Containers and the "Add child" pill
 
@@ -102,25 +117,25 @@ or type a new block above/below the container.
 
 ## Unregistered and broken components
 
-Open Knowledge takes a **"all user content always visible"** stance
-(Precedent #14). If a component can't be rendered live, it falls through
-to an editable source-code block instead of disappearing.
+Open Knowledge's rule: all user content stays visible and editable. If a
+component can't be rendered live, it falls through to an editable
+source-code block instead of disappearing.
 
 Two situations trigger the fallback:
 
 1. **Unregistered component name.** The editor doesn't ship a live React
    renderer for every MDX component in the world. Unknown names (your own
    project-specific components, imported libraries we don't bundle) are
-   shown as an editable `rawMdxFallback` block — a nested CodeMirror
-   editor containing the raw source. Fix the source; on blur the editor
+   shown as an editable source block — a nested CodeMirror editor
+   containing the raw source. Fix the source; on blur the editor
    re-parses and, if the source is valid MDX again, replaces the fallback
    with a live component.
 
 2. **Render errors.** A valid component that throws during React render
    (bad prop, missing required value, runtime crash) is caught by an
-   error boundary and auto-converted to the same `rawMdxFallback` source
-   editor. The error message is shown in the chrome bar so you can
-   diagnose what needs fixing.
+   error boundary and auto-converted to the same editable source block.
+   The error message is shown in the chrome bar so you can diagnose what
+   needs fixing.
 
 Either way: your MDX bytes are preserved exactly as you authored them.
 The raw source never disappears.
@@ -149,9 +164,9 @@ source now parses.
 
 ## See also
 
-- [Getting started](/docs/guides/getting-started) — install and first
+- [Getting started](/guides/getting-started) — install and first
   project.
-- [MCP integration](/docs/guides/mcp-integration) — how agents author
+- [MCP integration](/guides/mcp-integration) — how agents author
   content.
-- [Configuration](/docs/guides/configuration) — what `.open-knowledge/`
+- [Configuration](/guides/configuration) — what `.open-knowledge/`
   contains and how path filtering works.

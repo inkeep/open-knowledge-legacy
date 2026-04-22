@@ -79,6 +79,67 @@ function loadSnapshot(): SchemaSnapshot | null {
   return JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf-8')) as SchemaSnapshot;
 }
 
+// ── Allowed narrowings ──────────────────────────────────────────────
+
+/**
+ * Explicit narrowings that have been authorized against precedent #9 with
+ * linked spec evidence. Every entry names (a) the exact node-attribute
+ * combination being narrowed and (b) the spec citation explaining why the
+ * R13 schema-throw safety net is sufficient coverage. Adding a new entry
+ * REQUIRES the companion spec section AND a live-fire regression test in
+ * `packages/app/tests/integration/` (e.g. SH01/SH05 shape).
+ *
+ * This is the NOT a loophole — it's a registry that surfaces every
+ * authorized narrowing in one place so future audits can enumerate them
+ * without re-reading specs.
+ */
+interface AllowedNarrowing {
+  nodeType: string;
+  kind: 'content' | 'attr-removed' | 'atom-widening';
+  /** Attr name for `attr-removed`; undefined otherwise. */
+  attrName?: string;
+  specRef: string;
+  regressionTestRef: string;
+}
+
+const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
+  // jsxInline greenfield narrowing: atom-widening (allowed via content
+  // expression exception at line 126) plus attr removals listed explicitly.
+  {
+    nodeType: 'jsxInline',
+    kind: 'content',
+    specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
+    regressionTestRef:
+      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+  },
+  {
+    nodeType: 'jsxInline',
+    kind: 'attr-removed',
+    attrName: 'attributes',
+    specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
+    regressionTestRef:
+      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+  },
+  {
+    nodeType: 'jsxInline',
+    kind: 'attr-removed',
+    attrName: 'sourceRaw',
+    specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
+    regressionTestRef:
+      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+  },
+];
+
+function isAllowedNarrowing(
+  nodeType: string,
+  kind: AllowedNarrowing['kind'],
+  attrName?: string,
+): boolean {
+  return ALLOWED_NARROWINGS.some(
+    (a) => a.nodeType === nodeType && a.kind === kind && a.attrName === attrName,
+  );
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe('R10: schema add-only invariant', () => {
@@ -97,12 +158,18 @@ describe('R10: schema add-only invariant', () => {
     }
   });
 
-  test('no attrs removed from existing node types', () => {
+  test('no attrs removed from existing node types (outside allowed narrowings)', () => {
     for (const [nodeType, expected] of Object.entries(snapshot.nodes)) {
       const actual = current.nodes[nodeType];
       if (!actual) continue; // covered by "no node types removed"
       for (const attrName of Object.keys(expected.attrs)) {
-        expect(actual.attrs[attrName]).toBeDefined();
+        if (actual.attrs[attrName] !== undefined) continue;
+        if (isAllowedNarrowing(nodeType, 'attr-removed', attrName)) continue;
+        // Unauthorized removal — fail explicitly.
+        throw new Error(
+          `Schema NARROWED — attr '${attrName}' removed from node type '${nodeType}'. ` +
+            'This violates precedent #9 unless registered in ALLOWED_NARROWINGS with spec evidence.',
+        );
       }
     }
   });

@@ -5,7 +5,8 @@
  *
  *   info  — valid MDX for a component we don't render here (e.g. `<DataViz>`).
  *           The document is fine; a downstream target may render it. Muted
- *           styling, label `custom` — no alarm.
+ *           styling, label `unknown` — matches the "Unknown component: X"
+ *           placeholder copy surfaced by `JsxComponentView`.
  *   warn  — a registered component threw at render time. Doc is structurally
  *           valid; the component is misbehaving. Amber styling — attention.
  *   error — MDX failed to parse. The source is actively broken and won't
@@ -41,7 +42,7 @@ export const SEVERITY_STYLES: Record<Severity, SeverityStyle> = {
   info: {
     wrapperClass: 'border-muted-foreground/30 bg-muted/30',
     badgeClass: 'text-muted-foreground bg-muted',
-    label: 'custom',
+    label: 'unknown',
   },
   warn: {
     wrapperClass:

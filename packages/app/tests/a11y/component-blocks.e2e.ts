@@ -232,7 +232,7 @@ test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) 
 //     (keyboard, ARIA roles, form labels, landmarks, link purpose, …)
 //     actively enforced on this PR's surface so regressions surface.
 //   - `aria-allowed-attr` is NOT disabled: the wrapper's `role="group"`
-//     intentionally omits `aria-selected` (see precedent #32) and axe
+//     intentionally omits `aria-selected` (see precedent #34) and axe
 //     agrees, so the rule passes.
 test('A11Y10: Zero axe-core violations on 20-component fixture (excluding color-contrast)', async ({
   page,

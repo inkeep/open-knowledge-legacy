@@ -267,7 +267,7 @@ function detach(entry: CacheEntry): void {
  * `set synced(value)` is a no-op when the value is unchanged
  * (`@hocuspocus/provider/src/HocuspocusProvider.ts:387-397`). Returning a
  * pre-resolved promise here is what makes the "cold mount, warm content" path
- * (precedent #15(c), spec G1+G5) work — without this gate, every
+ * (precedent #18(c), spec G1+G5) work — without this gate, every
  * Activity-evicted-but-pool-resident revisit would hang for 30s waiting on a
  * listener that can never fire. The first call still pays one Suspense cycle
  * (Promise.resolve has no React `.status` field initially); subsequent calls

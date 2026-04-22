@@ -4,7 +4,7 @@
  * Implements the canonical ProseMirror + CodeMirror pattern
  * (prosemirror.net/examples/codemirror/) adapted for TipTap's React NodeView.
  *
- * Architecture (Precedent #24 — direct PM dispatch, NOT y-codemirror.next):
+ * Architecture (Precedent #26 — direct PM dispatch, NOT y-codemirror.next):
  *   CM keystroke → forwardUpdate → PM transaction → y-prosemirror → CRDT
  *   PM change → NodeView.update(node) → computeChange → CM transaction
  *   Single `updating` boolean prevents feedback loops.
@@ -240,6 +240,14 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     // Look up the current node at this position to get its size
     const currentNode = pmView.state.doc.nodeAt(pos);
     if (!currentNode) return;
+    // Type gate — same defensive check the sibling on-blur upgrade handler
+    // enforces (L398). If a concurrent transaction (remote on-blur upgrade,
+    // Observer B re-parse under the always-live parse path, agent write)
+    // swapped the `rawMdxFallback` at this position for a `jsxComponent` or
+    // anything else between CM's internal update and this callback firing,
+    // writing CM's text into that node's content range would silently
+    // corrupt its children. Bail on any type mismatch.
+    if (currentNode.type.name !== 'rawMdxFallback') return;
 
     const start = pos + 1;
     const end = pos + currentNode.nodeSize - 1;
@@ -312,6 +320,11 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       if (!pmView) return false;
       const currentNode = pmView.state.doc.nodeAt(pos);
       if (!currentNode) return false;
+      // Type gate — mirror the sibling on-blur upgrade handler. If the
+      // rawMdxFallback has been swapped under us (concurrent upgrade,
+      // Observer B re-parse), stepping past `pos + currentNode.nodeSize`
+      // computed against a different node would misposition PM selection.
+      if (currentNode.type.name !== 'rawMdxFallback') return false;
       const targetPos = dir < 0 ? pos : pos + currentNode.nodeSize;
       const selection = Selection.near(pmView.state.doc.resolve(targetPos), dir);
       pmView.dispatch(pmView.state.tr.setSelection(selection).scrollIntoView());
@@ -350,7 +363,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     //   1. Doc changes → forward text into PM (existing behavior).
     //   2. Focus changes → set PM NodeSelection on this block when CM gains
     //      focus (e.g. user clicks inside CM). Without this, SelectionStatePlugin
-    //      (Precedent #27) sees stale `state.selection` whenever CM has focus,
+    //      (Precedent #29) sees stale `state.selection` whenever CM has focus,
     //      so halo/breadcrumb/aria-live report the wrong block. The guard in
     //      the canonical PM+CM example uses `updatingRef` to prevent PM→CM→PM
     //      loops; we reuse the same flag.
@@ -369,6 +382,11 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
           if (currentSel instanceof NodeSelection && currentSel.from === pos) return;
           const currentNode = pmView.state.doc.nodeAt(pos);
           if (!currentNode) return;
+          // Type gate — mirror the on-blur upgrade handler. If another
+          // client / Observer B re-parse swapped the rawMdxFallback at
+          // `pos` under us, creating a NodeSelection on that position
+          // would land on an unrelated node.
+          if (currentNode.type.name !== 'rawMdxFallback') return;
           updatingRef.current = true;
           try {
             pmView.dispatch(
@@ -456,7 +474,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     });
   }, [resolvedTheme]);
 
-  // PM→CM selection sync (Precedent #27 + canonical PM+CM pattern): when
+  // PM→CM selection sync (Precedent #29 + canonical PM+CM pattern): when
   // PM selection lands on or inside this node — via outer arrow navigation,
   // slash-insert-with-focus, programmatic commands — mirror it into CM so
   // the nested editor reflects the intended caret. Two cases:

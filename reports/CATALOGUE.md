@@ -1,7 +1,7 @@
 # Research Reports Catalogue
 
 > Auto-generated on 2026-04-16 by `generate-catalogue.ts`; manually amended 2026-04-21 to add the Mermaid-rendering report.
-> 86 valid reports indexed
+> 89 valid reports indexed (body section count — manual amendment left the header count stale; re-run `generate-catalogue.ts` to refresh both the count and the table)
 
 ---
 

@@ -69,16 +69,36 @@ export interface ParseHealthMetrics {
    */
   jsxRenderFailure: Record<string, number>;
   jsxAutoConvertFailed: Record<string, number>;
+  /**
+   * Successful auto-convert counter — keyed the same way as
+   * `jsxAutoConvertFailed`. Publishing both lets operators compute a
+   * success rate (`succeeded / (succeeded + failed)`) rather than reading
+   * the absolute failure count against an unknown denominator.
+   */
+  jsxAutoConvertSucceeded: Record<string, number>;
+  /**
+   * Dangerous-prop drops from `sanitizeComponentProps`. Keyed by lowercased
+   * prop name (`'onclick'`, `'dangerouslysetinnerhtml'`, `'href'`, …).
+   * Cardinality is bounded — React's `on*` namespace is ~80 names plus a
+   * handful of explicit internals; URL-valued props share the `URL_PROP_NAMES`
+   * set. Elevated above `console.debug` because drop volume is the primary
+   * signal for targeted XSS probes against the editor surface.
+   */
+  jsxPropDropped: Record<string, number>;
 }
 
 const metrics: {
   parseFallback: { blockLevel: number; wholeDoc: number };
   jsxRenderFailure: Record<string, number>;
   jsxAutoConvertFailed: Record<string, number>;
+  jsxAutoConvertSucceeded: Record<string, number>;
+  jsxPropDropped: Record<string, number>;
 } = {
   parseFallback: { blockLevel: 0, wholeDoc: 0 },
   jsxRenderFailure: {},
   jsxAutoConvertFailed: {},
+  jsxAutoConvertSucceeded: {},
+  jsxPropDropped: {},
 };
 
 export function incrementBlockFallback(): void {
@@ -105,6 +125,22 @@ export function incrementJsxAutoConvertFailed(component: string): void {
   metrics.jsxAutoConvertFailed[component] = (metrics.jsxAutoConvertFailed[component] ?? 0) + 1;
 }
 
+/** See {@link incrementJsxRenderFailure} — same cardinality contract. */
+export function incrementJsxAutoConvertSucceeded(component: string): void {
+  metrics.jsxAutoConvertSucceeded[component] =
+    (metrics.jsxAutoConvertSucceeded[component] ?? 0) + 1;
+}
+
+/**
+ * Increment the dangerous-prop drop counter. `propName` MUST be lowercased
+ * (matches the shape in `DANGEROUS_PROP_NAMES` / `URL_PROP_NAMES`) so aggregation
+ * across React camelCase (`onClick`) and HTML lowercase (`onclick`) collapses to
+ * a single row.
+ */
+export function incrementJsxPropDropped(propName: string): void {
+  metrics.jsxPropDropped[propName] = (metrics.jsxPropDropped[propName] ?? 0) + 1;
+}
+
 /**
  * Increment ypsMismatch.block counter.
  *
@@ -128,6 +164,8 @@ export function getParseHealth(): ParseHealthMetrics {
     ypsMismatch: { block: yps.block, inline: yps.inline },
     jsxRenderFailure: { ...metrics.jsxRenderFailure },
     jsxAutoConvertFailed: { ...metrics.jsxAutoConvertFailed },
+    jsxAutoConvertSucceeded: { ...metrics.jsxAutoConvertSucceeded },
+    jsxPropDropped: { ...metrics.jsxPropDropped },
   };
 }
 
@@ -136,6 +174,9 @@ export function resetParseHealth(): void {
   metrics.parseFallback.wholeDoc = 0;
   for (const k of Object.keys(metrics.jsxRenderFailure)) delete metrics.jsxRenderFailure[k];
   for (const k of Object.keys(metrics.jsxAutoConvertFailed)) delete metrics.jsxAutoConvertFailed[k];
+  for (const k of Object.keys(metrics.jsxAutoConvertSucceeded))
+    delete metrics.jsxAutoConvertSucceeded[k];
+  for (const k of Object.keys(metrics.jsxPropDropped)) delete metrics.jsxPropDropped[k];
   const yps = ypsCounters();
   yps.block = 0;
   yps.inline = 0;

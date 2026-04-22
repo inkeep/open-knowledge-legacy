@@ -255,7 +255,7 @@ export function EditorTabs({
 // Child wrapper for <Tab> blocks. Subscribes to the parent's `data-active-tab`
 // attr via useAncestorAttr and derives `data-state` from React state rather
 // than imperative DOM mutation. Inactive panels use `data-[state=inactive]:hidden`
-// (display:none) — this is a documented exemption from Precedent #26: standard
+// (display:none) — this is a documented exemption from Precedent #28: standard
 // tab UX hides inactive panels; content is accessible by clicking the tab
 // trigger, not permanently hidden.
 
@@ -270,12 +270,19 @@ export function EditorTab({ value, children }: { value?: string; children?: Reac
   // before the child's first paint.
   const state = activeTab !== null && activeTab === escaped ? 'active' : 'inactive';
 
+  // When `value` is absent (malformed Tab in user content), there is no
+  // trigger to derive `aria-labelledby` from. Fall back to a stable
+  // `aria-label` so the tabpanel still has an accessible name and axe-core
+  // `tabpanel-name` doesn't fail — the panel is visible and focusable, so
+  // the role demands an accessible name regardless of authoring state.
+  const hasValue = Boolean(escaped);
   return (
     <div
       ref={panelRef}
       id={panelId}
       role="tabpanel"
-      aria-labelledby={triggerId}
+      aria-labelledby={hasValue ? triggerId : undefined}
+      aria-label={hasValue ? undefined : 'Unnamed tab panel'}
       className="editor-tab-content p-4 text-[0.9375rem] bg-fd-background rounded-xl prose-no-margin data-[state=inactive]:hidden"
       data-value={escaped}
       data-state={state}

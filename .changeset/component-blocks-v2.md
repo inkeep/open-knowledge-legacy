@@ -6,6 +6,8 @@
 
 feat: Component Blocks v2 — typed props + editable children + block UX
 
+BREAKING: `jsxInline` schema narrows from `content: 'inline*'` + `{attributes, sourceRaw}` attrs to `content: 'text*'` with zero attrs. Mid-flight collab pairs on different versions will see stale-shape inline content render empty (the R13 `@tiptap/y-tiptap` patch logs + skips; no Y.Item tombstoning — see `packages/core/src/schema-invariant.test.ts` `ALLOWED_NARROWINGS` registry and the SH05 regression test at `packages/app/tests/integration/jsx-schema-narrowing-safety.test.ts`). Pre-1.0 semver allows the break at minor, but the change is load-bearing for anyone upgrading under an in-flight collab session.
+
 Widens `jsxComponent` from atom to a block-container node (`atom: false, content: 'block*'`, `isolating: true`) with runtime descriptor dispatch for 17 built-in components (fumadocs callouts, cards, tabs, steps, accordions, files, image-zoom, banner, TypeTable, inline-TOC, Audio). Rewrites `jsxInline` to a thin `content: 'text*'` shape whose text content IS the source — inline JSX renders as editable source text in WYSIWYG (per SPEC NG14). Adds:
 
 - Floating PropPanel with auto-generated controls (string/boolean/enum/number) from TypeScript interfaces via `react-docgen-typescript`

@@ -25,7 +25,7 @@ describe('classifySeverity', () => {
   });
 
   test('SEVERITY_STYLES covers all three levels', () => {
-    expect(SEVERITY_STYLES.info.label).toBe('custom');
+    expect(SEVERITY_STYLES.info.label).toBe('unknown');
     expect(SEVERITY_STYLES.warn.label).toBe('render error');
     expect(SEVERITY_STYLES.error.label).toBe('parse error');
   });

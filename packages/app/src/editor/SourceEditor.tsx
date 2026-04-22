@@ -54,7 +54,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   // V2 EDITOR CACHE WIRING (US-008)
   //
   // Replaces the inline `new EditorView({ parent })` + `view.destroy()` on
-  // unmount with mountCmEditor + parkCmEditor (precedent #18(g) — H1 12/12
+  // unmount with mountCmEditor + parkCmEditor (precedent #25(a) — H1 12/12
   // probe). The view's DOM is reparented across Activity flips instead of
   // being destroyed, which preserves selection / undo / yCollab binding /
   // Y.Text identity / scroll position (cm6-reparent-contract.md §7).

@@ -12,14 +12,16 @@
  *   - Golden-file updates require explicit: bun run test:visual:update
  *   - Cannot silently regenerate in CI
  *
- * Requires: Playwright browsers installed. Dev server started by
- * playwright.config.ts webServer on VITE_PORT (or default 5173).
+ * Isolation: uses the per-worker fixture + per-test UUID docName — the same
+ * pattern enforced across all E2E suites (see CLAUDE.md "Per-test docName
+ * isolation"). Hardcoded `'test-doc'` is forbidden because parallel workers
+ * would race on the same CRDT state, baking corrupted presence / selection
+ * pixels into the golden under `test:visual:update`.
  */
 
-import { expect, type Page, test } from '@playwright/test';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import { randomUUID } from 'node:crypto';
+import type { Page } from '@playwright/test';
+import { expect, test } from '../stress/_helpers';
 
 /** Wait for provider to connect and sync */
 async function waitForProvider(page: Page) {
@@ -28,7 +30,7 @@ async function waitForProvider(page: Page) {
   });
 }
 
-/** Wait for the editor's top-level doc to contain at least one block (seed
+/** Wait for the editor's top-level doc to contain at least N blocks (seed
  *  acknowledged) — replaces every `waitForTimeout(500)` after a write. */
 async function waitForDocSeeded(page: Page, minChildCount = 1) {
   await page.waitForFunction(
@@ -36,16 +38,6 @@ async function waitForDocSeeded(page: Page, minChildCount = 1) {
     minChildCount,
     { timeout: 10_000 },
   );
-}
-
-/** Write MDX content to the editor via the API */
-async function writeContent(content: string, docName = 'test-doc') {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName, content, mode: 'replace' }),
-  });
-  if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
 /** Toggle theme to dark or light mode */
@@ -95,14 +87,23 @@ async function deselectAll(page: Page) {
   );
 }
 
-test.beforeEach(async ({ page }) => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+/**
+ * Per-test isolation: seed a unique docName, replace its contents, navigate
+ * to it via hash route. Returns the docName so the caller can reference it
+ * later if needed.
+ */
+async function seedAndNavigate(
+  page: Page,
+  api: { seedDocs: (d: Array<{ name: string; markdown: string }>) => Promise<void> },
+  markdown: string,
+): Promise<string> {
+  const docName = `vr-${randomUUID().slice(0, 12)}`;
+  await api.seedDocs([{ name: docName, markdown }]);
+  await page.goto(`/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
-});
+  return docName;
+}
 
 // ── VR01: Callout ──────────────────────────────────────────────
 
@@ -112,8 +113,11 @@ for (const calloutType of calloutTypes) {
   for (const theme of ['light', 'dark'] as const) {
     test(`VR01-${calloutType}-${theme}: Callout type=${calloutType} in ${theme} mode`, async ({
       page,
+      api,
     }) => {
-      await writeContent(
+      await seedAndNavigate(
+        page,
+        api,
         `<Callout type="${calloutType}">\n\nThis is a ${calloutType} callout with **bold** and *italic* text.\n\n</Callout>`,
       );
       await waitForDocSeeded(page);
@@ -136,8 +140,10 @@ for (const calloutType of calloutTypes) {
 // ── VR02: Card ─────────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR02-${theme}: Card in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR02-${theme}: Card in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Card title="Getting Started" href="/docs/start">\n\nLearn how to set up the project.\n\n</Card>',
     );
     await waitForDocSeeded(page);
@@ -154,8 +160,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR03: Cards ────────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR03-${theme}: Cards grid in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR03-${theme}: Cards grid in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Cards>\n\n<Card title="First" href="/a">\n\nFirst card content.\n\n</Card>\n\n<Card title="Second" href="/b">\n\nSecond card content.\n\n</Card>\n\n</Cards>',
     );
     await waitForDocSeeded(page);
@@ -171,8 +179,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR04: Steps ────────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR04-${theme}: Steps with 3 children in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR04-${theme}: Steps with 3 children in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Steps>\n\n<Step>\n\nInstall dependencies\n\n</Step>\n\n<Step>\n\nConfigure settings\n\n</Step>\n\n<Step>\n\nDeploy\n\n</Step>\n\n</Steps>',
     );
     await waitForDocSeeded(page);
@@ -188,8 +198,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR05: Tabs ─────────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR05-${theme}: Tabs with 2 tabs in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR05-${theme}: Tabs with 2 tabs in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Tabs items={["npm", "pnpm"]}>\n\n<Tab value="npm">\n\nnpm install open-knowledge\n\n</Tab>\n\n<Tab value="pnpm">\n\npnpm add open-knowledge\n\n</Tab>\n\n</Tabs>',
     );
     await waitForDocSeeded(page);
@@ -205,8 +217,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR06: Accordions ───────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR06-${theme}: Accordions in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR06-${theme}: Accordions in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Accordions>\n\n<Accordion title="First">\n\nFirst accordion content.\n\n</Accordion>\n\n<Accordion title="Second">\n\nSecond accordion content.\n\n</Accordion>\n\n</Accordions>',
     );
     await waitForDocSeeded(page);
@@ -222,8 +236,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR08: Files ────────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR08-${theme}: Files tree in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR08-${theme}: Files tree in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Files>\n\n<Folder name="src" defaultOpen>\n\n<File name="index.ts" />\n\n<File name="config.ts" />\n\n</Folder>\n\n<File name="package.json" />\n\n</Files>',
     );
     await waitForDocSeeded(page);
@@ -239,8 +255,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR10: Banner ───────────────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR10-${theme}: Banner in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR10-${theme}: Banner in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<Banner title="Notice">\n\nThis is an important announcement.\n\n</Banner>',
     );
     await waitForDocSeeded(page);
@@ -256,8 +274,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR17: Mixed document ───────────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR17-${theme}: Mixed 6-component document in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR17-${theme}: Mixed 6-component document in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       [
         '# Mixed Components',
         '',
@@ -313,8 +333,10 @@ for (const theme of ['light', 'dark'] as const) {
 // ── VR18: Wildcard unregistered ────────────────────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR18-${theme}: Wildcard unregistered component in ${theme} mode`, async ({ page }) => {
-    await writeContent(
+  test(`VR18-${theme}: Wildcard unregistered component in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
       '<CustomThing prop="value">\n\nUnregistered component content\n\n</CustomThing>',
     );
     await waitForDocSeeded(page);

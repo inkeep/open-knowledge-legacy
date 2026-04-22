@@ -552,7 +552,7 @@ export const builtInComponents: JsxComponentMeta[] = [
   // that don't ship the claimed capability are tech debt. Existing `<Mermaid />`
   // content in user docs falls through to the wildcard `'*'` descriptor, which
   // `JsxComponentView` auto-converts to `rawMdxFallback` — a nested CodeMirror
-  // editing surface (Precedent #24 + #26). The chart source stays fully
+  // editing surface (Precedent #26 + #28). The chart source stays fully
   // editable; future real-renderer work is captured in
   // `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
   // with landscape research at `reports/mermaid-rendering-options-for-mdx-editors/`.

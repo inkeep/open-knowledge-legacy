@@ -38,9 +38,54 @@
  * Matches the shape shipped by React itself for `href` in development
  * builds (see reactjs/rfcs#186 + createSanitizeURL) and by DOMPurify's
  * `ALLOWED_URI_REGEXP` default.
+ *
+ * Telemetry:
+ *   Drop events go to `console.warn` (above the default log-aggregator
+ *   threshold) and bump `incrementJsxPropDropped` so
+ *   `/api/metrics/parse-health` exposes attack volume. A per-prop-name
+ *   rate limit caps warn emissions at 10/min/prop so legitimate MDX
+ *   authoring mistakes (`<Callout onClick={handler}>`) don't flood logs
+ *   while still surfacing targeted XSS probes (where attack cadence blows
+ *   past the rate limit and produces visible aggregate counters).
  */
 
+import { incrementJsxPropDropped } from '@inkeep/open-knowledge-core';
+
 const URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'tel:', 'ftp:', 'sms:']);
+
+/**
+ * Per-prop-name warn-emit rate limit window. 10 warns per minute per
+ * prop-name is enough to surface a targeted XSS probe (attacker cadence
+ * blows past this and the counter tells the story) while absorbing
+ * legitimate authoring mistakes (`<Callout onClick={handler}>` typed
+ * once) without log spam. Counter emission is unlimited — the rate cap
+ * only gates the per-event `console.warn`.
+ */
+const DROP_WARN_WINDOW_MS = 60_000;
+const DROP_WARN_LIMIT_PER_WINDOW = 10;
+const dropWarnState = new Map<string, { windowStart: number; count: number }>();
+
+function emitPropDroppedEvent(reason: string, key: string): void {
+  const lower = key.toLowerCase();
+  incrementJsxPropDropped(lower);
+  const now = Date.now();
+  const state = dropWarnState.get(lower);
+  if (!state || now - state.windowStart >= DROP_WARN_WINDOW_MS) {
+    dropWarnState.set(lower, { windowStart: now, count: 1 });
+  } else {
+    state.count += 1;
+    if (state.count > DROP_WARN_LIMIT_PER_WINDOW) return;
+  }
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(
+      JSON.stringify({
+        event: 'jsx-prop-dropped',
+        reason,
+        prop: key,
+      }),
+    );
+  }
+}
 
 /**
  * Prop names whose string value is rendered as a DOM URL attribute.
@@ -99,6 +144,14 @@ const DANGEROUS_PROP_NAMES = new Set([
   'key',
   'defaultvalue',
   'defaultchecked',
+  // Prototype-pollution guards. JSON.parse + Object.entries don't
+  // enumerate inherited properties, so these rarely reach user code —
+  // but MDX expression-attrs can technically carry any key shape, and
+  // a renderer that forwards `{...props}` to a non-React consumer
+  // could see the prototype walked. Belt-and-braces denylist is cheap.
+  '__proto__',
+  'constructor',
+  'prototype',
 ]);
 
 /**
@@ -259,18 +312,11 @@ export function sanitizeComponentProps(props: Record<string, unknown>): Record<s
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
     if (isDangerousPropName(key)) {
-      // DROP. Structured debug event lets operators grep for attacks;
-      // console.debug keeps the signal below default log level so legitimate
-      // debugging isn't flooded when MDX authors happen to misuse a prop.
-      if (typeof console !== 'undefined' && typeof console.debug === 'function') {
-        console.debug(
-          JSON.stringify({
-            event: 'jsx-prop-dropped',
-            reason: 'dangerous-prop-name',
-            prop: key,
-          }),
-        );
-      }
+      // DROP. Promoted from `console.debug` so drop events land above
+      // default log-aggregator thresholds (DevTools / Sentry / Datadog
+      // / Grafana all hide `debug` by default). Per-prop-name rate limit
+      // absorbs author mistakes; aggregate counter is unlimited.
+      emitPropDroppedEvent('dangerous-prop-name', key);
       changed = true;
       continue;
     }

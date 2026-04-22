@@ -32,11 +32,49 @@ interface ParseWithFallbackOptions {
 }
 
 /**
+ * Defense-in-depth budget against adversarial MDX that could drive the
+ * recursive fallback path with pathological per-region failures.
+ *
+ * MAX_SPLIT_DEPTH already caps recursion depth; in practice the total
+ * parse() work is bounded by ~O(N × depth) because each recursion operates
+ * on a non-overlapping substring of its parent (with a marginal overhead
+ * from `hoistRefDefs` prepend). A hostile input with N unclosed tags could
+ * still tie up the event loop for seconds on the server-side Observer B
+ * hot path (precedent #14 — server is the single writer). The wall-clock
+ * ceiling and parse-call cap are belt-and-braces defense against
+ * multi-tenant CPU starvation: first one to trip aborts to whole-doc raw
+ * text, which is always a valid PM doc.
+ */
+const MAX_PARSE_WALLCLOCK_MS = 500;
+const MAX_TOTAL_PARSE_CALLS = 1000;
+
+interface ParseBudget {
+  startMs: number;
+  calls: number;
+}
+
+/**
  * Parse markdown with block-level fallback on failure.
  * Returns JSONContent (same shape as MarkdownManager.parse).
  */
 export function parseWithFallback(source: string, opts: ParseWithFallbackOptions): JSONContent {
-  return parseRecursive(source, opts.parse, 0);
+  const budget: ParseBudget = {
+    startMs:
+      typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now(),
+    calls: 0,
+  };
+  return parseRecursive(source, opts.parse, 0, budget);
+}
+
+function budgetExhausted(budget: ParseBudget): boolean {
+  if (budget.calls >= MAX_TOTAL_PARSE_CALLS) return true;
+  const now =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  return now - budget.startMs >= MAX_PARSE_WALLCLOCK_MS;
 }
 
 /**
@@ -50,27 +88,64 @@ export function parseWithFallback(source: string, opts: ParseWithFallbackOptions
  * adding name + stack (head of) for log aggregators that key off JSON shape.
  * See CLAUDE.md "Logging conventions" and the `bridge-merge-content-loss`
  * event shape for the precedent this mirrors.
+ *
+ * Both `message` and `stack` are capped. Unified mdast/micromark errors can
+ * quote source snippets of arbitrary length; an adversarial file would
+ * otherwise produce multi-KB per-parse log entries and a log-volume DoS
+ * amplification under load. Matches the `slice(0, 200)` pattern in
+ * `tryPerBlockFallback` but with a slightly larger ceiling for the top-level
+ * site because the primary message is the main signal for diagnosis.
  */
+const MAX_ERROR_MESSAGE_LEN = 500;
+
 function errorPayload(err: unknown): { name: string; message: string; stack?: string } {
   if (err instanceof Error) {
     return {
       name: err.name,
-      message: err.message,
+      message: err.message.slice(0, MAX_ERROR_MESSAGE_LEN),
       // Stack traces can be tens of KB. Keep the first 4 frames — enough to
       // locate the throw site without flooding log aggregators.
       stack: err.stack?.split('\n').slice(0, 4).join('\n'),
     };
   }
-  return { name: 'UnknownError', message: String(err ?? 'unknown') };
+  return {
+    name: 'UnknownError',
+    message: String(err ?? 'unknown').slice(0, MAX_ERROR_MESSAGE_LEN),
+  };
 }
 
-export function parseRecursive(source: string, parse: ParseFn, depth: number): JSONContent {
+export function parseRecursive(
+  source: string,
+  parse: ParseFn,
+  depth: number,
+  budget?: ParseBudget,
+): JSONContent {
   if (depth > MAX_SPLIT_DEPTH) {
     incrementWholeDocFallback();
     console.warn(
       JSON.stringify({ event: 'mdx-whole-doc-fallback', reason: 'MAX_SPLIT_DEPTH exceeded' }),
     );
     return wholeDocRawText(source);
+  }
+
+  // Wall-clock / call-count budget (defense-in-depth against adversarial
+  // MDX on the server Observer B hot path). When tripped, abort to
+  // whole-doc raw text which is always a valid PM doc. `budget` is
+  // optional so existing test callers that invoke `parseRecursive`
+  // directly (e.g. US-015 boundary coverage) don't need the wrapper.
+  if (budget) {
+    if (budgetExhausted(budget)) {
+      incrementWholeDocFallback();
+      console.warn(
+        JSON.stringify({
+          event: 'mdx-whole-doc-fallback',
+          reason: 'parse budget exhausted',
+          calls: budget.calls,
+        }),
+      );
+      return wholeDocRawText(source);
+    }
+    budget.calls += 1;
   }
 
   try {
@@ -117,10 +192,10 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
       const afterSrc = source.slice(region.end);
 
       const beforeDoc = beforeSrc.trim()
-        ? parseRecursive(beforeSrc, parse, depth + 1)
+        ? parseRecursive(beforeSrc, parse, depth + 1, budget)
         : { type: 'doc' as const, content: [] };
       const afterDoc = afterSrc.trim()
-        ? parseRecursive(hoistRefDefs(beforeSrc) + afterSrc, parse, depth + 1)
+        ? parseRecursive(hoistRefDefs(beforeSrc) + afterSrc, parse, depth + 1, budget)
         : { type: 'doc' as const, content: [] };
 
       const fallbackNode: JSONContent = {
@@ -149,6 +224,11 @@ export function parseRecursive(source: string, parse: ParseFn, depth: number): J
         JSON.stringify({
           event: 'mdx-whole-doc-fallback',
           reason: `Recovery failed: ${recoveryPayload.message}`,
+          // Disambiguate which recovery stage threw: block-split + rejoin
+          // (this catch site) vs per-block independent parse (caught inline
+          // inside `tryPerBlockFallback`). Saves guesswork during incident
+          // triage when a sibling `mdx-block-fallback` is also in the logs.
+          recoveryPath: 'block-split-then-rejoin',
           error: recoveryPayload,
           originalError: payload,
         }),
