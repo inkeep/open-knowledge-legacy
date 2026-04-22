@@ -5,6 +5,26 @@ description: How external agents write into the CRDT via markdown, and how the s
 
 External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints; the server-authoritative cross-CRDT bridge then propagates the write to both `Y.XmlFragment` (TipTap) and `Y.Text` (CodeMirror) so the result is visible in either editor mode without any client-side merge.
 
+## Actor identity model
+
+Every write is attributed to an `(principal, agent_session)` actor tuple (AGENTS.md precedent #24). On the server side, `extractAgentIdentity(body)` is the canonical identity boundary — every mutating POST handler calls it at entry before any Y.Doc mutation. It resolves the request body to `{agentId, agentName, colorSeed, clientName}` and is the single source of truth for identity threading.
+
+`AgentSessionManager.getSession(docName, agentId)` returns a `SessionRecord` whose `origin` field is a per-session frozen `LocalTransactionOrigin` (precedent #1, D2). Each session's origin is object-identity-unique and deep-frozen. All Y.Doc mutations from that session pass through:
+
+```ts
+session.dc.document.transact(fn, session.origin)
+```
+
+Never `session.dc.transact(fn)` — that form omits the origin, causing persistence misattribution and silent undo-tracking failure (D32 STOP rule, precedent #24(c)).
+
+### Per-session UndoManager
+
+Each `SessionRecord` also owns a `Y.UndoManager` scoped across `[Y.Text('source'), Y.Map('metadata'), Y.Map('agent-flash')]` with `trackedOrigins: new Set([session.origin])` (D25). This enables "undo only this session's last edit" without affecting other sessions' Y.Doc state. The UM is destroyed automatically when the session's `DirectConnection` disconnects (D26).
+
+### Session lifecycle
+
+Agent sessions are created on demand and torn down when the MCP subprocess's keepalive WebSocket closes (D11, D27). A 30-second grace timer (D28) prevents false-positive cleanup on transient network drops. After the grace elapses, `sessionManager.closeAllForAgent(connectionId)` clears all per-(docName, agentId) sessions and removes their awareness entries. Subprocess reconnects always create a fresh session (D29 — no resume-by-label).
+
 ## Write endpoints
 
 ### Raw write (`POST /api/agent-write`)
@@ -26,36 +46,93 @@ Accepts a JSON body:
 ```json
 {
   "markdown": "## New section\n\nAgent-written paragraph.",
-  "position": "append"
+  "position": "append",
+  "agentId": "<connectionId>",
+  "agentName": "Claude (a4f2)",
+  "colorSeed": "claude-code",
+  "clientName": "claude-code"
 }
 ```
 
 The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10):
 
-1. Opens a `DirectConnection` to the Y.Doc
+1. Opens a `DirectConnection` to the Y.Doc via `sessionManager.getSession(docName, agentId)`
 2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message. Server-side cross-CRDT sync (precedent #14) runs under a single-writer `afterAllTransactions` settlement dispatch (one fire per outermost `doc.transact()` drain, SPEC 2026-04-16 bridge-correctness §6 R4); the client observer is a baseline-tracking shell that does not write Y.Text.
 3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
 4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
 5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
 6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyFastDiff` (character-level DMP write exported from `@inkeep/open-knowledge-core/bridge`) — minimal mutation, preserves non-agent Y.Text Items and their origins
+7. The entire operation runs inside `session.dc.document.transact(fn, session.origin)` — the per-session frozen origin is the attribution token for persistence (L2 drain), history refs, and undo tracking
 
 The XmlFragment-authoritative shape is required to preserve concurrent user WYSIWYG content during agent writes. The prior implementation (`syncTextToFragment`, deleted by the `2026-04-14-bridge-convergence-under-concurrent-writes` spec — FR-9) read `Y.Text` as the authoritative input, which lagged the XmlFragment for client-originated WYSIWYG typing and caused `updateYFragment` to stomp user content (Bug-A, deterministic).
 
-V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` in the bridge-convergence spec for the template.
+### Undo write (`POST /api/agent-undo`)
+
+Accepts `{ connectionId, scope: 'last' | 'session' }`. The handler calls `applyAgentUndo(session, scope)` in `agent-sessions.ts` which uses the same XmlFragment-authoritative composition pattern as `applyAgentMarkdownWrite` (precedent #10) but fires under `session.undoOrigin` (a separate per-session `PairedWriteOrigin` with `context.origin: 'agent-undo'`). This keeps undo-of-undo off the UM stack and lets Observer A/B short-circuit the same way they do for agent writes.
+
+## Attribution and history refs
+
+### Attribution sweep
+
+All 12 mutating POST handlers call `extractAgentIdentity(body)` at entry (FR-5, D42). The meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` asserts this structurally on every PR — any new POST handler that handles a mutation without calling `extractAgentIdentity` OR being on the explicit allowlist fails the test.
+
+### History ref topology (precedent #25)
+
+The history repo lives at `<projectRoot>/.open-knowledge/history/` (D56 — unified state dir; replaces the legacy `.git/openknowledge/` and `.openknowledge/` split). Per-session refs are emitted at the L2 drain (persistence debounce, 15s trailing-edge):
+
+```
+refs/wip/<project-branch>/agent-<connectionId>        ← MCP agent writes
+refs/wip/<project-branch>/principal-<UUID>            ← human browser writes
+refs/wip/<project-branch>/file-system                 ← disk reconciliation
+refs/wip/<project-branch>/git-upstream                ← HEAD-move imports
+refs/wip/<project-branch>/openknowledge-service       ← park, service fallback
+```
+
+Concurrent contributors in one L2 window each get their own commit sharing the same tree SHA (FR-7 per-writer fan-out, US-014).
+
+### `ok-actor:` commit body
+
+Every history commit includes a structured `ok-actor:` JSON line:
+
+```
+ok-actor: {"v":1,"principal":"principal-6f3a...","agent_session":"conn-abc","agent_type":"claude","client_name":"claude-code","client_version":null,"label":null,"display_name":"Claude (a4f2)","color_seed":"claude-code","docs":["notes.md"]}
+```
+
+`parseOkActor` / `formatOkActor` in `packages/core/src/history-repo-layout.ts` are the canonical schema helpers.
+
+### Commit subject prefixes
+
+All history commits use prefixed subjects for at-a-glance legibility in `git log`:
+
+| Prefix | Action |
+|---|---|
+| `wip:` | Auto-save L2 drain |
+| `checkpoint:` | User-invoked save-version |
+| `reconcile:` | File-watcher external-change |
+| `import:` | HEAD-move upstream import |
+| `park:` | Branch-switch park |
+| `rollback:` | Rollback to prior version |
+| `rename:` | Rename op |
 
 ## Source mode live injection
 
 Source mode (CodeMirror) binds `Y.Text('source')` directly via `y-codemirror.next`. Agent writes are visible in real time without any application-level observer:
 
-1. `applyAgentMarkdownWrite` updates `Y.XmlFragment` and mirrors the canonical markdown to `Y.Text` inside one server-side `doc.transact()` block under `AGENT_WRITE_ORIGIN` (a paired-write origin per AGENTS.md precedent #1).
+1. `applyAgentMarkdownWrite` updates `Y.XmlFragment` and mirrors the canonical markdown to `Y.Text` inside one server-side `doc.transact()` block under `session.origin` (a paired-write origin per AGENTS.md precedent #1).
 2. The Y.Text mutation propagates to every connected client through the standard CRDT sync.
 3. `y-codemirror.next` applies the incoming delta to the CodeMirror buffer with character-level precision — cursor and selection on the local keystroke side are preserved by the binding.
 
 The server's bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). One outermost `doc.transact()` call produces exactly one settlement fire; Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment) within each drain, and Observer B canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` holds at every settlement point. There is no debounce window, no injected `Scheduler`, and no wall-clock timing in either bridge observer file (enforced by the grep gate at `packages/server/src/bridge-no-wallclock.test.ts`).
 
-Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`) declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent).
+Paired-write origins declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent).
 
 Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
+
+## Activity log ring-buffer
+
+Each agent transaction's text effect is captured into `Y.Map('agent-effects')` on the same doc (D49, FR-11). The map is bounded at 50 entries total per doc; oldest-by-timestamp entries are evicted in the same paired-write drain as the capture. Clients sync and subscribe via standard Y.Doc sync + `Y.Map.observe` — no separate REST endpoint, no CC1 broadcast.
+
+The `Y.Map('agent-flash')` side-channel (D57 — renamed from `Y.Map('activity')`) carries ephemeral write flash signals for the presence bar cursor colouring. This is separate from the activity log: `agent-flash` is write-flash UX, `agent-effects` is the bounded effect capture.
 
 ## Mode toggle (no merge)
 

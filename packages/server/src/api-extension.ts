@@ -1024,7 +1024,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
-  /** Extract agent identity fields shared across the three write endpoints. */
+  /**
+   * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
+   * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
+   * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
     agentId: string;

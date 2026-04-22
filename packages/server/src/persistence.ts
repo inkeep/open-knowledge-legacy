@@ -279,8 +279,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         return;
       }
 
-      // Per-writer fan-out (FR-7, US-014): build tree once, commit per writer.
+      // Per-writer fan-out (FR-7, US-014, precedent #25): build tree once, commit per writer.
       // All per-writer commits share the same tree SHA for this drain cycle.
+      // Writer IDs follow the taxonomy in parseWriterId (history-repo-layout.ts): agent-<connId>,
+      // principal-<UUID>, file-system, git-upstream, openknowledge-service.
       let treeSha: string;
       try {
         treeSha = await buildWipTree(shadow, contentRoot);

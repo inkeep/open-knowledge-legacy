@@ -26,10 +26,18 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
- * D34 taxonomy (US-006). Classified system writers are non-attributable
+ * D34 taxonomy (US-006, precedent #25). Classified system writers are non-attributable
  * actions written under a fixed writer-id. Legacy values ('human-', 'upstream',
  * 'server') are classified 'unknown' so the US-018 allowlist sweep can
  * identify and GC them without confusing them with valid attributed refs.
+ *
+ * Full writer-ID table:
+ *   agent-<connectionId>       → 'agent'                           (MCP session)
+ *   principal-<UUID>           → 'principal'                        (browser tab)
+ *   file-system                → 'classified-file-system'           (disk reconcile)
+ *   git-upstream               → 'classified-git-upstream'          (HEAD-move import)
+ *   openknowledge-service      → 'classified-openknowledge-service' (park / service)
+ *   server, human-*, upstream  → 'unknown'                          (legacy, swept by US-018)
  */
 export type WriterClassification =
   | 'agent'

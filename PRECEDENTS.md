@@ -2,7 +2,7 @@
 
 Companion to `AGENTS.md`. These are patterns that ALL work in the repo should follow. Established during the collaboration-capabilities audit (`stories/collaboration-capabilities-audit/STORY.md §13`), greenfield directive first committed 2026-04-13.
 
-Twenty-three numbered precedents. **Numbers are stable** — code comments across the codebase cite them as `precedent #N` (~50 sites). When adding a new precedent, append at the next number; never renumber. Sub-letter addressing (e.g. `#11(a)`, `#13(b)`, `#19(d)`) is part of the reference contract and is preserved verbatim.
+Twenty-five numbered precedents. **Numbers are stable** — code comments across the codebase cite them as `precedent #N` (~50 sites). When adding a new precedent, append at the next number; never renumber. Sub-letter addressing (e.g. `#11(a)`, `#13(b)`, `#19(d)`) is part of the reference contract and is preserved verbatim.
 
 See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
 
@@ -111,3 +111,50 @@ See `AGENTS.md` → "Architectural precedents" for the jump-index summary.
     **How to apply.** Every new `/collab`-style upgrade handler MUST attach both `socket.on('error', …)` and `ws.on('error', …)` listeners with the `(err.code === 'EPIPE' || err.code === 'ECONNRESET') return` filter before any downstream logging. Server-wide `wss.on('error', …)` handlers do NOT need the filter (those fire for listener-level issues like EADDRINUSE, not per-connection socket errors). If a consumer's failure path is awareness-driven (diagnostic: awareness frames in EPIPE stack traces — cf. [Hocuspocus #1017](https://github.com/ueberdosis/hocuspocus/issues/1017)), consider the `WebSocketLike` wrapper pattern Docmost uses; for timer-driven broadcasters (CC1 broadcaster, file-watcher → `signalChannel`), the listener-at-boundary pattern is sufficient.
 
     **Reference.** `packages/app/src/server/hocuspocus-plugin.ts` (dev path) + `packages/cli/src/commands/start.ts` (production path) — both sites apply the filter at their `socket.on('error', …)` and `ws.on('error', …)` listeners. Research: `reports/e2e-isolation-and-broadcaster-lifecycle/REPORT.md` Track B + evidence files b1-b5.
+
+## Actor identity & attribution (precedents 24, 25)
+
+24. **Per-session actor identity at the CRDT origin layer.** Every Y.Doc transaction that originates from an identifiable actor passes a per-session frozen `LocalTransactionOrigin` object created at session birth, not a shared module-level constant. Three sub-principles:
+
+    (a) **`extractAgentIdentity` is the canonical server-side identity boundary.** All mutating POST handlers call `extractAgentIdentity(body)` at their entry before any Y.Doc mutation. It is the single point that resolves an HTTP request body to `{agentId, agentName, colorSeed, clientName}`. New mutating handlers MUST call it; GET-only handlers and `test-reset` are on an explicit allowlist. The meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` asserts this at PR tier.
+
+    (b) **Per-session frozen `LocalTransactionOrigin` — object-identity-unique and deep-frozen.** Each call to `AgentSessionManager.getSession(docName, agentId)` creates one `LocalTransactionOrigin` object via `createSessionOrigin` with `context.paired: true`, `context.session_id`, `context.origin: 'agent-write'`. Both `context` and the outer object are `Object.freeze`'d (D23 — deep-freeze; a shallow freeze allows `context` mutation which breaks the UM `trackedOrigins` Set-identity match). Object identity is used as the UM tracking key — a reconstructed object with the same shape is NOT equivalent.
+
+    (c) **`session.dc.document.transact(fn, session.origin)` is the only legal agent write form.** Never call `session.dc.transact(fn)` (which omits the origin) or pass the legacy shared `AGENT_WRITE_ORIGIN` constant to per-session writes. `dc.transact(fn)` routes the write to `openknowledge-service` at the L2 drain (persistence misattribution) AND silently skips the session UM stack (Set-identity miss → no undo tracking). Tests for concurrent `getSession` calls producing exactly one `openDirectConnection` invocation (D30) enforce this at the session layer.
+
+    **How to apply.** When adding a new agent write path: (1) call `extractAgentIdentity(body)` at handler entry; (2) call `sessionManager.getSession(docName, agentId)` to get a `SessionRecord`; (3) wrap all Y.Doc mutations in `session.dc.document.transact(fn, session.origin)`. The fuzzer op set must also be extended per precedent #13(d) when the new path is a distinct write surface. Spec: `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` (F1, D2, D32, FR-1, FR-5).
+
+    **Reference.** `packages/server/src/agent-sessions.ts:createSessionOrigin` (per-session frozen origin), `packages/server/src/api-extension.ts:extractAgentIdentity` (canonical identity boundary, line ~1028), `packages/app/tests/integration/attribution-sweep-coverage.test.ts` (meta-test enforcement).
+
+25. **Classified writer IDs + subject-prefix action encoding in the history repo.** Every commit to the history bare-git-repo (`<projectRoot>/.open-knowledge/history/`) has a writer ID and a subject-prefix that together make `git log refs/wip/<branch>/` legible per actor and per action without parsing commit bodies.
+
+    (a) **Writer-ID taxonomy** (`parseWriterId` + `WRITER_ID_RE` in `packages/core/src/history-repo-layout.ts`):
+
+    | Writer ID | Classification | Who emits |
+    |---|---|---|
+    | `agent-<connectionId>` | `'agent'` | MCP agent session via `AgentSessionManager` |
+    | `principal-<UUID>` | `'principal'` | Human browser session (D50) |
+    | `file-system` | `'classified-file-system'` | `applyExternalChange` — disk-originated writes |
+    | `git-upstream` | `'classified-git-upstream'` | HEAD-move commit imports |
+    | `openknowledge-service` | `'classified-openknowledge-service'` | Park serialization, service fallback |
+    | `server`, `human-<*>`, `upstream` | `'unknown'` | Legacy pre-spec — swept by US-018 on first upgrade |
+
+    Classified writers (`file-system`, `git-upstream`, `openknowledge-service`) are never GC'd regardless of age (D54). Session writers (`agent-*`, `principal-*`) are GC'd after 30 days of inactivity. `'unknown'` refs are preserved by the GC (defensive) but deleted by the first-run allowlist sweep on upgrade.
+
+    (b) **Subject-prefix scheme** (`format*Subject` helpers in `history-repo-layout.ts`, D53):
+
+    | Prefix | When emitted | Target field |
+    |---|---|---|
+    | `wip:` | Auto-save L2 drain | list of doc paths |
+    | `checkpoint:` | Save-version user message | user-supplied message |
+    | `reconcile:` | File-watcher external-change | doc path |
+    | `import:` | HEAD-move upstream import | `<N> commits from <remote/branch>` |
+    | `park:` | Branch-switch park | `<old-branch> -> <new-branch>` |
+    | `rollback:` | Rollback to prior version | `<docName> to <short-sha>` |
+    | `rename:` | Rename op | `<old-path> -> <new-path>` |
+
+    (c) **`ok-actor:` JSON body.** Every history commit carries one or more structured `ok-actor:` JSON lines (FR-8, D13, D53). `parseOkActor` + `formatOkActor` in `history-repo-layout.ts` are the canonical schema helpers. Shape: `{v:1, principal, agent_session, agent_type, client_name, client_version, label, display_name, color_seed, docs[]}`. Parsers MUST reject `v!==1` and missing `principal` field; writers MUST include all fields even when `null`.
+
+    **How to apply.** When adding a new commit-emitting path: (1) use the appropriate `format*Subject` helper for the subject line; (2) call `formatOkActor(entry)` and append to the commit body; (3) choose the correct `WriterIdentity` constant (`FILE_SYSTEM_WRITER`, `GIT_UPSTREAM_WRITER`, `SERVICE_WRITER` from `packages/server/src/history-repo.ts`) or derive from `session.agentId` for attributable paths. The writer classification determines GC behavior — do not use `openknowledge-service` for attributable actions.
+
+    **Reference.** `packages/core/src/history-repo-layout.ts` (`parseWriterId`, `WRITER_ID_RE`, subject-prefix format helpers, `parseOkActor`/`formatOkActor`), `packages/server/src/history-repo.ts` (writer identity constants, `commitWip`, `buildWipTree`, `commitWipFromTree`), `packages/server/src/history-branch-gc.ts` (30-day TTL per session writer). Spec: `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` (D7, D8, D13, D34, D53, FR-7, FR-13).

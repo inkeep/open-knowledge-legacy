@@ -117,7 +117,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Twenty-three numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Twenty-five numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -142,6 +142,8 @@ Twenty-three numbered rules govern how work lands in this repo. Code comments ci
 21. **Ancestor-priority for auto-revealing tree-state derivations** — Auto-reveal + user-toggle merge shape
 22. **Shell-script conventions for repo tooling** — Six sub-rules for bash library code
 23. **Async socket errors at the boundary** — Classify EPIPE/ECONNRESET at upgrade; no userspace pre-filter
+24. **Per-session actor identity at the CRDT origin layer** — Each session creates a frozen `LocalTransactionOrigin`; `extractAgentIdentity` is the canonical entry point; `session.dc.document.transact(fn, session.origin)` is mandatory
+25. **Classified writer IDs + subject-prefix action encoding** — History refs keyed by `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`; commit subjects prefixed `wip:`, `checkpoint:`, `reconcile:`, etc.
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -775,6 +777,7 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
+- **STOP:** Do NOT call `session.dc.transact(fn)` in server-side agent code. Always use `session.dc.document.transact(fn, session.origin)` instead — the per-session frozen origin object must be passed explicitly so every Y.Doc transaction is attributed to the correct session (precedent #24, D32). Calling `dc.transact(fn)` omits the origin, causing persistence to route the write to `openknowledge-service` instead of the triggering session's writer ref, and breaking per-session undo (the UndoManager's `trackedOrigins` Set-identity match finds no match and silently skips the transaction).
 - **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
 - **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.

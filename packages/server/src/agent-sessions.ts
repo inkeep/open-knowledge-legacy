@@ -263,9 +263,11 @@ export interface SessionRecord {
 }
 
 /**
- * Create a frozen per-session PairedWriteOrigin (F1, D2, D23).
+ * Create a frozen per-session PairedWriteOrigin (F1, D2, D23, precedent #24(b)).
  * Object-identity-unique per call; deep-frozen via Object.freeze on both
- * the context and the outer object.
+ * the context and the outer object. The returned object is the Y.UndoManager
+ * trackedOrigins key for this session — a reconstructed object with the same
+ * shape is NOT equivalent (Set-identity match, not structural equality).
  */
 function createSessionOrigin(
   sessionId: string,
