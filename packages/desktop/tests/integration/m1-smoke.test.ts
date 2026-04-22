@@ -218,17 +218,29 @@ describe('M1 smoke', () => {
     // Positive regression: the nested walker must actually find sub-members
     // of the `shell` block. If it silently fell back to top-level-only, this
     // test would quietly succeed while missing an entire class of drift.
-    // `shell.openExternal` is the most stable sub-member (shipped in M1 and
-    // still in every copy) — assert it's captured in all three.
+    //
+    // Assert every shell.* sub-member shipped by the 2026-04-21 Open in Agent
+    // Desktop spec (§5.1 bridge-contract rows). A walker regression that drops
+    // one of these — say, the paren-depth guard degrading on a signature with
+    // a generic type parameter — would silently lose the drift signal for that
+    // method. Explicit membership makes the signal load-bearing (US-012).
+    const REQUIRED_SHELL_MEMBERS = [
+      'shell.openExternal', // M1 baseline
+      'shell.detectProtocol', // 2026-04-21 US-004 (Open in Agent)
+      'shell.spawnCursor', // 2026-04-21 US-004 (Open in Agent)
+      'shell.recordHandoff', // 2026-04-21 US-008 (Open in Agent telemetry)
+    ] as const;
     for (const [label, members] of [
       ['core', coreMembers],
       ['desktop', desktopMembers],
       ['app', appMembers],
     ] as const) {
-      expect(members.has('shell.openExternal')).toBe(true);
       expect(members.has('shell')).toBe(true);
-      if (!members.has('shell.openExternal')) {
-        throw new Error(`${label} extractor missed shell.openExternal — walker broken`);
+      for (const required of REQUIRED_SHELL_MEMBERS) {
+        expect(members.has(required)).toBe(true);
+        if (!members.has(required)) {
+          throw new Error(`${label} extractor missed ${required} — walker broken`);
+        }
       }
     }
 
