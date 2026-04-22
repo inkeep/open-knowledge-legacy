@@ -134,6 +134,7 @@ export {
   type ExternalLinkTarget,
   isExternalHref,
 } from './utils/link-targets.ts';
+export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,
