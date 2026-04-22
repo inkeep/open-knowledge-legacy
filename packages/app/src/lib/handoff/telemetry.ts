@@ -49,7 +49,7 @@ export interface HandoffStatsLine {
  * `window.okDesktop` by default; tests inject a fake to avoid touching the
  * real Electron preload.
  */
-export interface RecordHandoffDeps {
+interface RecordHandoffDeps {
   readonly okDesktop?: { shell: { recordHandoff(line: HandoffStatsLine): Promise<void> } };
   /** Diagnostic sink — defaults to `console.warn`. */
   readonly warn?: (message: string) => void;

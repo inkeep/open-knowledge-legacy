@@ -22,13 +22,13 @@ import { join, posix as pathPosix, win32 as pathWin32 } from 'node:path';
 import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
 
 /** Two seconds is the product-tier budget for "detect one scheme" — SPEC §6.4. */
-export const DEFAULT_PROBE_TIMEOUT_MS = 2000;
+const DEFAULT_PROBE_TIMEOUT_MS = 2000;
 
 /** Independent budget for `which cursor` — SPEC §6.5. */
-export const WHICH_TIMEOUT_MS = 500;
+const WHICH_TIMEOUT_MS = 500;
 
 /** Spawn budget for `cursor <path>` — SPEC §6.5 (argv, shell:false). */
-export const SPAWN_TIMEOUT_MS = 2000;
+const SPAWN_TIMEOUT_MS = 2000;
 
 /** Shape of the Electron `app.getApplicationInfoForProtocol` return. */
 interface AppInfo {
@@ -39,7 +39,7 @@ interface AppInfo {
 }
 
 /** Injected by main/index.ts; replaceable in tests with stubbed Promise returns. */
-export interface DetectProtocolDeps {
+interface DetectProtocolDeps {
   /** `process.platform` at call time. Drives the macOS+Windows vs Linux branch. */
   platform: NodeJS.Platform;
   /**
@@ -130,7 +130,7 @@ export async function detectProtocol(
   }
 }
 
-export interface SpawnCursorDeps {
+interface SpawnCursorDeps {
   /**
    * Same Electron wrapper as DetectProtocolDeps — used first to resolve the
    * Cursor binary path (per DC7.1 security note: never trust `$PATH` alone).
@@ -183,7 +183,7 @@ export interface SpawnCursorDeps {
  *
  * Pure function for test coverage of the macOS bundle-routing branch.
  */
-export function resolveSpawnInvocation(
+function resolveSpawnInvocation(
   resolvedPath: string,
   userPath: string,
   platform: NodeJS.Platform,
@@ -332,7 +332,7 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
  * to `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent
  * dispatch. Zero phone-home (XQ3 LOCKED).
  */
-export interface RecordHandoffDeps {
+interface RecordHandoffDeps {
   /** `os.homedir()` — overridable in tests so a tmpdir stands in for `~`. */
   readonly homedir: () => string;
   /**

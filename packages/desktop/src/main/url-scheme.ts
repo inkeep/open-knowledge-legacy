@@ -41,7 +41,7 @@
 import { isAbsolute, resolve } from 'node:path';
 
 /** Successful parse result — host is narrowed to the one supported value. */
-export interface ParsedOpenKnowledgeUrl {
+interface ParsedOpenKnowledgeUrl {
   readonly host: 'open';
   readonly project: string;
   readonly doc: string;
@@ -116,7 +116,7 @@ export function parseOpenKnowledgeUrl(input: string): ParsedOpenKnowledgeUrl | n
  * process glue can pass real `openProject` / `focusWindowForProject` / `send`
  * functions while tests pass stubs.
  */
-export interface ProtocolHandlerDeps {
+interface ProtocolHandlerDeps {
   /** `electron.app` subset — the listeners + setters we touch. */
   app: {
     on(event: 'open-url', cb: (event: { preventDefault: () => void }, url: string) => void): void;
@@ -185,7 +185,7 @@ export interface ProtocolHandlerDeps {
  * `window-manager.ts` plus Electron's `BrowserWindow` at runtime.
  */
 // biome-ignore lint/suspicious/noEmptyInterface: intentional — opaque handle.
-export interface BrowserWindowHandle {}
+interface BrowserWindowHandle {}
 
 const QUEUE_FLUSH_MAX_ATTEMPTS = 10;
 const QUEUE_FLUSH_INTERVAL_MS = 500;

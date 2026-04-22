@@ -69,7 +69,7 @@ export interface AgentPresenceState {
  * Returning the pair here means the caller does not need a second O(M·N)
  * reverse lookup on the awareness map to recover the id.
  */
-export interface AgentPresenceRecord {
+interface AgentPresenceRecord {
   agentId: string;
   entry: AgentPresenceEntry;
 }

@@ -307,7 +307,7 @@ export async function commitWip(
  * (initShadowRepo acquires an exclusive writer lock immediately after), so
  * unconditional deletion is safe.
  */
-export function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
+function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
   let deleted = 0;
   try {
     for (const name of readdirSync(shadow.gitDir)) {

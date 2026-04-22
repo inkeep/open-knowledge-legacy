@@ -48,7 +48,7 @@ export type InstalledAgentScheme = (typeof INSTALLED_AGENTS_SCHEMES)[number];
 export const INSTALLED_AGENTS_CACHE_TTL_MS = 60_000;
 
 /** SPEC §6.4: `Per-OS shell invocation with 2s timeout`. */
-export const INSTALLED_AGENTS_PROBE_TIMEOUT_MS = 2000;
+const INSTALLED_AGENTS_PROBE_TIMEOUT_MS = 2000;
 
 /**
  * macOS app-name candidates per scheme. The `osascript` probe asks for an app
@@ -80,7 +80,7 @@ export type ExecFileLike = (
   cb: (err: (Error & { code?: number | string }) | null, stdout: string, stderr: string) => void,
 ) => void;
 
-export interface InstalledAgentsProbeDeps {
+interface InstalledAgentsProbeDeps {
   /** Probe one scheme against the OS; returns true iff install-registered. */
   probe: (scheme: InstalledAgentScheme) => Promise<boolean>;
   /** Clock override — defaults to `Date.now`. Tests inject a fake clock. */
