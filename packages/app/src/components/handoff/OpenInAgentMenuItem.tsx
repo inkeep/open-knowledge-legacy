@@ -5,21 +5,33 @@
  * (E4 DIRECTED for web-host Cursor disabled-always; PQ6 LOCKED for the
  * "Open in claude.ai →" secondary affordance on disabled Claude rows).
  *
- * Two visual states per row:
+ * Three visual shapes per row:
  *   1. Enabled — icon + display name; click invokes the supplied `onSelect`.
  *      Radix DropdownMenuItem closes the menu automatically on selection.
- *   2. Disabled — `data-disabled` + dimmed; click is a no-op (Radix gates
- *      `onSelect` on disabled). Hovering the row opens a Tooltip with:
- *        - Always: an "Install <displayName> →" affordance
+ *   2. Disabled pre-probe (install state is `null`) — plain `DropdownMenuItem`
+ *      with `disabled`, inline hint "Detecting…" on the right (AC8 defensive).
+ *   3. Disabled post-probe (not installed, or web-host Cursor) — rendered as
+ *      a `DropdownMenuSub` whose trigger looks like the enabled row plus a
+ *      right-aligned status hint; the submenu contains the PQ6 affordances
+ *      as real `DropdownMenuItem`s:
+ *        - Always: an "Install <displayName> →" affordance.
  *        - Claude rows only (`hasWebFallback`): an "Open in claude.ai →"
- *          affordance that opens https://claude.ai/new?q=<prompt>
- *        - Web-host Cursor: a single "Cursor handoff requires the desktop
- *          build." copy + an "Install the Open Knowledge desktop app →"
- *          affordance, with NO claude.ai fallback.
+ *          affordance that opens `https://claude.ai/new?q=<prompt>`.
+ *        - Web-host Cursor: a single "Install the Open Knowledge desktop
+ *          app →" affordance, with NO claude.ai fallback.
  *
- * Per-row interaction is split into two pure helpers (`computeRowState`,
- * `computeWebFallbackUrl`) so unit tests cover the logic without rendering.
- * Full interaction coverage lands under Playwright in US-013.
+ * Why a submenu (not a hover tooltip with buttons): a tooltip hosting
+ * interactive content violates the WAI-ARIA tooltip pattern (tooltips are
+ * hints; they auto-dismiss, are screen-reader-announced as descriptions, and
+ * must not hold focusable widgets). Radix `DropdownMenuItem` with `disabled`
+ * also removes the row from roving focus — keyboard users never see the
+ * tooltip in the first place. Routing the affordances through a nested
+ * `DropdownMenuSub` makes them proper keyboard-reachable menu items and
+ * fixes both failure modes at once.
+ *
+ * Per-row classification is split into the pure helper `computeRowState`
+ * (unchanged signature; consumers across sibling surfaces still rely on it)
+ * so unit tests cover the logic without rendering.
  */
 
 import {
@@ -27,44 +39,35 @@ import {
   type InstallState,
   type TargetData,
 } from '@inkeep/open-knowledge-core';
-import { Bot, Code2, Sparkles, Terminal } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from '@/components/ui/dropdown-menu';
 import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external';
 
 /**
  * Stable URL for the "Install the Open Knowledge desktop app →" affordance
- * shown only in the web-host Cursor tooltip. Pinned to the public repo
- * landing page since the desktop installer lives in GitHub Releases for
- * dogfood. Update at US-014 ship time if a marketing URL replaces this.
+ * shown only in the web-host Cursor submenu. Points at the releases page so
+ * users land directly on installers rather than a source-code README.
  */
-export const OK_DESKTOP_INSTALL_URL = 'https://github.com/inkeep/open-knowledge';
+export const OK_DESKTOP_INSTALL_URL = 'https://github.com/inkeep/open-knowledge/releases';
 
-/** Static icon registry — KNOWN_TARGETS stores icon names as string slugs. */
-const ICON_REGISTRY: Record<string, React.ComponentType<{ className?: string }>> = {
-  Sparkles,
-  Terminal,
-  Bot,
-  Code2,
-};
-
-function resolveIcon(slug: string): React.ComponentType<{ className?: string }> {
-  return ICON_REGISTRY[slug] ?? Sparkles;
-}
-
-/** A clickable affordance shown inside the disabled-row tooltip. */
+/** A clickable affordance shown inside the disabled-row submenu. */
 export interface RowAffordance {
   readonly label: string;
   readonly url: string;
 }
 
-/** Tooltip payload for a disabled row. `null` while install state is `null`
- *  (initial probe in flight) — disabled-but-no-tooltip per AC8. */
+/** Submenu payload for a disabled row. `null` while install state is `null`
+ *  (initial probe in flight) — disabled-but-no-submenu per AC8. */
 export interface DisabledTooltip {
-  /** Main message — appears as the first line of the tooltip. */
+  /** Main message — describes why the row is disabled (used for the short
+   *  hint text rendered inline on the trigger row). */
   readonly message: string;
-  /** Primary install affordance — always present on a tooltip. */
+  /** Primary install affordance — always present when a submenu is shown. */
   readonly installAction: RowAffordance;
   /** Secondary "Open in claude.ai →" affordance — Claude rows only. */
   readonly webFallback?: RowAffordance;
@@ -72,24 +75,41 @@ export interface DisabledTooltip {
 
 export interface RowState {
   readonly enabled: boolean;
-  /** When non-null, render a Tooltip with this payload on hover. */
+  /** When non-null, render a submenu with install + (Claude only) web-fallback
+   *  affordances instead of a plain disabled item. The `message` field doubles
+   *  as the short right-aligned status hint for the trigger row. */
   readonly tooltip: DisabledTooltip | null;
 }
 
 /**
- * Pure derivation of per-row visual / tooltip state.
+ * Short inline hint rendered on a disabled row's trigger. Parallels the
+ * sibling surfaces (`OpenInAgentContextSubmenu.contextRowHint`,
+ * `CommandPalette`'s inline hint). Centralized so all three surfaces agree
+ * on the pre-probe / not-installed / desktop-only copy.
+ */
+export function computeRowHint(args: {
+  target: TargetData;
+  installState: InstallState;
+  isElectronHost: boolean;
+}): string | null {
+  const { target, installState, isElectronHost } = args;
+  if (target.id === 'cursor' && !isElectronHost) return 'Desktop only';
+  if (installState.installed === null) return 'Detecting…';
+  if (installState.installed === false) return 'Not installed';
+  return null;
+}
+
+/**
+ * Pure derivation of per-row visual state.
  *
  * Branches:
- *   1. Web-host Cursor (E4 DIRECTED) → always disabled, special tooltip copy.
- *   2. Pre-probe (`installed === null`, AC8) → disabled, no tooltip.
- *   3. Not installed (`installed === false`) → disabled, install + (claude only)
- *      web-fallback affordances.
- *   4. Installed → enabled, no tooltip.
- *
- * `prompt` is the OK-composed prompt string used to build the web-fallback URL.
- * The component owns the URL build — this helper only signals the affordance's
- * existence. (Building the URL inside the helper would tie this pure file to
- * the encodeURIComponent shape; `computeWebFallbackUrl` lives separately.)
+ *   1. Web-host Cursor (E4 DIRECTED) → always disabled, Install-OK-desktop
+ *      affordance.
+ *   2. Pre-probe (`installed === null`, AC8) → disabled, no submenu (the
+ *      surface renders a plain `DropdownMenuItem` with a "Detecting…" hint).
+ *   3. Not installed (`installed === false`) → disabled, install + (Claude
+ *      only) web-fallback affordances surface as submenu items.
+ *   4. Installed → enabled, no submenu.
  */
 export function computeRowState(args: {
   target: TargetData;
@@ -112,7 +132,7 @@ export function computeRowState(args: {
     };
   }
 
-  // Branch 2: pre-probe — defensive disabled, no tooltip (AC8).
+  // Branch 2: pre-probe — defensive disabled, no submenu (AC8).
   if (installState.installed === null) {
     return { enabled: false, tooltip: null };
   }
@@ -128,10 +148,10 @@ export function computeRowState(args: {
       ...(target.hasWebFallback
         ? {
             webFallback: {
-              // The URL itself is built at click time via `computeWebFallbackUrl`
-              // — the label here is the visible affordance text.
+              // URL is built at click time via `computeWebFallbackUrl` — the
+              // sentinel here is a visible label only.
               label: 'Open in claude.ai →',
-              url: '', // sentinel; component substitutes via computeWebFallbackUrl
+              url: '',
             },
           }
         : {}),
@@ -139,7 +159,7 @@ export function computeRowState(args: {
     return { enabled: false, tooltip };
   }
 
-  // Branch 4: installed — enabled, no tooltip.
+  // Branch 4: installed — enabled, no submenu.
   return { enabled: true, tooltip: null };
 }
 
@@ -171,7 +191,7 @@ export interface OpenInAgentMenuItemProps {
   /** Fired only when the row is enabled and the user selects it. The hook
    *  layer (`useHandoffDispatch`) handles toast + telemetry. */
   readonly onSelect: () => void;
-  /** Test seam — wraps the openExternal primitive used by tooltip affordances. */
+  /** Test seam — wraps the openExternal primitive used by submenu affordances. */
   readonly openExternal?: typeof defaultOpenExternal;
   /** Test seam — fires after a successful web-fallback click so the caller can
    *  surface a toast. Defaults to a no-op; production callers will wire sonner. */
@@ -183,8 +203,8 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
   const openExternal = props.openExternal ?? defaultOpenExternal;
   const onWebFallbackSuccess = props.onWebFallbackSuccess ?? (() => {});
 
-  const Icon = resolveIcon(target.icon);
   const rowState = computeRowState({ target, installState, isElectronHost });
+  const hint = computeRowHint({ target, installState, isElectronHost });
 
   const handleInstallClick = () => {
     if (!rowState.tooltip) return;
@@ -199,54 +219,53 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
     })();
   };
 
-  const itemContent = (
-    <DropdownMenuItem
-      disabled={!rowState.enabled}
-      onSelect={rowState.enabled ? onSelect : undefined}
-      // Override shadcn's `data-[disabled]:pointer-events-none` so the disabled
-      // row can still receive mouse hover and trigger the tooltip. Radix gates
-      // `onSelect` on `disabled` so click is still a no-op.
-      className={rowState.enabled ? undefined : 'data-[disabled]:pointer-events-auto'}
-      data-testid={`open-in-agent-item-${target.id}`}
-    >
-      <Icon className="size-4" />
-      <span>Open in {target.displayName}</span>
-    </DropdownMenuItem>
-  );
-
-  if (!rowState.tooltip) {
-    return itemContent;
+  // Enabled row — direct DropdownMenuItem, click dispatches.
+  if (rowState.enabled) {
+    return (
+      <DropdownMenuItem onSelect={onSelect} data-testid={`open-in-agent-item-${target.id}`}>
+        <span>Open in {target.displayName}</span>
+      </DropdownMenuItem>
+    );
   }
 
+  // Pre-probe — plain disabled row with "Detecting…" hint (AC8).
+  if (!rowState.tooltip) {
+    return (
+      <DropdownMenuItem disabled data-testid={`open-in-agent-item-${target.id}`}>
+        <span className="flex-1">Open in {target.displayName}</span>
+        {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
+      </DropdownMenuItem>
+    );
+  }
+
+  // Disabled post-probe — submenu with install + (Claude only) web-fallback.
+  // Using DropdownMenuSub instead of a Tooltip-with-buttons preserves the
+  // PQ6 affordances while being keyboard-accessible and ARIA-correct.
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{itemContent}</TooltipTrigger>
-      <TooltipContent
-        side="left"
-        align="start"
-        // pointer-events-auto so the affordance links inside are clickable.
-        className="pointer-events-auto flex max-w-xs flex-col items-start gap-2 px-3 py-2 text-left"
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid={`open-in-agent-item-${target.id}`}>
+        <span className="flex-1">Open in {target.displayName}</span>
+        {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent
+        className="min-w-[260px]"
+        data-testid={`open-in-agent-submenu-${target.id}`}
       >
-        <span>{rowState.tooltip.message}</span>
-        <button
-          type="button"
-          onClick={handleInstallClick}
-          className="text-left text-background underline underline-offset-2 hover:no-underline"
+        <DropdownMenuItem
+          onSelect={handleInstallClick}
           data-testid={`open-in-agent-install-${target.id}`}
         >
-          {rowState.tooltip.installAction.label}
-        </button>
-        {rowState.tooltip.webFallback && (
-          <button
-            type="button"
-            onClick={handleWebFallbackClick}
-            className="text-left text-background underline underline-offset-2 hover:no-underline"
+          <span>{rowState.tooltip.installAction.label}</span>
+        </DropdownMenuItem>
+        {rowState.tooltip.webFallback ? (
+          <DropdownMenuItem
+            onSelect={handleWebFallbackClick}
             data-testid={`open-in-agent-web-fallback-${target.id}`}
           >
-            {rowState.tooltip.webFallback.label}
-          </button>
-        )}
-      </TooltipContent>
-    </Tooltip>
+            <span>{rowState.tooltip.webFallback.label}</span>
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }

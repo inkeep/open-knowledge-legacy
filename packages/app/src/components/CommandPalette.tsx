@@ -17,8 +17,7 @@
  * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
  */
 
-import { Bot, Code2, FolderOpen, FolderPlus, Sparkles, Terminal } from 'lucide-react';
-import type { ComponentType } from 'react';
+import { FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   CommandDialog,
@@ -49,23 +48,6 @@ export const runWithToast = (
   fallback: string,
   toastApi?: { error(msg: string): void },
 ): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'CommandPalette');
-
-/**
- * Local icon registry for the "Open in agent" group — must mirror the slugs
- * listed in `KNOWN_TARGETS[i].icon` (US-010 / `OpenInAgentMenuItem.tsx`). Kept
- * here instead of importing a shared registry because the icon set is small
- * and diverging would surface immediately as a missing-icon fallback.
- */
-const HANDOFF_ICON_REGISTRY: Record<string, ComponentType<{ className?: string }>> = {
-  Sparkles,
-  Terminal,
-  Bot,
-  Code2,
-};
-
-function resolveHandoffIcon(slug: string): ComponentType<{ className?: string }> {
-  return HANDOFF_ICON_REGISTRY[slug] ?? Sparkles;
-}
 
 interface CommandPaletteProps {
   bridge: OkDesktopBridge;
@@ -183,7 +165,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
               {KNOWN_TARGETS.map((target) => {
                 const installState = installStates[target.id];
                 const enabled = installState.installed === true && handoffInput !== null;
-                const Icon = resolveHandoffIcon(target.icon);
                 // The Command palette has no tooltip affordance on disabled
                 // rows; the dropdown surface (EditorHeader) carries the full
                 // PQ6 tooltip UX with install + claude.ai affordances. Here
@@ -209,7 +190,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                     }}
                     data-testid={`command-palette-open-in-${target.id}`}
                   >
-                    <Icon />
                     <span>Open in {target.displayName}</span>
                     {hint ? (
                       <CommandShortcut className="text-muted-foreground">{hint}</CommandShortcut>

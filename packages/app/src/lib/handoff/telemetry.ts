@@ -7,7 +7,7 @@
  *
  * Host behavior (SPEC 2026-04-21 §13.1):
  *   - **Electron host** (`window.okDesktop` present): forwards `line` to the
- *     `ok:handoff:record` IPC channel. The main-process handler does an
+ *     `ok:shell:record-handoff` IPC channel. The main-process handler does an
  *     append-only `fs.promises.appendFile(~/.open-knowledge/stats.jsonl, ...)`
  *     and resolves even on EACCES / ENOSPC (warning logged, no throw).
  *   - **Web host** (no `window.okDesktop`): no-op in v0. Diagnostic counters

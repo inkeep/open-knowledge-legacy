@@ -41,11 +41,6 @@ describe('KNOWN_TARGETS', () => {
     }
   });
 
-  test('every target names a Lucide icon (Sparkles / Terminal / Bot / Code2)', () => {
-    const icons = KNOWN_TARGETS.map((t) => t.icon);
-    expect(new Set(icons)).toEqual(new Set(['Sparkles', 'Terminal', 'Bot', 'Code2']));
-  });
-
   test('displayNames match SPEC §7.2 (PQ4 DIRECTED)', () => {
     const byId = new Map(KNOWN_TARGETS.map((t) => [t.id, t.displayName]));
     expect(byId.get('claude-cowork')).toBe('Claude Cowork');

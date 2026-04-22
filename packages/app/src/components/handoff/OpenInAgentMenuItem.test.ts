@@ -27,10 +27,61 @@ describe('OpenInAgentMenuItem module surface', () => {
     const mod = await import('./OpenInAgentMenuItem');
     expect(typeof mod.OpenInAgentMenuItem).toBe('function');
     expect(typeof mod.computeRowState).toBe('function');
+    expect(typeof mod.computeRowHint).toBe('function');
     expect(typeof mod.computeWebFallbackUrl).toBe('function');
     expect(typeof mod.successToastForWebFallback).toBe('function');
     expect(typeof mod.OK_DESKTOP_INSTALL_URL).toBe('string');
     expect(mod.OK_DESKTOP_INSTALL_URL.startsWith('https://')).toBe(true);
+  });
+
+  test('OK_DESKTOP_INSTALL_URL points at the releases page, not the source README', async () => {
+    const { OK_DESKTOP_INSTALL_URL } = await import('./OpenInAgentMenuItem');
+    // The URL must land on installers directly. A repo-root URL drops users on
+    // the README which is actively misleading as an "install" destination.
+    expect(OK_DESKTOP_INSTALL_URL).toContain('/releases');
+  });
+});
+
+describe('computeRowHint — short inline status hint on the trigger row', () => {
+  test('Cursor on web-host → "Desktop only" (E4 DIRECTED takes precedence)', async () => {
+    const { computeRowHint } = await import('./OpenInAgentMenuItem');
+    // Even when the server reports cursor:true the web-host row is disabled.
+    const hint = computeRowHint({
+      target: targetById('cursor'),
+      installState: { installed: true, lastChecked: 1 },
+      isElectronHost: false,
+    });
+    expect(hint).toBe('Desktop only');
+  });
+
+  test('pre-probe (installed:null) → "Detecting…"', async () => {
+    const { computeRowHint } = await import('./OpenInAgentMenuItem');
+    const hint = computeRowHint({
+      target: targetById('codex'),
+      installState: { installed: null },
+      isElectronHost: true,
+    });
+    expect(hint).toBe('Detecting…');
+  });
+
+  test('installed:false → "Not installed"', async () => {
+    const { computeRowHint } = await import('./OpenInAgentMenuItem');
+    const hint = computeRowHint({
+      target: targetById('claude-code'),
+      installState: { installed: false, lastChecked: 1 },
+      isElectronHost: true,
+    });
+    expect(hint).toBe('Not installed');
+  });
+
+  test('enabled row → null (no hint needed)', async () => {
+    const { computeRowHint } = await import('./OpenInAgentMenuItem');
+    const hint = computeRowHint({
+      target: targetById('claude-cowork'),
+      installState: { installed: true, lastChecked: 1 },
+      isElectronHost: true,
+    });
+    expect(hint).toBeNull();
   });
 });
 

@@ -34,7 +34,6 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { TooltipProvider } from '@/components/ui/tooltip';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { OpenInAgentMenuItem, successToastForWebFallback } from './OpenInAgentMenuItem';
 import { type HandoffDispatchInput, useHandoffDispatch } from './useHandoffDispatch';
@@ -85,38 +84,39 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
     void dispatch(target.id, input);
   };
 
+  // Note: no nested TooltipProvider — the root provider in
+  // `packages/app/src/main.tsx` already covers the whole tree, and the
+  // disabled-row submenu pattern doesn't rely on tooltips for affordances.
   return (
-    <TooltipProvider>
-      <DropdownMenuRoot open={open} onOpenChange={handleOpenChange}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Open in…"
-            disabled={triggerDisabled}
-            className="text-muted-foreground"
-            data-testid="open-in-agent-trigger"
-          >
-            <MoreHorizontal className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[220px]" data-testid="open-in-agent-menu">
-          {KNOWN_TARGETS.map((target) => {
-            const installState = states[target.id];
-            return (
-              <OpenInAgentMenuItem
-                key={target.id}
-                target={target}
-                installState={installState}
-                isElectronHost={isElectronHost}
-                prompt={prompt}
-                onSelect={() => handleSelect(target)}
-                onWebFallbackSuccess={handleWebFallbackSuccess}
-              />
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenuRoot>
-    </TooltipProvider>
+    <DropdownMenuRoot open={open} onOpenChange={handleOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Open in…"
+          disabled={triggerDisabled}
+          className="text-muted-foreground"
+          data-testid="open-in-agent-trigger"
+        >
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[220px]" data-testid="open-in-agent-menu">
+        {KNOWN_TARGETS.map((target) => {
+          const installState = states[target.id];
+          return (
+            <OpenInAgentMenuItem
+              key={target.id}
+              target={target}
+              installState={installState}
+              isElectronHost={isElectronHost}
+              prompt={prompt}
+              onSelect={() => handleSelect(target)}
+              onWebFallbackSuccess={handleWebFallbackSuccess}
+            />
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }

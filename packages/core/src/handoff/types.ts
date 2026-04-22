@@ -95,8 +95,6 @@ export interface TargetData {
    * `new Set(KNOWN_TARGETS.flatMap(t => t.schemes))`.
    */
   readonly schemes: ReadonlyArray<string>;
-  /** Lucide icon name (e.g. `'Sparkles'`, `'Terminal'`, `'Bot'`, `'Code2'`). */
-  readonly icon: string;
   /** Download / install page URL — shown in the disabled tooltip. */
   readonly installUrl: string;
   /**

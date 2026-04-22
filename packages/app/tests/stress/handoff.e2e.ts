@@ -120,17 +120,15 @@ async function waitForProbeSettled(page: Page, host: 'electron' | 'web'): Promis
 }
 
 /**
- * Scope a locator query to Radix Tooltip content. Radix's TooltipPrimitive
- * renders a visible portaled `[data-slot="tooltip-content"]` AND a
- * visually-hidden aria-describedby clone; both contain the tooltip children
- * and trip Playwright's strict-mode assertion on shared testids / text.
- * Callers chain a final `.first()` at the end of their query so strict mode
- * is happy even when Radix is in a mid-hover transition with two portals
- * briefly live. The clone is a11y-inert so "first visible" is always the
- * right answer for user-observable assertions.
+ * Scope a locator query to the portaled submenu for a given target. The
+ * disabled-row submenu pattern (replacing the prior tooltip-with-buttons
+ * pattern that violated WAI-ARIA) mounts the install / claude.ai affordances
+ * as real `DropdownMenuItem`s inside a `DropdownMenuSub`. Radix portals the
+ * submenu content to the document body; the testid on the sub-content is the
+ * stable anchor.
  */
-function tooltipScope(page: Page): Locator {
-  return page.locator('[data-slot="tooltip-content"]');
+function _submenuFor(page: Page, targetId: string): Locator {
+  return page.locator(`[data-testid="open-in-agent-submenu-${targetId}"]`);
 }
 
 test.describe('handoff — 8-cell matrix', () => {
@@ -254,10 +252,14 @@ test.describe('handoff — 8-cell matrix', () => {
     await installHandoffMocks(page, cfg);
     await seedAndNavigate(page, api);
 
-    // Open: Codex row disabled (codex:false from initial probe).
+    // Open: Codex row is disabled (codex:false from initial probe). Under the
+    // submenu pattern (replacing the prior tooltip-with-buttons UX), the row
+    // renders as a `DropdownMenuSubTrigger` with an inline "Not installed"
+    // hint + chevron affordance. Enabled rows are plain `DropdownMenuItem`s
+    // with neither. Assert on the hint text presence as the disabled signal.
     await openDropdown(page);
     const codexRow = page.getByTestId('open-in-agent-item-codex');
-    await expect(codexRow).toHaveAttribute('data-disabled', '');
+    await expect(codexRow).toContainText('Not installed');
 
     // Close dropdown, advance past the 10s throttle, flip mock, reopen.
     await page.keyboard.press('Escape');
@@ -268,11 +270,17 @@ test.describe('handoff — 8-cell matrix', () => {
 
     await openDropdown(page);
     // After reopen the throttle check passes + detectProtocol returns
-    // codex:true → row flips to enabled. Use expect.poll because the
-    // refresh() call is async.
+    // codex:true → row flips to enabled. Enabled rows don't carry the
+    // "Not installed" hint; poll until it disappears.
     await expect
-      .poll(async () => codexRow.getAttribute('data-disabled'), { timeout: 5_000 })
-      .toBeNull();
+      .poll(
+        async () => {
+          const text = await codexRow.textContent();
+          return (text ?? '').includes('Not installed');
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(false);
   });
 
   test('cell 4: Web Claude Cowork happy path dispatches via anchor-click + success toast', async ({

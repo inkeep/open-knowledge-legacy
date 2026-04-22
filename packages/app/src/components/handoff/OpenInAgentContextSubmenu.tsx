@@ -28,8 +28,7 @@ import type {
   InstallState,
   TargetData,
 } from '@inkeep/open-knowledge-core';
-import { Bot, Code2, ExternalLink, Sparkles, Terminal } from 'lucide-react';
-import type { ComponentType, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   ContextMenuItem,
   ContextMenuSub,
@@ -39,20 +38,6 @@ import {
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { computeRowState } from './OpenInAgentMenuItem';
 import type { HandoffDispatchInput } from './useHandoffDispatch';
-
-/** Icon registry — same slugs as `OpenInAgentMenuItem`. Duplicated locally to
- *  keep the per-surface component self-contained; if the registry grows beyond
- *  ~10 entries we promote it to `@/lib/handoff/icons.ts`. */
-const ICON_REGISTRY: Record<string, ComponentType<{ className?: string }>> = {
-  Sparkles,
-  Terminal,
-  Bot,
-  Code2,
-};
-
-function resolveIcon(slug: string): ComponentType<{ className?: string }> {
-  return ICON_REGISTRY[slug] ?? Sparkles;
-}
 
 /**
  * Status hint shown on disabled rows in place of the dropdown's PQ6 tooltip.
@@ -96,10 +81,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
   const { input, installStates, isElectronHost, dispatch } = props;
   return (
     <ContextMenuSub>
-      <ContextMenuSubTrigger>
-        <ExternalLink aria-hidden="true" />
-        Open in…
-      </ContextMenuSubTrigger>
+      <ContextMenuSubTrigger>Open in…</ContextMenuSubTrigger>
       <ContextMenuSubContent>
         {KNOWN_TARGETS.map((target) => {
           const installState = installStates[target.id];
@@ -107,7 +89,6 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
           const inputMissing = input === null;
           const enabled = rowState.enabled && !inputMissing;
           const hint = contextRowHint(target, installState, isElectronHost, inputMissing);
-          const Icon = resolveIcon(target.icon);
           return (
             <ContextMenuItem
               key={target.id}
@@ -118,7 +99,6 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
               }}
               data-testid={`file-tree-open-in-${target.id}`}
             >
-              <Icon aria-hidden="true" />
               <span className="flex-1">Open in {target.displayName}</span>
               {hint ? <span className="ml-2 text-muted-foreground text-xs">{hint}</span> : null}
             </ContextMenuItem>
