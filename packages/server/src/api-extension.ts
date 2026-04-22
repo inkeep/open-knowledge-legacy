@@ -169,13 +169,33 @@ const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
+// F9: unicode-preserving. Permits any Unicode letter, number, or combining
+// mark, plus pictographic emoji and the punctuation whitelist (., -, _, space).
+// Everything else (including `/`, `\`, null bytes, control chars, CRLF) is
+// either stripped or replaced so path-escape guards downstream keep their
+// invariants. CJK, Arabic, Cyrillic, and emoji survive — macOS/Finder
+// ergonomics without sacrificing filesystem safety.
+const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
+// Stripping C0 + DEL is the whole point — the rule fires on intentional use.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
+const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
+
 export function sanitizeFilename(name: string): string {
-  const base = name.replace(/[/\\]/g, '');
-  const ext = extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
-  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
-  return safeStem + safeExt;
+  // Strip path separators and null/control bytes BEFORE any other pass so
+  // they cannot reappear inside a replacement and dodge later checks.
+  let stripped = name.replace(STRIP_ON_SIGHT, '');
+  stripped = stripped.replace(SAFE_FILENAME_CHARS, '_');
+
+  // Collapse underscore and dot runs so "../etc/passwd" → "etcpasswd" and
+  // "foo__bar" → "foo_bar".
+  stripped = stripped.replace(/_+/g, '_').replace(/\.{2,}/g, '.');
+
+  // No hidden files — trim leading dots and leading underscores.
+  stripped = stripped.replace(/^[._]+/, '');
+  // Filesystem portability — strip trailing dots (Windows trims them too).
+  stripped = stripped.replace(/\.+$/, '');
+
+  return stripped === '' ? 'upload' : stripped;
 }
 
 function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {

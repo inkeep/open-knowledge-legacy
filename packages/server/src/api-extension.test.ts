@@ -47,16 +47,113 @@ describe('sanitizeFilename', () => {
     expect(sanitizeFilename('foo\\bar.png')).toBe('foobar.png');
   });
 
-  test('replaces unsafe characters with underscore', () => {
-    expect(sanitizeFilename('my file (1).png')).toBe('my_file__1_.png');
+  test('preserves whitelisted characters (space, dot, dash, underscore)', () => {
+    // Space is whitelisted per FR-5 unicode-preserving sanitization — the
+    // sanitized "my file _1_.png" is filesystem-safe and matches the macOS
+    // Finder/Obsidian ergonomic that users expect.
+    expect(sanitizeFilename('my file (1).png')).toBe('my file _1_.png');
   });
 
-  test('preserves safe characters', () => {
+  test('preserves simple alphanumeric names byte-identical', () => {
     expect(sanitizeFilename('screenshot-2024.png')).toBe('screenshot-2024.png');
   });
 
   test('falls back to "upload" for truly empty name', () => {
     expect(sanitizeFilename('')).toBe('upload');
+  });
+
+  test('CJK (Japanese) characters preserved', () => {
+    expect(sanitizeFilename('会議メモ.pdf')).toBe('会議メモ.pdf');
+  });
+
+  test('CJK (Chinese) characters preserved', () => {
+    expect(sanitizeFilename('文件.docx')).toBe('文件.docx');
+  });
+
+  test('CJK (Korean) characters preserved', () => {
+    expect(sanitizeFilename('문서.pdf')).toBe('문서.pdf');
+  });
+
+  test('Arabic characters preserved', () => {
+    expect(sanitizeFilename('قصة.pdf')).toBe('قصة.pdf');
+  });
+
+  test('Cyrillic characters preserved', () => {
+    expect(sanitizeFilename('Проект.docx')).toBe('Проект.docx');
+  });
+
+  test('emoji preserved — Finder/macOS ergonomics', () => {
+    // Documented behavior: `\p{Extended_Pictographic}` pass through so users
+    // who drop 'emoji 🎉.png' get a faithful filename on disk.
+    expect(sanitizeFilename('emoji 🎉.png')).toBe('emoji 🎉.png');
+  });
+
+  test('combining marks (Vietnamese tone, Devanagari) preserved', () => {
+    // `\p{M}` covers combining marks so characters that decompose into
+    // base+combining (NFD) do not lose their diacritics.
+    expect(sanitizeFilename('ghi chú.pdf')).toBe('ghi chú.pdf');
+  });
+
+  test('path-escape attempt ../etc/passwd is flattened — no traversal survives', () => {
+    // The `/` and `\` are stripped; the remaining `..etcpasswd` sees its
+    // dot-run collapsed and leading dot trimmed → 'etcpasswd'.
+    expect(sanitizeFilename('../etc/passwd')).toBe('etcpasswd');
+  });
+
+  test('Windows-style path traversal stripped', () => {
+    // Backslashes are stripped outright (not replaced with `_`) so the
+    // final shape collapses intermediate separators — matches the existing
+    // shipped behavior for forward slashes (e.g. `foo/bar.png` → `foobar.png`).
+    expect(sanitizeFilename('..\\Windows\\System32\\evil.exe')).toBe('WindowsSystem32evil.exe');
+  });
+
+  test('null byte stripped', () => {
+    expect(sanitizeFilename('foo\x00bar.png')).toBe('foobar.png');
+  });
+
+  test('CRLF stripped', () => {
+    expect(sanitizeFilename('foo\r\nbar.png')).toBe('foobar.png');
+  });
+
+  test('control characters stripped', () => {
+    expect(sanitizeFilename('foo\x01\x02\x1fbar.png')).toBe('foobar.png');
+  });
+
+  test('DEL (0x7f) stripped', () => {
+    expect(sanitizeFilename('foo\x7fbar.png')).toBe('foobar.png');
+  });
+
+  test('hidden file leading dot trimmed', () => {
+    expect(sanitizeFilename('.env')).toBe('env');
+  });
+
+  test('multiple leading dots trimmed', () => {
+    expect(sanitizeFilename('...config')).toBe('config');
+  });
+
+  test('trailing dots stripped (Windows portability)', () => {
+    expect(sanitizeFilename('foo.png...')).toBe('foo.png');
+  });
+
+  test('consecutive underscores collapsed', () => {
+    expect(sanitizeFilename('foo!!!bar.png')).toBe('foo_bar.png');
+  });
+
+  test('dot-only input falls back to upload', () => {
+    expect(sanitizeFilename('...')).toBe('upload');
+  });
+
+  test('single dot falls back to upload', () => {
+    expect(sanitizeFilename('.')).toBe('upload');
+  });
+
+  test('pure unsafe-character input falls back to upload', () => {
+    // '!!!' → '___' → '_' → leading underscore trimmed → '' → 'upload'
+    expect(sanitizeFilename('!!!')).toBe('upload');
+  });
+
+  test('mixed script preserved', () => {
+    expect(sanitizeFilename('会議-notes-Проект.pdf')).toBe('会議-notes-Проект.pdf');
   });
 });
 
