@@ -1,7 +1,7 @@
 # Editor Mode Persistence & Cross-Window Sync
 
 **Status:** FINALIZED — audit + challenge complete; 14 surgical corrections applied; 3 design decisions resolved; all 8 decisions LOCKED; resolution completeness gate passed.
-**Baseline commit:** `c29a5a14` (verified unchanged at finalization)
+**Baseline commit:** `7e0beff4` (refreshed at ship-time; PR #237 "V2 editor cache + InteractionLayer + Option E cold-load" landed on main between spec finalization and ship, changing the mode-swap CSS from Tailwind `hidden` (display:none) to the custom `.ok-mode-hidden` class with `content-visibility:hidden + position:absolute + pointer-events:none`. D7 decision unchanged — interaction-state concerns (IME, drag-select) still apply under the new CSS; focus-based re-check remains the correct fit.)
 **Finalized:** 2026-04-22
 **Owner:** Nick Gomez
 **Created:** 2026-04-21
@@ -13,7 +13,7 @@
 
 ## 1. Problem
 
-**Situation.** The Open Knowledge editor offers two content-editing surfaces — WYSIWYG (TipTap, bound to `Y.XmlFragment`) and Source (CodeMirror 6, bound to `Y.Text('source')`) — plus an ephemeral diff/timeline preview (`EditorMode = 'wysiwyg' | 'source' | 'diff'` in [`packages/app/src/components/EditorPane.tsx:23`](../../packages/app/src/components/EditorPane.tsx)). The user picks between the two edit modes based on task and working style. The current mode lives in `useState<EditorMode>('wysiwyg')` at `EditorPane.tsx:26` — pure React state.
+**Situation.** The Open Knowledge editor offers two content-editing surfaces — WYSIWYG (TipTap, bound to `Y.XmlFragment`) and Source (CodeMirror 6, bound to `Y.Text('source')`) — plus an ephemeral diff/timeline preview (`EditorMode = 'wysiwyg' | 'source' | 'diff'` at `EditorPane.tsx:21` at baseline `7e0beff4`). The user picks between the two edit modes based on task and working style. The current mode lives in `useState<EditorMode>('wysiwyg')` at `EditorPane.tsx:24` — pure React state.
 
 **Complication.** Every page refresh and every new browser tab slams the user back to `'wysiwyg'` regardless of what they were just using. A user who prefers Source has to re-toggle on every reload. Forward-looking: as the M1+ Electron desktop build (one window per project) gains adoption, the friction scales with window count — a user with 3 project windows re-toggles 3 times per restart. The preference is obvious to the user ("I always work in markdown"); the app forgets it instantly.
 
@@ -140,7 +140,7 @@ Why a global var, not a class/attribute on `<html>`: React state initializer rea
 
 New file: `packages/app/src/editor/use-editor-mode.ts`
 
-Cross-window sync uses the **focus-based re-check** pattern (Excalidraw Pattern C — research D8) rather than the live `storage` event listener (next-themes Pattern A). Rationale: the editor is a large-state surface; `display:none` CSS swap on mode flip destroys DOM focus, interrupts IME composition, and orphans in-flight drag-selection. Deferring the re-apply to the next `focus` return eliminates mid-edit interruption at the cost of a slight delay before an inactive window reflects a cross-window flip — a trade-off the consuming spec accepts (see §13 R4).
+Cross-window sync uses the **focus-based re-check** pattern (Excalidraw Pattern C — research D8) rather than the live `storage` event listener (next-themes Pattern A). Rationale: the editor is a large-state surface; the mode-swap CSS (`.ok-mode-hidden` in `packages/app/src/globals.css` — `content-visibility:hidden + position:absolute + pointer-events:none`) preserves DOM presence but interrupts IME composition and orphans in-flight drag-selection on swap. Deferring the re-apply to the next `focus` return eliminates mid-edit interruption at the cost of a slight delay before an inactive window reflects a cross-window flip — a trade-off the consuming spec accepts (see §13 R4).
 
 ```typescript
 import { useEffect, useState } from 'react';
@@ -201,7 +201,7 @@ export function useEditorMode(): [EditorModeValue, (next: EditorModeValue) => vo
 
 ### 7.4 Integration at `EditorPane`
 
-Current code (`EditorPane.tsx:26`):
+Current code (`EditorPane.tsx:24` at baseline `7e0beff4`):
 ```typescript
 const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
 ```
@@ -248,7 +248,7 @@ useEffect(() => {
 }, [persistedMode]);
 ```
 
-`modeBeforeDiffRef` (EditorPane.tsx:41) continues to capture the session-local pre-diff mode and restore to it on exit. This is distinct from the persisted preference: on diff exit you return to exactly where you were (session UX continuity), not to what some other window may have written to localStorage while you were in diff. If the user wants the cross-window update after diff exit, they can either (a) trust focus-based re-check to pick it up the next time the window regains focus, or (b) explicitly toggle — both paths work.
+`modeBeforeDiffRef` (`EditorPane.tsx:39` at baseline `7e0beff4`) continues to capture the session-local pre-diff mode and restore to it on exit. This is distinct from the persisted preference: on diff exit you return to exactly where you were (session UX continuity), not to what some other window may have written to localStorage while you were in diff. If the user wants the cross-window update after diff exit, they can either (a) trust focus-based re-check to pick it up the next time the window regains focus, or (b) explicitly toggle — both paths work.
 
 **Scope-expansion note on diff-mode.** The Agent Constraints §15 `STOP_IF` lists "touch diff-mode behavior" as a halt signal. This spec DOES introduce a diff-aware branch (the `editorModeRef.current === 'diff'` guard) — which is a deliberate narrow extension, not a violation. The STOP_IF is revised in §15 to disambiguate.
 
@@ -343,7 +343,7 @@ All decisions carried through intake + research + open-question resolution. All 
 | D4 | New docs honor persisted pref — no new-doc special case | LOCKED | Silent override of user preference is the exact friction this spec fixes. |
 | D5 | Store in `localStorage` with versioned key `ok-editor-mode-v1` | LOCKED | Research D6: localStorage is Chromium-shared across same-origin BrowserWindows in Electron automatically. The repo has TWO established storage tiers for distinct concerns: (a) **project config** (`.open-knowledge/config.yml` — `content.dir`, `content.include`, MCP server list) and (b) **user UX preferences** (localStorage — `ok-theme-v1`, `ok-pin-v1`). Editor mode is a UX preference, not a project config, so it fits tier (b) cleanly alongside theme and pin. A per-project editor-mode default (e.g., "this code-heavy project defaults to Source") would be a config-tier concern and is correctly classified as Future Work. electron-store upgrade is Future Work if preferences grow structurally. |
 | D6 | FOUC prevention via inline `<script>` in `packages/app/index.html` — no new library | LOCKED | Research D4: next-themes' inline-script pattern is the canonical approach. Hand-rolled for one key = 10 lines; no library needed. Adds zero bundle weight vs. importing next-themes-equivalent. |
-| D7 | Cross-window sync via `focus` event re-check (Excalidraw Pattern C). Live `storage` event auto-apply rejected on audit/challenge review. | LOCKED | Initial recommendation was next-themes Pattern A (live `storage` event auto-apply). Audit + challenge review surfaced that the spec's "flipping a CSS class is content-safe" framing was narrow: `display:none` CSS swap on the containing `<div>` (`EditorActivityPool.tsx:319`) **destroys user-interaction state** — DOM focus, IME composition, in-flight drag-selection. Neither `SourceEditor` nor `TiptapEditor` has a `.focus()` restore call on mode flip. For a large-state editor surface, the Excalidraw team deliberately chose focus-based lazy re-check for exactly this class of concern (research D8 evidence + Issue #2791 + PR #4545). We adopt the same pattern. Cost: cross-window updates are eventually-consistent on the unfocused window, not live — user returns to window B and the mode flip is picked up at that moment. Benefit: no mid-edit caret/selection/IME interruption. The cost is invisible to the user (they're not looking at the unfocused window anyway); the benefit is critical when they are. |
+| D7 | Cross-window sync via `focus` event re-check (Excalidraw Pattern C). Live `storage` event auto-apply rejected on audit/challenge review. | LOCKED | Initial recommendation was next-themes Pattern A (live `storage` event auto-apply). Audit + challenge review surfaced that "flipping a CSS class is content-safe" was narrow: the mode-swap CSS class (`.ok-mode-hidden` on `EditorActivityPool.tsx:561` / `:570` — at ship-time baseline `7e0beff4`) preserves DOM presence via `content-visibility:hidden + position:absolute + pointer-events:none`, but still interrupts IME composition and orphans in-flight drag-selection on swap. (Before PR #237, the swap used Tailwind `hidden` / `display:none` which additionally destroyed DOM focus; the new CSS is strictly less disruptive but still interaction-breaking for IME / drag-select.) Neither `SourceEditor` nor `TiptapEditor` has a `.focus()` restore call on mode flip. For a large-state editor surface, the Excalidraw team deliberately chose focus-based lazy re-check for exactly this class of concern (research D8 evidence + Issue #2791 + PR #4545). We adopt the same pattern. Cost: cross-window updates are eventually-consistent on the unfocused window, not live — user returns to window B and the mode flip is picked up at that moment. Benefit: no mid-edit IME/selection interruption. The cost is invisible to the user (they're not looking at the unfocused window anyway); the benefit is critical when they are. |
 | D8 | Every toggle writes to localStorage immediately — no session-vs-persisted distinction | LOCKED | Matches next-themes, matches `ok-pin-v1`, avoids hidden state confusion. Toggle = commit. |
 
 ---
@@ -433,7 +433,7 @@ None. All P0 items resolved.
 
 - **Storing in electron-store instead of localStorage.** Rejected — introduces main↔renderer IPC, breaks web distribution, and requires preload plumbing for FOUC-free first paint. Research D6 shows electron-store is overkill for a single renderer-visible preference.
 - **BroadcastChannel instead of `focus` event for cross-window sync.** Rejected — tldraw's use case (structured diff messages, per-workspace channels) doesn't apply. We have one boolean-equivalent preference; focus-based re-check with a `localStorage.getItem` on focus return is simpler and doesn't interrupt mid-edit interaction.
-- **Live `storage` event auto-apply (next-themes Pattern A).** **Initially recommended, rejected on audit/challenge review.** The framing "flipping a CSS class is content-safe" was narrow — `display:none` on an ancestor (`EditorActivityPool.tsx:319`) destroys DOM focus, IME composition, in-flight drag-selection. Pattern A works for theme (whose mid-edit cost is zero) but not for a large-state editor. Focus-based re-check (Excalidraw Pattern C) is the correct fit for this surface. See D7.
+- **Live `storage` event auto-apply (next-themes Pattern A).** **Initially recommended, rejected on audit/challenge review.** The framing "flipping a CSS class is content-safe" was narrow — the mode-swap CSS class `.ok-mode-hidden` (on `EditorActivityPool.tsx:561`/`:570` at ship-time baseline) interrupts IME composition and drag-selection gestures even though DOM focus is preserved by `content-visibility:hidden`. Pattern A works for theme (whose mid-edit cost is zero) but not for a large-state editor. Focus-based re-check (Excalidraw Pattern C) is the correct fit for this surface. See D7.
 - **React Context for the hook.** Rejected per ASK_FIRST — consumer count is 1 (`EditorPane`). Context adds indirection without buying anything.
 - **New-doc-opens-in-WYSIWYG special case** (Option c from intake Q4). Rejected per D4 — violates "user pref sticks everywhere."
 - **`auto`/`system` third mode.** Rejected per D2 — no OS-level signal analog for editor mode (unlike `prefers-color-scheme` for theme).
@@ -441,11 +441,13 @@ None. All P0 items resolved.
 
 ### 16.2 Related PRs / baseline code references
 
-- `packages/app/src/components/EditorPane.tsx:23` — `EditorMode` type definition (TQ8 — precedent #6)
-- `packages/app/src/components/EditorPane.tsx:26` — current `useState<EditorMode>('wysiwyg')` to replace
-- `packages/app/src/components/EditorPane.tsx:41` — `modeBeforeDiffRef` (session ref, preserved)
-- `packages/app/src/components/EditorPane.tsx:126` — `handleModeChange` (integration point)
-- `packages/app/src/main.tsx:48` — `ok-theme-v1` precedent (next-themes)
-- `packages/app/src/editor/DocumentContext.tsx:114` — `ok-pin-v1` precedent (versioned localStorage key)
+- `packages/app/src/components/EditorPane.tsx:21` — `EditorMode` type definition (TQ8 — precedent #6)
+- `packages/app/src/components/EditorPane.tsx:24` — current `useState<EditorMode>('wysiwyg')` to replace
+- `packages/app/src/components/EditorPane.tsx:39` — `modeBeforeDiffRef` (session ref, preserved)
+- `packages/app/src/components/EditorPane.tsx:112` — `handleModeChange` (integration point)
+- `packages/app/src/main.tsx:70` — `ok-theme-v1` precedent (next-themes)
+- `packages/app/src/editor/DocumentContext.tsx:117` — `ok-pin-v1` precedent (versioned localStorage key)
+- `packages/app/src/components/EditorActivityPool.tsx:561/:570` — current mode-swap CSS class (`.ok-mode-hidden`)
+- `packages/app/src/globals.css:1341` — `.ok-mode-hidden` CSS class (content-visibility:hidden pattern)
 - `packages/app/src/components/ThemeToggle.tsx` — existing next-themes toggle UX (for visual parity reference)
 - `packages/app/index.html` — target for FOUC inline script

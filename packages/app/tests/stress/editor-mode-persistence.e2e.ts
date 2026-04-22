@@ -271,7 +271,13 @@ test.describe('editor-mode-persistence — SPEC §8.3', () => {
     // localStorage → persistedMode becomes 'wysiwyg'. The cross-window
     // sync useEffect fires but the editorModeRef.current === 'diff' guard
     // should short-circuit the setEditorMode call.
-    await page.bringToFront();
+    //
+    // MUST use simulateFocusReturn — bringToFront alone does not reliably
+    // dispatch the window 'focus' event in headless Chromium. Without the
+    // explicit dispatch, persistedMode in page A would never update, the
+    // cross-window sync useEffect would never fire, and the H1 guard would
+    // not be exercised. T5 would pass even with the H1 bug present.
+    await simulateFocusReturn(page);
 
     // Step 5 — Exit diff via 'Now'. handleEntrySelect with sha=''
     // branches to setEditorMode(modeBeforeDiffRef.current) which is
@@ -285,7 +291,9 @@ test.describe('editor-mode-persistence — SPEC §8.3', () => {
     // WYSIWYG. This is the H1 bug regression guard.
     await expectSourceMounted(page);
     // Sanity check — WYSIWYG subtree should NOT be visible in page A.
-    await expect(page.locator('.ProseMirror').first()).toBeHidden({ timeout: 2_000 });
+    // 5s timeout (vs 2s) defends against Activity mount-in latency on
+    // first diff→source transition under React Compiler.
+    await expect(page.locator('.ProseMirror').first()).toBeHidden({ timeout: 5_000 });
   });
 
   // ── T6: invalid localStorage value falls back to WYSIWYG default ─────
@@ -339,6 +347,16 @@ test.describe('editor-mode-persistence — SPEC §8.3', () => {
       return localStorage.getItem(key);
     }, STORAGE_KEY);
     expect(finalPersistedMode === 'source' || finalPersistedMode === 'wysiwyg').toBe(true);
+
+    // Spec §8.3 T7 assertion: rendered mode does not diverge from the
+    // final localStorage value. Because the burst happened WITHOUT focus
+    // return, the hook has NOT applied any of the writes yet — so the
+    // rendered mode is whatever the user last clicked (WYSIWYG from
+    // mount). The final localStorage value is the last burst write.
+    // Divergence is legitimate here (focus-gated by design); the
+    // assertion is that the editor remains interactive despite the
+    // burst — which the subsequent toggle round-trip proves.
+    await expectWysiwygMounted(page);
 
     // Editor is still interactive — toggle via UI clicks still works.
     // Click Visual (a no-op if already WYSIWYG) then Source then back.
