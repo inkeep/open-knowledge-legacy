@@ -4,6 +4,7 @@ import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
+import { subscribeToDocPanelTabRequests } from '@/components/doc-panel-events';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
@@ -76,6 +77,16 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
       }
     }
   }, [autoCollapse, docPanelLayout, panelRef]);
+
+  useEffect(
+    () =>
+      subscribeToDocPanelTabRequests(() => {
+        if (isSheetMode) {
+          setSheetOpen(true);
+        }
+      }),
+    [isSheetMode],
+  );
 
   // Track the previously-active docName for DocumentErrorBoundary's
   // "Back to previous document" affordance. Updated AFTER render (effect) so

@@ -1,24 +1,31 @@
 /**
- * CommandPalette — Electron-only Cmd+K (Ctrl+K on Win/Linux) overlay that
- * mirrors the File-menu actions as a searchable list. User feedback during
- * Phase 8 review asked for a command-palette UI (beyond the menu bar + the
- * top-bar ProjectSwitcher pill) for project selection.
+ * CommandPalette — workspace omnibar opened by Cmd+K / Ctrl+K.
  *
- * Commands (all open a NEW editor BrowserWindow per D3 revised):
- *   - Open folder on disk…            — `bridge.dialog.openFolder()` → open
- *   - New Project (open Navigator)    — via File menu parallel; IPC TBD
- *                                       (falls back to openFolder for v0)
- *   - Open Recent → <one item per recent project>, up to 10
- *
- * Web / CLI distribution: `window.okDesktop` is undefined → the palette never
- * mounts; Cmd+K is a no-op outside Electron. Keeps zero-footprint for non-
- * Electron consumers of packages/app.
- *
- * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
+ * The palette is available on both web and Electron hosts. Workspace
+ * navigation (files, folders, create commands, graph, open-in-agent) is
+ * shared across hosts; project-switching commands remain Electron-only.
  */
 
-import { FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { FilePlus2, FileText, FolderOpen, FolderPlus, Network, Sparkles } from 'lucide-react';
+import { useDeferredValue, useEffect, useState } from 'react';
+import {
+  filterOmnibarRecents,
+  loadOmnibarRecents,
+  makeOmnibarRecentKey,
+  type OmnibarRecentEntry,
+  rememberOmnibarRecent,
+  saveOmnibarRecents,
+} from '@/components/command-palette-recents';
+import {
+  buildWorkspaceEntries,
+  matchesCommandQuery,
+  searchWorkspaceEntries,
+  type WorkspaceEntry,
+} from '@/components/command-palette-search';
+import { requestDocPanelTab } from '@/components/doc-panel-events';
+import { defaultInitialDir } from '@/components/file-tree-utils';
+import { NewItemDialog } from '@/components/NewItemDialog';
+import { usePageList } from '@/components/PageListContext';
 import {
   CommandDialog,
   CommandEmpty,
@@ -26,23 +33,17 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { useWorkspace } from '@/lib/use-workspace';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 
-/**
- * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
- * surface ProjectSwitcher uses — consistent launcher UX (every rejection
- * surfaces as a sonner toast). Exported for unit-testing with a mockable
- * `toastApi` indirection; the default uses sonner's module-level `toast`.
- */
 export const runWithToast = (
   fn: () => Promise<void>,
   fallback: string,
@@ -50,46 +51,71 @@ export const runWithToast = (
 ): Promise<void> => runWithToastBase(fn, fallback, toastApi, 'CommandPalette');
 
 interface CommandPaletteProps {
-  bridge: OkDesktopBridge;
+  bridge?: OkDesktopBridge | null;
 }
 
-export function CommandPalette({ bridge }: CommandPaletteProps) {
+function navigateToDocHash(docName: string): void {
+  window.location.assign(hashFromDocName(docName));
+}
+
+function resolveCreateInitialDir(
+  activeTarget: ReturnType<typeof useDocumentContext>['activeTarget'],
+  activeDocName: string | null,
+): string {
+  if (activeTarget?.kind === 'folder' || activeTarget?.kind === 'folder-index') {
+    return activeTarget.folderPath;
+  }
+  return defaultInitialDir(activeDocName);
+}
+
+function NavigationItem({
+  entry,
+  onSelect,
+}: {
+  entry: WorkspaceEntry | OmnibarRecentEntry;
+  onSelect: () => void;
+}) {
+  const Icon = entry.kind === 'folder' ? FolderOpen : FileText;
+
+  return (
+    <CommandItem
+      value={`${entry.kind} ${entry.path}`}
+      onSelect={onSelect}
+      data-testid={`command-palette-nav-${entry.kind}-${entry.path}`}
+    >
+      <Icon />
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate font-medium">{entry.path.split('/').pop() ?? entry.path}</span>
+        <span className="truncate text-muted-foreground text-xs">{entry.path}</span>
+      </div>
+    </CommandItem>
+  );
+}
+
+export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
-  const [recents, setRecents] = useState<RecentProjectEntry[]>([]);
-  const { activeDocName } = useDocumentContext();
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const [projectRecents, setProjectRecents] = useState<RecentProjectEntry[]>([]);
+  const [recentNavigation, setRecentNavigation] = useState<OmnibarRecentEntry[]>([]);
+  const [createDialogKind, setCreateDialogKind] = useState<'file' | 'folder' | null>(null);
+  const { activeDocName, activeTarget } = useDocumentContext();
+  const { pages, folderPaths } = usePageList();
   const workspace = useWorkspace();
   const { states: installStates, refresh: refreshInstallStates } = useInstalledAgents();
   const { dispatch: dispatchHandoff } = useHandoffDispatch();
-  // Shared input construction — identical shape across the three surfaces so
-  // AC9's single-dispatch contract holds. `null` when no active doc or when
-  // workspace metadata has not resolved yet (web host only — Electron
-  // resolves synchronously via `window.okDesktop`).
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
-  // Lazy-load recents each time the palette opens so the list is always fresh.
-  // Cheap (<10ms over IPC), and avoids a stale snapshot if the user opens
-  // another project in a sibling window between palette opens. IPC rejection
-  // surfaces as a toast so users know the list is stale rather than silently
-  // seeing an empty group.
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void runWithToast(async () => {
-      const result = await bridge.project.listRecent();
-      if (!cancelled) setRecents(result);
-    }, 'Failed to load recent projects.');
-    // Fire-and-forget install-state refresh when the palette opens. The probe
-    // coordinator handles the 10s per-scheme throttle, so rapid open/close
-    // cycles collapse into at most one OS probe per window. Matches the
-    // EditorHeader dropdown's refresh-on-open semantics (SQ5 DIRECTED option c).
-    void refreshInstallStates();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, bridge, refreshInstallStates]);
+  const workspaceEntries = buildWorkspaceEntries(pages, folderPaths);
+  const navigationResults = searchWorkspaceEntries(workspaceEntries, deferredQuery);
+  const validRecentKeys = new Set(
+    workspaceEntries.map((entry) => makeOmnibarRecentKey(entry.kind, entry.path)),
+  );
+  const visibleRecents = filterOmnibarRecents(recentNavigation, validRecentKeys);
+  const currentPath = bridge?.config.projectPath ?? null;
+  const switchableProjects = bridge ? projectRecents.filter((row) => row.path !== currentPath) : [];
+  const initialCreateDir = resolveCreateInitialDir(activeTarget, activeDocName);
 
-  // Cmd+K / Ctrl+K global opener. Attached once per bridge instance; React
-  // Compiler handles the no-stale-closure-on-re-render concern via reactivity.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isTrigger = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
@@ -101,75 +127,190 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  useEffect(() => {
+    if (open) {
+      setRecentNavigation(loadOmnibarRecents());
+      void refreshInstallStates();
+      if (bridge) {
+        let cancelled = false;
+        void runWithToast(async () => {
+          const result = await bridge.project.listRecent();
+          if (!cancelled) setProjectRecents(result);
+        }, 'Failed to load recent projects.');
+        return () => {
+          cancelled = true;
+        };
+      }
+      return;
+    }
+    setQuery('');
+  }, [open, bridge, refreshInstallStates]);
+
   const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
     setOpen(false);
-    // Normalize `fn` to `() => Promise<void>` so the shared helper's
-    // signature lines up; sync callbacks get wrapped into a resolved promise.
     void runWithToast(async () => {
       await fn();
     }, fallback);
   };
 
-  const currentPath = bridge.config.projectPath;
-  const switchable = recents.filter((r) => r.path !== currentPath);
+  function rememberNavigation(entry: WorkspaceEntry | OmnibarRecentEntry) {
+    const nextEntry = {
+      kind: entry.kind,
+      path: entry.path,
+      lastOpenedAt: new Date().toISOString(),
+    } satisfies OmnibarRecentEntry;
+    const nextRecents = rememberOmnibarRecent(loadOmnibarRecents(), nextEntry);
+    saveOmnibarRecents(nextRecents);
+    setRecentNavigation(nextRecents);
+  }
+
+  function navigateToEntry(entry: WorkspaceEntry | OmnibarRecentEntry) {
+    setOpen(false);
+    rememberNavigation(entry);
+    navigateToDocHash(entry.path);
+  }
+
+  const showRecentNavigation = deferredQuery.trim() === '' && visibleRecents.length > 0;
+  const showNavigation = navigationResults.length > 0;
+  const showCreateFile = matchesCommandQuery('New file', deferredQuery, ['create file']);
+  const showCreateFolder = matchesCommandQuery('New folder', deferredQuery, ['create folder']);
+  const showGraphCommand = matchesCommandQuery('Open graph', deferredQuery, [
+    'graph panel network',
+  ]);
+  const showProjectOpenFolder =
+    bridge !== null && matchesCommandQuery('Open folder on disk', deferredQuery, ['project']);
+  const showProjectCreateFolder =
+    bridge !== null &&
+    matchesCommandQuery('Start fresh in a new folder', deferredQuery, ['project new']);
+  const showProjectRecents =
+    bridge !== null &&
+    switchableProjects.length > 0 &&
+    (deferredQuery.trim() === '' ||
+      switchableProjects.some((row) =>
+        matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, ['recent project']),
+      ));
+  const showAgentGroup =
+    deferredQuery.trim() === '' ||
+    KNOWN_TARGETS.some((target) =>
+      matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
+        target.id,
+        'agent handoff',
+      ]),
+    );
+  const hasAnyResults =
+    showRecentNavigation ||
+    showNavigation ||
+    showCreateFile ||
+    showCreateFolder ||
+    showGraphCommand ||
+    showProjectOpenFolder ||
+    showProjectCreateFolder ||
+    showProjectRecents ||
+    showAgentGroup;
 
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={setOpen}
-      title="Project Command Palette"
-      description="Switch projects, open folders, or start a new project."
-    >
-      <CommandInput placeholder="Type a command or search recent projects…" />
-      <CommandList>
-        <CommandEmpty>No matching commands.</CommandEmpty>
+    <>
+      <CommandDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Workspace Command Palette"
+        description="Search files, folders, and commands for the current workspace."
+        commandProps={{ shouldFilter: false }}
+      >
+        <CommandInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search files, folders, or commands…"
+        />
+        <CommandList>
+          {!hasAnyResults ? <CommandEmpty>No matching commands.</CommandEmpty> : null}
 
-        <CommandGroup heading="Project">
-          <CommandItem
-            onSelect={() =>
-              runAction(async () => {
-                const path = await bridge.dialog.openFolder();
-                if (!path) return;
-                await bridge.project.open({ path, target: 'new-window' });
-              })
-            }
-            data-testid="command-palette-open-folder"
-          >
-            <FolderOpen />
-            <span>Open folder on disk…</span>
-            <CommandShortcut>⌘O</CommandShortcut>
-          </CommandItem>
-          <CommandItem
-            onSelect={() =>
-              runAction(async () => {
-                // M4/M5 wires a proper New Project → Navigator invocation.
-                // For now: same as Open folder (opens native picker) so users
-                // get "create or pick a folder" behavior without a dead item.
-                const path = await bridge.dialog.createFolder();
-                if (!path) return;
-                await bridge.project.open({ path, target: 'new-window' });
-              })
-            }
-            data-testid="command-palette-start-fresh"
-          >
-            <FolderPlus />
-            <span>Start fresh in a new folder…</span>
-            <CommandShortcut>⌘⇧N</CommandShortcut>
-          </CommandItem>
-        </CommandGroup>
+          {showRecentNavigation ? (
+            <CommandGroup heading="Recently opened">
+              {visibleRecents.map((entry) => (
+                <NavigationItem
+                  key={makeOmnibarRecentKey(entry.kind, entry.path)}
+                  entry={entry}
+                  onSelect={() => navigateToEntry(entry)}
+                />
+              ))}
+            </CommandGroup>
+          ) : null}
 
-        {activeDocName ? (
-          <>
-            <CommandSeparator />
+          {showNavigation ? (
+            <CommandGroup heading="Navigate">
+              {navigationResults.map((entry) => (
+                <NavigationItem
+                  key={makeOmnibarRecentKey(entry.kind, entry.path)}
+                  entry={entry}
+                  onSelect={() => navigateToEntry(entry)}
+                />
+              ))}
+            </CommandGroup>
+          ) : null}
+
+          {showCreateFile || showCreateFolder || showGraphCommand ? (
+            <CommandGroup heading="Commands">
+              {showCreateFile ? (
+                <CommandItem
+                  value="new file create file"
+                  onSelect={() => {
+                    setOpen(false);
+                    setCreateDialogKind('file');
+                  }}
+                  data-testid="command-palette-new-file"
+                >
+                  <FilePlus2 />
+                  <span>New file</span>
+                </CommandItem>
+              ) : null}
+              {showCreateFolder ? (
+                <CommandItem
+                  value="new folder create folder"
+                  onSelect={() => {
+                    setOpen(false);
+                    setCreateDialogKind('folder');
+                  }}
+                  data-testid="command-palette-new-folder"
+                >
+                  <FolderPlus />
+                  <span>New folder</span>
+                </CommandItem>
+              ) : null}
+              {showGraphCommand ? (
+                <CommandItem
+                  value="open graph graph panel network"
+                  disabled={!activeDocName}
+                  onSelect={() => {
+                    if (!activeDocName) return;
+                    setOpen(false);
+                    requestDocPanelTab('graph');
+                  }}
+                  data-testid="command-palette-open-graph"
+                  aria-label={activeDocName ? 'Open graph' : 'Open graph, No active doc'}
+                >
+                  <Network />
+                  <span>Open graph</span>
+                  {!activeDocName ? (
+                    <span aria-hidden="true" className="ml-auto text-muted-foreground text-xs">
+                      No active doc
+                    </span>
+                  ) : null}
+                </CommandItem>
+              ) : null}
+            </CommandGroup>
+          ) : null}
+
+          {showAgentGroup ? (
             <CommandGroup heading="Open in agent">
-              {KNOWN_TARGETS.map((target) => {
+              {KNOWN_TARGETS.filter((target) =>
+                matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
+                  target.id,
+                  'agent handoff',
+                ]),
+              ).map((target) => {
                 const installState = installStates[target.id];
                 const enabled = installState.installed === true && handoffInput !== null;
-                // The Command palette has no tooltip affordance on disabled
-                // rows; the dropdown surface (EditorHeader) carries the full
-                // PQ6 tooltip UX with install + claude.ai affordances. Here
-                // we surface a concise right-aligned status hint so the user
-                // sees *why* the row is disabled without hunting for it.
                 const hint =
                   installState.installed === null
                     ? 'Detecting…'
@@ -178,23 +319,14 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                       : handoffInput === null
                         ? 'No active doc'
                         : null;
-                // Status hint for disabled rows is rendered as a plain <span>
-                // rather than <CommandShortcut>. CommandShortcut is cmdk's
-                // right-aligned affordance semantically reserved for keyboard
-                // shortcuts (⌘O / ⌘⇧N above). Overloading it with status copy
-                // ("Not installed", "Desktop only") conflated the shortcut
-                // affordance with disabled-state messaging; the plain span is
-                // the same visual placement without the semantic overload.
-                // `aria-label` composes the hint into the accessible name so
-                // AT users hear "Open in Codex, Not installed" rather than
-                // the bare "Open in Codex" that matches an enabled row.
                 const accessibleLabel = hint
                   ? `Open in ${target.displayName}, ${hint}`
                   : `Open in ${target.displayName}`;
+
                 return (
                   <CommandItem
                     key={target.id}
-                    value={`open-in-agent ${target.id} ${target.displayName}`}
+                    value={`open in ${target.displayName} ${target.id} agent`}
                     disabled={!enabled}
                     onSelect={() => {
                       if (!enabled || !handoffInput) return;
@@ -214,37 +346,97 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                 );
               })}
             </CommandGroup>
-          </>
-        ) : null}
+          ) : null}
 
-        {switchable.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Recent projects">
-              {switchable.slice(0, 10).map((row) => (
+          {bridge && (showProjectOpenFolder || showProjectCreateFolder || showProjectRecents) ? (
+            <CommandGroup heading="Project">
+              {showProjectOpenFolder ? (
                 <CommandItem
-                  key={row.path}
-                  value={`${row.name} ${row.path}`}
-                  disabled={row.missing}
+                  value="open folder on disk project"
                   onSelect={() =>
-                    runAction(() => bridge.project.open({ path: row.path, target: 'new-window' }))
+                    runAction(async () => {
+                      const path = await bridge.dialog.openFolder();
+                      if (!path) return;
+                      await bridge.project.open({ path, target: 'new-window' });
+                    })
                   }
-                  data-testid={`command-palette-recent-${row.path}`}
+                  data-testid="command-palette-open-folder"
                 >
-                  <Sparkles />
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate font-medium">{row.name}</span>
-                    <span className="truncate text-muted-foreground text-xs">
-                      {row.path}
-                      {row.missing ? '  (missing)' : ''}
-                    </span>
-                  </div>
+                  <FolderOpen />
+                  <span>Open folder on disk…</span>
+                  <CommandShortcut>⌘O</CommandShortcut>
                 </CommandItem>
-              ))}
+              ) : null}
+              {showProjectCreateFolder ? (
+                <CommandItem
+                  value="start fresh new folder project"
+                  onSelect={() =>
+                    runAction(async () => {
+                      const path = await bridge.dialog.createFolder();
+                      if (!path) return;
+                      await bridge.project.open({ path, target: 'new-window' });
+                    })
+                  }
+                  data-testid="command-palette-start-fresh"
+                >
+                  <FolderPlus />
+                  <span>Start fresh in a new folder…</span>
+                  <CommandShortcut>⌘⇧N</CommandShortcut>
+                </CommandItem>
+              ) : null}
+              {showProjectRecents
+                ? switchableProjects
+                    .filter((row) =>
+                      matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, [
+                        'recent project',
+                      ]),
+                    )
+                    .slice(0, 10)
+                    .map((row) => (
+                      <CommandItem
+                        key={row.path}
+                        value={`${row.name} ${row.path} recent project`}
+                        disabled={row.missing}
+                        onSelect={() =>
+                          runAction(
+                            () => bridge.project.open({ path: row.path, target: 'new-window' }),
+                            'Failed to open project.',
+                          )
+                        }
+                        data-testid={`command-palette-recent-${row.path}`}
+                      >
+                        <Sparkles />
+                        <div className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium">{row.name}</span>
+                          <span className="truncate text-muted-foreground text-xs">
+                            {row.path}
+                            {row.missing ? '  (missing)' : ''}
+                          </span>
+                        </div>
+                      </CommandItem>
+                    ))
+                : null}
             </CommandGroup>
-          </>
-        ) : null}
-      </CommandList>
-    </CommandDialog>
+          ) : null}
+        </CommandList>
+      </CommandDialog>
+
+      <NewItemDialog
+        open={createDialogKind === 'file'}
+        onOpenChange={(next) => {
+          if (!next) setCreateDialogKind(null);
+        }}
+        kind="file"
+        initialDir={initialCreateDir}
+      />
+      <NewItemDialog
+        open={createDialogKind === 'folder'}
+        onOpenChange={(next) => {
+          if (!next) setCreateDialogKind(null);
+        }}
+        kind="folder"
+        initialDir={initialCreateDir}
+      />
+    </>
   );
 }

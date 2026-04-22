@@ -100,11 +100,10 @@ function NewItemShortcutHandler() {
 }
 
 export function App() {
-  // Electron-only Cmd+K palette for project-level commands (open folder,
-  // start fresh, switch to a recent project). Gated on `window.okDesktop`
-  // so the web/CLI distribution never mounts the handler — zero footprint
-  // outside Electron. Mounted at the App root so Cmd+K works regardless of
-  // which surface has focus (editor, sidebar, timeline, etc.).
+  // Workspace omnibar: shared across web and Electron for file/folder
+  // navigation and command dispatch. Electron additionally surfaces project-
+  // level commands through the same palette when the desktop bridge exists.
+  // Mounted at the App root so Cmd/Ctrl+K works regardless of focus.
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
 
   return (
@@ -115,7 +114,7 @@ export function App() {
           <SystemDocSubscriber />
           <NavigationHandler />
           <NewItemShortcutHandler />
-          {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+          <CommandPalette bridge={desktopBridge} />
           <SidebarProvider className="h-screen overflow-hidden">
             <FileSidebar />
             <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">

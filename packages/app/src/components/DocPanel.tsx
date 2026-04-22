@@ -1,14 +1,17 @@
 import { CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
+import {
+  consumePendingDocPanelTabRequest,
+  type DocPanelTab,
+  subscribeToDocPanelTabRequests,
+} from '@/components/doc-panel-events';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
-
-const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
+const TABS: { id: DocPanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', icon: ListTree },
   { id: 'backlinks', label: 'Backlinks', icon: CornerDownLeft },
   { id: 'forward-links', label: 'Outgoing Links', icon: CornerUpRight },
@@ -30,7 +33,18 @@ interface DocPanelProps {
 }
 
 export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
-  const [activeTab, setActiveTab] = useState(TABS[0].id);
+  const [activeTab, setActiveTab] = useState<DocPanelTab>(
+    () => consumePendingDocPanelTabRequest() ?? TABS[0].id,
+  );
+
+  useEffect(
+    () =>
+      subscribeToDocPanelTabRequests((tab) => {
+        consumePendingDocPanelTabRequest();
+        setActiveTab(tab);
+      }),
+    [],
+  );
 
   return (
     <>
@@ -38,7 +52,7 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
         type="single"
         variant="outline"
         value={activeTab}
-        onValueChange={(value: PanelTab) => {
+        onValueChange={(value: DocPanelTab) => {
           if (value) setActiveTab(value);
         }}
         className="mx-auto p-2"
