@@ -147,6 +147,79 @@ test.describe('docs-open — hybrid navigation UX', () => {
     expect(result.shellMs).toBeLessThan(500);
   });
 
+  test('F0b: warm nav to a mark-heavy doc shows EditorSkeleton during the mount window', async ({
+    page,
+    api,
+  }) => {
+    // Skeleton-during-nav guarantee: when the target doc's editor mount is
+    // observably slow (mark-heavy doc above BYTES_CACHE_THRESHOLD, forcing
+    // a fresh `new Editor()` on every warm visit), the editor area MUST
+    // show the EditorSkeleton during the transition window — NOT the
+    // previous doc's stale content. Regression trace: after shipping
+    // useDeferredValue for shell-snap, warm nav started leaving the old
+    // doc's editor visible for the full 1-3s mount window, which looks
+    // like a "flash of the previous editor" to the user.
+    //
+    // Test shape: mirror F0's setup (mark-heavy big doc), warm both, then
+    // on the warm-nav click capture all skeleton appearances via
+    // MutationObserver (same pattern as F3 cold-nav skeleton test).
+    // Assert the skeleton appeared during the window.
+    const MARK_LINE = Array.from({ length: 40 }, (_, i) => `[[Link ${i}]]`).join(' ');
+    const PARAGRAPH = `${MARK_LINE} and some \`inline code here\` plus more [[wiki links]] to cross-reference.`;
+    const BIG_BODY = Array.from(
+      { length: 300 },
+      (_, i) => `## Section ${i}\n\n${PARAGRAPH}\n\n${PARAGRAPH}\n`,
+    ).join('\n');
+    const BIG_DOC = `# Big Doc\n\n${BIG_BODY}\n\n## End\n`;
+    const SMALL_DOC = '# Small\n\nShort.';
+    await api.seedDocs([
+      { name: 'small', markdown: SMALL_DOC },
+      { name: 'big', markdown: BIG_DOC },
+    ]);
+
+    await page.goto('/');
+    await openFromSidebar(page, 'small.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+    await openFromSidebar(page, 'big.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc');
+    // Back to small so the next click to big.md is a warm-but-slow-mount nav.
+    await openFromSidebar(page, 'small.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Small');
+
+    // Install skeleton-sighting observer BEFORE the click.
+    await page.evaluate(() => {
+      window.__f0bSkeletonSeen = false;
+      const skeletonSelector = '[role="status"][aria-label="Loading document"]';
+      const check = () => {
+        if (document.querySelector(skeletonSelector)) {
+          window.__f0bSkeletonSeen = true;
+        }
+      };
+      check();
+      const observer = new MutationObserver(check);
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true });
+      window.__f0bObserverCleanup = () => observer.disconnect();
+    });
+
+    const sidebar = page.locator('[data-slot="sidebar-container"]');
+    await sidebar.getByText('big.md', { exact: true }).click();
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 15_000 });
+
+    await page.evaluate(() => window.__f0bObserverCleanup?.());
+    const seen = await page.evaluate(() => window.__f0bSkeletonSeen);
+
+    // Load-bearing assertion: skeleton must have been visible at some
+    // point during the warm nav. A regression that lets the stale editor
+    // stay visible through the entire mount window (no skeleton overlay)
+    // fails here. Complementary to F3 which covers the same guarantee
+    // for cold nav.
+    expect(seen).toBe(true);
+  });
+
   test('F1: warm-nav preserves content atomically (scroll position survives A→B→A)', async ({
     page,
     api,
@@ -250,7 +323,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('[role="status"][aria-label="Loading document"]')).toHaveCount(0);
   });
 
-  test('F4: cold-load skeleton only when there is no prior content', async ({ page, api }) => {
+  test('F4: skeleton is shown during nav transitions (cold and warm)', async ({ page, api }) => {
     await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
@@ -310,25 +383,26 @@ test.describe('docs-open — hybrid navigation UX', () => {
     const coldMarker = sightings.findIndex((s) => s.tag === 'marker-cold-complete');
     const bSyncedMarker = sightings.findIndex((s) => s.tag === 'marker-b-synced');
 
-    // For a pooled doc A, re-visiting (after cold-load + nav-to-B) must NOT
-    // produce any skeleton sighting — this is the deterministic direction of
-    // F4. The warm-Activity swap bypasses Suspense.
+    // Post-useDeferredValue behavior (commit cb9d165d → post-warm-flash
+    // fix): the EditorArea renders an `<EditorSkeleton />` overlay while
+    // `activeDocName !== deferredActiveDocName`, covering the stale-editor
+    // window on ANY nav (cold OR warm). Prior behavior was "cold-only
+    // skeleton"; this changed because on warm-nav to a mark-heavy doc
+    // (BYTES_CACHE_THRESHOLD > 500_000 — cache refuses admission, forcing
+    // a fresh `new Editor()` on every warm visit) the old editor was left
+    // visible for 1-3s, which the user experienced as a "flash of the
+    // previous editor" contradicting the now-updated sidebar highlight.
+    //
+    // F4 now asserts: skeleton appears on BOTH cold load AND warm revisit.
+    // The warm-nav assertion is the load-bearing one (regression from
+    // cb9d165d ship).
     const warmVisitSightings = sightings.slice(bSyncedMarker + 1);
     const skeletonDuringWarmVisit = warmVisitSightings.some((s) => s.found);
-    expect(skeletonDuringWarmVisit).toBe(false);
+    expect(skeletonDuringWarmVisit).toBe(true);
 
-    // For the cold load, we expect (best-effort) to have seen the skeleton
-    // at least once — may flake on ultra-fast localhost sync. Tolerated:
-    // if sync is so fast the skeleton never paints, React was still
-    // correctly rendering the Suspense fallback. The negative assertion
-    // above is the load-bearing guarantee.
     const coldSightings = sightings.slice(0, coldMarker + 1);
     const coldSkeletonSeen = coldSightings.some((s) => s.found);
-    // Log but don't fail on the positive direction — timing-sensitive on
-    // fast CI. The deterministic assertion is the warm-visit negative above.
-    console.log(
-      `[F4] cold-load skeleton observed=${coldSkeletonSeen} across ${coldSightings.length} samples`,
-    );
+    expect(coldSkeletonSeen).toBe(true);
   });
 
   test('F5: sync failure shows recoverable error boundary + retry re-enters Suspense', async ({
@@ -1055,6 +1129,8 @@ declare global {
   interface Window {
     __f0Start?: number;
     __f0Result?: { shellMs: number } | null;
+    __f0bSkeletonSeen?: boolean;
+    __f0bObserverCleanup?: () => void;
     __f3SkeletonEverVisible?: boolean;
     __f3ObserverCleanup?: () => void;
     __f4SkeletonSightings?: Array<{ tag: string; found: boolean; t: number }>;

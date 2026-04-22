@@ -261,7 +261,7 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           hidden doc's cached rejected syncPromise cannot re-throw into
           the visible UI (QA-023/024). See EditorActivityPool.tsx file
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-      <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+      <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
         <EditorActivityPool
           // Fall back to the urgent `activeDocName` when the deferred
           // value is still null (initial load, before the first
@@ -288,6 +288,25 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           }}
           onRecycle={recycleDocument}
         />
+        {/* Nav-pending skeleton overlay. Rendered when the urgent
+            `activeDocName` (shell state — driving sidebar highlight +
+            header title) has moved past `deferredActiveDocName` (editor
+            subtree prop). That delta window is exactly the interval
+            between shell-snap and the editor subtree's deferred commit
+            completing — 1-3s on mark-heavy docs that refuse V2 cache
+            admission. Without this overlay the user sees the PREVIOUS
+            doc's editor linger through the mount window, which looks
+            like a "flash of the old editor" and contradicts the
+            sidebar's now-updated highlight. The overlay is absolute +
+            inset-0 on the positioned parent so it paints over the pool
+            without unmounting it — Activity state (scroll, selection,
+            editor instances) survives underneath. Regression test:
+            docs-open.e2e.ts F0b. */}
+        {activeDocName && activeDocName !== deferredActiveDocName ? (
+          <div className="absolute inset-0 z-10 bg-background">
+            <EditorSkeleton />
+          </div>
+        ) : null}
       </div>
       {toggleButton}
     </div>
