@@ -6,7 +6,6 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
-import '@/lib/desktop-bridge-types';
 import { installGitInitToast } from '@/lib/install-git-init-toast';
 import { RootApp } from './root-app';
 import '@fontsource-variable/inter';

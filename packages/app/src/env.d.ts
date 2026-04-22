@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 declare namespace globalThis {
+  import type { OkDesktopBridge } from '@/lib/desktop-bridge-types.ts';
   import type { HocuspocusProvider } from '@hocuspocus/provider';
   import type { Editor } from '@tiptap/core';
   import type { GraphNodeVisualState } from '@/components/graph-view-utils';
@@ -65,4 +66,7 @@ declare namespace globalThis {
    * SystemDocSubscriber's debounced nav check → hash change.
    */
   var __test_injectAgentFocus: ((docName: string) => boolean) | undefined;
+
+  /** Populated by the desktop preload script. Absent in web / CLI distribution. */
+  var okDesktop: OkDesktopBridge | undefined;
 }
