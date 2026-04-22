@@ -315,3 +315,47 @@ Greenfield principle articulation: already named in CLAUDE.md §118 as "(greenfi
 
 None. All MODERATE + LOW design escalations resolved. Ready for Step 8 mechanical checks + resolution status verification + baseline commit advance.
 
+---
+
+## 2026-04-21 — Session 2 cycle-3: Step 8 finalize
+
+### Mechanical adversarial checks (self-applied per /spec Step 8)
+
+**Check 1 — ASSUMED decisions load-bearing?** No decision in §10 has ASSUMED status. D1-D4 are DIRECTED (user-directed scope calls); D-A is REFUTED by D-M; D-L is REMOVED; D-B/D-C/D-D/D-E/D-F/D-G/D-H/D-I/D-J/D-K/D-M are LOCKED. PASS.
+
+**Check 2 — Confidence gaps on 1-way doors?** 1-way-classified decisions: D-C (universe convergence, HIGH), D-F (paired with D-I, HIGH), D-G (client-breaking, client updates in same PR), D-I (6-editor convergence, HIGH), D-K (asymmetric 1-way; MEDIUM-HIGH with explicit 12-month revisit trigger + paired `openknowledge gc` commitment; user-accepted risk per STRONG-2 resolution). D-M is reversible (config-narrow path exists). PASS.
+
+**Check 3 — Non-goal accuracy?** All 14 NGs carry temporal tags. NEVER-tagged items (NG1, NG3, NG4) are either architectural (disjoint key space for NG4 means no rework penalty for adding note-to-note later in a separate spec) or scope boundaries (NG3 image editing is out-of-product). NOT NOW items all have concrete triggers. NOT UNLESS items (NG13, NG14) have explicit activation conditions. PASS.
+
+### Resolution completeness gate (per In Scope item)
+
+Each §13 In Scope item verified against /spec's 6-point gate:
+
+- All decisions affecting the item are made (LOCKED / DIRECTED / REFUTED-by-LOCKED / REMOVED — no ASSUMED) ✓
+- 3rd-party deps named: `file-type@22.0.1` (INV3-verified), `@tiptap/extension-file-handler` (shipped), Foam-style path resolver (ported per INV2), `micromark-extension-mdx` (spec unchanged here), Zod (existing) ✓
+- Architectural viability: wiki-link tokenizer extension validated additive per precedent #15; basename index sized for 1000+ files per INV2; CC1 primitive shipped and ready ✓
+- Integration feasibility: all cross-package seams (file-watcher → CC1 → `path-resolve.ts`, `managed-rename-rewrite` → FR-7 addition, `api-extension.ts` → sha256 dedup) verified against current-shipped-state.md at baseline `2ad0177a` ✓
+- Acceptance criteria verifiable: `evidence/e2e-acceptance-scenarios.md` 12-scenario contract + FR-by-FR acceptance column ✓
+- No dependency on Out of Scope items: Phase 2 (typed-component-nodes) is coordinated via permanent fallback markers (L4 B); Phase 2 landing does NOT block P0 ship ✓
+
+### Quality bar (must-have checklist)
+
+All must-have items pass. Spec includes SCR problem framing, goals + non-goals with temporal tags, 4 personas + 5 user journeys, measurable acceptance criteria with observable behavior descriptions, current-state documented with evidence file, vertical-slice proposed solution (UX → API → persistence → runtime → ops via CC1), Decision Log with resolution status + rationale + door-type + evidence links, Open Questions all RESOLVED with next actions, PRD + technical design together, major assertions evidence-backed or labeled VERIFIED via INV files, error/failure experience addressed in journeys + NFR-3 security, Future Work items maturity-tiered (Explored / Identified / Noted), Success Metrics M1-M6 defined, evidence files contain primary source citations, NOT-FOUND claims include negative-search documentation (e.g., "Zero references to `.obsidian`"), Agent Constraints §16 populated with SCOPE / EXCLUDE / STOP_IF / ASK_FIRST derived from In Scope.
+
+### Minor fixes applied during finalize
+
+Four issues caught by quality bar check:
+- **M5 success metric** referenced deleted `allowedMimeTypes` — reframed to `maxBytes` journey (the tangible operator-config path post-D-M).
+- **FR-2 acceptance** said D-B resolution "(pending)" — D-B is LOCKED. Updated to cite the LOCKED toast template verbatim + config escape hatch.
+- **Q-INV3 status** closed "D-A locked strict" — D-A now REFUTED by D-M. Added cycle-2 update note; sniff now feeds NFR-3 SVG routing + FR-1a emit consistency, not a rejection gate.
+- **§13 scenario count** said 11 — actually 12 in top-list plus P2.2 as in-file-not-top. Corrected enumeration.
+
+### Baseline commit
+
+Stamped at `4b527410` — the cycle-2 resolutions commit (last verified codebase state before finalize polish). The finalize polish commit (this one) carries no code-impacting changes, just status + four text fixes.
+
+### Status transition
+
+Draft → **Finalized**. Ready for `/ship`.
+
+
