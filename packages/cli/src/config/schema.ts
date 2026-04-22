@@ -1,3 +1,9 @@
+import type {
+  DedupMode as CoreDedupMode,
+  DedupUIMode as CoreDedupUIMode,
+  EmitFormat as CoreEmitFormat,
+  UploadConfig as CoreUploadConfig,
+} from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 
 export const FolderFrontmatterSchema = z
@@ -67,10 +73,22 @@ export const UploadConfigSchema = z
     wikiEmbedExtensions: [...DEFAULT_WIKI_EMBED_EXTENSIONS],
   });
 
-export type UploadConfig = z.infer<typeof UploadConfigSchema>;
-export type EmitFormat = UploadConfig['emitFormat'];
-export type DedupMode = UploadConfig['dedup']['mode'];
-export type DedupUIMode = UploadConfig['dedup']['ui'];
+// Re-export so cli consumers (loader, commands) and server (via core) see the
+// same UploadConfig identity. Compile-time `satisfies` below catches drift if
+// the Zod schema's inferred shape ever diverges from core's interface.
+export type UploadConfig = CoreUploadConfig;
+export type EmitFormat = CoreEmitFormat;
+export type DedupMode = CoreDedupMode;
+export type DedupUIMode = CoreDedupUIMode;
+
+type _UploadConfigShapeMatches =
+  z.infer<typeof UploadConfigSchema> extends UploadConfig
+    ? UploadConfig extends z.infer<typeof UploadConfigSchema>
+      ? true
+      : never
+    : never;
+const _shapeCheck: _UploadConfigShapeMatches = true;
+void _shapeCheck;
 
 export const ConfigSchema = z.object({
   content: z

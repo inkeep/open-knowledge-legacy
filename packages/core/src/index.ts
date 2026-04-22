@@ -15,7 +15,14 @@ export {
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
-export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
+export {
+  ALLOWED_IMAGE_MIME_TYPES,
+  ASSET_EXTENSIONS,
+  type DedupMode,
+  type DedupUIMode,
+  type EmitFormat,
+  type UploadConfig,
+} from './constants/upload.ts';
 
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';

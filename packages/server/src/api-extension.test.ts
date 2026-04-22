@@ -286,12 +286,20 @@ describe('handleUploadImage', () => {
     expect(body.src).toMatch(/^pasted-\d{8}-\d{6}\.png$/);
   });
 
-  test('rejects spoofed MIME (exe renamed to .png)', async () => {
+  test('D-M accept-all: spoofed MIME no longer rejects, file is stored under sanitized name', async () => {
+    // Pre-D-M behavior rejected with "Unsupported file type". Under D-M
+    // accept-all (SPEC §10), any file under maxBytes is accepted; only
+    // the SVG <img>-only routing relies on a successful magic-byte sniff
+    // (NFR-3 LOAD-BEARING). The "exe spoofed as .png" test now confirms
+    // accept-all + storage; the security posture flips to render-time:
+    // unrecognized types serve as opaque blobs, never inline-executed.
     const exeBuffer = Buffer.from('MZexecutable content here');
     const res = await uploadImage(exeBuffer, 'malicious.png', 'docs/guide.md');
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Unsupported file type');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.src).toBe('malicious.png');
+    expect(body.deduped).toBe(false);
   });
 
   test('SVG accepted with image/svg+xml', async () => {
@@ -320,5 +328,176 @@ describe('handleUploadImage', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('path-escape');
+  });
+
+  test('FR-8: /api/upload (new primary endpoint) accepts the same payload', async () => {
+    const formData = new FormData();
+    formData.append('parentDocName', 'docs/guide.md');
+    formData.append('file', new Blob([createPngBuffer()]), 'screenshot.png');
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
+    expect(body.src).toBe('screenshot.png');
+    expect(body.deduped).toBe(false);
+    expect(existsSync(join(contentDir, 'docs', 'screenshot.png'))).toBe(true);
+  });
+
+  test('D-M: PDF accepts and stores under sanitized name', async () => {
+    // PDF magic bytes start with %PDF-1.x.
+    const pdfBuffer = Buffer.from('%PDF-1.4\n%fake pdf content for test');
+    const formData = new FormData();
+    formData.append('parentDocName', 'docs/guide.md');
+    formData.append('file', new Blob([pdfBuffer]), 'draft.pdf');
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; src: string };
+    expect(body.src).toBe('draft.pdf');
+    expect(existsSync(join(contentDir, 'docs', 'draft.pdf'))).toBe(true);
+  });
+
+  test('D-M: non-sniffable text file (CSV) accepts under client filename', async () => {
+    // CSV has no magic bytes — `file-type` returns undefined. SVG fallback
+    // does not match. Pre-D-M this rejected with "Unsupported file type";
+    // post-D-M the file lands on disk and emit-shape dispatch decides
+    // (markdown-link in the client per FR-1a).
+    const csvBuffer = Buffer.from('a,b,c\n1,2,3\n', 'utf-8');
+    const formData = new FormData();
+    formData.append('parentDocName', 'docs/guide.md');
+    formData.append('file', new Blob([csvBuffer]), 'data.csv');
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; src: string };
+    expect(body.src).toBe('data.csv');
+    expect(existsSync(join(contentDir, 'docs', 'data.csv'))).toBe(true);
+  });
+
+  test('FR-8 deprecation shim: /api/upload-image still works', async () => {
+    // The old endpoint forwards to the same handler — clients already in
+    // the field continue to function during the one-release shim window.
+    const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
+    expect(body.deduped).toBe(false);
+    expect(body.src).toBe('screenshot.png');
+  });
+
+  test('NFR-3: SVG extension-fallback preserved — sniff returns image/svg+xml', async () => {
+    const res = await uploadImage(createSvgBuffer(), 'diagram.svg', 'docs/guide.md');
+    expect(res.status).toBe(200);
+    expect(existsSync(join(contentDir, 'docs', 'diagram.svg'))).toBe(true);
+  });
+
+  test('response shape always carries the deduped flag (US-006 forward-compat)', async () => {
+    const res = await uploadImage(createPngBuffer(), 'shot.png', 'docs/guide.md');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toHaveProperty('deduped');
+    expect(body.deduped).toBe(false);
+  });
+});
+
+describe('handleUploadImage — config-driven maxBytes (FR-5)', () => {
+  let tmpDir: string;
+  let contentDir: string;
+  let server: import('node:http').Server;
+  let port: number;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'upload-maxbytes-'));
+    contentDir = join(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    mkdirSync(join(contentDir, 'docs'), { recursive: true });
+    writeFileSync(join(contentDir, 'docs', 'guide.md'), '# Guide');
+
+    const { Hocuspocus } = await import('@hocuspocus/server');
+    const { AgentSessionManager } = await import('./agent-sessions.ts');
+    const { createApiExtension } = await import('./api-extension.ts');
+
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const sessionManager = new AgentSessionManager(hocuspocus);
+    const ext = createApiExtension({
+      hocuspocus,
+      sessionManager,
+      contentDir,
+      getFileIndex: () => new Map(),
+      // Set an artificially small cap so a 200-byte payload trips rejection.
+      getUploadConfig: () => ({
+        attachmentFolderPath: './',
+        emitFormat: 'wikiembed',
+        maxBytes: 100,
+        dedup: { mode: 'same-dir', ui: 'toast' },
+        wikiEmbedExtensions: ['png'],
+      }),
+    });
+
+    const { createServer } = await import('node:http');
+    server = createServer((req, res) => {
+      // biome-ignore lint/suspicious/noExplicitAny: test harness
+      hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
+        if (!res.writableEnded) {
+          res.writeHead(500);
+          res.end('Error');
+        }
+      });
+    });
+
+    hocuspocus.configuration.extensions.push(ext);
+
+    port = await new Promise<number>((res) => {
+      server.listen(0, () => {
+        const addr = server.address();
+        res(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((res) => server.close(() => res()));
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('over-cap upload rejected with byte-size-specific message', async () => {
+    // 250-byte buffer against a 100-byte cap.
+    const big = Buffer.alloc(250, 0x42);
+    const formData = new FormData();
+    formData.append('parentDocName', 'docs/guide.md');
+    formData.append('file', new Blob([big]), 'big.bin');
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as {
+      ok: boolean;
+      error: string;
+      message: string;
+      maxBytes: number;
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('maxBytes');
+    expect(body.maxBytes).toBe(100);
+    // Message must name the configured limit explicitly (P1.3 — no generic
+    // "too large" phrase).
+    expect(body.message).toContain('100');
+  });
+
+  test('under-cap upload still works with custom config', async () => {
+    const tiny = Buffer.from('tiny');
+    const formData = new FormData();
+    formData.append('parentDocName', 'docs/guide.md');
+    formData.append('file', new Blob([tiny]), 'tiny.txt');
+    const res = await fetch(`http://localhost:${port}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    expect(res.status).toBe(200);
   });
 });

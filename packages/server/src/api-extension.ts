@@ -33,6 +33,7 @@ import {
   type HeadingEntry,
   prependFrontmatter,
   stripFrontmatter,
+  type UploadConfig,
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
@@ -164,8 +165,15 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
+// SPEC §6 FR-5 fallback when no `getUploadConfig` is provided. Matches the
+// Zod default in packages/cli/src/config/schema.ts so test harnesses don't
+// have to wire the accessor when they only care about the legacy contract.
+const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+// Retained for the SVG extension-fallback at NFR-3 — see handleUploadImage.
+// `ALLOWED_IMAGE_MIME_TYPES` is the hard-coded reference set; D-M removed
+// the runtime allowlist gate at the upload boundary.
+const _LEGACY_IMAGE_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
+void _LEGACY_IMAGE_MIME_TYPES;
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -196,6 +204,16 @@ export function sanitizeFilename(name: string): string {
   stripped = stripped.replace(/\.+$/, '');
 
   return stripped === '' ? 'upload' : stripped;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
+  if (bytes < 1024) return `${bytes} bytes`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
 }
 
 function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
@@ -447,6 +465,13 @@ export interface ApiExtensionOptions {
   contentDir: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+  /**
+   * Accessor for the resolved upload.* config (SPEC §6 FR-5). When omitted,
+   * the handler falls back to the schema defaults — keeps existing test
+   * harnesses functional without forcing every caller to wire the accessor.
+   * Per-request invocation supports config hot-reload patterns.
+   */
+  getUploadConfig?: () => UploadConfig;
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
@@ -566,6 +591,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sessionManager,
     contentDir,
     getFileIndex,
+    getUploadConfig,
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
@@ -3038,13 +3064,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // SPEC §13: read upload.maxBytes per-request (config hot-reload friendly).
+    const maxBytes = getUploadConfig?.().maxBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
+
     let uploadResult: UploadResult | undefined;
     try {
-      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
+      uploadResult = await readUploadBody(req, maxBytes);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (message === 'Payload too large') {
-        json(res, 413, { ok: false, error: 'Payload too large' });
+        // SPEC P1.3: byte-size-specific message naming both attempted and limit.
+        const attemptedHeader = req.headers['content-length'];
+        const attemptedBytes =
+          typeof attemptedHeader === 'string' ? Number.parseInt(attemptedHeader, 10) : NaN;
+        json(res, 413, {
+          ok: false,
+          error: 'maxBytes',
+          message: Number.isFinite(attemptedBytes)
+            ? `File is ${formatBytes(attemptedBytes)} but the upload limit is ${formatBytes(maxBytes)}.`
+            : `Upload exceeds the configured ${formatBytes(maxBytes)} limit.`,
+          attemptedBytes: Number.isFinite(attemptedBytes) ? attemptedBytes : undefined,
+          maxBytes,
+        });
       } else if (message === 'No file received') {
         json(res, 400, { ok: false, error: 'No file received' });
       } else {
@@ -3100,11 +3141,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Magic bytes check — ignore the client-supplied mimeType entirely
+    // D-M LOCKED accept-all: every file under maxBytes is accepted. The
+    // magic-byte sniff is only consulted to (a) preserve the SVG `<img>`-only
+    // routing for NFR-3 security and (b) recover an extension when the
+    // upload arrived with a generic clipboard filename. Non-sniffable
+    // bytes are accepted under the client-supplied filename.
     const fileTypeResult = await fileTypeFromBuffer(buffer);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes) — check manually
+    // file-type can't detect SVG (text-based, no magic bytes) — check manually.
+    // STOP: this fallback is LOAD-BEARING for NFR-3 — SVG must render via
+    // <img>, never inline DOM. Do not remove without a compensating guard.
     if (!detectedMime) {
       const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
       if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
@@ -3112,24 +3159,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !ALLOWED_MIME_TYPES.has(detectedMime)) {
-      json(res, 400, {
-        ok: false,
-        error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
-      });
-      return;
-    }
 
-    // D8: detect clipboard paste (generic/empty filename) → timestamp stem
+    // D8 / GENERIC_PASTE_NAMES: clipboard paste arrives with synthetic names
+    // ("image.png", "Clipboard 2024-04-21 14:23:45"). Replace with a
+    // timestamp stem so the disk filename is human-meaningful.
     let finalFilename: string;
-    if (!filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename)) {
+    const isGenericPaste = !filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename);
+    if (isGenericPaste) {
       const now = new Date();
       const ts = now
         .toISOString()
         .replace(/[-:T]/g, '')
         .slice(0, 14)
         .replace(/(\d{8})(\d{6})/, '$1-$2');
-      finalFilename = `pasted-${ts}.${detectedExt}`;
+      // Prefer the sniffed extension when present; otherwise try the
+      // client-supplied extname, finally fall back to .bin.
+      const fallbackExt = filename ? extname(filename).slice(1) : '';
+      const ext = detectedExt ?? fallbackExt ?? '';
+      finalFilename = ext === '' ? `pasted-${ts}` : `pasted-${ts}.${ext}`;
     } else {
       finalFilename = sanitizeFilename(filename);
     }
@@ -3139,13 +3186,41 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
-      console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src: destFilename });
+      console.log(
+        JSON.stringify({
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          dedup: false,
+          mime: detectedMime ?? null,
+          size: buffer.length,
+          destPath: relPath,
+          httpStatus: 200,
+        }),
+      );
+      json(res, 200, { ok: true, src: destFilename, deduped: false });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
       json(res, 500, { ok: false, error: 'Failed to save file' });
     }
+  }
+
+  /**
+   * /api/upload-image is a one-release deprecation shim (D-G). It forwards
+   * to handleUploadImage and logs a deprecation notice once per process.
+   */
+  let deprecationLogged = false;
+  async function handleUploadImageDeprecated(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!deprecationLogged) {
+      console.warn(
+        '[upload] /api/upload-image is deprecated; clients should POST to /api/upload (one-release shim — will be removed)',
+      );
+      deprecationLogged = true;
+    }
+    return handleUploadImage(req, res);
   }
 
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
@@ -4268,7 +4343,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload-image': handleUploadImage,
+    '/api/upload': handleUploadImage,
+    // SPEC §6 FR-8 / D-G: one-release deprecation shim. Clients should
+    // migrate to /api/upload; this entry is removed in the next minor.
+    '/api/upload-image': handleUploadImageDeprecated,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
