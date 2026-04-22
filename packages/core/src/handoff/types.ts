@@ -34,6 +34,22 @@ export interface HandoffPayload {
  * `dispatchCursor` on web host as defense-in-depth — the UI filters the
  * Cursor row as always-disabled on web per E4 DIRECTED, so the reason is
  * never surfaced in normal flow.
+ *
+ * **DRIFT WARNING — this union is mirrored inline in four places** for
+ * IPC-channel / bridge-contract isolation reasons (the bridge surfaces cannot
+ * import from `core/handoff/` without pulling the whole handoff package into
+ * the Electron preload bundle). When editing this union, the following sites
+ * MUST be updated in lockstep; TypeScript catches the drift at call-site
+ * boundaries but not at the definitions themselves:
+ *
+ *   1. `packages/desktop/src/shared/ipc-channels.ts` — `HandoffStatsLine.reason`
+ *   2. `packages/desktop/src/shared/bridge-contract.ts` — `OkDesktopBridge.shell.recordHandoff` param
+ *   3. `packages/core/src/desktop-bridge.ts` — canonical `OkDesktopBridge.shell.recordHandoff` param
+ *   4. `packages/app/src/lib/desktop-bridge-types.ts` — renderer-side augmentation
+ *
+ * Review Minor #2 follow-up: a compile-time structural-equivalence assertion
+ * between this canonical union and each inline mirror would close the gap;
+ * for now the breadcrumb keeps future editors from shipping one-of-four.
  */
 export type HandoffFailureReason =
   | 'not-installed'

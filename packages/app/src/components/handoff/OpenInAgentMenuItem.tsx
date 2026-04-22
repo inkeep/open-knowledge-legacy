@@ -311,13 +311,21 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
           <span>{rowState.tooltip.installAction.label}</span>
         </DropdownMenuItem>
         {rowState.tooltip.webFallback ? (
+          // Data-egress disclosure per SPEC §12 R7 — the claude.ai web fallback
+          // is the ONE dispatch path that transmits OK-composed prompt content
+          // off the machine (all other targets resolve via local URL schemes).
+          // "opens in browser with prompt pre-filled" matches the spec-verbatim
+          // hint so users in regulated contexts see the data-path signal at
+          // click time rather than after the fact. `aria-label` composes the
+          // hint into the accessible name so AT users get the same disclosure.
           <DropdownMenuItem
             onSelect={handleWebFallbackClick}
             data-testid={`open-in-agent-web-fallback-${target.id}`}
+            aria-label={`${rowState.tooltip.webFallback.label}, opens in browser with prompt pre-filled`}
           >
             <span className="flex-1">{rowState.tooltip.webFallback.label}</span>
             <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
-              opens in browser
+              opens in browser with prompt pre-filled
             </span>
           </DropdownMenuItem>
         ) : null}
