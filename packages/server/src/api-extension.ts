@@ -553,6 +553,32 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
+/**
+ * Returns true when an Origin header value is permitted to reach /api/* endpoints.
+ *
+ * Allowed:
+ * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
+ * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
+ * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
+ * - http(s)://[::1][:port] — IPv6 loopback
+ *
+ * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
+ */
+function isAllowedApiOrigin(origin: string): boolean {
+  if (origin === 'null') return true; // file:// / packaged Electron renderer
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname === 'localhost' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -4610,21 +4636,33 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
-      // Permissive CORS for /api/*. The server binds to 127.0.0.1 only (per
-      // createServer default), so `*` can't be reached from a remote origin
-      // and the blast radius is limited to other localhost processes. This is
-      // what makes the Electron renderer (served from electron-vite's dev
-      // server OR a `file://` / `resource://` in packaged builds) able to
-      // fetch `http://localhost:<utility-port>/api/*` without CORS errors.
+      // Origin-allowlist CORS for /api/*. Only loopback origins are accepted:
+      // - No Origin header (same-origin browser tab, curl, CLI): passes through.
+      // - Origin "null" (Electron packaged renderer, file:// per Fetch spec §4.3): allowed.
+      // - http(s)://localhost[:port] / 127.x.x.x[:port] / [::1][:port]: allowed.
+      // - Any other Origin: 403 — closes the CSRF door on unauthenticated mutating
+      //   routes (/api/agent-write-md, /api/rollback, /api/manage/delete, etc.)
+      //   without breaking the Electron renderer or local Vite dev servers.
       //
-      // Setting via `setHeader` (not `writeHead`) so handler responses that
-      // call `writeHead(status, { 'Content-Type': ... })` inherit these. The
-      // typeof guard handles unit tests that pass a bare-mock ServerResponse
-      // (several `api-*.test.ts` files stub only `writeHead` + `end`); a
-      // production `http.ServerResponse` always has `setHeader`.
+      // When an allowed Origin is present, it is reflected verbatim in ACAO (not
+      // `*`) so the browser's preflight check passes while non-loopback origins are
+      // still refused by the gate above. `Vary: Origin` prevents cache poisoning.
+      //
+      // Setting via `setHeader` (not `writeHead`) so handler responses that call
+      // `writeHead(status, { ... })` inherit these headers. The typeof guard handles
+      // unit tests that stub only `writeHead` + `end`.
       if (url.startsWith('/api/')) {
+        const origin = request.headers.origin;
+        if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+          response.writeHead(403);
+          response.end('origin-not-allowed');
+          return;
+        }
         if (typeof response.setHeader === 'function') {
-          response.setHeader('Access-Control-Allow-Origin', '*');
+          if (origin !== undefined) {
+            response.setHeader('Access-Control-Allow-Origin', origin);
+            response.setHeader('Vary', 'Origin');
+          }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
           response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
         }

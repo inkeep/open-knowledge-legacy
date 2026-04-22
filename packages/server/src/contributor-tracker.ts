@@ -200,3 +200,12 @@ export function clearContributors(): void {
 export function contributorCount(): number {
   return pendingContributors.size;
 }
+
+/**
+ * Returns true when a writer is already tracked in the pending accumulator.
+ * Used by the onStoreDocument safety-net to avoid overwriting a handler-path
+ * entry with a stub (post-QA review fix — safety-net-metadata-races-handler).
+ */
+export function hasContributor(writerId: string): boolean {
+  return pendingContributors.has(writerId);
+}

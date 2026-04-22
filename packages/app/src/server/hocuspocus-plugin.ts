@@ -197,6 +197,7 @@ try {
     historyRef,
     backlinkIndex,
     getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    getPrincipal: () => loadedPrincipal,
   });
 
   hocuspocus = new Hocuspocus({

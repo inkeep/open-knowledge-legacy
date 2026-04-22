@@ -11,7 +11,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'n
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
   formatOkActor,
   formatWipSubject,
@@ -23,6 +23,7 @@ import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   contributorCount,
+  hasContributor,
   recordContributor,
   restoreContributorEntry,
   restoreContributors,
@@ -62,7 +63,10 @@ const log = getLogger('persistence');
  * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
  * Exported for unit-testing the dispatch table without spinning up a server.
  */
-export function resolveWriterFromOrigin(origin: unknown): WriterIdentity | null {
+export function resolveWriterFromOrigin(
+  origin: unknown,
+  getPrincipal?: () => Principal | null,
+): WriterIdentity | null {
   if (!origin || typeof origin !== 'object') return null;
   const o = origin as Record<string, unknown>;
 
@@ -95,6 +99,19 @@ export function resolveWriterFromOrigin(origin: unknown): WriterIdentity | null 
     const ctx = conn?.context as Record<string, unknown> | undefined;
     if (typeof ctx?.principalId === 'string') {
       const principalId = ctx.principalId as string;
+      // Post-QA review fix: when the claimed principalId matches the loaded
+      // principal record, use the real display_name / display_email (e.g.
+      // git-config user.name) so `ok-actor:` body + Co-Authored-By trailers
+      // mirror the user's git identity. Fall back to a stub only when the
+      // server has no principal loaded or the claim doesn't match.
+      const loaded = getPrincipal?.();
+      if (loaded && loaded.id === principalId) {
+        return {
+          id: loaded.id,
+          name: loaded.display_name,
+          email: loaded.display_email,
+        };
+      }
       return {
         id: principalId,
         name: 'Local User',
@@ -120,6 +137,13 @@ export interface PersistenceOptions {
   backlinkIndex?: BacklinkIndex;
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
+  /**
+   * Accessor for the server's principal record. When a browser connection's
+   * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
+   * emits WriterIdentity with the real display_name / display_email instead
+   * of a "Local User" stub (post-QA review fix).
+   */
+  getPrincipal?: () => Principal | null;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -211,6 +235,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const historyRef = options?.historyRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
   const backlinkIndex = options?.backlinkIndex;
+  const getPrincipal = options?.getPrincipal;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -568,9 +593,24 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // handles human-browser connection writes (US-024) and any other origin
       // that doesn't go through a handler. The call is idempotent: if the
       // handler already recorded the session, only the docs Set is updated.
-      const writer = resolveWriterFromOrigin(lastTransactionOrigin);
+      const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
       if (writer && writer.id !== SERVICE_WRITER.id) {
-        recordContributor(documentName, writer.id, writer.name, writer.id);
+        // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
+        // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
+        // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
+        // the handler-path entry is in the tracker by the time we get here.
+        // The safety-net only fills in for writes that never pass through an
+        // /api/* handler — specifically browser-principal writes (US-024,
+        // `source: 'connection'`). Skipping when the entry already exists
+        // guarantees the stub `Agent (<short>)` displayName can never
+        // overwrite the handler's rich identity under any ordering edge case
+        // (post-restart replay, test harness, future extension ordering changes).
+        if (!hasContributor(writer.id)) {
+          recordContributor(documentName, writer.id, writer.name, writer.id);
+        }
+        // else: entry exists with rich handler-path identity; keep it untouched.
+        // The docs Set is still correct because the handler path recorded this
+        // docName already when it fired recordContributor for this write.
       }
 
       const xmlFragment = document.getXmlFragment('default');

@@ -309,4 +309,55 @@ describe('resolveWriterFromOrigin', () => {
     // session_id path wins over classified-origin path
     expect(writer?.id).toBe('agent-conn-priority');
   });
+
+  test('connection origin matching loaded principal → uses real display_name/email', () => {
+    // Post-QA review fix — Minor 1 (principal-display-name-stub).
+    // When ctx.principalId matches loadedPrincipal.id, resolveWriterFromOrigin
+    // must emit the real git-config display_name/email instead of "Local User".
+    const principalId = 'principal-abc-123';
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId } },
+    };
+    const loaded = {
+      id: principalId,
+      display_name: 'Alice Smith',
+      display_email: 'alice@example.com',
+      source: 'git-config' as const,
+      created_at: '2026-04-22T00:00:00.000Z',
+    };
+    const writer = resolveWriterFromOrigin(origin, () => loaded);
+    expect(writer?.id).toBe(principalId);
+    expect(writer?.name).toBe('Alice Smith');
+    expect(writer?.email).toBe('alice@example.com');
+  });
+
+  test('connection origin with mismatched principalId → stub fallback', () => {
+    // Claim doesn't match loaded principal — emit stub so the caller can see
+    // the attribution fell through (the onAuthenticate pin prevents this in
+    // practice, but resolveWriterFromOrigin should still be safe if reached).
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId: 'principal-different' } },
+    };
+    const loaded = {
+      id: 'principal-loaded',
+      display_name: 'Alice',
+      display_email: 'alice@example.com',
+      source: 'git-config' as const,
+      created_at: '2026-04-22T00:00:00.000Z',
+    };
+    const writer = resolveWriterFromOrigin(origin, () => loaded);
+    expect(writer?.id).toBe('principal-different');
+    expect(writer?.name).toBe('Local User');
+  });
+
+  test('connection origin with getPrincipal returning null → stub fallback', () => {
+    const origin = {
+      source: 'connection',
+      connection: { context: { principalId: 'principal-abc' } },
+    };
+    const writer = resolveWriterFromOrigin(origin, () => null);
+    expect(writer?.name).toBe('Local User');
+  });
 });

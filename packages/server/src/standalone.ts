@@ -225,6 +225,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      getPrincipal: () => loadedPrincipal,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -251,6 +252,16 @@ export function createServer(options: ServerOptions): ServerInstance {
     // with ctx.principalId set. Missing or invalid tokens are silently ignored
     // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
     // like test harness and MCP never send tokens).
+    //
+    // Post-QA review fix (principalId-token-unverified, Consider):
+    // The token is unauthenticated — a rogue browser tab (or a page that
+    // discovers the localhost port + passes the Origin allowlist) could claim
+    // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
+    // when the claim matches the server's loaded principal, and ignore the
+    // claim otherwise (falling back to SERVICE_WRITER via resolveWriterFromOrigin).
+    // This closes attribution-forgery on the single-user loopback deployment
+    // without requiring a signed token. When multi-principal support is ever
+    // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
     const principalAuthExtension: Extension = {
       async onAuthenticate(payload) {
         try {
@@ -259,7 +270,29 @@ export function createServer(options: ServerOptions): ServerInstance {
           const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
           const ctx = payload.context as Record<string, unknown>;
           if (typeof parsed.principalId === 'string') {
-            ctx.principalId = parsed.principalId;
+            // Pin to loaded principal when the claim matches; ignore on mismatch.
+            if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
+              ctx.principalId = loadedPrincipal.id;
+            } else if (loadedPrincipal) {
+              // Claim doesn't match — log at warn and omit principalId so the
+              // write falls through to SERVICE_WRITER. Preserves observability
+              // without letting the claim through.
+              console.warn(
+                JSON.stringify({
+                  event: 'principal-token-mismatch',
+                  claimed: parsed.principalId,
+                  loaded: loadedPrincipal.id,
+                }),
+              );
+            }
+            // When loadedPrincipal is null (not yet loaded), accept the claim
+            // — the async load is best-effort and browser writes need a writer
+            // ID even in the brief pre-load window. Classified writer fallback
+            // happens via resolveWriterFromOrigin when loaded fields aren't
+            // available for display-name lookup.
+            else {
+              ctx.principalId = parsed.principalId;
+            }
           }
           if (typeof parsed.tabSessionId === 'string') {
             ctx.tabSessionId = parsed.tabSessionId;
