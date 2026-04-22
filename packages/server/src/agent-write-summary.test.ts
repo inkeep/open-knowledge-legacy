@@ -10,12 +10,30 @@ describe('normalizeSummary — classification', () => {
     expect(normalizeSummary('')).toEqual({ kind: 'absent' });
   });
 
+  test('whitespace-only string → absent (blank bullet would add zero signal)', () => {
+    // Single spaces, multiple spaces, tabs, newlines, and a mix.
+    expect(normalizeSummary(' ')).toEqual({ kind: 'absent' });
+    expect(normalizeSummary('     ')).toEqual({ kind: 'absent' });
+    expect(normalizeSummary('\t')).toEqual({ kind: 'absent' });
+    expect(normalizeSummary('\n\t \r')).toEqual({ kind: 'absent' });
+  });
+
+  test('non-whitespace-only string with surrounding whitespace → value (preserved verbatim, no trim)', () => {
+    // Intentional padding stays — only entirely-whitespace short-circuits.
+    expect(normalizeSummary('  hi  ')).toEqual({ kind: 'value', value: '  hi  ' });
+  });
+
   test('number → invalid (caller returns 400)', () => {
     expect(normalizeSummary(42)).toEqual({ kind: 'invalid' });
   });
 
   test('object → invalid', () => {
     expect(normalizeSummary({ text: 'hi' })).toEqual({ kind: 'invalid' });
+  });
+
+  test('array → invalid (Array.isArray(raw) is an object in typeof — explicit coverage)', () => {
+    expect(normalizeSummary(['hi'])).toEqual({ kind: 'invalid' });
+    expect(normalizeSummary([])).toEqual({ kind: 'invalid' });
   });
 
   test('null → invalid', () => {

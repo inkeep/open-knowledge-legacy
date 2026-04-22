@@ -226,6 +226,55 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(getMetrics().summariesProvided).toBe(0);
     });
 
+    test('summary whitespace-only string → treated as absent (no blank bullet)', async () => {
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/agent-write-md',
+        {
+          docName: 'test-doc',
+          markdown: '# H\n',
+          position: 'replace',
+          agentId: 'claude-1',
+          agentName: 'Claude',
+          summary: '   \t\n  ',
+        },
+      );
+      expect(response.status).toBe(200);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.summary).toBeUndefined();
+      expect(parsed.hint).toBeUndefined();
+      const m = getMetrics();
+      expect(m.summariesProvided).toBe(0);
+      expect(m.summariesTruncated).toBe(0);
+      // Underlying contributor row should NOT carry a whitespace summary.
+      expect(formatContributors()).not.toContain('"summaries"');
+    });
+
+    test('summary as JSON array → 400 (invalid, not auto-joined)', async () => {
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/agent-write-md',
+        {
+          docName: 'test-doc',
+          markdown: '# H\n',
+          position: 'replace',
+          agentId: 'claude-1',
+          agentName: 'Claude',
+          summary: ['first', 'second'],
+        },
+      );
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+      const m = getMetrics();
+      expect(m.agentWriteCalls).toBe(0);
+      expect(m.summariesProvided).toBe(0);
+      expect(formatContributors()).toBe('');
+    });
+
     test('multiple writes coalesce summaries into a single contributor entry', async () => {
       for (const s of ['First', 'Second', 'Third']) {
         await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-write-md', {

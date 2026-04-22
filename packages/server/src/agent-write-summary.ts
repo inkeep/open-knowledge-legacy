@@ -33,15 +33,21 @@ export type NormalizedSummary =
 /**
  * Normalize a raw body value into a truncated summary or a sentinel.
  *
- * - `undefined` / `''` → `{ kind: 'absent' }`
- * - non-string (number, object, boolean, null) → `{ kind: 'invalid' }`
+ * - `undefined` / `''` / whitespace-only → `{ kind: 'absent' }`
+ * - non-string (number, object, boolean, null, array) → `{ kind: 'invalid' }`
  * - string of length ≤ 80 → `{ kind: 'value', value: raw }`
  * - string of length > 80 → `{ kind: 'value', value: raw.slice(0, 79) + '…', truncatedFrom: raw.length }`
+ *
+ * Whitespace-only values are classified as absent rather than forwarded: a
+ * whitespace string would render as a blank bullet in the TimelinePanel and
+ * inflate the M1 adoption counter with zero signal. Non-whitespace-only
+ * values are preserved verbatim (leading/trailing whitespace intact) — only
+ * the "entirely whitespace" case short-circuits.
  */
 export function normalizeSummary(raw: unknown): NormalizedSummary {
   if (raw === undefined) return { kind: 'absent' };
   if (typeof raw !== 'string') return { kind: 'invalid' };
-  if (raw.length === 0) return { kind: 'absent' };
+  if (raw.length === 0 || raw.trim().length === 0) return { kind: 'absent' };
   if (raw.length <= MAX_SUMMARY_LENGTH) {
     return { kind: 'value', value: raw };
   }

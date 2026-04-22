@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import type { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { register as registerEditDocument } from './edit-document.ts';
@@ -40,15 +41,33 @@ interface ToolResult {
 type Handler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 function createCaptureServer() {
-  const tools: Array<{ name: string; description: string; handler: Handler }> = [];
+  const tools: Array<{
+    name: string;
+    description: string;
+    /** Raw Zod schema object captured at register() time — exposed so
+     *  transport-safety tests can exercise the real Zod runtime guard
+     *  rather than a passthrough. */
+    schema: Record<string, z.ZodTypeAny>;
+    handler: Handler;
+  }> = [];
   const server = {
-    tool(name: string, description: string, _schema: unknown, handler: Handler) {
-      tools.push({ name, description, handler });
+    tool(
+      name: string,
+      description: string,
+      schema: Record<string, z.ZodTypeAny>,
+      handler: Handler,
+    ) {
+      tools.push({ name, description, schema, handler });
     },
   } as unknown as ServerInstance;
   return {
     server,
-    getTool(name: string): { name: string; description: string; handler: Handler } {
+    getTool(name: string): {
+      name: string;
+      description: string;
+      schema: Record<string, z.ZodTypeAny>;
+      handler: Handler;
+    } {
       const t = tools.find((x) => x.name === name);
       if (!t) throw new Error(`Tool ${name} not registered`);
       return t;
@@ -166,7 +185,37 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
       expect(result.content[0]?.text).toContain('Summary truncated from 200 chars to 80');
     });
 
-    test('200-char summary passes Zod validation (transport-safety cap)', async () => {
+    test('Zod schema: summary 200 chars accepted, 201 chars rejected, non-string rejected', () => {
+      // Exercises the real Zod runtime guard captured at register() time —
+      // proves the transport-safety 200-char cap (D21) actually fires,
+      // independent of the HTTP passthrough machinery.
+      const cap = createCaptureServer();
+      registerWriteDocument(cap.server, baseDeps());
+      const summarySchema = cap.getTool('write_document').schema.summary;
+      if (!summarySchema) throw new Error('summary schema missing from write_document');
+
+      // Accepts up-to-cap.
+      expect(summarySchema.safeParse('x'.repeat(200)).success).toBe(true);
+      expect(summarySchema.safeParse('short').success).toBe(true);
+      expect(summarySchema.safeParse(undefined).success).toBe(true); // optional()
+
+      // Rejects over-cap.
+      const over = summarySchema.safeParse('x'.repeat(201));
+      expect(over.success).toBe(false);
+      if (!over.success) {
+        expect(over.error.issues[0]?.code).toBe('too_big');
+      }
+
+      // Rejects non-string at the transport layer (number, object, array).
+      expect(summarySchema.safeParse(42).success).toBe(false);
+      expect(summarySchema.safeParse({ text: 'hi' }).success).toBe(false);
+      expect(summarySchema.safeParse(['hi']).success).toBe(false);
+    });
+
+    test('200-char summary passes through to HTTP body unchanged (server-side truncation, not MCP)', async () => {
+      // The Zod cap is 200 (transport safety). API-side normalizeSummary
+      // truncates to 80 (render bound). This test proves a 200-char summary
+      // survives the MCP layer verbatim — any truncation happens on the server.
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());
       const input = 'x'.repeat(200);
@@ -176,10 +225,6 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
         position: 'append',
         summary: input,
       });
-      // At the MCP layer the arg just passes through — the Zod check is a
-      // runtime guardrail covered by the Zod schema registration. Here we
-      // simply assert the 200-char string reached the HTTP body without
-      // being truncated at the MCP layer (truncation is server-side).
       expect(recordedRequest?.body.summary).toBe(input);
       expect(result.isError).toBeUndefined();
     });
