@@ -65,6 +65,7 @@ import type { Position } from 'unist';
  */
 export const PROMOTED_MDAST_TYPES = [
   'wikiLink',
+  'wikiLinkEmbed',
   'mdxJsxFlowElement',
   'mdxJsxTextElement',
   'rawMdxFallback',

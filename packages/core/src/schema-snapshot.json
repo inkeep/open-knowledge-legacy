@@ -164,6 +164,26 @@
       "inline": true,
       "atom": true
     },
+    "wikiLinkEmbed": {
+      "attrs": {
+        "target": {
+          "hasDefault": true
+        },
+        "alias": {
+          "hasDefault": true
+        },
+        "anchor": {
+          "hasDefault": true
+        },
+        "resolved": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
+    },
     "list": {
       "attrs": {
         "ordered": {
@@ -288,6 +308,7 @@
     "rawMdxFallback",
     "jsxInline",
     "wikiLink",
+    "wikiLinkEmbed",
     "list",
     "listItem",
     "emphasis",

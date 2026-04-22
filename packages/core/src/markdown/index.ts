@@ -51,7 +51,7 @@ import type {
   MdxTextExpression,
 } from 'mdast-util-mdx';
 import type { Processor } from 'unified';
-import type { WikiLinkMdast } from './mdast-augmentation.ts';
+import type { WikiLinkEmbedMdast, WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
 import {
   createParseProcessor,
@@ -597,6 +597,21 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       });
   }
 
+  // SPEC §6 FR-3c: wiki-embed mdast → PM. Storage shape is attrs-only —
+  // the renderer decides image vs plain-link vs typed-component (Phase 2
+  // per D-F) based on target extension at render time. The mdast→PM path
+  // does not consult the basename index; `resolved` defaults false and
+  // the server-side renderer flips it once the index lookup succeeds.
+  if (n.wikiLinkEmbed) {
+    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast) =>
+      n.wikiLinkEmbed.createAndFill({
+        target: node.data?.target ?? '',
+        alias: node.data?.alias ?? null,
+        anchor: node.data?.anchor ?? null,
+        resolved: false,
+      });
+  }
+
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
   // yaml + toml are pre-ignored by the library — correct behavior
 
@@ -881,6 +896,25 @@ function buildPmToMdastHandlers(schema: Schema): {
       const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
       return {
         type: 'wikiLink' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
+    };
+  }
+
+  // SPEC §6 FR-3c reverse: PM wikiLinkEmbed → mdast. The `resolved` attr
+  // is render-layer state (populated by the basename index at render
+  // time) and doesn't flow back into mdast — serialization is lossless
+  // over target/anchor/alias.
+  if (n.wikiLinkEmbed) {
+    nodeHandlers.wikiLinkEmbed = (pmNode: PmNode) => {
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLinkEmbed' as const,
         value: label,
         data: { target, anchor, alias },
         children: [{ type: 'text' as const, value: label }],

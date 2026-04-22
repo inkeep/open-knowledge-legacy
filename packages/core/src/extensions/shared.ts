@@ -21,6 +21,7 @@ import { List, ListItem } from './list.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
+import { WikiLinkEmbed } from './wiki-link-embed.ts';
 
 export const sharedExtensions = [
   // JsxComponent MUST be before StarterKit so its schema is registered.
@@ -31,6 +32,8 @@ export const sharedExtensions = [
   JsxInline,
   // WikiLink also needs to register before StarterKit.
   WikiLink,
+  // WikiLinkEmbed sits next to WikiLink — same priority ordering concern.
+  WikiLinkEmbed,
   // Unified list extension (D15) — replaces BulletListFidelity, OrderedListFidelity,
   // ListItemFidelity, TaskList, TaskItem with a single list+listItem NodeSpec.
   List,
