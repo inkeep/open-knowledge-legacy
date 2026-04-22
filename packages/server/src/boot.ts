@@ -22,12 +22,6 @@
  */
 import type { Server as HttpServer } from 'node:http';
 
-// Re-export `toBroadcasterKey` so existing callers (test harnesses, direct
-// imports from `./boot.ts`) keep working after the helper was consolidated
-// into `./agent-id.ts`. Canonical definition lives in `agent-id.ts` alongside
-// the `AGENT_ID_RE` validator — both concerns are one contract.
-export { toBroadcasterKey } from './agent-id.ts';
-
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';

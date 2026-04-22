@@ -385,8 +385,6 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
  */
 import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
-export { UploadWriteError, type UploadWriteReason };
-
 interface UploadResult {
   filename: string;
   mimeType: string;

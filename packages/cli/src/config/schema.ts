@@ -1,7 +1,4 @@
 import {
-  type DedupMode as CoreDedupMode,
-  type DedupUIMode as CoreDedupUIMode,
-  type EmitFormat as CoreEmitFormat,
   type UploadConfig as CoreUploadConfig,
   DEFAULT_UPLOAD_CONFIG,
 } from '@inkeep/open-knowledge-core';
@@ -38,7 +35,7 @@ export type FolderRule = z.infer<typeof FolderRuleSchema>;
 // drifting apart when either side was edited in isolation.
 const DEFAULT_WIKI_EMBED_EXTENSIONS: readonly string[] = DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions;
 
-export const UploadDedupSchema = z
+const UploadDedupSchema = z
   .object({
     mode: z.enum(['off', 'same-dir']).default('same-dir'),
     ui: z.enum(['silent', 'toast', 'confirm']).default('toast'),
@@ -85,10 +82,7 @@ export const UploadConfigSchema = z
 // deliberately NOT identical. Compile-time safety for the resolved shape
 // lives in `resolveUploadConfig`'s return type — if any field drifts,
 // the return-type annotation fails TypeScript.
-export type UploadConfig = CoreUploadConfig;
-export type EmitFormat = CoreEmitFormat;
-export type DedupMode = CoreDedupMode;
-export type DedupUIMode = CoreDedupUIMode;
+type UploadConfig = CoreUploadConfig;
 
 // Narrow sanity check: the four always-resolved fields on the Zod shape
 // must still match the resolved type. attachmentFolderPath + emitFormat

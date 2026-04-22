@@ -30,7 +30,7 @@ import {
 import { type DispatchCursorDeps, dispatchCursor } from './cursor-two-step.ts';
 import { type OpenExternalDeps, openExternal } from './open-external.ts';
 
-export interface DispatchHandoffDeps {
+interface DispatchHandoffDeps {
   /** Forwarded to `openExternal` for Claude/Codex (and step 2 of Cursor). */
   readonly openExternalDeps?: OpenExternalDeps;
   /** Forwarded to `dispatchCursor`. */

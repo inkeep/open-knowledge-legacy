@@ -72,7 +72,7 @@ export function defaultProbeDeps(): ProbeDeps {
   };
 }
 
-export interface UseInstalledAgentsResult {
+interface UseInstalledAgentsResult {
   states: Record<HandoffTarget, InstallState>;
   refresh: () => Promise<void>;
 }

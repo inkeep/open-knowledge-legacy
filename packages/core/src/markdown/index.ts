@@ -86,7 +86,7 @@ interface MarkdownManagerOptions {
  * they read live context at invocation time. `parse()` sets `current`
  * before dispatching and clears it in a `finally` block — see US-013.
  */
-export interface ParseContext {
+interface ParseContext {
   /**
    * Resolver used by `handlers.wikiLinkEmbed` to map an embed target
    * (e.g. `photo.png`) to a disk-relative path (`attachments/photo.png`).

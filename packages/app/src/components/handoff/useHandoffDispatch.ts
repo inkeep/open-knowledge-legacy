@@ -281,7 +281,7 @@ export function defaultHandoffDispatchDeps(): HandoffDispatchDeps {
  * Result of the hook. A single `dispatch` callback wraps the pure helper with
  * production deps; all three UI surfaces call this to land a dispatch (AC9).
  */
-export interface UseHandoffDispatchResult {
+interface UseHandoffDispatchResult {
   dispatch: (target: HandoffTarget, input: HandoffDispatchInput) => Promise<HandoffOutcome>;
 }
 

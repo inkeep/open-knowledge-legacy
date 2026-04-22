@@ -28,7 +28,7 @@ import type { ContentFilter } from './content-filter.ts';
 import { isSupportedAssetFile } from './doc-extensions.ts';
 
 /** Classification of why a particular entry was skipped during the walk. */
-export type SeedSkipReason =
+type SeedSkipReason =
   | 'read-failed'
   | 'lstat-failed'
   | 'realpath-failed'
