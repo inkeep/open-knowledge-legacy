@@ -66,14 +66,14 @@ export function toastBBody(version: string): string {
  * subscription logic in `attachUpdateSubscribers` can be unit-tested with a
  * mock without invoking sonner's DOM side-effects.
  */
-export type ToastFn = (body: string, opts: ToastOpts) => void;
+type ToastFn = (body: string, opts: ToastOpts) => void;
 
 /**
  * Sonner error-toast variant — used for the Major #3 relaunch-failed
  * surface. Decoupled from `ToastFn` so tests can assert which variant was
  * called (normal vs error). Production wires both to sonner functions.
  */
-export type ToastErrorFn = (body: string, opts: { id: string; duration?: number }) => void;
+type ToastErrorFn = (body: string, opts: { id: string; duration?: number }) => void;
 
 export interface ToastOpts {
   duration: number;

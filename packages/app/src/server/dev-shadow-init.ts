@@ -29,7 +29,7 @@ export interface DevShadowInitIo {
 }
 
 /** Production IO — injected by default inside the plugin. */
-export const defaultDevShadowInitIo: DevShadowInitIo = {
+const defaultDevShadowInitIo: DevShadowInitIo = {
   logInfo: (msg) => console.log(msg),
   logWarn: (msg, err) => (err === undefined ? console.warn(msg) : console.warn(msg, err)),
   exit: (code) => process.exit(code) as never,
@@ -64,12 +64,12 @@ export function handleDevShadowInitError(err: unknown, io: DevShadowInitIo): voi
  * Injectable `deps` let tests stub the two @inkeep/open-knowledge-server
  * primitives; production passes the real ones.
  */
-export interface DevShadowInitDeps {
+interface DevShadowInitDeps {
   ensureProjectGit: typeof ensureProjectGit;
   initShadowRepo: typeof initShadowRepo;
 }
 
-export const defaultDevShadowInitDeps: DevShadowInitDeps = {
+const defaultDevShadowInitDeps: DevShadowInitDeps = {
   ensureProjectGit,
   initShadowRepo,
 };

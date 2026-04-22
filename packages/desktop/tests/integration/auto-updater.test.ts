@@ -26,15 +26,19 @@ import {
   type IpcMainLike,
   isClassifiedUpdaterError,
   releaseUrlFor,
-  type SendTarget,
   STUCK_HINT_DOWNLOAD_URL,
   STUCK_HINT_THRESHOLD_MS,
   startAutoUpdater,
   UPDATE_CHECK_INTERVAL_MS,
   type UpdaterLike,
 } from '../../src/main/auto-updater.ts';
-import type { AppState } from '../../src/main/state-store.ts';
-import { emptyState } from '../../src/main/state-store.ts';
+import { type AppState, emptyState } from '../../src/main/state-store.ts';
+import type { SendableWebContents } from '../../src/shared/ipc-send.ts';
+
+/** Narrow window-like shape used in tests — mirrors the production `getPrimaryWindow` return type. */
+interface SendTarget {
+  webContents: SendableWebContents;
+}
 
 // ————————————————————————————————————————————————————————
 // Fakes
@@ -87,10 +91,10 @@ interface CapturedSend {
 function makeFakeWindow(captured: CapturedSend[]): SendTarget {
   return {
     webContents: {
-      send: (channel: string, payload: unknown) => {
-        captured.push({ channel, payload });
+      send: (channel: string, ...args: unknown[]) => {
+        captured.push({ channel, payload: args[0] });
       },
-    } as unknown as SendTarget['webContents'],
+    },
   };
 }
 

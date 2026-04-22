@@ -8,22 +8,13 @@
  * closures must retain the wrapped-listener reference for
  * `ipcRenderer.removeListener` to match).
  *
- * Main-process dispatch goes through one of two typed factories:
- *   - `createSender(getWindows)` — fan-out to every target from
- *     `getWindows()`. Use for channels that every open BrowserWindow should
- *     react to (e.g., menu-action, project-switched).
- *   - `createSingleSender(getTarget)` — deliver to ONE target from
- *     `getTarget()`. Use for channels that must not duplicate across
- *     multiple BrowserWindows (e.g., M3 update toasts under D24 multi-
- *     window mode, where fan-out would render N independent toasts with N
- *     "Relaunch now" buttons).
- *
- * Both factories mirror `createHandler` / `createInvoker`. Direct
- * `webContents.send(...)` calls are banned outside this file by the D19
- * lint rule in `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
+ * Main-process dispatch goes through `sendToRenderer` in `./ipc-send.ts` —
+ * the D19 typed wrapper that's the canonical path for main→renderer push
+ * events. Direct `webContents.send(...)` calls are banned outside allowlisted
+ * wrapper files by the D19 lint rule in
+ * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */
 
-import type { WebContents } from 'electron';
 import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
 
 export interface EventChannels {
@@ -59,61 +50,4 @@ export interface EventChannels {
    * the user at the manual-download page. Fires at most once per installation.
    */
   'ok:update:stuck-hint': { payload: { downloadUrl: string } };
-}
-
-export type EventChannelName = keyof EventChannels;
-
-/**
- * Minimum shape the sender needs — `webContents.send(channel, payload)`.
- * `BrowserWindow` satisfies this structurally, as does any mock-object in
- * tests. Accepting the wider `WebContents` type from electron keeps the
- * production call site honest.
- */
-export interface SendTarget {
-  webContents: Pick<WebContents, 'send'>;
-}
-
-/**
- * Build a typed sender that fan-outs an EventChannels-declared event to
- * every target returned by `getTargets()` (e.g., `BrowserWindow.getAllWindows`).
- *
- * Channel name + payload shape are type-checked against the EventChannels
- * map — a typo on the channel literal fails at compile time, which is the
- * guarantee direct `webContents.send(...)` calls cannot provide.
- *
- * Usage:
- * ```ts
- * const send = createSender(() => BrowserWindow.getAllWindows());
- * send('ok:update:downloaded', { version: '0.3.1' });
- * ```
- *
- * D19: this is the only place in `packages/desktop/src/` (outside the
- * allowlist) where `webContents.send` is legal. The lint rule
- * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` enforces it.
- */
-export function createSender(getTargets: () => readonly SendTarget[]) {
-  return <K extends EventChannelName>(channel: K, payload: EventChannels[K]['payload']): void => {
-    for (const target of getTargets()) {
-      target.webContents.send(channel, payload);
-    }
-  };
-}
-
-/**
- * Build a typed sender that delivers an EventChannels-declared event to a
- * SINGLE target returned by `getTarget()`. Companion to `createSender` for
- * channels that must not fan-out across multiple BrowserWindows — update-
- * toast channels under D24 multi-window mode would otherwise render N
- * independent toasts with N "Relaunch now" buttons (see `auto-updater.ts`).
- *
- * `getTarget()` may return `null` when no suitable window is open — the
- * returned sender no-ops in that case. Production wires this to
- * `() => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null`.
- */
-export function createSingleSender(getTarget: () => SendTarget | null) {
-  return <K extends EventChannelName>(channel: K, payload: EventChannels[K]['payload']): void => {
-    const target = getTarget();
-    if (!target) return;
-    target.webContents.send(channel, payload);
-  };
 }

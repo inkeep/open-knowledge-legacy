@@ -26,8 +26,9 @@
  */
 
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
-import { createSingleSender, type SendTarget } from '../shared/ipc-events.ts';
+import type { EventChannels } from '../shared/ipc-events.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { type SendableWebContents, sendToRenderer } from '../shared/ipc-send.ts';
 import type { AppState } from './state-store.ts';
 
 // ————————————————————————————————————————————————————————
@@ -65,7 +66,7 @@ export interface UpdaterLike {
 export interface IpcMainLike extends Pick<IpcMain, 'handle' | 'removeHandler'> {}
 
 /** Injectable `setInterval` / `clearInterval` for deterministic tests. */
-export interface Clock {
+interface Clock {
   setInterval(cb: () => void, ms: number): ReturnType<typeof setInterval>;
   clearInterval(handle: ReturnType<typeof setInterval>): void;
 }
@@ -87,7 +88,7 @@ export type DispatchKind =
   | 'relaunch-now'
   | 'skipped-dev-mode';
 
-export interface StartAutoUpdaterOpts {
+interface StartAutoUpdaterOpts {
   updater: UpdaterLike;
   ipcMain: IpcMainLike;
   readState: () => AppState;
@@ -102,7 +103,7 @@ export interface StartAutoUpdaterOpts {
    * to the first open window when none is focused). Returns null if no
    * window is open — broadcast is a no-op.
    */
-  getPrimaryWindow: () => SendTarget | null;
+  getPrimaryWindow: () => { webContents: SendableWebContents } | null;
   getAppVersion: () => string;
   isPackaged: boolean;
   /** True when `OK_UPDATER_FORCE_DEV=1` — lets Tier-2 smoke harness opt in. */
@@ -134,7 +135,7 @@ export interface StartAutoUpdaterHandle {
   destroy(): void;
 }
 
-export interface Logger {
+interface Logger {
   info(msg: string, ctx?: object): void;
   warn(msg: string, ctx?: object): void;
   error(msg: string, ctx?: object): void;
@@ -222,20 +223,25 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
 
   /**
    * Send an update event to a single window (D24 multi-window fan-out fix).
-   * Routes through `createSingleSender` — the typed D19 companion to
-   * `createSender` for channels that must not fan-out. Fan-out would render
+   * Routes through `sendToRenderer` — the canonical D19 main→renderer wrapper
+   * (also used by window-manager for `ok:git-init-notice`). We target ONE
+   * window (not `BrowserWindow.getAllWindows()`) because fan-out would render
    * N independent toasts across N editor windows with N "Relaunch now"
    * buttons. When no window is open (unusual — updater is wired after the
-   * first window opens), the sender no-ops; the state gate still arms so
+   * first window opens), the broadcast no-ops; the state gate still arms so
    * the event doesn't re-emit repeatedly once a window opens.
    */
-  const broadcast = createSingleSender(() => {
+  const broadcast = <K extends keyof EventChannels>(
+    channel: K,
+    payload: EventChannels[K]['payload'],
+  ): void => {
     const target = getPrimaryWindow();
     if (!target) {
       logger.debug('broadcast skipped — no primary window');
+      return;
     }
-    return target;
-  });
+    sendToRenderer(target.webContents, channel, payload);
+  };
 
   /**
    * Persist state, swallowing any I/O error so the caller can treat a failed
