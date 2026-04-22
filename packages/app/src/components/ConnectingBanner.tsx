@@ -4,9 +4,9 @@
  * Three modes (see `computeBannerMode`):
  *   (1) **Hidden** — either `collabUrl` resolved, or we're still inside the
  *       grace window on a fresh mount. The grace window prevents a banner
- *       flash on healthy page loads: in `bun run dev` mode `/api/config`
- *       returns 404 and falls back to same-origin in ~50ms — showing
- *       "Connecting…" for 50ms is pure noise.
+ *       flash on healthy page loads: `/api/config` resolves in ~50ms under
+ *       both `ok ui` and `bun run dev` — showing "Connecting…" for 50ms is
+ *       pure noise.
  *   (2) **Retrying** — `useCollabUrl()` has not yet resolved after the grace
  *       period; the hook is polling `/api/config` with bounded exponential
  *       backoff. Amber banner.
