@@ -27,6 +27,15 @@ import { basename, join, resolve } from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const STDERR_TAIL_LINES = 40;
+/**
+ * Grace window between SIGTERM (requested on timeout) and SIGKILL (escalation).
+ * Electron's main process can stall SIGTERM when it is blocked on a hung
+ * utility IPC or a deadlocked renderer, leaving the app alive after the
+ * driver has returned. 2 s is enough for a cooperating process to drain and
+ * short enough that the human watching the driver doesn't see the shell
+ * prompt lag.
+ */
+const KILL_ESCALATION_GRACE_MS = 2_000;
 
 /**
  * Parse CLI args — single positional (dmg or .app path). Exported for tests.
@@ -124,6 +133,7 @@ export async function resolveAppPath(inputPath, deps = {}) {
 export async function spawnAppWithEnv(appPath, outPath, deps = {}) {
   const spawnImpl = deps.spawn ?? spawn;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const killEscalationMs = deps.killEscalationMs ?? KILL_ESCALATION_GRACE_MS;
   const setTimeoutImpl = deps.setTimeout ?? setTimeout;
   const clearTimeoutImpl = deps.clearTimeout ?? clearTimeout;
 
@@ -146,10 +156,12 @@ export async function spawnAppWithEnv(appPath, outPath, deps = {}) {
 
   return await new Promise((resolvePromise) => {
     let settled = false;
+    let sigkillTimer = null;
     const settle = (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeoutImpl(timer);
+      if (sigkillTimer) clearTimeoutImpl(sigkillTimer);
       resolvePromise({ exitCode, stderr: stderrChunks.join('') });
     };
     const timer = setTimeoutImpl(() => {
@@ -158,7 +170,18 @@ export async function spawnAppWithEnv(appPath, outPath, deps = {}) {
       } catch {
         // already gone
       }
-      settle(null);
+      // Escalate to SIGKILL after a grace period — Electron's main process can
+      // ignore SIGTERM when stuck in a deadlocked state, leaving the app alive
+      // after the driver has returned. Don't settle until the SIGKILL fires so
+      // the parent shell sees the orphan cleanup happen.
+      sigkillTimer = setTimeoutImpl(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // already gone
+        }
+        settle(null);
+      }, killEscalationMs);
     }, timeoutMs);
     child.on('exit', (code) => settle(code));
     child.on('error', () => settle(null));
@@ -172,9 +195,10 @@ async function resolveExecutable(appPath, deps = {}) {
     await statImpl(exec);
     return exec;
   } catch {
-    // Fall back to Info.plist parse — but the default naming is
-    // "<basename>.app/Contents/MacOS/<basename>" which is what Electron
-    // produces. A missing binary is a packaging bug worth surfacing.
+    // Electron + electron-builder produces `<basename>.app/Contents/MacOS/<basename>`.
+    // A missing binary at that path is a packaging mismatch (renamed productName
+    // without updating the `.app` basename, corrupt build output) — surface it
+    // verbatim rather than masking with a CFBundleExecutable fallback.
     throw new Error(`Executable not found at ${exec}`);
   }
 }
@@ -234,7 +258,18 @@ export async function runDriver(argv, deps = {}) {
 
     const result = await readSmokeResult(outPath, deps);
     if (!result) {
-      errStream('verify-keyring: smoke never wrote output file.\n');
+      // Two distinct shapes collapse into this branch: (1) the utility
+      // crashed or exited before `runKeyringSmoke()` completed, so no file
+      // was written; (2) the smoke completed but `writeSmokeResult` failed
+      // (EACCES/ENOSPC on the OUT path's parent dir) and the utility logged
+      // + continued per the SPEC US-005 non-fatal write-failure path. Name
+      // both so the operator knows where to look.
+      errStream(
+        'verify-keyring: smoke result file never appeared. Either the app ' +
+          'exited before the smoke finished, or the smoke completed but the ' +
+          "output write failed — check the parent dir's permissions on the " +
+          'OUT path and the stderr tail below.\n',
+      );
       errStream(formatStderrTail(stderr));
       return 3;
     }

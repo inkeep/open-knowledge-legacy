@@ -62,10 +62,15 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
   });
 
   test('on init message: imports server, calls bootServer with M1 opt-outs, posts ready', async () => {
+    // `didGitInit` is part of the `UtilityReadyMessage` IPC contract (required
+    // field). Pin it to an explicit value on the fake so the assertion below
+    // locks the shape — deep equality between the asserted object and an
+    // implicit-undefined field can mask a production rename of the field.
     const fakeBooted = {
       port: 51234,
       destroy: mock(() => Promise.resolve()),
       degraded: [] as readonly string[],
+      didGitInit: false,
     };
     const bootServer = mock(() => Promise.resolve(fakeBooted));
     const importServer = mock(() =>
@@ -99,6 +104,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     expect(ready.type).toBe('ready');
     expect(ready.port).toBe(51234);
     expect(ready.apiOrigin).toBe('http://localhost:51234');
+    expect(ready.didGitInit).toBe(false);
 
     // Asserts the M1 opt-outs (D36)
     const callArgs = bootServer.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
@@ -110,6 +116,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       type: 'ready',
       port: 51234,
       apiOrigin: 'http://localhost:51234',
+      didGitInit: false,
     });
   });
 

@@ -147,8 +147,14 @@ describe('runDriver (full orchestration)', () => {
     });
     const code = await runDriver(['node', 'script', '/tmp/app.app'], deps);
     expect(code).toBe(3);
-    expect(deps.messages.stderr.join('')).toContain('smoke never wrote output');
-    expect(deps.messages.stderr.join('')).toContain('dying early');
+    const errOut = deps.messages.stderr.join('');
+    // Exit-3 stderr must name BOTH shapes collapsed into this branch —
+    // "exited before the smoke finished" (pre-smoke crash) and "output write
+    // failed" (smoke ran but writeSmokeResult threw). See SPEC US-005's
+    // non-fatal-write-failure path.
+    expect(errOut).toContain('exited before the smoke finished');
+    expect(errOut).toContain('output write failed');
+    expect(errOut).toContain('dying early');
   });
 
   test('exit 2: bad argv', async () => {

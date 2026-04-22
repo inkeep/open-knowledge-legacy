@@ -117,9 +117,12 @@ export interface OkUpdateStuckHintInfo {
 
 /**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
- * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`.
- * Duplicated here (not imported) because core has no dep on desktop; the two
- * shapes are kept in sync by `tests/integration/bridge-contract.test.ts`.
+ * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
+ * (identical field set). Duplicated here (not imported) because core has no
+ * dep on desktop. Drift across the three copies (desktop, core, app) is
+ * caught by the `M1 invariant: bridge contract drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts`, which walks the
+ * interface body of each file and asserts field-name set equality.
  */
 export interface OkKeyringSmokeResult {
   ok: boolean;

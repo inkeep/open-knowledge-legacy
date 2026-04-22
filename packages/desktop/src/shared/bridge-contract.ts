@@ -2,10 +2,13 @@
  * `window.okDesktop` bridge contract — desktop-side canonical source.
  *
  * The same shape is also defined at `@inkeep/open-knowledge-core`'s
- * `desktop-bridge.ts` so that the app package (which consumes the window
- * global) can import the type via its existing core dependency. The two
- * definitions are kept in sync by a contract-equality test
- * (`tests/integration/bridge-contract.test.ts`, added in US-010).
+ * `desktop-bridge.ts` (consumed by the app package via its existing core
+ * dependency) and app-locally at `packages/app/src/lib/desktop-bridge-types.ts`.
+ * Drift across the three copies is caught by the `M1 invariant: bridge
+ * contract drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts`, which asserts
+ * top-level `OkDesktopBridge` member parity AND the `KeyringSmokeResult` /
+ * `OkKeyringSmokeResult` field shape across all three files.
  *
  * Why duplicated: moving the types to core's `exports` map + re-exports from
  * the core barrel pulls core's full compilation tree (markdown, CRDT bridge,

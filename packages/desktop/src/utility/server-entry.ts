@@ -307,6 +307,16 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         });
       }
     }
+    // Observability-only IPC for the dev-mode auto-smoke path — `correlationId:
+    // 'auto-boot'` will never match a pending entry in the main-side relay's
+    // correlation Map (the renderer doesn't register 'auto-boot' as a pending
+    // id), so `handleUtilityMessage` drops it on the floor. We still post it
+    // because: (a) SPEC US-005 mandates the IPC regardless of EXIT mode, (b)
+    // an existing test pins the shape, and (c) a future DevTools listener
+    // that wants to watch auto-boot results can filter on the sentinel id
+    // without a server-entry code change. Under EXIT=1 the post is best-effort
+    // fire-and-forget (the process is about to exit); the driver script reads
+    // the OUT file, not this IPC.
     deps.parentPort?.postMessage({
       type: 'debug-keyring-smoke-result',
       correlationId: 'auto-boot',
