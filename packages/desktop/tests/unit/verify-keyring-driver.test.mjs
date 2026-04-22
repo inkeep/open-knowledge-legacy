@@ -194,4 +194,145 @@ describe('runDriver (full orchestration)', () => {
     expect(code).toBe(1);
     expect(deps.messages.stderr.join('')).toContain('No .app bundle found');
   });
+
+  test('signal handlers registered during run, removed on clean exit', async () => {
+    const registered = [];
+    const removed = [];
+    const proc = {
+      once: (sig, cb) => registered.push({ sig, cb }),
+      removeListener: (sig, cb) => removed.push({ sig, cb }),
+      exit: () => {
+        throw new Error('unexpected exit call on clean path');
+      },
+    };
+    const deps = fakeDeps({ process: proc });
+    await runDriver(['node', 'script', '/tmp/app.app'], deps);
+    // Both signals registered at run entry
+    expect(registered.map((r) => r.sig).sort()).toEqual(['SIGINT', 'SIGTERM']);
+    // Both removed on finally — no listener-count leak across repeated runs
+    expect(removed.map((r) => r.sig).sort()).toEqual(['SIGINT', 'SIGTERM']);
+    // Same handler refs registered + removed (correctness of cleanup)
+    for (const reg of registered) {
+      const match = removed.find((r) => r.sig === reg.sig && r.cb === reg.cb);
+      expect(match).toBeDefined();
+    }
+  });
+
+  test('SIGINT fires cleanup (rm + resolvedApp.cleanup) then exits 130', async () => {
+    let sigintHandler;
+    const exits = [];
+    const proc = {
+      once: (sig, cb) => {
+        if (sig === 'SIGINT') sigintHandler = cb;
+      },
+      removeListener: () => {},
+      exit: (code) => exits.push(code),
+    };
+    let runCommandCalls = 0;
+    const runCommand = mock(async (cmd) => {
+      runCommandCalls += 1;
+      // Simulate .dmg path so resolvedApp.cleanup has work to do (detach)
+      if (cmd === 'hdiutil' && runCommandCalls === 1) return; // attach
+      if (cmd === 'hdiutil' && runCommandCalls === 2) return; // detach (normal finally)
+    });
+    const rm = mock(async () => {});
+    const deps = fakeDeps({
+      process: proc,
+      runCommand,
+      rm,
+      // Inject a spawn that never exits so we can fire SIGINT before normal finally
+      spawn: () => {
+        // Fire SIGINT synchronously after spawn "starts"
+        setImmediate(() => sigintHandler?.());
+        return {
+          on: () => {},
+          kill: () => {},
+          stderr: { on: () => {} },
+          stdout: { on: () => {} },
+        };
+      },
+      // Keep the run from timing out normally — test controls termination via SIGINT.
+      timeoutMs: 60_000,
+    });
+    // Don't await — runDriver's promise will never resolve because we're
+    // simulating signal-driven exit. Fire SIGINT via setImmediate above.
+    const runPromise = runDriver(['node', 'script', '/tmp/foo.dmg'], deps);
+    // Let the event loop drain so the setImmediate + signal cleanup runs
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(exits).toEqual([130]);
+    expect(rm).toHaveBeenCalled();
+    // Cleanup message surfaced
+    expect(deps.messages.stderr.join('')).toContain('received SIGINT');
+
+    // Prevent the dangling runPromise from causing an unhandled rejection —
+    // we deliberately short-circuited runDriver before it could resolve.
+    runPromise.catch(() => {});
+  });
+
+  test('SIGTERM exits 143', async () => {
+    let sigtermHandler;
+    const exits = [];
+    const proc = {
+      once: (sig, cb) => {
+        if (sig === 'SIGTERM') sigtermHandler = cb;
+      },
+      removeListener: () => {},
+      exit: (code) => exits.push(code),
+    };
+    const deps = fakeDeps({
+      process: proc,
+      spawn: () => {
+        setImmediate(() => sigtermHandler?.());
+        return {
+          on: () => {},
+          kill: () => {},
+          stderr: { on: () => {} },
+          stdout: { on: () => {} },
+        };
+      },
+      timeoutMs: 60_000,
+    });
+    const runPromise = runDriver(['node', 'script', '/tmp/app.app'], deps);
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(exits).toEqual([143]);
+    expect(deps.messages.stderr.join('')).toContain('received SIGTERM');
+    runPromise.catch(() => {});
+  });
+
+  test('signal handler is idempotent — double-fire exits once', async () => {
+    let sigintHandler;
+    const exits = [];
+    const proc = {
+      once: (sig, cb) => {
+        if (sig === 'SIGINT') sigintHandler = cb;
+      },
+      removeListener: () => {},
+      exit: (code) => exits.push(code),
+    };
+    const deps = fakeDeps({
+      process: proc,
+      spawn: () => {
+        setImmediate(() => {
+          sigintHandler?.();
+          sigintHandler?.(); // second fire — guarded by signalHandled
+        });
+        return {
+          on: () => {},
+          kill: () => {},
+          stderr: { on: () => {} },
+          stdout: { on: () => {} },
+        };
+      },
+      timeoutMs: 60_000,
+    });
+    const runPromise = runDriver(['node', 'script', '/tmp/app.app'], deps);
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(exits).toEqual([130]); // single exit despite two signal fires
+    runPromise.catch(() => {});
+  });
 });

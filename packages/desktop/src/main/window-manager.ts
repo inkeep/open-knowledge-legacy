@@ -227,6 +227,15 @@ export interface WindowManagerDeps {
    * expected to narrow by `msg.type` and no-op on unknown shapes.
    */
   onUtilityMessage?(msg: unknown): void;
+  /**
+   * Notified whenever a utility process emits `exit` (normal shutdown OR
+   * crash). The debug-ipc relay uses this to cancel any pending
+   * `debug-keyring-smoke` requests that were posted to this utility —
+   * otherwise those entries sit in the pending Map until their per-request
+   * timeout fires. Called with the same `utility` reference that was passed
+   * to `onUtilityMessage`, so the consumer can identity-match.
+   */
+  onUtilityExit?(utility: UtilityProcessLike): void;
 }
 
 export class WindowManager {
@@ -443,6 +452,11 @@ export class WindowManager {
     utility.on('exit', (code) => {
       this.deps.log?.info({ pid: utility.pid, code }, 'utility exited');
       this.windowsByPath.delete(canonicalKey);
+      // Reject any in-flight debug-IPC requests bound to this utility so
+      // pending entries don't linger for the full timeout window after a
+      // crash. Same utility reference used by `onUtilityMessage`, enabling
+      // identity-match in the consumer's pending Map.
+      this.deps.onUtilityExit?.(utility);
       const pid = utility.pid;
       if (typeof pid === 'number') {
         this.deps.setTimeout(() => {

@@ -398,6 +398,33 @@ describe('WindowManager', () => {
     ).not.toThrow();
   });
 
+  test('onUtilityExit (when wired) is invoked on utility exit with the utility ref', async () => {
+    const observed: unknown[] = [];
+    env.deps.onUtilityExit = (utility) => observed.push(utility);
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52200, apiOrigin: 'http://localhost:52200' });
+    await p;
+
+    const utilityRef = env.utilities[0];
+    env.utilities[0]?.fireExit(0);
+
+    expect(observed).toHaveLength(1);
+    // Identity match: consumer (debug-ipc) will use this to select pending
+    // entries for cleanup via ===.
+    expect(observed[0]).toBe(utilityRef);
+  });
+
+  test('onUtilityExit is not attached when not provided (no-op for back-compat)', async () => {
+    delete env.deps.onUtilityExit;
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/no-exit-hook' });
+    env.utilities[0]?.fire({ type: 'ready', port: 52201, apiOrigin: 'http://localhost:52201' });
+    await p;
+    // Firing exit should not throw even without a listener wired.
+    expect(() => env.utilities[0]?.fireExit(1)).not.toThrow();
+  });
+
   // Attach-mode tests — D44 case (b) revised: when a live same-host server
   // already holds the lock (a running `ok start` CLI, another Electron
   // instance, etc.), reuse it instead of fighting over the lock.

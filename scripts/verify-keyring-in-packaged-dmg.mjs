@@ -228,6 +228,10 @@ export async function runDriver(argv, deps = {}) {
   const errStream = deps.errStream ?? ((s) => process.stderr.write(s));
   const mkdtempImpl = deps.mkdtemp ?? mkdtemp;
   const rmImpl = deps.rm ?? rm;
+  // Injectable `process` for tests — default is Node's global. The driver uses
+  // it only for signal registration + cleanup-on-exit; everything else stays
+  // on pure Node APIs.
+  const proc = deps.process ?? process;
 
   let args;
   try {
@@ -239,6 +243,42 @@ export async function runDriver(argv, deps = {}) {
 
   let resolvedApp;
   let outDir;
+
+  // SIGINT / SIGTERM handler registered inside `runDriver` (not at module
+  // load) so the cleanup closure captures the current invocation's
+  // `resolvedApp` + `outDir`. `once` + de-registration in `finally` keeps
+  // each driver run idempotent and prevents listener-count leaks across
+  // repeated invocations of the module in the same process (the test suite
+  // calls `runDriver` many times per run).
+  //
+  // Why both SIGINT + SIGTERM: the developer's Ctrl+C in a terminal sends
+  // SIGINT; external orchestration (CI timeout, `kill <pid>`) sends SIGTERM.
+  // Node's default behavior on both is to exit the process synchronously —
+  // the `finally` block below never runs. That leaves the hdiutil mount
+  // attached at `/Volumes/Open Knowledge` (requires manual `hdiutil detach`
+  // or reboot) and the tmp OUT dir on disk. Running cleanup from the signal
+  // handler eliminates the orphan.
+  let signalHandled = false;
+  async function signalCleanupAndExit(signal, exitCode) {
+    if (signalHandled) return;
+    signalHandled = true;
+    errStream(`verify-keyring: received ${signal}, cleaning up…\n`);
+    try {
+      await resolvedApp?.cleanup().catch(() => {});
+      if (outDir) await rmImpl(outDir, { recursive: true, force: true }).catch(() => {});
+    } finally {
+      proc.exit(exitCode);
+    }
+  }
+  const sigintHandler = () => {
+    void signalCleanupAndExit('SIGINT', 130);
+  };
+  const sigtermHandler = () => {
+    void signalCleanupAndExit('SIGTERM', 143);
+  };
+  proc.once('SIGINT', sigintHandler);
+  proc.once('SIGTERM', sigtermHandler);
+
   try {
     resolvedApp = await resolveAppPath(args.inputPath, deps);
     outDir = await mkdtempImpl(join(tmpdir(), 'ok-smoke-out-'));
@@ -290,6 +330,8 @@ export async function runDriver(argv, deps = {}) {
     errStream(`verify-keyring: driver error — ${err.message}\n`);
     return 1;
   } finally {
+    proc.removeListener('SIGINT', sigintHandler);
+    proc.removeListener('SIGTERM', sigtermHandler);
     await resolvedApp?.cleanup().catch(() => {});
     if (outDir) await rmImpl(outDir, { recursive: true, force: true }).catch(() => {});
   }

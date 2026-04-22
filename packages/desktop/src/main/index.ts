@@ -290,6 +290,9 @@ function ensureWindowManager() {
     onUtilityMessage: (msg) => {
       ensureDebugIpc().handleUtilityMessage(msg);
     },
+    onUtilityExit: (utility) => {
+      ensureDebugIpc().cancelPendingForUtility(utility);
+    },
   });
 }
 

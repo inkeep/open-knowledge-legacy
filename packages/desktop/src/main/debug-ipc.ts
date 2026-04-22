@@ -28,6 +28,13 @@ interface PendingRequest {
   resolve: (result: KeyringSmokeResult) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /**
+   * The utility this request was posted to. Held so that
+   * `cancelPendingForUtility(utility)` can clean up all entries for a utility
+   * that crashed or exited before replying — without waiting the full
+   * `timeoutMs` window for each entry.
+   */
+  utility: UtilityLike;
 }
 
 export interface DebugIpcDeps {
@@ -65,6 +72,14 @@ export interface DebugIpcHandle {
    * out before the utility replied).
    */
   handleUtilityMessage(msg: unknown): void;
+  /**
+   * Called by window-manager when a utility process emits `exit`. Rejects
+   * every in-flight request that was posted to that utility with a
+   * `utility-exited` error, freeing the pending Map entries without waiting
+   * for the per-request `timeoutMs` window to elapse. Requests bound to
+   * other utilities are untouched.
+   */
+  cancelPendingForUtility(utility: UtilityLike): void;
   /**
    * Number of in-flight requests. Exposed for tests to assert leak-free
    * behavior on timeout.
@@ -108,13 +123,26 @@ export function createDebugIpc(deps: DebugIpcDeps): DebugIpcHandle {
           err: new Error(`debug-keyring-smoke: timed out after ${timeoutMs}ms`),
         });
       }, timeoutMs);
-      pending.set(correlationId, { resolve, reject, timer });
+      pending.set(correlationId, { resolve, reject, timer, utility });
       try {
         utility.postMessage({ type: 'debug-keyring-smoke', correlationId });
       } catch (err) {
         settle(correlationId, { kind: 'err', err: err as Error });
       }
     });
+  }
+
+  function cancelPendingForUtility(utility: UtilityLike): void {
+    const orphaned: string[] = [];
+    for (const [correlationId, entry] of pending) {
+      if (entry.utility === utility) orphaned.push(correlationId);
+    }
+    for (const correlationId of orphaned) {
+      settle(correlationId, {
+        kind: 'err',
+        err: new Error('debug-keyring-smoke: utility exited before replying'),
+      });
+    }
   }
 
   function handleUtilityMessage(msg: unknown): void {
@@ -127,6 +155,7 @@ export function createDebugIpc(deps: DebugIpcDeps): DebugIpcHandle {
   return {
     requestKeyringSmoke,
     handleUtilityMessage,
+    cancelPendingForUtility,
     pendingSize: () => pending.size,
   };
 }
