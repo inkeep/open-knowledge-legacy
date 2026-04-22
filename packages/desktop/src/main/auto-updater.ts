@@ -402,11 +402,17 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     // with nothing staged is undefined behavior in Squirrel.Mac (best case:
     // app quits and relaunches same version; worst case: inconsistent state).
     // Ignore + log any invocation that reaches main without state backing it.
-    const pending = readState().versionPendingInstall;
-    if (!pending) {
+    //
+    // Single `readState()` snapshot feeds both the gate check AND the
+    // persist spread — Electron's main process is single-threaded so no
+    // TOCTOU risk exists, and the dedup is cleaner than two reads with
+    // identical results (Review Pass 5 Consider #1).
+    const snapshot = readState();
+    if (!snapshot.versionPendingInstall) {
       logger.warn('relaunch-now invoked without versionPendingInstall — ignoring');
       return undefined;
     }
+    const pending = snapshot.versionPendingInstall;
     // Double-invoke guard (Review Pass 4 Major #2): clear the state gate
     // BEFORE calling `quitAndInstall()` so a second IPC fire (rapid
     // double-click on Toast A's "Relaunch now" — sonner doesn't debounce
@@ -418,7 +424,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     // persist fails, skip the call entirely — better to leave the toast
     // visible and let the user click again (with a healthy disk) than to
     // fire a non-idempotent operation on unreliable state.
-    if (!persistSafely({ ...readState(), versionPendingInstall: null }, 'relaunch-now'))
+    if (!persistSafely({ ...snapshot, versionPendingInstall: null }, 'relaunch-now'))
       return undefined;
     logger.info('relaunch-now invoked — calling autoUpdater.quitAndInstall', { pending });
     onDispatch?.('relaunch-now');

@@ -523,20 +523,41 @@ app.whenReady().then(async () => {
     // the primary window has already loaded by the time Toast B fires
     // (rare — updater wires before loadURL resolves), fire immediately.
     whenRendererReady: (fn) => {
+      // Three cases, all must deliver Toast B eventually because
+      // `lastSeenVersion` has already advanced at the call site and the
+      // AC7 contract ("user sees a toast on first launch post-update")
+      // does not allow silent-drop (Review Pass 5 Minor #3 — close the
+      // `lastSeenVersion`-advanced-but-broadcast-lost gap that the
+      // original Pass 4 Major #1 fix left open for the no-window race).
+      //
+      //   1. Window exists + already loaded → fire immediately.
+      //   2. Window exists + still loading  → wait for did-finish-load.
+      //   3. No window yet                  → wait for the next
+      //      `browser-window-created` event, then recurse into cases
+      //      1/2 against the fresh window.
+      //
+      // Electron emits `browser-window-created` synchronously inside
+      // `new BrowserWindow(opts)`; `once` self-detaches after the first
+      // firing so this listener can't leak across future spawns. If
+      // the user quits the app before any window ever opens (pathological
+      // — macOS doesn't dispatch Cmd+Q without a window), the listener is
+      // garbage-collected alongside the `app` object at process exit.
+      const tryFire = (win: BrowserWindow): void => {
+        if (win.webContents.isLoading()) {
+          win.webContents.once('did-finish-load', fn);
+        } else {
+          fn();
+        }
+      };
       const focused = BrowserWindow.getFocusedWindow();
-      const win = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
-      if (!win) {
-        // No window at all — updater wired up before any window opened.
-        // Skip the broadcast; `lastSeenVersion` is already advanced, so
-        // Toast B won't re-fire on next boot. Aligns with
-        // `createSingleSender`'s null-target no-op semantics.
+      const existing = focused ?? BrowserWindow.getAllWindows()[0] ?? null;
+      if (existing) {
+        tryFire(existing);
         return;
       }
-      if (win.webContents.isLoading()) {
-        win.webContents.once('did-finish-load', fn);
-      } else {
-        fn();
-      }
+      app.once('browser-window-created', (_event, createdWin) => {
+        tryFire(createdWin as BrowserWindow);
+      });
     },
   });
 });
