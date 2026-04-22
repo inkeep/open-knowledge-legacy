@@ -6,5 +6,33 @@
     "capturedAt": "2026-04-17",
     "capturedFrom": "local seed (3 consecutive runs, port 22437) — replace with median-of-5 CI runs post-merge per perf-baseline-update.md",
     "notes": "FR-21 chunked-insertion frame-time p50 during a 1MB Source paste. Local consistently lands at 16.7ms (60fps tick); CI runners are typically 1.5-2x slower. The baseline-relative assertion is `p50 < max(2 * p50Ms, 32)` — 32ms is the absolute floor (one double-budget at 60fps); 2x p50Ms is the regression ceiling. Real regressions trip the ceiling without runner-speed variance tripping the floor. Key naming: `qa022` (lowercase, no dash) vs the `QA-022` ID used in SPEC.md / test names / documentation — shell-quoting friendliness, see perf-baseline-update.md §Schema."
+  },
+  "v2g1WarmSwitch": {
+    "p50Ms": null,
+    "absoluteFloorMs": 200,
+    "capturedAt": "2026-04-20",
+    "capturedFrom": "V2 SPEC §7 M1 + §2 G1 target — warm-switch (cache-hit) wall-clock P95 < 200ms prod for docs ≤200 views. Baseline to be captured by median-of-5 prod CI runs post-V2-integration (US-008 + wired scenarios). Absolute floor 200ms = spec G1.",
+    "notes": "V2 editor cache cache-hit path. Consumer: packages/app/tests/perf/scenarios/warm-switch-cached.ts (to be authored in US-008 integration). Assertion shape: `p50 < max(2 * p50Ms, 200)` once p50Ms is captured."
+  },
+  "v2g2ColdPoolWarm": {
+    "p50Ms": null,
+    "absoluteFloorMs": 500,
+    "capturedAt": "2026-04-20",
+    "capturedFrom": "V2 SPEC §7 M2 + §2 G2 target — cold-pool-warm P95 < 500ms prod for docs ≤200 views. Baseline per Part B measurements: README 192ms, STORIES 541ms (pre-V2). Target post-V2: STORIES < 300ms.",
+    "notes": "Existing cold-pool-warm.ts scenario; no baseline until post-V2-integration. Absolute floor 500ms = spec G2."
+  },
+  "v2g3ColdLoad": {
+    "p50Ms": null,
+    "absoluteFloorMs": 1500,
+    "capturedAt": "2026-04-20",
+    "capturedFrom": "V2 SPEC §7 M3 + §2 G3 target — cold-load P95 < 1500ms prod for docs up to 500KB/200 views. Baseline pre-V2: STORIES 1845ms prod. Target post-Option-E: STORIES < 1500ms.",
+    "notes": "Existing cold-load scenario + Option E fallback (US-010+US-011). Absolute floor 1500ms = spec G3."
+  },
+  "v2g4ModeToggle": {
+    "p50Ms": null,
+    "absoluteFloorMs": 200,
+    "capturedAt": "2026-04-20",
+    "capturedFrom": "V2 SPEC §7 M4 + §2 G4 target — mode-toggle P95 < 200ms prod. CV:hidden probe AC22 MET at 204ms first / 115ms repeat dev. Target: < 200ms prod.",
+    "notes": "US-009 .ok-mode-hidden CSS swap. Absolute floor 200ms = spec G4."
   }
 }

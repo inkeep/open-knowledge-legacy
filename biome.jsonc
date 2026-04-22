@@ -72,6 +72,8 @@
       "!docs/bun.lock",
       "!worktrees",
       "!**/rehype-plugins/fixtures",
+      "!**/tests/perf/results",
+      "!**/tests/perf/playwright-results",
       "!packages/desktop/out",
       "!packages/desktop/dist-desktop"
     ]

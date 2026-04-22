@@ -1,12 +1,59 @@
+/**
+ * JsxComponent NodeView — per-instance React render (precedent #25(c) bifurcation:
+ * NodeViews that embed live fumadocs components must render per-instance; only
+ * PropPanel/Toolbar/Breadcrumb move to the singleton InteractionLayer plane).
+ *
+ * Under V2 (US-007) this view:
+ *   1. Renders the live component (today: `<Callout>` — CB-v2 extends to Tabs /
+ *      Accordion / Steps / ...) inside a `<NodeViewWrapper>` so PM manages the
+ *      outer-element identity.
+ *   2. Registers a propPanel renderer with the per-editor InteractionLayer
+ *      singleton via `getInteractionLayer(editor)` and deregisters on destroy.
+ *      PropPanel mounts ONCE at editor root keyed by active nodeId.
+ *   3. Emits `data-node-id="jsx-${n}"` for event delegation — IDs are allocated
+ *      via the module-level monotonic counter (lazy-init via `useState`).
+ *
+ * Forward-compat with CB-v2: BridgeStore WeakMap is keyed by Editor identity.
+ * V2 editor cache preserves Editor identity across nav (precedent #25(a)) so
+ * CB-v2's per-editor BridgeStore naturally survives Activity flips without any
+ * additional coordination.
+ */
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
+import { useEffect, useRef, useState } from 'react';
 import { Callout } from '../Callout';
+import { getInteractionLayer } from '../interaction-layer-host';
+import { JsxComponentPropPanel } from './JsxComponentPropPanel';
+
+// Module-level counter — drives the stable `data-node-id` attribute used by
+// InteractionLayer's event delegation. Monotonic across an app session so
+// two JsxComponent instances on the same page never collide.
+let __jsxNodeIdCounter = 0;
+
+/**
+ * Allocate a fresh stable node id for a JsxComponent NodeView instance.
+ * Exported so `useState(nextJsxNodeId)` can lazy-init and pure unit tests
+ * can assert monotonicity.
+ */
+export function nextJsxNodeId(): string {
+  return `jsx-${++__jsxNodeIdCounter}`;
+}
+
+/** Reset the counter. Test-only — used to get deterministic IDs in unit tests. */
+export function __resetJsxNodeIdCounterForTests(): void {
+  __jsxNodeIdCounter = 0;
+}
 
 /**
  * Parses a simple JSX-like string to extract the component name, type prop, and children text.
- * This is intentionally simple — it handles the <Callout type="...">children</Callout> pattern.
+ * Exported so tests can assert parse behavior without mounting React.
+ * Intentionally simple — handles the `<Callout type="...">children</Callout>` pattern.
  */
-function parseJsxContent(raw: string): { component: string; type: string; children: string } {
+export function parseJsxContent(raw: string): {
+  component: string;
+  type: string;
+  children: string;
+} {
   const tagMatch = raw.match(/<(\w+)\s+type="([^"]*)">([\s\S]*?)<\/\1>/);
   if (tagMatch) {
     return {
@@ -18,12 +65,60 @@ function parseJsxContent(raw: string): { component: string; type: string; childr
   return { component: 'Unknown', type: 'info', children: raw.trim() };
 }
 
-export function JsxComponentView({ node }: NodeViewProps) {
+/**
+ * Per-instance NodeView for jsxComponent (atom: true) — keeps the live
+ * fumadocs Callout render inline (FR8: per-instance live render remains)
+ * and wires the singleton PropPanel at editor root via InteractionLayer
+ * (FR4/FR8 forward-compat for CB-v2 §9.15).
+ */
+export function JsxComponentView({ node, editor, getPos }: NodeViewProps) {
   const content = (node.attrs.content as string) || '';
   const parsed = parseJsxContent(content);
 
+  // Stable synthetic id per NodeView instance. Precedent #9 add-only
+  // preserved — id lives only in component state, NOT in the schema.
+  const [nodeId] = useState(nextJsxNodeId);
+
+  // `getPos` identity changes on EVERY NodeView update — TipTap
+  // intentionally passes a fresh reference each transaction so React memo
+  // detects the prop change (see @tiptap/react/src/ReactNodeViewRenderer.tsx
+  // lines 222-223 with that comment). Holding `getPos` in an effect deps
+  // array caused the layer to deregister+reregister on every keystroke,
+  // which dismissed the active PropPanel mid-edit (review Major #6). The
+  // fix: keep the latest `getPos` in a ref updated out-of-render, and
+  // register exactly once per NodeView instance (deps = [editor, nodeId]).
+  const getPosRef = useRef(getPos);
+  useEffect(() => {
+    getPosRef.current = getPos;
+  }, [getPos]);
+
+  useEffect(() => {
+    const layer = getInteractionLayer(editor);
+    const safeGetPos = (): number | undefined => {
+      const pos = getPosRef.current();
+      return typeof pos === 'number' ? pos : undefined;
+    };
+    layer.register({
+      type: 'jsxComponent',
+      nodeId,
+      getPos: safeGetPos,
+      controls: {
+        propPanel: (ctx) => (
+          <JsxComponentPropPanel editor={editor} getPos={safeGetPos} onDismiss={ctx.deactivate} />
+        ),
+      },
+    });
+    return () => {
+      layer.deregister(nodeId);
+    };
+  }, [editor, nodeId]);
+
   return (
-    <NodeViewWrapper className="jsx-component-wrapper" contentEditable={false}>
+    <NodeViewWrapper
+      className="jsx-component-wrapper"
+      contentEditable={false}
+      data-node-id={nodeId}
+    >
       {parsed.component === 'Callout' ? (
         <Callout type={parsed.type}>{parsed.children}</Callout>
       ) : (

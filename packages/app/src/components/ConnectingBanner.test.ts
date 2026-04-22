@@ -1,8 +1,7 @@
 /**
  * ConnectingBanner — unit tests for the pure `computeBannerMode` helper that
- * drives the three-state render (hidden / retrying / terminal). Same
- * pure-function altitude as NavigationPendingBar.test.ts — full DOM behavior
- * is covered by Playwright E2E where it matters.
+ * drives the three-state render (hidden / retrying / terminal). Pure-function
+ * altitude — full DOM behavior is covered by Playwright E2E where it matters.
  *
  * The grace-period wrapper (useEffect + setTimeout) is mechanical React glue
  * around this function; the logic under test is the decision table:
