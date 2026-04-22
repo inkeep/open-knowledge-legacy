@@ -72,47 +72,23 @@ test.describe('docs-open — hybrid navigation UX', () => {
       .toBeGreaterThan(scrollBeforeNav - 50); // allow minor rounding; position must not reset to 0
   });
 
-  test('F2: cold-nav keeps prior doc visible during pending', async ({ page, api }) => {
-    await api.seedDocs([
-      { name: 'doc-a', markdown: DOC_A },
-      { name: 'doc-b', markdown: DOC_B },
-    ]);
+  // F2 was removed with the skeleton-first cold-path split (precedent #18(f)
+  // narrowed to warm-only). Content-continuity on warm paths is a React
+  // `startTransition` behavior — warm nav completes in a single commit
+  // because `syncPromise` is already resolved, so there is no observable
+  // pending window for a MutationObserver to sample. Cold-path skeleton
+  // appearance (the interesting new-behavior guarantee) is covered by F3
+  // below + F4's session-wide skeleton-sighting assertions.
 
-    await page.goto('/');
-    await openFromSidebar(page, 'doc-a.md');
-    await waitForActiveProviderSynced(page);
-    await page.waitForSelector('.ProseMirror');
-    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
-
-    // Install a mutation observer BEFORE the click so we capture the
-    // transient DOM state even if Playwright polls too slowly.
-    await page.evaluate(() => {
-      window.__f2DocASeenDuringTransition = false;
-      window.__f2BodyTextSamples = [];
-      const sampler = new MutationObserver(() => {
-        const body = document.body.textContent ?? '';
-        window.__f2BodyTextSamples?.push(body.slice(0, 5_000));
-        if (body.includes('Doc A Heading')) window.__f2DocASeenDuringTransition = true;
-      });
-      sampler.observe(document.body, { childList: true, subtree: true, characterData: true });
-      window.__f2SamplerCleanup = () => sampler.disconnect();
-    });
-
-    await openFromSidebar(page, 'doc-b.md');
-
-    // Wait for doc B to complete.
-    await waitForActiveProviderSynced(page);
-    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
-
-    await page.evaluate(() => window.__f2SamplerCleanup?.());
-
-    // At some point during the transition, doc A's content was still in the
-    // DOM — that's the content-continuity guarantee.
-    const docASeen = await page.evaluate(() => window.__f2DocASeenDuringTransition);
-    expect(docASeen).toBe(true);
-  });
-
-  test('F3: NavigationPendingBar is visible during isPending', async ({ page, api }) => {
+  test('F3: cold-nav paints EditorSkeleton immediately (no content-continuity flash)', async ({
+    page,
+    api,
+  }) => {
+    // Skeleton-first cold path (supersedes prior NavigationPendingBar test).
+    // When the target doc's provider is NOT yet synced, openDocumentTransition
+    // skips `startTransition` and lets React's default Suspense behavior paint
+    // `<EditorSkeleton />` immediately — so the user sees motion rather than
+    // the stale previous-doc content stretching through the mount window.
     await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
@@ -123,17 +99,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Capture pending-bar appearances via a MutationObserver so even a
-    // sub-100ms appearance is caught.
+    // Capture skeleton appearances via a MutationObserver so sub-100ms
+    // transient mounts aren't missed by poll-based assertions.
     await page.evaluate(() => {
-      window.__f3BarEverVisible = false;
-      window.__f3BarEverHidden = false;
+      window.__f3SkeletonEverVisible = false;
+      const skeletonSelector = '[role="status"][aria-label="Loading document"]';
       const check = () => {
-        const bar = document.querySelector('[data-slot="navigation-pending-bar"]');
-        if (bar) {
-          window.__f3BarEverVisible = true;
-        } else {
-          window.__f3BarEverHidden = true;
+        if (document.querySelector(skeletonSelector)) {
+          window.__f3SkeletonEverVisible = true;
         }
       };
       check();
@@ -142,34 +115,20 @@ test.describe('docs-open — hybrid navigation UX', () => {
       window.__f3ObserverCleanup = () => observer.disconnect();
     });
 
+    // Nav to doc-b — cold path (provider not yet created). Skeleton should
+    // appear at least once during the mount window.
     await openFromSidebar(page, 'doc-b.md');
     await waitForActiveProviderSynced(page);
     await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
 
     await page.evaluate(() => window.__f3ObserverCleanup?.());
 
-    const everVisible = await page.evaluate(() => window.__f3BarEverVisible);
-    const everHidden = await page.evaluate(() => window.__f3BarEverHidden);
+    const skeletonSeen = await page.evaluate(() => window.__f3SkeletonEverVisible);
+    expect(skeletonSeen).toBe(true);
 
-    // Bar must have been visible at some point (pending happened) AND must
-    // have been hidden at some point (nav settled). The "hidden" side rules
-    // out a stuck-pending regression.
-    expect(everVisible).toBe(true);
-    expect(everHidden).toBe(true);
-
-    // Sanity check: bar has role=status + aria-live=polite when mounted.
-    // Trigger another nav to exercise the bar's attributes.
-    await openFromSidebar(page, 'doc-a.md');
-    // The bar may already be gone by the time we assert; poll briefly for
-    // its attribute contract while it's present, swallowing the timeout if
-    // navigation completed before we observed it. (The Promise.race
-    // wrapping a duplicate fixed sleep was redundant — a single waitFor
-    // with the same timeout has identical semantics.)
-    await page
-      .locator('[data-slot="navigation-pending-bar"][role="status"][aria-live="polite"]')
-      .first()
-      .waitFor({ timeout: 1_500 })
-      .catch(() => {});
+    // Skeleton must not be stuck visible after convergence — the nav settled
+    // and the real editor should have taken over.
+    await expect(page.locator('[role="status"][aria-label="Loading document"]')).toHaveCount(0);
   });
 
   test('F4: cold-load skeleton only when there is no prior content', async ({ page, api }) => {
@@ -431,10 +390,10 @@ test.describe('docs-open — hybrid navigation UX', () => {
 
     await expect(page.locator('.ProseMirror')).toContainText('Doc E Heading');
 
-    // Pending bar must not be stuck visible after convergence.
-    // Poll for a hidden state (bar element not in DOM).
+    // EditorSkeleton must not be stuck visible after convergence — the nav
+    // settled and the real editor should have taken over.
     await expect
-      .poll(async () => page.locator('[data-slot="navigation-pending-bar"]').count(), {
+      .poll(async () => page.locator('[role="status"][aria-label="Loading document"]').count(), {
         timeout: 5_000,
         intervals: [100, 200, 400],
       })
@@ -476,7 +435,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('.cm-content')).not.toContainText('Doc B Heading');
   });
 
-  test('F13: a11y attributes present on pending-bar + error-boundary surfaces', async ({
+  test('F13: a11y attributes present on EditorSkeleton + error-boundary surfaces', async ({
     page,
     api,
   }) => {
@@ -490,18 +449,19 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // NavigationPendingBar — catch a13y attrs on a race: the bar renders
-    // transiently during transition; use a MutationObserver to snapshot its
-    // attributes if/when it appears.
+    // EditorSkeleton — catch a11y attrs on a race: the skeleton renders
+    // transiently during cold nav; use a MutationObserver to snapshot its
+    // attributes if/when it appears. Post-NavigationPendingBar, the
+    // skeleton is the only surface that announces "loading" to ATs.
     await page.evaluate(() => {
       window.__f13BarAttrs = null;
       const observer = new MutationObserver(() => {
-        const bar = document.querySelector('[data-slot="navigation-pending-bar"]');
-        if (bar && !window.__f13BarAttrs) {
+        const skeleton = document.querySelector('[role="status"][aria-label="Loading document"]');
+        if (skeleton && !window.__f13BarAttrs) {
           window.__f13BarAttrs = {
-            role: bar.getAttribute('role'),
-            ariaLive: bar.getAttribute('aria-live'),
-            ariaHidden: bar.getAttribute('aria-hidden'),
+            role: skeleton.getAttribute('role'),
+            ariaLive: skeleton.getAttribute('aria-live'),
+            ariaHidden: skeleton.getAttribute('aria-busy'),
           };
         }
       });
@@ -517,9 +477,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
     const barAttrs = await page.evaluate(() => window.__f13BarAttrs);
     expect(barAttrs).not.toBeNull();
     expect(barAttrs?.role).toBe('status');
-    expect(barAttrs?.ariaLive).toBe('polite');
-    // aria-hidden is 'false' when mounted (per spec §D7 + NavigationPendingBar.tsx).
-    expect(barAttrs?.ariaHidden).toBe('false');
+    // EditorSkeleton uses aria-busy="true" (implicit live-region semantics)
+    // rather than aria-live="polite" — the Radix Skeleton primitive the
+    // fallback is built on provides aria-busy as the canonical loading
+    // affordance. `ariaLive` is intentionally null on this surface.
+    expect(barAttrs?.ariaLive).toBeNull();
+    // Field reused from the legacy bar attrs shape — carries aria-busy here.
+    expect(barAttrs?.ariaHidden).toBe('true');
 
     // Error boundary a11y — arm a rejection on a fresh navigation to observe
     // role=alert on the fallback. We nav to doc-c (seeded fresh below) so
@@ -806,23 +770,13 @@ test.describe('docs-open — WS-interception scenarios', () => {
     await expect(errorAlert).toContainText('doc-b');
   });
 
-  // ── QA-012: NavigationPendingBar — transient visibility validated via MutationObserver ──
-  // The bar's `isPending` from `useTransition()` is transient on localhost
-  // (sync completes in <10ms → transition commits → isPending drops). React
-  // 19 only keeps isPending=true when an EXISTING Suspense boundary re-
-  // suspends — but both cold-nav and recycle create fresh Activity mounts
-  // (new Suspense), so isPending drops immediately after React's work phase.
-  //
-  // The F3 test (line ~148) already validates bar visibility via
-  // MutationObserver that catches transient DOM appearances. The pure
-  // `computeTier` function is unit-tested at all 4 boundaries in
-  // NavigationPendingBar.test.ts. This QA-012 scenario adds a recycle-path
-  // validation: after recycling a warm doc with WS blocked, the Suspense
-  // fallback (EditorSkeleton) renders and eventually the 30s timeout fires
-  // the ErrorBoundary (validated in QA-013). The pending bar's tier
-  // escalation under real network latency (5s/15s/25s/30s wall-clock delay)
-  // requires actual network delay that localhost can't simulate — confirmed
-  // blocked for this reason. Unit-test coverage is the right layer.
+  // ── QA-012: warm-recycle with hung WS — Suspense fallback + eventual timeout ──
+  // The F3 test already validates that EditorSkeleton appears during cold nav
+  // via a MutationObserver that catches transient DOM mounts. This QA-012
+  // scenario adds a recycle-path validation: after recycling a warm doc with
+  // WS blocked, the Suspense fallback (EditorSkeleton) renders and eventually
+  // the 30s syncPromise timeout fires the ErrorBoundary (validated in
+  // QA-013).
   //
   // This test validates the structural claim: on a warm-recycle with hung WS,
   // the doc eventually times out via the real 30s path (not stuck forever).
@@ -980,11 +934,7 @@ test.describe('docs-open — WS-interception scenarios', () => {
 // Global type augmentation for the test-only window properties used above.
 declare global {
   interface Window {
-    __f2DocASeenDuringTransition?: boolean;
-    __f2BodyTextSamples?: string[];
-    __f2SamplerCleanup?: () => void;
-    __f3BarEverVisible?: boolean;
-    __f3BarEverHidden?: boolean;
+    __f3SkeletonEverVisible?: boolean;
     __f3ObserverCleanup?: () => void;
     __f4SkeletonSightings?: Array<{ tag: string; found: boolean; t: number }>;
     __f4ObserverCleanup?: () => void;

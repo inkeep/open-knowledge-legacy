@@ -1,0 +1,9 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	ignorecase = true
+	precomposeunicode = true
+	worktree = /Users/edwingomezcuellar/projects/open-knowledge/.claude/worktrees/playwright-stability
+[user]
+	name = openknowledge
+	email = noreply@openknowledge.local
