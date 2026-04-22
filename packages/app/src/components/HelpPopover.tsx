@@ -11,8 +11,8 @@ const links: Array<{
   href: string;
   icon: FC<ComponentProps<'svg'>>;
 }> = [
-  { label: 'Documentation', href: 'https://docs.inkeep.com/overview', icon: BookOpen },
-  { label: 'Homepage', href: 'https://inkeep.com/', icon: Globe },
+  { label: 'Documentation', href: 'https://openknowledge.ai/docs', icon: BookOpen },
+  { label: 'Homepage', href: 'https://openknowledge.ai/', icon: Globe },
   { label: 'Twitter / X', href: 'https://x.com/inkeep', icon: XTwitterIcon },
   { label: 'LinkedIn', href: 'https://www.linkedin.com/company/inkeep/', icon: LinkedinIcon },
 ];

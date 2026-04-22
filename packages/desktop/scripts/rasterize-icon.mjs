@@ -38,8 +38,29 @@ if (!isStale()) {
   process.exit(0);
 }
 
-const svg = readFileSync(svgPath);
-const resvg = new Resvg(svg, {
+// Expand the outer <svg>'s viewBox to add transparent padding around the
+// artwork. macOS HIG convention: app-icon content occupies ~80% of the
+// canvas (≈10% margin each side). Done at rasterize time (not on the SVG
+// source) because favicon.svg is also the browser favicon in
+// packages/app/index.html, where extra padding is unwanted.
+const PAD_RATIO = 0.1;
+const rawSvg = readFileSync(svgPath, 'utf8');
+const paddedSvg = rawSvg.replace(
+  /viewBox="(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)"/,
+  (_m, x, y, w, h) => {
+    const wn = Number(w);
+    const hn = Number(h);
+    const nx = Number(x) - wn * PAD_RATIO;
+    const ny = Number(y) - hn * PAD_RATIO;
+    const nw = wn * (1 + 2 * PAD_RATIO);
+    const nh = hn * (1 + 2 * PAD_RATIO);
+    return `viewBox="${nx} ${ny} ${nw} ${nh}"`;
+  },
+);
+if (paddedSvg === rawSvg) {
+  throw new Error('[rasterize-icon] failed to rewrite viewBox — unexpected SVG shape');
+}
+const resvg = new Resvg(paddedSvg, {
   fitTo: { mode: 'width', value: 512 },
   background: 'rgba(0, 0, 0, 0)',
 });
