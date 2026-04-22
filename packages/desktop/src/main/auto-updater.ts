@@ -645,7 +645,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
  *
  * See electron-updater `out/main.js` for the `Object.defineProperty` site.
  */
-export interface ElectronUpdaterModule {
+interface ElectronUpdaterModule {
   autoUpdater?: UpdaterLike;
   default?: { autoUpdater?: UpdaterLike };
 }
@@ -656,7 +656,7 @@ export interface ElectronUpdaterModule {
  * `null` if neither path exposes the member so the caller can log + bail
  * cleanly instead of throwing on the subsequent property assignment.
  */
-export function resolveAutoUpdater(mod: ElectronUpdaterModule): UpdaterLike | null {
+function resolveAutoUpdater(mod: ElectronUpdaterModule): UpdaterLike | null {
   return mod.default?.autoUpdater ?? mod.autoUpdater ?? null;
 }
 

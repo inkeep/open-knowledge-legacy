@@ -32,7 +32,6 @@ import { attachUpdateSubscribers, type UpdateNotice } from '@/components/UpdateN
 let notices: UpdateNotice[] = [];
 const listeners = new Set<() => void>();
 let attached = false;
-let detach: (() => void) | null = null;
 
 function notify(): void {
   for (const l of listeners) l();
@@ -79,19 +78,5 @@ export function installUpdateNoticesBridge(): void {
   const bridge = window.okDesktop;
   if (!bridge) return;
   attached = true;
-  detach = attachUpdateSubscribers(bridge, addNotice, dismissNotice);
-}
-
-/**
- * HMR / test teardown seam. Production never calls this (the subscription
- * lives for the window's lifetime). Present for module-reload cleanliness
- * and for tests that need a fresh module state between scenarios.
- */
-export function uninstallUpdateNoticesBridge(): void {
-  if (!attached) return;
-  detach?.();
-  detach = null;
-  attached = false;
-  notices = [];
-  notify();
+  attachUpdateSubscribers(bridge, addNotice, dismissNotice);
 }

@@ -81,7 +81,7 @@ const PRIORITY_WHATS_NEW = 3;
  * `addNotice`; tests pass a capturing stub. Idempotent on id collision
  * (update-in-place).
  */
-export type AddNoticeFn = (notice: UpdateNotice) => void;
+type AddNoticeFn = (notice: UpdateNotice) => void;
 
 /**
  * Testable seam for dismissing a notice by id from outside the store.
@@ -90,7 +90,7 @@ export type AddNoticeFn = (notice: UpdateNotice) => void;
  * `quitAndInstall` is a no-op) and is a harmless no-op in production
  * (the app is about to quit anyway, taking the card with it).
  */
-export type DismissNoticeFn = (id: string) => void;
+type DismissNoticeFn = (id: string) => void;
 
 /**
  * Pure subscription logic. Attach the three update subscribers on the

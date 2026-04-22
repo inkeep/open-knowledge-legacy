@@ -23,10 +23,12 @@ import { Button } from '@/components/ui/button';
 import { dismissNotice, getNoticesSnapshot, subscribeToNotices } from '@/lib/update-notices-store';
 import type { UpdateNotice } from './UpdateNotices.shared';
 
-// Re-export the canonical copy + subscription surface for any consumer
-// still importing from `./UpdateNotices` (tests, future callers).
+// Re-export the canonical copy + subscription surface for consumers that
+// import from `./UpdateNotices` (tests, future callers). The subscription
+// seams (`AddNoticeFn` / `DismissNoticeFn`) are intentionally NOT re-exported
+// — their types are internal to `attachUpdateSubscribers` and not part of
+// the public surface.
 export {
-  type AddNoticeFn,
   attachUpdateSubscribers,
   TOAST_A_ACTION,
   TOAST_A_BODY,
