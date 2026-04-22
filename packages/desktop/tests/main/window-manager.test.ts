@@ -41,17 +41,27 @@ function makeUtility(pid: number): MockUtility {
   };
 }
 
-function makeWindow(): BrowserWindowLike & { fireClose: () => void } {
+function makeWindow(): BrowserWindowLike & {
+  fireClose: () => void;
+  fireDomReady: () => void;
+} {
   let closeHandler: (() => void) | null = null;
+  let domReadyHandler: (() => void) | null = null;
   return {
     focus: mock(() => {}),
     on: mock((_event: 'closed', cb: () => void) => {
       closeHandler = cb;
     }) as BrowserWindowLike['on'],
-    webContents: { send: mock(() => {}) },
+    webContents: {
+      send: mock(() => {}),
+      once: mock((event: 'dom-ready', cb: () => void) => {
+        if (event === 'dom-ready') domReadyHandler = cb;
+      }),
+    },
     loadFile: mock(() => Promise.resolve()),
     loadURL: mock(() => Promise.resolve()),
     fireClose: () => closeHandler?.(),
+    fireDomReady: () => domReadyHandler?.(),
   };
 }
 
@@ -481,6 +491,116 @@ describe('WindowManager', () => {
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40005, apiOrigin: 'http://localhost:40005' });
       await p;
+    });
+  });
+
+  describe('git-init-notice dispatch (US-007)', () => {
+    test('didGitInit:true in ready → subscribes to dom-ready and sends ok:git-init-notice', async () => {
+      const wm = new WindowManager(env.deps);
+      const promise = wm.createProjectWindow({ projectPath: '/tmp/fresh-project' });
+      env.utilities[0]?.fire({
+        type: 'ready',
+        port: 52055,
+        apiOrigin: 'http://localhost:52055',
+        didGitInit: true,
+      });
+      await promise;
+
+      const window = env.windows[0];
+      if (!window) throw new Error('expected window to be created');
+
+      // dom-ready listener was subscribed (deferral guard)
+      expect((window.webContents.once as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+      // webContents.send should NOT fire until dom-ready actually fires
+      expect((window.webContents.send as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+
+      window.fireDomReady();
+
+      expect((window.webContents.send as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+      expect((window.webContents.send as ReturnType<typeof mock>).mock.calls[0]).toEqual([
+        'ok:git-init-notice',
+        { gitDir: '/tmp/fresh-project/.git' },
+      ]);
+    });
+
+    test('didGitInit:false in ready → no subscription, no send', async () => {
+      const wm = new WindowManager(env.deps);
+      const promise = wm.createProjectWindow({ projectPath: '/tmp/existing-git' });
+      env.utilities[0]?.fire({
+        type: 'ready',
+        port: 52056,
+        apiOrigin: 'http://localhost:52056',
+        didGitInit: false,
+      });
+      await promise;
+
+      const window = env.windows[0];
+      if (!window) throw new Error('expected window to be created');
+
+      expect((window.webContents.once as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+      expect((window.webContents.send as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    });
+
+    test('omitted didGitInit field → treated as false (back-compat)', async () => {
+      const wm = new WindowManager(env.deps);
+      // Intentionally omit didGitInit from the ready payload
+      const promise = wm.createProjectWindow({ projectPath: '/tmp/legacy' });
+      env.utilities[0]?.fire({
+        type: 'ready',
+        port: 52057,
+        apiOrigin: 'http://localhost:52057',
+      });
+      await promise;
+
+      const window = env.windows[0];
+      if (!window) throw new Error('expected window to be created');
+
+      expect((window.webContents.once as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    });
+
+    test('dom-ready listener registered BEFORE loadFile resolves (Electron event-order regression)', async () => {
+      // Real-Electron event order: `dom-ready` fires BEFORE `did-finish-load`,
+      // and `loadURL` / `loadFile`'s promise resolves on `did-finish-load`.
+      // Registering `webContents.once('dom-ready', ...)` AFTER the load promise
+      // resolves silently misses the event and the toast never fires.
+      // This test asserts the listener is attached BEFORE the load resolves.
+      let onceCalled = false;
+      let onceCalledBeforeLoadResolved = false;
+      env.deps.createWindow = () => {
+        const w = makeWindow();
+        const baseOnce = w.webContents.once as (event: 'dom-ready', cb: () => void) => void;
+        w.webContents.once = ((event: 'dom-ready', cb: () => void) => {
+          onceCalled = true;
+          baseOnce(event, cb);
+        }) as typeof w.webContents.once;
+        const baseLoadFile = w.loadFile as () => Promise<void>;
+        w.loadFile = mock(async () => {
+          onceCalledBeforeLoadResolved = onceCalled;
+          return baseLoadFile();
+        }) as typeof w.loadFile;
+        const baseLoadURL = w.loadURL as () => Promise<void>;
+        w.loadURL = mock(async () => {
+          onceCalledBeforeLoadResolved = onceCalled;
+          return baseLoadURL();
+        }) as typeof w.loadURL;
+        env.windows.push(w);
+        env.createWindowOpts.push({ additionalArguments: [], title: '' });
+        return w;
+      };
+
+      const wm = new WindowManager(env.deps);
+      const promise = wm.createProjectWindow({ projectPath: '/tmp/event-order' });
+      env.utilities[0]?.fire({
+        type: 'ready',
+        port: 52060,
+        apiOrigin: 'http://localhost:52060',
+        didGitInit: true,
+      });
+      await promise;
+
+      expect(onceCalled).toBe(true);
+      expect(onceCalledBeforeLoadResolved).toBe(true);
     });
   });
 });

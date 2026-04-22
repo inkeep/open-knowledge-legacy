@@ -27,7 +27,7 @@ createServer(options)          ← synchronous, returns ServerInstance
        ├─ HEAD-drift check     ← compare last-known-head vs current HEAD;
        │                         commitUpstreamImport() if diverged
        ├─ File watcher start   ← @parcel/watcher subscribe
-       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
+       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/
        └─ SyncEngine start     ← remote detection → auto-sync timers (if remote exists)
 ```
 

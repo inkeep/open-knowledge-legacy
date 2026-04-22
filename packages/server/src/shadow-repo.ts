@@ -1,17 +1,20 @@
 /**
- * Shadow repo — attribution journal at .git/openknowledge/
+ * Shadow repo — attribution journal at `<projectRoot>/.git/open-knowledge/`.
  *
  * A bare repo (core.bare unset, core.worktree → project root) that stores
  * per-writer WIP refs and upstream-import commits. Isolated from the project
  * repo so user staging area and history are never touched.
  *
- * Layout:
- *   Integrated mode: .git/openknowledge/   (inside project .git — no .gitignore needed)
- *   Standalone mode: .openknowledge/       (added to .gitignore)
+ * Single-mode layout (SPEC 2026-04-21-shadow-repo-single-mode):
+ *   - Shadow always lives inside `<projectRoot>/.git/open-knowledge/`.
+ *   - Projects without `.git/` get auto-init'd by `ensureProjectGit` before
+ *     `initShadowRepo` runs (R2 / D12 fail-fast).
+ *   - Pre-spec integrated shadows at `.git/openknowledge/` (legacy path) are
+ *     silently rename-migrated in-place once per repo (R9 shim below).
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
@@ -58,15 +61,31 @@ export function shadowGit(shadow: ShadowHandle) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 /**
- * Initialize the shadow bare repo.
+ * Initialize the shadow bare repo at `<projectRoot>/.git/open-knowledge/`.
  *
- * - Integrated mode (.git/ exists): creates .git/openknowledge/
- * - Standalone mode (no .git/):     creates .openknowledge/ and adds to .gitignore
+ * Assumes the project already has a `.git/` — `ensureProjectGit` is responsible
+ * for that guarantee upstream (SPEC R2 / D12).
+ *
+ * Legacy migration (R9): if `<projectRoot>/.git/openknowledge/` exists from a
+ * pre-spec integrated-mode install, silently `renameSync` it to the canonical
+ * `.git/open-knowledge/` path. One-shot, lossless — preserves all refs and
+ * commits. Defensive: if BOTH directories are present (shouldn't happen), log
+ * and no-op.
  */
 export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
-  // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
-  // read path and this server write path use exactly the same rule (D22).
-  const { path: shadowDir, mode } = resolveShadowDir(projectRoot);
+  // Path resolution lives in @inkeep/open-knowledge-core so the CLI read path
+  // and this server write path use exactly the same rule (D22).
+  const shadowDir = resolveShadowDir(projectRoot);
+
+  // R9 legacy-rename shim — runs before any other shadow op.
+  const legacyDir = resolve(projectRoot, '.git/openknowledge');
+  const legacyExists = existsSync(legacyDir);
+  const newExists = existsSync(shadowDir);
+  if (legacyExists && !newExists) {
+    renameSync(legacyDir, shadowDir);
+  } else if (legacyExists && newExists) {
+    console.warn('[shadow-repo] unexpected legacy + new shadow both present — no rename performed');
+  }
 
   // Skip init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
@@ -81,22 +100,6 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
     await sg.raw('config', 'core.worktree', projectRoot);
     await sg.raw('config', 'user.name', 'openknowledge');
     await sg.raw('config', 'user.email', 'noreply@openknowledge.local');
-  }
-
-  // Standalone mode: ensure .openknowledge/ is in .gitignore
-  if (mode === 'standalone') {
-    const gitignorePath = resolve(projectRoot, '.gitignore');
-    const entry = '.openknowledge/';
-    let content = '';
-    try {
-      content = readFileSync(gitignorePath, 'utf-8');
-    } catch {
-      // no .gitignore yet
-    }
-    if (!content.split('\n').some((line) => line.trim() === entry)) {
-      const suffix = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-      writeFileSync(gitignorePath, `${content}${suffix}${entry}\n`, 'utf-8');
-    }
   }
 
   // Acquire exclusive writer lock

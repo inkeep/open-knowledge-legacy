@@ -127,7 +127,7 @@ async function runClone(
         import('./init.ts'),
         import('../content/init.ts'),
       ]);
-      runInit({ cwd: targetDir, mcp: false });
+      await runInit({ cwd: targetDir, mcp: false });
       try {
         ensureOkGitignoredAtRoot(targetDir);
       } catch {

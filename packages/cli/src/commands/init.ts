@@ -16,6 +16,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { ensureProjectGit, ProjectGitInitError } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
@@ -161,6 +162,8 @@ interface InitCommandResult {
   preview?: PreviewResult;
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
   launchJson?: LaunchJsonResult;
+  /** `true` if `ensureProjectGit` ran `git init` during this invocation (SPEC R2 / D9). */
+  didGitInit: boolean;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction:
     | 'written'
@@ -458,12 +461,17 @@ function collectLegacyProjectConfig(
 // Core init logic
 // ---------------------------------------------------------------------------
 
-export function runInit(options: InitCommandOptions = {}): InitCommandResult {
+export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const installOptions: McpInstallOptions = {
     mode: options.devMcp ? 'dev' : 'published',
     cliEntryPath: options.cliEntryPath,
   };
+
+  // 0. Ensure the project has a `.git/` (SPEC D9 — `ok init` is the explicit
+  // "set this project up" verb, so it does the heavier side-effect too).
+  // Propagates `ProjectGitInitError` on git-missing — caller exits non-zero.
+  const gitResult = await ensureProjectGit(cwd);
 
   // 1. Scaffold .open-knowledge/
   let contentResult: ReturnType<typeof initContent>;
@@ -477,6 +485,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
       editors: [],
       legacyProjectConfigs: [],
       rootInstructions: [],
+      didGitInit: gitResult.didInit,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -548,6 +557,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     legacyProjectConfigs,
     rootInstructions,
     launchJson,
+    didGitInit: gitResult.didInit,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -563,6 +573,13 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
  */
 export function formatInitResult(result: InitCommandResult, cwd: string): string {
   const lines: string[] = [];
+
+  // Auto-git-init disclosure (SPEC R5 / D9) — surfaced when ensureProjectGit
+  // ran `git init` during this invocation. Silent when the project already
+  // had `.git/`.
+  if (result.didGitInit) {
+    lines.push(`Initialized git repo at ${cwd}/.git/ (default branch: main)`);
+  }
 
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
@@ -889,13 +906,26 @@ export function initCommand(): Command {
         }
       }
 
-      const result = runInit({
-        cwd,
-        mcp: opts.mcp,
-        force: opts.force,
-        devMcp: opts.devMcp,
-        editors,
-      });
+      let result: InitCommandResult;
+      try {
+        result = await runInit({
+          cwd,
+          mcp: opts.mcp,
+          force: opts.force,
+          devMcp: opts.devMcp,
+          editors,
+        });
+      } catch (err) {
+        if (err instanceof ProjectGitInitError) {
+          process.stderr.write(
+            "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.\n",
+          );
+          if (err.stderr) process.stderr.write(`${err.stderr.trim()}\n`);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
 
       try {
         const { previewContent } = await import('../content/preview.ts');
