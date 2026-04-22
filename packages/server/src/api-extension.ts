@@ -4243,6 +4243,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
     return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
   }
 

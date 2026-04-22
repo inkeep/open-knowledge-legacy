@@ -209,26 +209,55 @@ describe('createOsProbe', () => {
     expect(calls[0]?.args).toEqual(['-e', 'id of app "Claude"']);
   });
 
-  test('macOS probe returns false when osascript errors (app not installed)', async () => {
+  test('macOS probe returns false when every candidate name errors (app not installed)', async () => {
     const err = Object.assign(new Error('exit 1'), { code: 1 });
-    const { exec } = makeExecFake({ osascript: { err } });
+    const { exec, calls } = makeExecFake({ osascript: { err } });
     const probe = createOsProbe('darwin', exec);
     expect(await probe('codex')).toBe(false);
+    // Codex has two candidates; both must be probed before we conclude not-installed.
+    expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  test('macOS codex scheme maps to "OpenAI Codex"', async () => {
+  test('macOS codex scheme tries "Codex" first, falls back to "OpenAI Codex"', async () => {
+    // Sequential probe: first candidate fails with exit 1, second returns a bundle id.
+    const calls: Array<{ cmd: string; args: readonly string[] }> = [];
+    let callIndex = 0;
+    const exec: ExecFileLike = (file, args, _opts, cb) => {
+      calls.push({ cmd: file, args });
+      const index = callIndex++;
+      queueMicrotask(() => {
+        if (index === 0) {
+          // First candidate ("Codex") not found on this machine.
+          cb(Object.assign(new Error('exit 1'), { code: 1 }), '', '');
+        } else {
+          // Second candidate ("OpenAI Codex") returns a bundle id.
+          cb(null, 'com.openai.codex\n', '');
+        }
+      });
+    };
+    const probe = createOsProbe('darwin', exec);
+    expect(await probe('codex')).toBe(true);
+    expect(calls[0]?.args).toEqual(['-e', 'id of app "Codex"']);
+    expect(calls[1]?.args).toEqual(['-e', 'id of app "OpenAI Codex"']);
+  });
+
+  test('macOS codex scheme resolves on first candidate when "Codex" matches', async () => {
     const { exec, calls } = makeExecFake({ osascript: { stdout: 'com.openai.codex' } });
     const probe = createOsProbe('darwin', exec);
-    await probe('codex');
-    expect(calls[0]?.args).toEqual(['-e', 'id of app "OpenAI Codex"']);
+    expect(await probe('codex')).toBe(true);
+    // Fallback candidate never probed once the first one returned.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.args).toEqual(['-e', 'id of app "Codex"']);
   });
 
-  test('Windows probe uses reg query HKCU\\Software\\Classes\\<scheme>', async () => {
+  test('Windows probe uses reg query HKCR\\<scheme> (merged user+machine view)', async () => {
     const { exec, calls } = makeExecFake({ reg: {} });
     const probe = createOsProbe('win32', exec);
     expect(await probe('cursor')).toBe(true);
     expect(calls[0]?.cmd).toBe('reg');
-    expect(calls[0]?.args).toEqual(['query', 'HKCU\\Software\\Classes\\cursor', '/ve']);
+    // Querying HKCR catches both HKCU\Software\Classes (user-scope) and
+    // HKLM\Software\Classes (system-wide installer) registrations.
+    expect(calls[0]?.args).toEqual(['query', 'HKCR\\cursor', '/ve']);
   });
 
   test('Windows probe returns false when reg query non-zero exit', async () => {
@@ -365,5 +394,28 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
 
   test('schemes constant is exactly the three product targets', () => {
     expect([...INSTALLED_AGENTS_SCHEMES]).toEqual(['claude', 'codex', 'cursor']);
+  });
+
+  test('rejects cross-origin requests (DNS-rebinding / malicious-page defense)', async () => {
+    // A request that reaches the loopback socket but carries an Origin header
+    // naming a non-loopback host is the DNS-rebinding / cross-origin-fetch
+    // class. The `checkLocalOpSecurity` gate added alongside this endpoint
+    // rejects it; exposing the install fingerprint to co-resident hostile
+    // origins defeats the whole point of the gate.
+    const res = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: { Origin: 'https://evil.example.com' },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+  });
+
+  test('accepts same-origin browser requests (Origin: http://localhost)', async () => {
+    const res = await fetch(`http://localhost:${port}/api/installed-agents`, {
+      headers: { Origin: `http://localhost:${port}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ claude: true, codex: false, cursor: true });
   });
 });

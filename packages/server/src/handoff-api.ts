@@ -9,10 +9,16 @@
  *
  * Per SPEC `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.4:
  *   - macOS:   `osascript -e 'id of app "<AppName>"'` — stdout has bundle id
- *              when installed; non-zero exit + error when not.
- *   - Windows: `reg query "HKCU\Software\Classes\<scheme>" /ve` — exit 0 when
- *              the installer registered the scheme (user hive; HKCR merged view
- *              catches HKLM too).
+ *              when installed; non-zero exit + error when not. We try multiple
+ *              candidate display names per scheme because vendor apps rename
+ *              (e.g. Codex shipped as "Codex" at /Applications/Codex.app but
+ *              some builds use "OpenAI Codex"). Any non-empty id wins.
+ *   - Windows: `reg query "HKCR\<scheme>" /ve` — exit 0 when the scheme has a
+ *              registered handler anywhere in the merged HKCR view. HKCR is
+ *              the merge of HKCU\Software\Classes and HKLM\Software\Classes,
+ *              so this catches both user-scope and machine-scope (MSI / system-
+ *              wide installer) registrations. Querying HKCU alone would miss
+ *              HKLM entries.
  *   - Linux:   `xdg-mime query default x-scheme-handler/<scheme>` — non-empty
  *              stdout when a `.desktop` handler is registered.
  *
@@ -45,16 +51,21 @@ export const INSTALLED_AGENTS_CACHE_TTL_MS = 60_000;
 export const INSTALLED_AGENTS_PROBE_TIMEOUT_MS = 2000;
 
 /**
- * macOS app-name mapping per scheme. The `osascript` probe asks for an app by
- * its Launch Services display name; these are the stable defaults noted in
- * SPEC §6.4 ("claude: → 'Claude', codex: → 'OpenAI Codex' (TBD during impl),
- * cursor: → 'Cursor'"). Codex's exact name is the best current guess; if an
- * installed Codex reports a different display name on macOS, update here.
+ * macOS app-name candidates per scheme. The `osascript` probe asks for an app
+ * by its Launch Services display name and rejects hard if the name doesn't
+ * match a registered bundle — an exact-name mismatch masquerades as "not
+ * installed." Some vendors rename between versions (Codex shipped as
+ * "Codex" at `/Applications/Codex.app` in the current desktop release; older
+ * internal builds used "OpenAI Codex"), so we try every candidate in order
+ * and treat the first non-empty `id of app` result as installed.
+ *
+ * Keep the vendor's current marketing name first; add aliases conservatively
+ * when a real install-detection miss is observed in the wild.
  */
-const MACOS_APP_NAMES: Record<InstalledAgentScheme, string> = {
-  claude: 'Claude',
-  codex: 'OpenAI Codex',
-  cursor: 'Cursor',
+const MACOS_APP_NAMES: Record<InstalledAgentScheme, ReadonlyArray<string>> = {
+  claude: ['Claude'],
+  codex: ['Codex', 'OpenAI Codex'],
+  cursor: ['Cursor'],
 };
 
 /**
@@ -193,28 +204,41 @@ export function createOsProbe(
 }
 
 function probeMacOs(scheme: InstalledAgentScheme, exec: ExecFileLike): Promise<boolean> {
-  return new Promise((resolve) => {
-    const appName = MACOS_APP_NAMES[scheme];
-    exec(
-      'osascript',
-      ['-e', `id of app "${appName}"`],
-      { timeout: INSTALLED_AGENTS_PROBE_TIMEOUT_MS, encoding: 'utf-8' },
-      (err, stdout) => {
-        if (err) {
-          resolve(false);
-          return;
-        }
-        resolve(stdout.trim().length > 0);
-      },
-    );
-  });
+  const candidates = MACOS_APP_NAMES[scheme];
+  function tryCandidate(appName: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      exec(
+        'osascript',
+        ['-e', `id of app "${appName}"`],
+        { timeout: INSTALLED_AGENTS_PROBE_TIMEOUT_MS, encoding: 'utf-8' },
+        (err, stdout) => {
+          if (err) {
+            resolve(false);
+            return;
+          }
+          resolve(stdout.trim().length > 0);
+        },
+      );
+    });
+  }
+  return (async () => {
+    for (const candidate of candidates) {
+      if (await tryCandidate(candidate)) return true;
+    }
+    return false;
+  })();
 }
 
 function probeWindows(scheme: InstalledAgentScheme, exec: ExecFileLike): Promise<boolean> {
   return new Promise((resolve) => {
+    // Query HKCR (the merged view of HKCU\Software\Classes and HKLM\Software\
+    // Classes) so both user-scope installs AND system-wide installers (the
+    // default for MSI / enterprise-packaged builds) register as installed.
+    // Querying HKCU alone would miss machine-scope registrations and report
+    // the row as permanently disabled for any user with a system-wide install.
     exec(
       'reg',
-      ['query', `HKCU\\Software\\Classes\\${scheme}`, '/ve'],
+      ['query', `HKCR\\${scheme}`, '/ve'],
       { timeout: INSTALLED_AGENTS_PROBE_TIMEOUT_MS, encoding: 'utf-8' },
       (err) => {
         resolve(!err);
