@@ -120,22 +120,17 @@ export function attachUpdateSubscribers(
         action: {
           label: TOAST_A_ACTION,
           onClick: () => {
-            // Await the IPC so a synchronous throw (or a promise rejection
-            // in the IPC transport) is catchable. Without this, `void
-            // bridge.update.relaunchNow()` silently discards the rejection
-            // and the user sees no feedback. Major #3 — surface the
-            // failure via `toastError` with a retry-friendly id so the
-            // user can try again or close the app manually.
-            (async () => {
-              try {
-                await bridge.update.relaunchNow();
-              } catch {
-                toastError(TOAST_A_ERROR_BODY, {
-                  id: `relaunch-error-${version}`,
-                  duration: Number.POSITIVE_INFINITY,
-                });
-              }
-            })();
+            // Catch IPC rejections so a synchronous throw (or promise
+            // rejection in the IPC transport) surfaces via `toastError`
+            // rather than being silently discarded. Major #3 — give the
+            // user a retry-friendly recovery path. Flattened from the
+            // original async IIFE per cloud review feedback.
+            bridge.update.relaunchNow().catch(() => {
+              toastError(TOAST_A_ERROR_BODY, {
+                id: `relaunch-error-${version}`,
+                duration: Number.POSITIVE_INFINITY,
+              });
+            });
           },
         },
       });
