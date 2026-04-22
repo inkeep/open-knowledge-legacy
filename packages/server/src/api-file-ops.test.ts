@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
+import simpleGit from 'simple-git';
 import type * as Y from 'yjs';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -92,6 +93,9 @@ async function callApi(
     backlinkIndex?: BacklinkIndex;
     hocuspocus?: Parameters<typeof createApiExtension>[0]['hocuspocus'];
     sessionManager?: Parameters<typeof createApiExtension>[0]['sessionManager'];
+    getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
+    signalChannel?: Parameters<typeof createApiExtension>[0]['signalChannel'];
+    projectDir?: string;
   },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
@@ -109,8 +113,10 @@ async function callApi(
         closeAllForDoc: async () => {},
       } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager']),
     contentDir,
-    getFileIndex: () => buildFileIndex(contentDir),
+    getFileIndex: options?.getFileIndex ?? (() => buildFileIndex(contentDir)),
     backlinkIndex: options?.backlinkIndex ?? buildBacklinkIndex(contentDir),
+    signalChannel: options?.signalChannel,
+    projectDir: options?.projectDir,
   });
 
   const req = makeReq(url, method, body);
@@ -393,6 +399,126 @@ describe('file operation API routes', () => {
       { fromDocName: 'docs/index', toDocName: 'guides/index' },
       { fromDocName: 'docs/nested/page', toDocName: 'guides/nested/page' },
     ]);
+  });
+
+  test('folder rename updates the in-memory index before /api/pages reads it', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'docs/nested'), { recursive: true });
+    writeFileSync(join(dir, 'docs/index.md'), '# Docs\n', 'utf-8');
+    writeFileSync(join(dir, 'docs/nested/page.md'), '# Nested\n', 'utf-8');
+
+    const fileIndex = new Map(buildFileIndex(dir));
+    const signals: string[] = [];
+
+    const renameResult = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'folder',
+        fromPath: 'docs',
+        toPath: 'guides',
+      },
+      {
+        backlinkIndex: buildBacklinkIndex(dir),
+        getFileIndex: () => fileIndex,
+        signalChannel: (channel) => signals.push(channel),
+      },
+    );
+
+    expect(renameResult.status).toBe(200);
+    expect(fileIndex.has('docs/index')).toBe(false);
+    expect(fileIndex.has('docs/nested/page')).toBe(false);
+    expect(fileIndex.has('guides/index')).toBe(true);
+    expect(fileIndex.has('guides/nested/page')).toBe(true);
+    expect(signals).toEqual(expect.arrayContaining(['files', 'backlinks', 'graph']));
+
+    const pagesResult = await callApi(
+      dir,
+      '/api/pages',
+      'GET',
+      {},
+      {
+        backlinkIndex: buildBacklinkIndex(dir),
+        getFileIndex: () => fileIndex,
+      },
+    );
+
+    expect(pagesResult.status).toBe(200);
+    const body = JSON.parse(pagesResult.body) as {
+      ok: boolean;
+      pages: Array<{ docName: string; title: string }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ docName: 'guides/index', title: 'Docs' }),
+        expect.objectContaining({ docName: 'guides/nested/page', title: 'Nested' }),
+      ]),
+    );
+    expect(body.pages.map((page) => page.docName)).not.toContain('docs/index');
+    expect(body.pages.map((page) => page.docName)).not.toContain('docs/nested/page');
+  });
+
+  test('folder rename uses git mv for tracked files', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'docs/nested'), { recursive: true });
+    writeFileSync(join(dir, 'docs/index.md'), '# Docs\n', 'utf-8');
+    writeFileSync(join(dir, 'docs/nested/page.md'), '# Nested\n', 'utf-8');
+
+    const git = simpleGit(dir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@example.com');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'folder',
+        fromPath: 'docs',
+        toPath: 'guides',
+      },
+      {
+        backlinkIndex: buildBacklinkIndex(dir),
+        projectDir: dir,
+      },
+    );
+
+    expect(result.status).toBe(200);
+
+    const status = await git.raw('status', '--short');
+    expect(status).toContain('R  docs/index.md -> guides/index.md');
+    expect(status).toContain('R  docs/nested/page.md -> guides/nested/page.md');
+    expect(status).not.toContain(' D docs/index.md');
+    expect(status).not.toContain('?? guides/');
+  });
+
+  test('file rename uses git mv for tracked files', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'old-name.md'), '# Doc\\n', 'utf-8');
+
+    const git = simpleGit(dir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@example.com');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      { docName: 'old-name', newDocName: 'new-name' },
+      { backlinkIndex: buildBacklinkIndex(dir), projectDir: dir },
+    );
+
+    expect(result.status).toBe(200);
+    const status = await git.raw('status', '--short');
+    expect(status).toContain('old-name.md -> new-name.md');
   });
 
   test('deletes a file and reports the removed doc name', async () => {

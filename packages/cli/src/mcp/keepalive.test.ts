@@ -280,4 +280,62 @@ describe('startKeepalive', () => {
     handle.close();
     expect(() => handle.close()).not.toThrow();
   });
+
+  test('URL omits connectionId query param when option is not set', async () => {
+    const scheduler = createScheduler();
+    const opened: FakeWebSocket[] = [];
+    const handle = startKeepalive({
+      resolveWsUrl: async () => 'ws://localhost:12345',
+      scheduler,
+      createWebSocket: (url) => {
+        const fake = new FakeWebSocket(url);
+        opened.push(fake);
+        return fake;
+      },
+    });
+    await runMicrotasks();
+    expect(opened.length).toBe(1);
+    expect(opened[0].url).not.toContain('connectionId=');
+    handle.close();
+  });
+
+  test('URL contains connectionId= when option is set (deterministic cleanup)', async () => {
+    const scheduler = createScheduler();
+    const opened: FakeWebSocket[] = [];
+    const handle = startKeepalive({
+      resolveWsUrl: async () => 'ws://localhost:12345',
+      scheduler,
+      connectionId: 'abcdef12-3456-7890-abcd-ef1234567890',
+      createWebSocket: (url) => {
+        const fake = new FakeWebSocket(url);
+        opened.push(fake);
+        return fake;
+      },
+    });
+    await runMicrotasks();
+    expect(opened.length).toBe(1);
+    expect(opened[0].url).toContain('connectionId=abcdef12-3456-7890-abcd-ef1234567890');
+    expect(opened[0].url).toContain(`pid=${process.pid}`);
+    handle.close();
+  });
+
+  test('URL percent-encodes connectionId values containing reserved characters', async () => {
+    const scheduler = createScheduler();
+    const opened: FakeWebSocket[] = [];
+    const handle = startKeepalive({
+      resolveWsUrl: async () => 'ws://localhost:12345',
+      scheduler,
+      connectionId: 'user/agent=1&2',
+      createWebSocket: (url) => {
+        const fake = new FakeWebSocket(url);
+        opened.push(fake);
+        return fake;
+      },
+    });
+    await runMicrotasks();
+    expect(opened.length).toBe(1);
+    // encodeURIComponent: /→%2F, =→%3D, &→%26
+    expect(opened[0].url).toContain('connectionId=user%2Fagent%3D1%262');
+    handle.close();
+  });
 });

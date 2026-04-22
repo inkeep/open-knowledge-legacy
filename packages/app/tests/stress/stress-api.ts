@@ -4,8 +4,7 @@
  *
  * Runs against a dev server (bun run dev on port 5173). Exercises:
  *   POST /api/agent-write-md
- *   POST /api/agent-undo
- *   GET  /api/agent-undo-status
+ *   POST /api/agent-undo  (V0-14: per-session, requires connectionId)
  *   POST /api/test-reset
  *
  * Does NOT assert the bridge invariant (that's Layer A's job).
@@ -53,18 +52,17 @@ async function agentWriteMd(markdown: string): Promise<void> {
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
-async function agentUndo(): Promise<{ ok: boolean; canUndo: boolean; canRedo: boolean }> {
-  const res = await fetch(`${BASE}/api/agent-undo`, { method: 'POST' });
-  return res.json();
-}
-
-async function agentUndoStatus(): Promise<{
-  canUndo: boolean;
-  canRedo: boolean;
-  stackSize: number;
-}> {
-  const res = await fetch(`${BASE}/api/agent-undo-status`);
-  return res.json();
+async function agentUndo(
+  connectionId: string,
+  docName = 'test-doc',
+  scope: 'last' | 'session' = 'last',
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/api/agent-undo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ connectionId, docName, scope }),
+  });
+  return res.ok ? { ok: true } : { ok: false };
 }
 
 function wait(ms: number): Promise<void> {
@@ -174,6 +172,7 @@ async function runS1(tier: Tier, doc: Y.Doc): Promise<void> {
 
 async function runS3(tier: Tier, doc: Y.Doc): Promise<void> {
   const N = tier.lines >= 10000 ? 3 : 5;
+  const connectionId = 'agent-stress-s3';
 
   for (let i = 0; i < N; i++) {
     const content = generateMarkdown(tier.lines);
@@ -181,19 +180,9 @@ async function runS3(tier: Tier, doc: Y.Doc): Promise<void> {
     await wait(1000);
   }
 
-  const status = await agentUndoStatus();
-  if (!status.canUndo) {
-    throw new Error(`Expected canUndo=true after ${N} writes, got false`);
-  }
-
   for (let i = 0; i < N; i++) {
-    await agentUndo();
+    await agentUndo(connectionId, 'test-doc', 'last');
     await wait(500);
-  }
-
-  const postStatus = await agentUndoStatus();
-  if (postStatus.canUndo) {
-    throw new Error(`Expected canUndo=false after ${N} undos, got true`);
   }
 
   const ytext = doc.getText('source');
@@ -240,7 +229,7 @@ async function main(): Promise<void> {
 
   // Verify server is reachable
   try {
-    await fetch(`${BASE}/api/agent-undo-status`);
+    await fetch(`${BASE}/api/document`);
   } catch {
     console.error('[stress-api] ERROR: Dev server not reachable. Run `bun run dev` first.');
     process.exit(1);

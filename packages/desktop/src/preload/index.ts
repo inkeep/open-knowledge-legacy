@@ -97,6 +97,12 @@ const bridge: OkDesktopBridge = {
     return () => ipcRenderer.removeListener('ok:update:stuck-hint', listener);
   },
 
+  onDeepLink(cb: (evt: { doc: string }) => void) {
+    const listener = (_event: IpcRendererEvent, evt: { doc: string }) => cb(evt);
+    ipcRenderer.on('ok:deep-link', listener);
+    return () => ipcRenderer.removeListener('ok:deep-link', listener);
+  },
+
   dialog: {
     openFolder: () => invoke('ok:dialog:open-folder'),
     createFolder: () => invoke('ok:dialog:create-folder'),
@@ -126,5 +132,15 @@ const bridge: OkDesktopBridge = {
   platform: process.platform as 'darwin' | 'win32' | 'linux',
   appVersion: parseArg('app-version') ?? '0.0.0',
 };
+
+// Debug namespace — populated ONLY when main decided the runtime gate is
+// open (SPEC D-M5-8). When the flag is absent, `bridge.debug` stays
+// undefined so a typo in renderer code calling the method surfaces at
+// TypeScript compile time.
+if (parseArg('debug-keyring-smoke') === '1') {
+  bridge.debug = {
+    keyringSmoke: () => invoke('ok:debug:keyring-smoke'),
+  };
+}
 
 contextBridge.exposeInMainWorld('okDesktop', bridge);

@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 // Side-effect import to load the `Window.okDesktop?` global augmentation.
 import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
+import { installDeepLinkListener } from '@/lib/install-deep-link-listener';
 import { installGitInitToast } from '@/lib/install-git-init-toast';
 import { initWebVitals } from '@/lib/perf';
 import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
@@ -52,6 +53,14 @@ if (typeof window !== 'undefined') {
 // `<UpdateNotices />` component reads them via `useSyncExternalStore`.
 // No-op in web/CLI distribution (window.okDesktop undefined).
 installUpdateNoticesBridge();
+
+// Desktop-only: subscribe to the `ok:deep-link` bridge event so an
+// `openknowledge://` URL routed to this window updates the hash to open the
+// target doc (M4 US-007). Module-init registration mirrors the git-init-toast
+// pattern — listener must be in place before the event can fire.
+if (typeof window !== 'undefined') {
+  installDeepLinkListener({ bridge: window.okDesktop });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

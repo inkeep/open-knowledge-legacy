@@ -13,6 +13,7 @@
  * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently ~8 channels.
  */
 
+import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { OkDesktopConfig } from './bridge-contract.ts';
 
 /** Recent-project row as surfaced to the Navigator. */
@@ -132,4 +133,12 @@ export interface RequestChannels {
    * and relaunches on the new version. AC18 / D3 revised.
    */
   'ok:update:relaunch-now': { args: []; result: undefined };
+  /**
+   * Debug-only keyring smoke — relays into the window's utility process and
+   * round-trips setPassword/getPassword/deletePassword against a namespace-
+   * scoped keychain entry (SPEC D-M5-1). Gated at runtime: disabled in
+   * packaged builds unless `OK_DEBUG_KEYRING_SMOKE=1` (D-M5-7). Renderer
+   * surface is populated only when the same gate allows (D-M5-8).
+   */
+  'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
 }

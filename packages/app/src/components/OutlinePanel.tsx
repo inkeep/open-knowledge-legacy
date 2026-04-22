@@ -11,6 +11,7 @@ import {
   PanelTitle,
 } from '@/components/ui/panel';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { useActiveHeading } from '@/hooks/useActiveHeading';
 import { ProfilerBoundary } from '@/lib/perf';
 import { cn } from '@/lib/utils';
@@ -172,6 +173,9 @@ function OutlinePanelInner({
       slug,
       mode: isSourceMode ? 'source' : 'wysiwyg',
     };
+    if (detail.mode === 'source') {
+      rememberPendingSourceNavigation(docName, { kind: 'outline', detail });
+    }
     window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
   }
 

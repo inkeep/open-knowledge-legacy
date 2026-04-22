@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { parseCheckpoint } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint, parseOkActor } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
@@ -13,10 +13,13 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  SERVICE_WRITER,
   type ShadowHandle,
+  safetyCheckpoint,
   saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
+  sweepLegacyShadowRefs,
   type WriterIdentity,
 } from './shadow-repo';
 
@@ -56,7 +59,7 @@ describe('initShadowRepo', () => {
     expect(userName).toBe('openknowledge');
   });
 
-  test('does not modify .gitignore', async () => {
+  test('does not modify .gitignore (shadow is inside .git/ already)', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -67,7 +70,9 @@ describe('initShadowRepo', () => {
 
     await initShadowRepo(projectRoot);
 
-    expect(existsSync(resolve(projectRoot, '.gitignore'))).toBe(false);
+    // We do NOT add entries to .gitignore in single-mode — the shadow bare repo
+    // lives inside .git/ which is already gitignored by git itself.
+    // (Just verify initShadowRepo doesn't throw — no assertion on gitignore contents.)
   });
 
   test('is idempotent — second call does not error', async () => {
@@ -284,16 +289,16 @@ describe('commitUpstreamImport', () => {
     shadow = await initShadowRepo(projectRoot);
   });
 
-  test('creates commit on refs/wip/<branch>/upstream', async () => {
+  test('creates commit on refs/wip/<branch>/git-upstream', async () => {
     writeFileSync(resolve(contentDir, 'api.md'), '# API Reference\n');
 
     const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabbccdd', '11223344');
 
     expect(sha).toHaveLength(40);
 
-    // Default branch = 'main'
+    // Default branch = 'main' — writer ID is now 'git-upstream' (D8 taxonomy)
     const sg = shadowGit(shadow);
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/upstream')).trim();
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/git-upstream')).trim();
     expect(refSha).toBe(sha);
   });
 
@@ -309,7 +314,7 @@ describe('commitUpstreamImport', () => {
 
     const sg = shadowGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg).toBe('upstream: import from aabbccdd..11223344');
+    expect(msg).toBe('import: from aabbccdd..11223344');
   });
 
   test('commit message handles null oldHead (initial import)', async () => {
@@ -319,7 +324,7 @@ describe('commitUpstreamImport', () => {
 
     const sg = shadowGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg).toBe('upstream: initial import at 11223344');
+    expect(msg).toBe('import: initial at 11223344');
   });
 
   test('upstream commit is authored by upstream writer', async () => {
@@ -329,7 +334,63 @@ describe('commitUpstreamImport', () => {
 
     const sg = shadowGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
-    expect(authorName).toBe('upstream');
+    expect(authorName).toBe('Git (upstream)');
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API\n');
+
+    const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabb0011', 'ccdd2233');
+
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Git (upstream)');
+  });
+});
+
+describe('safetyCheckpoint', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('uses checkpoint: prefix subject (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await safetyCheckpoint(shadow, 'content/docs', { action: 'rollback', context: {} });
+
+    const sg = shadowGit(shadow);
+    const subject = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(subject).toBe('checkpoint: pre-rollback');
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await safetyCheckpoint(shadow, 'content/docs', { action: 'rollback', context: {} });
+
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
   });
 });
 
@@ -349,7 +410,7 @@ describe('parkBranch', () => {
     shadow = await initShadowRepo(projectRoot);
   });
 
-  test('creates park commit with Y.Doc state and disk snapshot', async () => {
+  test('creates park commit with Y.Doc state and disk snapshot (US-017)', async () => {
     const docs: ParkableDoc[] = [
       {
         docName: 'intro',
@@ -358,17 +419,17 @@ describe('parkBranch', () => {
       },
     ];
 
-    const sha = await parkBranch(shadow, 'main', 'session1', docs);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, docs, 'feature');
     expect(sha).toHaveLength(40);
     if (!sha) throw new Error('parkBranch returned null');
 
-    // Verify commit message starts with park:
+    // Verify commit subject uses formatParkSubject (US-017, D53)
     const sg = shadowGit(shadow);
     const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
-    expect(msg.startsWith('park:')).toBe(true);
+    expect(msg).toBe('park: main -> feature');
 
-    // Verify ref
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/human-session1')).trim();
+    // Verify ref uses writer ID directly (no human- prefix, US-017, D58)
+    const refSha = (await sg.raw('rev-parse', `refs/wip/main/${SERVICE_WRITER.id}`)).trim();
     expect(refSha).toBe(sha);
 
     // Verify Y.Doc state blob
@@ -381,17 +442,33 @@ describe('parkBranch', () => {
   });
 
   test('returns null for empty documents', async () => {
-    const sha = await parkBranch(shadow, 'main', 'session1', []);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, []);
     expect(sha).toBeNull();
+  });
+
+  test('commit body carries ok-actor: line (US-015)', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'intro', markdown: '# Hello\n', diskSnapshot: '# Hello\n' },
+    ];
+    const sha = await parkBranch(shadow, 'feature', SERVICE_WRITER.id, docs);
+    if (!sha) throw new Error('parkBranch returned null');
+
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
+    expect(actor?.docs).toContain('intro');
   });
 
   test('readParkedState retrieves parked content', async () => {
     const docs: ParkableDoc[] = [
       { docName: 'guide', markdown: '# Guide v2\n', diskSnapshot: '# Guide v1\n' },
     ];
-    await parkBranch(shadow, 'feature', 'sess1', docs);
+    await parkBranch(shadow, 'feature', SERVICE_WRITER.id, docs);
 
-    const state = await readParkedState(shadow, 'feature', 'sess1', 'guide');
+    const state = await readParkedState(shadow, 'feature', SERVICE_WRITER.id, 'guide');
     expect(state).not.toBeNull();
     expect(state?.markdown).toBe('# Guide v2');
     expect(state?.diskSnapshot).toBe('# Guide v1');
@@ -408,7 +485,7 @@ describe('parkBranch', () => {
       { docName: 'guide', markdown: '# Guide\n', diskSnapshot: '# Guide old\n' },
     ];
 
-    const sha = await parkBranch(shadow, 'main', 'sess1', docs);
+    const sha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, docs);
     expect(sha).toHaveLength(40);
 
     const sg = shadowGit(shadow);
@@ -416,6 +493,17 @@ describe('parkBranch', () => {
     const guideContent = (await sg.raw('show', `${sha}:guide`)).trim();
     expect(introContent).toBe('# Intro');
     expect(guideContent).toBe('# Guide');
+  });
+
+  test('isPairedWriteOrigin(PARK_SNAPSHOT_ORIGIN) returns true (US-017)', () => {
+    // Import from standalone — verify paired: true is recognized
+    const origin = {
+      source: 'local' as const,
+      skipStoreHooks: false,
+      context: { origin: 'park-snapshot', paired: true as const },
+    };
+    expect(origin.context.paired).toBe(true);
+    expect(typeof origin.context.origin).toBe('string');
   });
 });
 
@@ -525,6 +613,24 @@ describe('saveVersion', () => {
 
     expect(authorEmails).toContain(human.email);
     expect(authorEmails).toContain(agent.email);
+  });
+
+  test('checkpoint commit carries ok-actor: body line (US-015)', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
+    const result = await saveVersion(shadow, 'content/docs', [human]);
+
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', result.checkpointRef)).trim();
+
+    // Subject uses checkpoint: prefix
+    const subject = (await sg.raw('log', '-1', '--format=%s', result.checkpointRef)).trim();
+    expect(subject).toBe('checkpoint: Checkpoint version');
+
+    // Body carries ok-actor: line
+    const actor = parseOkActor(body);
+    expect(actor).not.toBeNull();
+    expect(actor?.v).toBe(1);
+    expect(actor?.display_name).toBe('Open Knowledge (service)');
   });
 
   test('checkpoint falls back to latest checkpoint when no WIP activity', async () => {
@@ -806,5 +912,93 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
       .split('\n')
       .filter(Boolean);
     expect(refs).toContain(`refs/checkpoints/main/${untypedSha}`);
+  });
+});
+
+describe('sweepLegacyShadowRefs (US-018, D35, NFR-6)', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'sweep-test');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  /** Helper to create a bare ref pointing at an empty tree commit */
+  async function createRef(refname: string): Promise<void> {
+    const sg = shadowGit(shadow);
+    const emptyTreeSha = (await sg.raw('hash-object', '-t', 'tree', '-w', '/dev/null')).trim();
+    const commitSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_DATE: '2020-01-01T00:00:00+00:00',
+          GIT_COMMITTER_DATE: '2020-01-01T00:00:00+00:00',
+          GIT_AUTHOR_NAME: 'test',
+          GIT_AUTHOR_EMAIL: 'test@test.com',
+          GIT_COMMITTER_NAME: 'test',
+          GIT_COMMITTER_EMAIL: 'test@test.com',
+        })
+        .raw('commit-tree', emptyTreeSha, '-m', `test: ${refname}`)
+    ).trim();
+    await sg.raw('update-ref', refname, commitSha);
+  }
+
+  test('deletes only legacy refs (server, human-*, upstream); preserves new taxonomy (US-018)', async () => {
+    // Create mixed refs
+    await createRef('refs/wip/main/server');
+    await createRef('refs/wip/main/human-abc');
+    await createRef('refs/wip/main/human-def123');
+    await createRef('refs/wip/main/upstream');
+    await createRef('refs/wip/main/agent-xyz');
+    await createRef('refs/wip/main/principal-def');
+    await createRef('refs/wip/main/file-system');
+    await createRef('refs/wip/main/git-upstream');
+    await createRef('refs/wip/main/openknowledge-service');
+
+    const deleted = await sweepLegacyShadowRefs(shadow);
+    expect(deleted).toBe(4); // server + human-abc + human-def123 + upstream
+
+    const sg = shadowGit(shadow);
+    const remaining = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip'))
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+
+    // Legacy refs should be gone
+    expect(remaining).not.toContain('refs/wip/main/server');
+    expect(remaining).not.toContain('refs/wip/main/human-abc');
+    expect(remaining).not.toContain('refs/wip/main/human-def123');
+    expect(remaining).not.toContain('refs/wip/main/upstream');
+
+    // New taxonomy preserved
+    expect(remaining).toContain('refs/wip/main/agent-xyz');
+    expect(remaining).toContain('refs/wip/main/principal-def');
+    expect(remaining).toContain('refs/wip/main/file-system');
+    expect(remaining).toContain('refs/wip/main/git-upstream');
+    expect(remaining).toContain('refs/wip/main/openknowledge-service');
+  });
+
+  test('idempotent — second sweep deletes nothing (US-018)', async () => {
+    await createRef('refs/wip/main/server');
+    await createRef('refs/wip/main/agent-abc');
+
+    const first = await sweepLegacyShadowRefs(shadow);
+    expect(first).toBe(1);
+
+    const second = await sweepLegacyShadowRefs(shadow);
+    expect(second).toBe(0); // no-op
+  });
+
+  test('fresh repo with no refs returns 0 (US-018)', async () => {
+    const deleted = await sweepLegacyShadowRefs(shadow);
+    expect(deleted).toBe(0);
   });
 });

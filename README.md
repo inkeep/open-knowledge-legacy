@@ -35,7 +35,7 @@ All supported editors now share a single global `open-knowledge` entry. The MCP 
 ### Install globally (optional)
 
 ```bash
-bun  install -g @inkeep/open-knowledge   # or: npm install -g, or: pnpm add -g
+bun install -g @inkeep/open-knowledge   # or: npm install -g, or: pnpm add -g
 ok init                                  # short alias
 ok start                                 # equivalent to `open-knowledge start`
 ```

@@ -92,9 +92,8 @@ test('S6: multi-turn stress — large content + user edits', async ({ page, api,
   // 5. Final assertions.
   // `filterCriticalErrors` (from `_helpers/error-filters.ts`) strips known
   // dev-server noise — favicon/HMR/Vite chatter, WebSocket reconnect race
-  // during /api/test-reset, the by-design /api/config 404. The remaining
-  // entries are genuine failures. See the helper module for the full
-  // predicate list + rationale.
+  // during /api/test-reset. The remaining entries are genuine failures.
+  // See the helper module for the full predicate list + rationale.
   const errors = logs.filter((l) => l.type === 'error' || l.type === 'uncaught');
   const criticalErrors = filterCriticalErrors(errors);
   if (criticalErrors.length > 0) {

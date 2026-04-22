@@ -134,6 +134,15 @@
         "tests/health/baseline.json"
       ]
     },
+    "test:perf:sessions": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "tests/integration/per-session-um-perf.test.ts",
+        "../server/src/**/*.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
     "perf:profile": {
       "dependsOn": [],
       "cache": false,

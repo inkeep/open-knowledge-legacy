@@ -7,8 +7,12 @@
  * This file's purpose is twofold:
  *   1. Type the optional `window.okDesktop` global so `useCollabUrl` and any
  *      future Electron-aware app code can read it with full type safety.
- *   2. Stay in sync with the desktop preload's contract — drift caught by a
- *      contract-equality test promised in US-013.
+ *   2. Stay in sync with the desktop preload's contract — drift across the
+ *      three copies is caught by the `M1 invariant: bridge contract drift
+ *      catcher` test in
+ *      `packages/desktop/tests/integration/m1-smoke.test.ts` (top-level
+ *      `OkDesktopBridge` member parity + `KeyringSmokeResult` /
+ *      `OkKeyringSmokeResult` field shape).
  *
  * Web / CLI distribution: `window.okDesktop` is `undefined` and the optional
  * chaining + `if (window.okDesktop?.config.collabUrl)` guards in `useCollabUrl`
@@ -59,6 +63,23 @@ export interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
+/**
+ * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
+ * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
+ * and `OkKeyringSmokeResult` in `packages/core/src/desktop-bridge.ts`.
+ * Duplicated across the three copies; drift is caught by the `M1 invariant:
+ * bridge contract drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts` (field-set equality
+ * across all three files).
+ */
+export interface OkKeyringSmokeResult {
+  ok: boolean;
+  backend?: 'keyring' | 'file';
+  error?: string;
+  durationMs?: number;
+  timestamp: string;
+}
+
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
@@ -67,6 +88,7 @@ export interface OkDesktopBridge {
   onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
   onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
   onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
+  onDeepLink(cb: (evt: { doc: string }) => void): OkUnsubscribe;
   dialog: {
     openFolder(): Promise<string | null>;
     createFolder(): Promise<string | null>;
@@ -114,6 +136,13 @@ export interface OkDesktopBridge {
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;
+  /**
+   * Debug-only namespace populated by preload when the runtime gate allows
+   * (SPEC M5 D-M5-8). Absent in production so a typo surfaces at compile time.
+   */
+  debug?: {
+    keyringSmoke(): Promise<OkKeyringSmokeResult>;
+  };
 }
 
 declare global {

@@ -3,7 +3,7 @@
  *
  * The agent write endpoints (/api/agent-write, /api/agent-write-md) now:
  * - Set agent awareness (name: Claude, color: #D97757, type: agent)
- * - Write Y.Map('activity') entry alongside content for flash plugins
+ * - Write Y.Map('agent-flash') entry alongside content for flash plugins
  * - Use 'agent-write' origin for per-origin undo tracking
  *
  * Usage:
@@ -113,16 +113,6 @@ async function agentPatch(
 async function readDocument(): Promise<{ ok: boolean; content?: string; error?: string }> {
   const res = await fetch(`${BASE_URL}/api/document?docName=${encodeURIComponent(docName)}`);
   return (await res.json()) as { ok: boolean; content?: string; error?: string };
-}
-
-async function checkUndoStatus(): Promise<{ canUndo: boolean; canRedo: boolean } | null> {
-  try {
-    const res = await fetch(`${BASE_URL}/api/agent-undo-status`);
-    if (res.ok) return (await res.json()) as { canUndo: boolean; canRedo: boolean };
-  } catch {
-    // Server not running or endpoint not available
-  }
-  return null;
 }
 
 // --- Write helper (existing modes) ---
@@ -339,7 +329,7 @@ if (usePatch) {
   console.log(`Mode: ${useMarkdown ? 'markdown' : 'raw'}`);
   console.log(`Writes: ${count}${count > 1 ? ' (rapid, 100ms apart)' : ''}`);
   console.log(`Presence: Agent connects with awareness (Claude, #D97757, type: agent)`);
-  console.log(`Activity: Y.Map('activity') updated per write for flash plugins`);
+  console.log(`Activity: Y.Map('agent-flash') updated per write for flash plugins`);
   console.log(`Undo: writes tracked with 'agent-write' origin\n`);
 
   if (count > 1) {
@@ -351,12 +341,6 @@ if (usePatch) {
     }
   } else {
     await doWrite(1);
-  }
-
-  // Check undo status after writes
-  const undoStatus = await checkUndoStatus();
-  if (undoStatus) {
-    console.log(`\nUndo status: canUndo=${undoStatus.canUndo}, canRedo=${undoStatus.canRedo}`);
   }
 
   console.log('\nDone. Check the browser for:');

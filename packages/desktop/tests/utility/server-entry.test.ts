@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { KeyringSmokeResult } from '../../src/utility/keyring-smoke.ts';
 import { setupUtility } from '../../src/utility/server-entry.ts';
 
 /**
@@ -61,10 +62,15 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
   });
 
   test('on init message: imports server, calls bootServer with M1 opt-outs, posts ready', async () => {
+    // `didGitInit` is part of the `UtilityReadyMessage` IPC contract (required
+    // field). Pin it to an explicit value on the fake so the assertion below
+    // locks the shape — deep equality between the asserted object and an
+    // implicit-undefined field can mask a production rename of the field.
     const fakeBooted = {
       port: 51234,
       destroy: mock(() => Promise.resolve()),
       degraded: [] as readonly string[],
+      didGitInit: false,
     };
     const bootServer = mock(() => Promise.resolve(fakeBooted));
     const importServer = mock(() =>
@@ -98,6 +104,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     expect(ready.type).toBe('ready');
     expect(ready.port).toBe(51234);
     expect(ready.apiOrigin).toBe('http://localhost:51234');
+    expect(ready.didGitInit).toBe(false);
 
     // Asserts the M1 opt-outs (D36)
     const callArgs = bootServer.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
@@ -109,6 +116,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       type: 'ready',
       port: 51234,
       apiOrigin: 'http://localhost:51234',
+      didGitInit: false,
     });
   });
 
@@ -281,6 +289,238 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     await handle.shutdown('test-1');
     await handle.shutdown('test-2');
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  test('boot auto-smoke: OK_DEBUG_KEYRING_SMOKE=1 + OUT path writes JSON atomically', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 12,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+    const writeSmokeResult = mock(() => Promise.resolve());
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({} as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+      env: {
+        OK_DEBUG_KEYRING_SMOKE: '1',
+        OK_DEBUG_KEYRING_SMOKE_OUT: '/tmp/smoke-out.json',
+      },
+      writeSmokeResult,
+    });
+
+    // Auto-smoke is async — give it a microtask window.
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(writeSmokeResult).toHaveBeenCalledTimes(1);
+    const [writtenPath, writtenContents] = writeSmokeResult.mock.calls[0] as [string, string];
+    expect(writtenPath).toBe('/tmp/smoke-out.json');
+    const parsed = JSON.parse(writtenContents) as KeyringSmokeResult;
+    expect(parsed).toEqual(smokeResult);
+    expect(writtenContents.endsWith('\n')).toBe(true);
+    // Exit must NOT have been called — EXIT flag was not set
+    expect(env.exit).not.toHaveBeenCalled();
+  });
+
+  test('boot auto-smoke + EXIT=1: calls exit(0) after write, does NOT register listener', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 5,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+    const writeSmokeResult = mock(() => Promise.resolve());
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({} as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+      env: {
+        OK_DEBUG_KEYRING_SMOKE: '1',
+        OK_DEBUG_KEYRING_SMOKE_OUT: '/tmp/smoke-exit.json',
+        OK_DEBUG_KEYRING_SMOKE_EXIT: '1',
+      },
+      writeSmokeResult,
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(writeSmokeResult).toHaveBeenCalledTimes(1);
+    expect(env.exit).toHaveBeenCalledWith(0);
+    // Message listener must NOT have been registered when EXIT=1 — the
+    // utility is going down after the smoke.
+    expect(env.parentPort.on).not.toHaveBeenCalled();
+  });
+
+  test('boot auto-smoke: OK_DEBUG_KEYRING_SMOKE=1 without OUT path still posts IPC result', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 8,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+    const writeSmokeResult = mock(() => Promise.resolve());
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({} as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+      env: { OK_DEBUG_KEYRING_SMOKE: '1' },
+      writeSmokeResult,
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    // No OUT path → no file write
+    expect(writeSmokeResult).not.toHaveBeenCalled();
+    // IPC result is still posted
+    expect(env.parentPort.postMessage).toHaveBeenCalledWith({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'auto-boot',
+      result: smokeResult,
+    });
+    // Listener registered because EXIT not set — utility continues normal boot
+    expect(env.parentPort.on).toHaveBeenCalled();
+  });
+
+  test('boot auto-smoke: env unset → no smoke runs, listener registered immediately', async () => {
+    const runSmoke = mock(() =>
+      Promise.resolve({ ok: true, timestamp: 'x' } as KeyringSmokeResult),
+    );
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({} as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+      env: {},
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).not.toHaveBeenCalled();
+    expect(env.parentPort.on).toHaveBeenCalled();
+  });
+
+  test('boot auto-smoke: write failure logs + continues (does NOT exit or hang)', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 3,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+    const writeSmokeResult = mock(() => Promise.reject(new Error('EACCES')));
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({} as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+      env: {
+        OK_DEBUG_KEYRING_SMOKE: '1',
+        OK_DEBUG_KEYRING_SMOKE_OUT: '/tmp/unwritable/smoke.json',
+      },
+      writeSmokeResult,
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Smoke ran and was attempted to write
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(writeSmokeResult).toHaveBeenCalledTimes(1);
+    // No exit — the utility continues boot
+    expect(env.exit).not.toHaveBeenCalled();
+    // Listener registered so the utility can accept init
+    expect(env.parentPort.on).toHaveBeenCalled();
+  });
+
+  test('debug-keyring-smoke IPC: invokes injected runSmoke and echoes correlationId', async () => {
+    const smokeResult: KeyringSmokeResult = {
+      ok: true,
+      backend: 'keyring',
+      durationMs: 7,
+      timestamp: '2026-04-21T00:00:00.000Z',
+    };
+    const runSmoke = mock(() => Promise.resolve(smokeResult));
+
+    setupUtility({
+      parentPort: env.parentPort,
+      importServer: () =>
+        Promise.resolve({
+          bootServer: mock(() => Promise.resolve({})),
+        } as unknown as typeof import('@inkeep/open-knowledge-server')),
+      exit: env.exit,
+      parentPid: 99999,
+      killProbe: env.killProbe,
+      onSignal: (sig, h) => env.signalHandlers.set(sig, h),
+      setInterval: (cb, ms) => {
+        env.intervals.push({ cb, ms });
+        return { unref: mock(() => {}), clear: env.intervalCancel };
+      },
+      runSmoke,
+    });
+
+    env.parentPort.fire({ type: 'debug-keyring-smoke', correlationId: 'abc-123' });
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(env.parentPort.postMessage).toHaveBeenCalledWith({
+      type: 'debug-keyring-smoke-result',
+      correlationId: 'abc-123',
+      result: smokeResult,
+    });
   });
 
   test('degraded subsystems are reported via separate IPC after ready', async () => {
