@@ -1,27 +1,37 @@
 /**
- * Pure wrapper: given a raw `openDocument` function and React's
- * `startTransition`, returns an `openDocumentTransition` that wraps the
- * doc-open call in a transition scope.
+ * Pure wrapper: given a raw `openDocument` function, React's `startTransition`,
+ * and an `isWarm(docName)` predicate, returns an `openDocumentTransition` that
+ * splits fast-path and slow-path navigation:
  *
- * Extracted as a standalone function so the wrapping contract can be
- * unit-tested without a React rendering harness (see iteration 4 / iteration
- * 5 notes for the repo's "pure helper + Playwright for render behavior"
- * convention).
+ *   WARM (isWarm returns true)
+ *     Wrap `openDocument` in `startTransition`. The previously-revealed subtree
+ *     stays visible while the new entry's `use(syncPromise)` resolves in the
+ *     same render (cache-hit — `hasSynced=true`), delivering flash-free
+ *     content-continuity (SPEC G2 / precedent #18(f)).
  *
- * React semantics: wrapping `openDocument` in `startTransition` marks the
- * subsequent state updates (and their suspending re-renders) as non-urgent,
- * which (a) keeps previously-revealed content visible while the next entry
- * suspends (content-continuity; SPEC G2) and (b) keeps `isPending` true for
- * the full duration of the suspending re-render (SPEC G3 — consumed by
- * `NavigationPendingBar`).
+ *   COLD (isWarm returns false)
+ *     Call `openDocument` directly WITHOUT `startTransition`. React's default
+ *     Suspense behavior paints the `<EditorSkeleton />` fallback immediately,
+ *     so the shell (sidebar, header, tabs) updates synchronously before the
+ *     expensive editor mount + sync work runs. The skeleton gives the user
+ *     immediate "something's happening" feedback on cold loads where the
+ *     previous content staying visible would feel like lag.
+ *
+ * Extracted as a pure helper so the split can be unit-tested without a React
+ * rendering harness.
  */
 export function createOpenDocumentTransition(
   openDocument: (docName: string) => void,
   startTransition: (scope: () => void) => void,
+  isWarm: (docName: string) => boolean,
 ): (docName: string) => void {
   return (docName: string) => {
-    startTransition(() => {
-      openDocument(docName);
-    });
+    if (isWarm(docName)) {
+      startTransition(() => {
+        openDocument(docName);
+      });
+      return;
+    }
+    openDocument(docName);
   };
 }

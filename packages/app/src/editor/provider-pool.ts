@@ -360,11 +360,11 @@ export class ProviderPool {
   /**
    * Destroy and recreate the entry for `docName`, preserving `activeDocName`
    * across the swap. Used by the "Try again" retry path in
-   * `DocumentErrorBoundary` and `NavigationPendingBar` tier-3 to recover from
-   * `BridgeSetupError` (or any sync failure that leaves the provider in a
-   * known-broken state). Differs from `close + open` in that it does NOT
-   * intermediately null `activeDocName`, so `EditorArea` does not flash the
-   * "Select a document" empty state during the swap.
+   * `DocumentErrorBoundary` to recover from `BridgeSetupError` (or any sync
+   * failure that leaves the provider in a known-broken state). Differs from
+   * `close + open` in that it does NOT intermediately null `activeDocName`,
+   * so `EditorArea` does not flash the "Select a document" empty state
+   * during the swap.
    *
    * No-op if the doc is not in the pool.
    */

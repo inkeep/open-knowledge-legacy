@@ -34,12 +34,15 @@ interface DocumentContextValue {
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
   openDocument: (docName: string) => void;
   /**
-   * Same as `openDocument` but wrapped in React's `startTransition`. Use this
-   * for navigation flows that should (a) preserve previously-revealed content
-   * during the suspending re-render (SPEC G2) and (b) surface progress via
-   * `isPending` (SPEC G3 — consumed by `NavigationPendingBar`). All
-   * user-initiated and agent-initiated navigation should flow through here;
-   * `openDocument` is retained for non-transition callers (e.g. test setup).
+   * Navigation entry with a fast/slow split. If `docName` names a doc whose
+   * pool entry has `hasSynced=true` (warm path), the state update is wrapped
+   * in `startTransition` — the previously-revealed subtree stays visible
+   * through the suspending re-render (SPEC G2 / precedent #18(f)). Otherwise
+   * (cold path: no provider yet, or provider still syncing), `openDocument`
+   * runs directly — React's default Suspense behavior paints the
+   * `<EditorSkeleton />` fallback immediately so the shell feels snappy
+   * instead of stalling on the stale-content view. `openDocument` is retained
+   * for non-transition callers (tests, direct agent actions).
    */
   openDocumentTransition: (docName: string) => void;
   /**
@@ -51,22 +54,22 @@ interface DocumentContextValue {
    */
   openTarget: (target: ResolvedNavigationTarget) => void;
   /**
-   * Same as `openTarget` but wrapped in React's `startTransition`. This is
-   * the canonical hash-driven nav path (`NavigationHandler` in `App.tsx`)
-   * so the transition surfaces the `isPending` state that drives
-   * `NavigationPendingBar` AND keeps the previously-revealed subtree visible
-   * during the suspending re-render (SPEC G2+G3). `openTarget` is retained
-   * for non-transition callers (tests, direct agent actions).
+   * Hash-driven navigation entry (`NavigationHandler` in `App.tsx`). Applies
+   * the same fast/slow split as `openDocumentTransition` for `doc` targets:
+   * warm (provider synced) → wrapped in `startTransition`; cold → direct
+   * call, Suspense fallback paints immediately. Non-`doc` targets
+   * (folder-index, folder, missing) always go through the transition since
+   * there is no editor mount to stall on. `openTarget` is retained for
+   * non-transition callers (tests, direct agent actions).
    */
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
   clearTarget: () => void;
   /**
-   * True while a transition-wrapped navigation is mid-flight, including the
-   * time spent suspending on `syncPromise` inside `DocumentBoundary`. Shared
-   * across `openDocumentTransition` and `openTargetTransition` — a single
-   * `useTransition()` at the provider level, so every consumer of
-   * `useDocumentTransition()` sees the same pending state. Drives
-   * `NavigationPendingBar`'s 4-tier escalation.
+   * True while a transition-wrapped navigation is mid-flight (warm path
+   * only — cold-path nav renders the Suspense fallback directly without
+   * entering a transition). Shared across `openDocumentTransition` and
+   * `openTargetTransition` via a single `useTransition()` at the provider
+   * level, so every `useDocumentTransition()` consumer sees the same state.
    */
   isPending: boolean;
   closeDocument: (docName: string) => void;
@@ -224,10 +227,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     retry: retryCollab,
   } = useCollabUrl();
   // `useTransition` (rather than the module-level `startTransition`) is
-  // required so `isPending` is observable to context consumers. The
-  // transition stays "pending" through any suspending re-renders triggered
-  // by the wrapped state updates — exactly what keeps the
-  // `NavigationPendingBar` visible until `syncPromise` resolves.
+  // required so `isPending` is observable to context consumers that want to
+  // tailor UI while a warm-path nav is settling. Cold-path nav bypasses the
+  // transition entirely (see `openDocumentTransition` below) so the Suspense
+  // fallback paints immediately instead of waiting for the editor mount.
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -312,11 +315,26 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // stays as a direct-doc affordance for non-resolver callers (tests, etc.).
     setActiveTarget({ kind: 'doc', target: docName, docName });
   };
+  // Fast/slow split: warm (provider synced) → wrap in startTransition so
+  // the previously-revealed subtree stays visible through the suspending
+  // re-render. Cold → direct call so the Suspense fallback paints the
+  // skeleton immediately. `getPool(collabUrl).entries.get(docName)` reads
+  // the most-recent pool snapshot without touching state.
+  const isWarmDoc = (docName: string): boolean => {
+    if (collabUrl === null) return false;
+    const entry = getPool(collabUrl).entries.get(docName);
+    return entry?.hasSynced === true;
+  };
   const openDocumentTransition = (docName: string) => {
-    mark('ok/nav/open-document', { docName, transition: true });
-    startTransition(() => {
-      openDocument(docName);
-    });
+    const warm = isWarmDoc(docName);
+    mark('ok/nav/open-document', { docName, transition: warm });
+    if (warm) {
+      startTransition(() => {
+        openDocument(docName);
+      });
+      return;
+    }
+    openDocument(docName);
   };
 
   const openTarget = (target: ResolvedNavigationTarget) => {
@@ -333,7 +351,16 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   };
   const openTargetTransition = (target: ResolvedNavigationTarget) => {
     const docName = docNameForNavigationTarget(target);
-    mark('ok/nav/open-target', { docName, kind: target.kind, transition: true });
+    // Non-doc targets (folder / folder-index / missing) always go through
+    // the transition — they swap the folder-overview view, no editor mount
+    // cost. Doc targets apply the warm/cold split so cold nav paints the
+    // Suspense skeleton immediately rather than stalling on stale content.
+    const warm = target.kind === 'doc' && docName !== null && isWarmDoc(docName);
+    mark('ok/nav/open-target', { docName, kind: target.kind, transition: warm });
+    if (target.kind === 'doc' && !warm) {
+      openTarget(target);
+      return;
+    }
     startTransition(() => openTarget(target));
   };
 

@@ -19,15 +19,14 @@ import { mark, ProfilerBoundary } from '@/lib/perf';
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that resolves the active navigation target
- *  and calls openTargetTransition().
- *  Wrapping every hash-driven nav in a transition (a) keeps the previously-revealed
- *  doc visible while the next entry suspends on syncPromise (SPEC G2), and
- *  (b) surfaces `isPending` to NavigationPendingBar (SPEC G3). Agent-driven
- *  nav via SystemDocSubscriber flows through `window.location.hash` too, so
+ *  and calls openTargetTransition(). The transition wrapper keeps a previously-
+ *  revealed doc visible while the next entry suspends on syncPromise (fast/warm
+ *  path, SPEC G2); on cold paths `openTargetTransition` drops the transition
+ *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately. Agent-
+ *  driven nav via SystemDocSubscriber flows through `window.location.hash`, so
  *  it inherits the same UX without a separate code path (SPEC §F7). Target
  *  resolution (doc / folder-index / folder / missing) lives in
- *  resolveNavigationTarget (PR #175) — the transition wraps the whole
- *  openTarget() call so folder-overview nav is transition-wrapped too. */
+ *  resolveNavigationTarget (PR #175). */
 function NavigationHandler() {
   const { clearTarget } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();

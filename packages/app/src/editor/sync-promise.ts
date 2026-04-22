@@ -124,8 +124,8 @@ const cache = new Map<string, CacheEntry>();
  * Visibility-change handler installed lazily on first pending entry. Browsers
  * aggressively throttle (and sometimes pause outright) `setTimeout` in
  * backgrounded tabs — a 30s timer armed before a tab-sleep won't fire at 30s
- * of wall-clock time, leaving `NavigationPendingBar` stuck at tier 3 with no
- * rejection arriving to trigger the error boundary. On every flip to
+ * of wall-clock time, leaving the Suspense fallback stuck with no rejection
+ * arriving to trigger the error boundary. On every flip to
  * `document.visibilityState === 'visible'`, re-check elapsed time against
  * every pending entry and reject any that have exceeded the timeout — the
  * `setTimeout` stays as best-effort scheduler but the visibility handler
