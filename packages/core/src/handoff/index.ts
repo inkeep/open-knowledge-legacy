@@ -7,6 +7,9 @@
  * `KNOWN_TARGETS` data constant live in `packages/app/src/lib/handoff/`.
  */
 
+export { buildClaudeUrl } from './claude-url.ts';
+export { buildCodexUrl } from './codex-url.ts';
+export { buildCursorUrl } from './cursor-url.ts';
 export { composePrompt } from './prompt-composer.ts';
 export type {
   DocContext,
