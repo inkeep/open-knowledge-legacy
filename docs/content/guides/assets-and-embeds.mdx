@@ -1,0 +1,137 @@
+---
+title: Assets and embeds
+description: Drop files into the editor, reference them with Obsidian-style embeds, dedup duplicates, and tune the upload surface for your workflow.
+---
+
+Open Knowledge treats assets (images, PDFs, video, audio, fonts, archives) as first-class content. Drop a file from Finder into a note, paste a screenshot, or open an existing Obsidian vault — the editor writes the binary to disk next to your markdown and inserts a reference that renders inline in WYSIWYG and round-trips byte-identically through source view.
+
+## Dropping files
+
+Any file under the configured size limit (25 MB by default) is accepted. The editor routes files to one of three insertion shapes based on the extension:
+
+| File type                                           | Default shape                       | Example                 |
+| --------------------------------------------------- | ----------------------------------- | ----------------------- |
+| Images — `.png`, `.jpg`, `.gif`, `.webp`, `.avif`, `.svg` | Inline image via wiki-embed         | `![[photo.png]]`        |
+| PDF, MP4, MP3, WAV, OGG, M4A, MOV, WebM             | Wiki-embed (plain-link fallback today; typed viewers in a future release) | `![[draft.pdf]]`        |
+| Opaque (ZIP, DOCX, CSV, arbitrary)                  | Markdown link                       | `[archive.zip](archive.zip)` |
+
+<Callout type="info">
+Images render as `<img>` in both WYSIWYG and the rendered output. Video, audio, and PDF embeds currently render as clickable links; rich inline viewers land with the typed component-nodes rollout — the storage shape (`![[file.ext]]`) will not change, so you're not painting yourself into a corner.
+</Callout>
+
+### How the emit is chosen
+
+Three settings combine to pick the insert shape:
+
+1. `upload.emitFormat` — `wikiembed` (default) emits `![[...]]`. `markdown-image` emits `![alt](path)` for images and `[name](path)` for non-image typed files.
+2. `upload.wikiEmbedExtensions` — the allowlist of extensions eligible for the `![[...]]` shape. Anything outside this list always emits as a markdown link regardless of `emitFormat`.
+3. Whether the extension is an image — under `markdown-image`, only images use the `![alt](...)` image form; other typed files emit as markdown links.
+
+See [Configuration](/guides/configuration#upload-configuration) for the full schema.
+
+## Where files land on disk
+
+Assets are written to `upload.attachmentFolderPath`, resolved relative to the containing doc:
+
+| `attachmentFolderPath` | Resolution | Example |
+| ---------------------- | ---------- | ------- |
+| `"./"` (default)       | Same directory as the doc | `docs/meeting.md` → `docs/photo.png` |
+| `"/"`                  | Content-directory root | any doc → `photo.png` at repo root |
+| `"./attachments"`      | Subdirectory beside the doc | `docs/meeting.md` → `docs/attachments/photo.png` |
+| `"attachments"`        | Fixed content-relative path | any doc → `attachments/photo.png` |
+
+This mirrors Obsidian's literal schema verbatim. If you open a project that already contains an `.obsidian/app.json`, the setting is inherited automatically at server startup — see [Obsidian vault compatibility](#obsidian-vault-compatibility) below.
+
+## Deduplication
+
+Dropping the same screenshot twice into the same directory is a silent annoyance that Obsidian has carried for years. Open Knowledge checks sha256 against sibling asset files before writing. When the bytes match:
+
+- The server returns the existing path and the editor inserts a reference to it.
+- A toast appears: `Already at docs/pasted-20260416-140523.png — reusing.`
+- No new file is written.
+
+Dedup is scoped to the destination directory only (different dirs that happen to contain the same bytes stay independent). Disable with `upload.dedup.mode: off`; silence the toast with `upload.dedup.ui: silent`.
+
+## Moving documents with refs
+
+When you rename a document via the UI, MCP, or drag-drop:
+
+- **Relative markdown image refs** (`![alt](./photo.png)`, `![alt](subdir/photo.png)`) are rewritten to resolve from the new location.
+- **Absolute-path refs** (`![alt](/docs/photo.png)`) and URL refs (`http(s):`, `data:`) are left unchanged.
+- **Wiki-embed refs** (`![[photo.png]]`) are left unchanged — they resolve dynamically through a file-basename index, so the same byte-identical string keeps working from the new location.
+
+Assets themselves stay put during a document rename. If you want an asset to move with the doc, move it manually — the design assumption is that shared assets (one `logo.png` referenced by five docs) are a common case, and auto-relocating would silently break the other four.
+
+## Ambiguous embeds
+
+Wiki-embeds use just the filename, so two files with the same basename in different directories (`docs/photo.png` and `archive/photo.png`) need a tiebreak rule. The resolver uses Foam-style shortest-path from the current doc's directory:
+
+1. Prefer a match inside the current doc's subtree; shallowest depth wins.
+2. Otherwise prefer the fewest path hops from the current doc.
+3. If still tied, pick alphabetically — deterministic across server restarts.
+
+The lookup is case-insensitive on the basename (matching Obsidian), but the on-disk path is preserved in its original case.
+
+## Obsidian vault compatibility
+
+Open Knowledge reads `.obsidian/app.json` at server startup and pre-populates two upload settings non-destructively:
+
+- `attachmentFolderPath` — 1:1 passthrough of Obsidian's setting.
+- `emitFormat` — derived from Obsidian's `useMarkdownLinks`. `false` (Obsidian's default) maps to `wikiembed`; `true` maps to `markdown-image`.
+
+Nothing is written back to `.obsidian/` or to `.open-knowledge/config.yml`. When a vault provides a value, it takes precedence over `config.upload` — the pragmatic assumption is "if there's a vault, follow the vault."
+
+Once opened, an Obsidian vault should just work:
+
+- `![[photo.png]]` refs render inline as images.
+- Uploaded assets land where Obsidian expects them.
+- Opening the same vault back in Obsidian after editing in Open Knowledge shows no migration artifacts.
+
+## Operator tuning
+
+Every file-drop behavior is tunable without a rebuild:
+
+```yaml title=".open-knowledge/config.yml"
+upload:
+  maxBytes: 104857600               # bump to 100 MB
+  attachmentFolderPath: assets      # force all uploads into content/assets/
+  emitFormat: markdown-image        # for users who prefer standard markdown
+  dedup:
+    mode: off                       # allow intentional duplicates
+    ui: silent                      # or keep 'toast'
+  wikiEmbedExtensions:              # narrow or widen the allowlist
+    - png
+    - jpg
+    - pdf
+```
+
+Restart the server after editing. Changes take effect on the next upload.
+
+## Security
+
+- Storage never sanitizes content — raw HTML and entity references pass through unchanged. XSS mitigation is a render-time concern of the publishing pipeline, not of Open Knowledge storage.
+- SVG files render via `<img>` (never inline DOM) to prevent script execution via SVG `<script>`. This routing is preserved even under the accept-all upload posture.
+- Filenames are sanitized to preserve Unicode code points (letters, digits, punctuation, emoji) while stripping path separators, control bytes, and escape sequences.
+- Path-escape attempts (`..`, absolute paths, symlinks that resolve outside the content directory) are rejected at the upload boundary.
+
+## Limitations and future work
+
+- **Non-image embeds render as plain links today.** Video, audio, and PDF get dedicated inline viewers in the typed component-nodes release. Storage shape won't change.
+- **Cross-directory dedup is not implemented.** Scope is same-directory only; if you drop the same bytes into two different directories, you get two files.
+- **Garbage collection of orphaned assets is manual.** A future `openknowledge gc` CLI command will scan refs, diff against disk, and surface orphans with confirm-delete UX.
+- **Embed size modifiers (`![[image.png|640x480]]`) aren't parsed.** The base embed round-trips correctly; the `|modifier` suffix passes through as alias text.
+- **GitHub raw-file preview doesn't render wiki-embed refs.** GitHub renders `![](url)` and `[text](url)` forms natively; `![[...]]` shows as literal text. Set `emitFormat: markdown-image` if GitHub preview fidelity matters more to you than Obsidian parity.
+
+## Next steps
+
+<Cards>
+  <Card title="Configuration" href="/guides/configuration">
+    Full schema reference for `upload.*` and every other config section.
+  </Card>
+  <Card title="GitHub Sync" href="/guides/github-sync">
+    Asset changes sync the same way markdown does — auto-commit, push, pull.
+  </Card>
+  <Card title="Content filtering" href="/guides/content-filtering">
+    What the file watcher sees and how `content.include` / `content.exclude` apply to both markdown and assets.
+  </Card>
+</Cards>

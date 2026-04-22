@@ -40,6 +40,12 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | `sync.autoPull`             | `boolean`  | `true`                    | Automatically pull remote changes each cycle                                                                                                                                                         |
 | `sync.commitMessage`        | `string`   | `"auto"`                  | Commit message for auto-commits. `"auto"` uses `WIP auto-save <timestamp>`.                                                                                                                           |
 | `github.oauthAppClientId`   | `string`   | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
+| `upload.attachmentFolderPath` | `string`   | `"./"`                  | Where uploaded assets are written, relative to the containing doc. `"./"` = same directory as the doc (co-located). `"/"` = content-directory root. `"./subdir"` = subdirectory beside the doc. Any other string = a fixed content-directory-relative path. Mirrors Obsidian's literal schema. |
+| `upload.emitFormat`         | `'wikiembed' \| 'markdown-image'` | `"wikiembed"`     | How the editor writes the ref after a successful upload. `wikiembed` → `![[file.ext]]`; `markdown-image` → `![alt](relative-path)` for images, `[name](relative-path)` for non-image typed files.     |
+| `upload.maxBytes`           | `number`   | `26214400` (25 MB)        | Maximum upload size in bytes. Files over this limit are rejected with a byte-size-specific message.                                                                                                  |
+| `upload.dedup.mode`         | `'off' \| 'same-dir'` | `"same-dir"`        | sha256 deduplication scope. `same-dir` returns the existing path when identical bytes already exist next to the destination; `off` always writes a new file.                                          |
+| `upload.dedup.ui`           | `'silent' \| 'toast' \| 'confirm'` | `"toast"` | UX when a dedup match is found. `toast` shows `Already at <path> — reusing.`; `silent` hides the notice; `confirm` is reserved for future use (currently behaves like `toast`).                        |
+| `upload.wikiEmbedExtensions` | `string[]` | `["png","jpg","jpeg","gif","webp","avif","svg","pdf","mp4","webm","mov","mp3","wav","ogg","m4a"]` | Extensions that emit as `![[...]]` under `emitFormat: 'wikiembed'`. Extensions outside this allowlist always emit as markdown links regardless of `emitFormat`.                                        |
 
 ## Built-in directory skips
 
@@ -77,6 +83,27 @@ content:
 ```
 </Tab>
 </Tabs>
+
+### Upload configuration
+
+The `upload.*` section controls where assets are written, how they're referenced in markdown, and how the editor responds to duplicate drops. See the [Assets and embeds](/guides/assets-and-embeds) guide for the full picture.
+
+```yaml title=".open-knowledge/config.yml"
+upload:
+  attachmentFolderPath: "./"        # co-located with the doc
+  emitFormat: wikiembed             # or: markdown-image
+  maxBytes: 104857600               # 100 MB (default 25 MB)
+  dedup:
+    mode: same-dir                  # or: off
+    ui: toast                       # or: silent | confirm
+  wikiEmbedExtensions:
+    - png
+    - jpg
+    - pdf
+    - mp4
+```
+
+Projects that contain an `.obsidian/app.json` file pre-populate `attachmentFolderPath` and `emitFormat` from the vault's `attachmentFolderPath` + `useMarkdownLinks` settings at server startup (non-destructive — nothing is written back to `.obsidian/`). When a vault provides a value, it overrides the equivalent key in `config.upload`. Operators who want to pin a different setting remove the `.obsidian/app.json` field (or its file) before restart.
 
 ### Sync configuration
 
