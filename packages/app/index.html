@@ -7,6 +7,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Open Knowledge</title>
+  <!--
+    Editor-mode FOUC prevention. Reads the persisted mode synchronously
+    before React mounts so the first painted frame shows the user's
+    preferred editor (avoids flashing WYSIWYG before switching to Source).
+    Paired consumer: `src/editor/use-editor-mode.ts` (hook reads
+    `window.__OK_EDITOR_MODE__` once in its useState initializer).
+    Spec: specs/2026-04-21-editor-mode-persistence/SPEC.md §7.2.
+  -->
   <script>
     (() => {
       let mode = 'wysiwyg';

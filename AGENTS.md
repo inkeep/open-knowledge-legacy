@@ -452,11 +452,24 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-window changes propagate via **focus-based re-check** (Excalidraw Pattern C), not a live `storage` event listener — the mode-swap CSS (`.ok-mode-hidden`) preserves DOM via `content-visibility:hidden` but still interrupts IME composition and in-flight drag-selection, so deferring the re-apply to focus return avoids mid-edit disruption.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `useState` initializer prefers `window.__OK_EDITOR_MODE__`, falls back to `localStorage`, then `'wysiwyg'`. `focus` listener on `window` re-reads storage and updates state when persisted value differs (functional-update form short-circuits no-op writes). Every toggle persists immediately; throws from `localStorage.setItem` are swallowed with a `[editor-mode]` bracket-prefix `console.warn`.
+- `src/components/EditorPane.tsx` — consumer. Seeds session-local `editorMode` from `persistedMode`, tracks it in `editorModeRef`, and re-applies `persistedMode` via a dedicated `useEffect` that **skips when `editorModeRef.current === 'diff'`** so diff exit still restores the session pre-diff mode via `modeBeforeDiffRef` (audit-surfaced H1 race — SPEC §7.4 R1).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (T1-T8, in the CI `test:e2e` file list).
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
@@ -1571,11 +1584,24 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-window changes propagate via **focus-based re-check** (Excalidraw Pattern C), not a live `storage` event listener — the mode-swap CSS (`.ok-mode-hidden`) preserves DOM via `content-visibility:hidden` but still interrupts IME composition and in-flight drag-selection, so deferring the re-apply to focus return avoids mid-edit disruption.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `useState` initializer prefers `window.__OK_EDITOR_MODE__`, falls back to `localStorage`, then `'wysiwyg'`. `focus` listener on `window` re-reads storage and updates state when persisted value differs (functional-update form short-circuits no-op writes). Every toggle persists immediately; throws from `localStorage.setItem` are swallowed with a `[editor-mode]` bracket-prefix `console.warn`.
+- `src/components/EditorPane.tsx` — consumer. Seeds session-local `editorMode` from `persistedMode`, tracks it in `editorModeRef`, and re-applies `persistedMode` via a dedicated `useEffect` that **skips when `editorModeRef.current === 'diff'`** so diff exit still restores the session pre-diff mode via `modeBeforeDiffRef` (audit-surfaced H1 race — SPEC §7.4 R1).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (T1-T8, in the CI `test:e2e` file list).
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
