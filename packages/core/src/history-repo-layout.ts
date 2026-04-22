@@ -9,14 +9,20 @@
  *
  *   refs/wip/<project-branch>/<writer-id>
  *
- * where `<writer-id>` has one of four recognized prefixes:
- *   - `agent-<opaque-id>`   — an agent wrote the commit
- *   - `human-<opaque-id>`   — a human wrote the commit
- *   - `upstream`            — imported from `git pull`
- *   - `server`              — internal bookkeeping
+ * where `<writer-id>` is one of the five recognized forms in the D34/D52 taxonomy
+ * (dropping the legacy `human-` prefix and the opaque `server` writer):
+ *   - `agent-<connectionId>`     — an MCP agent session wrote the commit
+ *   - `principal-<UUID>`         — a browser-tab principal wrote the commit
+ *   - `file-system`              — classified: disk reconcile (file-watcher)
+ *   - `git-upstream`             — classified: HEAD-move commit import
+ *   - `openknowledge-service`    — classified: service-level fallback (park, etc.)
+ *
+ * Legacy ref names (`server`, `human-<*>`, `upstream`) classify as `'unknown'`
+ * so the D35 allowlist sweep in `initHistoryRepo()` can safely delete them on
+ * first run without deleting legitimate new-taxonomy refs.
  *
  * Centralizing this layout knowledge prevents CLI/server drift: the CLI
- * consumes these utilities to parse writer IDs and resolve shadow-dir paths
+ * consumes these utilities to parse writer IDs and resolve history-dir paths
  * without re-implementing the regex or path conventions.
  *
  * This file uses only `node:fs` (no other server/runtime deps) so it is safe

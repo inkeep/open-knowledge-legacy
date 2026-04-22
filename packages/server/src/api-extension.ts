@@ -1035,6 +1035,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     agentName: string;
     colorSeed: string;
     clientName: string | undefined;
+    clientVersion: string | undefined;
+    label: string | undefined;
   } {
     let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
@@ -1047,13 +1049,64 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (clientName !== undefined) {
       clientName = sanitizeGitIdentity(clientName);
     }
+    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
+    if (clientVersion !== undefined) {
+      clientVersion = sanitizeGitIdentity(clientVersion);
+    }
+    let label = typeof body.label === 'string' ? body.label : undefined;
+    if (label !== undefined) {
+      label = sanitizeGitIdentity(label);
+    }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
     const colorSeed =
       typeof body.colorSeed === 'string' && body.colorSeed.length > 0
         ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName };
+    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
+  }
+
+  /**
+   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
+   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
+   */
+  function resolveAgentType(clientName: string | undefined): string {
+    if (!clientName) return 'bot';
+    const lower = clientName.toLowerCase();
+    if (lower.includes('claude')) return 'claude';
+    if (lower.includes('cursor')) return 'cursor';
+    if (lower.includes('codex')) return 'codex';
+    if (lower.includes('cline')) return 'cline';
+    if (lower.includes('windsurf')) return 'windsurf';
+    return 'bot';
+  }
+
+  /**
+   * Build actor-tuple metadata (FR-8) for threading through recordContributor →
+   * ContributorEntry → OkActorEntry. Populates:
+   *   - principalId from getPrincipal() (stable UUID per local install)
+   *   - agentType derived from clientName
+   *   - clientName / clientVersion / label passed through from request body
+   */
+  function buildAgentActor(args: {
+    clientName: string | undefined;
+    clientVersion?: string;
+    label?: string;
+  }): {
+    principalId?: string;
+    agentType?: string;
+    clientName?: string;
+    clientVersion?: string;
+    label?: string;
+  } {
+    const principalId = getPrincipal?.()?.id;
+    return {
+      principalId,
+      agentType: resolveAgentType(args.clientName),
+      clientName: args.clientName,
+      clientVersion: args.clientVersion,
+      label: args.label,
+    };
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1090,7 +1143,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1116,7 +1170,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, session.origin);
-        recordContributor(docName, agentId, agentName, colorSeed);
+        recordContributor(
+          docName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+        );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1178,9 +1239,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
       const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1204,7 +1264,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, session.origin);
-        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
+        recordContributor(
+          resolvedDocName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+        );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1673,9 +1740,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1740,7 +1806,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
+        if (!notFound && !staleTarget)
+          recordContributor(
+            docName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+          );
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -2365,6 +2439,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       agentId: rollbackAgentId,
       agentName: rollbackAgentName,
       colorSeed: rollbackColorSeed,
+      clientName: rollbackClientName,
+      clientVersion: rollbackClientVersion,
+      label: rollbackLabel,
     } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
 
     const {
@@ -2451,6 +2528,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         rollbackAgentName,
         rollbackColorSeed,
         formatRollbackSubject(docName, commitSha),
+        buildAgentActor({
+          clientName: rollbackClientName,
+          clientVersion: rollbackClientVersion,
+          label: rollbackLabel,
+        }),
       );
       setReconciledBase(docName, markdown);
 
@@ -2794,6 +2876,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         agentId: createPageAgentId,
         agentName: createPageAgentName,
         colorSeed: createPageColorSeed,
+        clientName: createPageClientName,
+        clientVersion: createPageClientVersion,
+        label: createPageLabel,
       } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
@@ -2836,7 +2921,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
-      recordContributor(docName, createPageAgentId, createPageAgentName, createPageColorSeed);
+      recordContributor(
+        docName,
+        createPageAgentId,
+        createPageAgentName,
+        createPageColorSeed,
+        undefined,
+        buildAgentActor({
+          clientName: createPageClientName,
+          clientVersion: createPageClientVersion,
+          label: createPageLabel,
+        }),
+      );
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -2926,6 +3022,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         agentId: renameAgentId,
         agentName: renameAgentName,
         colorSeed: renameColorSeed,
+        clientName: renameClientName,
+        clientVersion: renameClientVersion,
+        label: renameLabel,
       } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { docName, newDocName } = body as Record<string, unknown>;
       if (typeof docName !== 'string' || typeof newDocName !== 'string') {
@@ -2967,6 +3066,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renameAgentName,
         renameColorSeed,
         formatRenameSubject(docName as string, newDocName as string),
+        buildAgentActor({
+          clientName: renameClientName,
+          clientVersion: renameClientVersion,
+          label: renameLabel,
+        }),
       );
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
@@ -4289,7 +4393,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
           op = parsed.op as 'push' | 'pull' | 'sync';
         }
-        extractAgentIdentity(parsed); // attribution threading (FR-5, D42)
       }
     } catch {
       // Ignore parse errors — use default op
@@ -4319,7 +4422,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       enabled = parsed.enabled;
-      extractAgentIdentity(parsed); // attribution threading (FR-5, D42)
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
@@ -4357,7 +4459,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const raw = await readBody(req);
       body = JSON.parse(raw.toString()) as Record<string, unknown>;
-      extractAgentIdentity(body); // attribution threading (FR-5, D42)
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
@@ -4441,7 +4542,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 503, { ok: false, error: 'Sync engine not active' });
       return;
     }
-    extractAgentIdentity({}); // attribution threading (FR-5, D42)
     try {
       await engine.abortMerge();
       json(res, 200, { ok: true });

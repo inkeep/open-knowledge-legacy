@@ -306,14 +306,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           email: `${writerId}@openknowledge.local`,
         };
         const docs = [...entry.docs];
+        // FR-8 / §8.7 — populate full actor tuple from ContributorEntry.actor when present.
+        // Classified writers (file-system, git-upstream, openknowledge-service) leave these
+        // null because they have no principal/agent attribution at record time.
+        const a = entry.actor;
         const actorEntry: OkActorEntry = {
           v: 1,
-          principal: null,
+          principal: a?.principalId ?? null,
           agent_session: writerId.startsWith('agent-') ? writerId.slice(6) : null,
-          agent_type: null,
-          client_name: null,
-          client_version: null,
-          label: null,
+          agent_type: a?.agentType ?? null,
+          client_name: a?.clientName ?? null,
+          client_version: a?.clientVersion ?? null,
+          label: a?.label ?? null,
           display_name: entry.displayName,
           color_seed: entry.colorSeed,
           docs,

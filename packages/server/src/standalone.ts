@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { Extension } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -57,6 +58,7 @@ import {
   setReconciledBase,
   switchReconciledBaseScope,
 } from './persistence.ts';
+import { loadPrincipal } from './principal.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
@@ -124,7 +126,7 @@ export interface ServerInstance {
    * Names of subsystems that failed to initialize during boot.
    * Read AFTER `await ready` for a stable list; reads before may return a partial result.
    * Empty array means all subsystems initialized successfully.
-   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * Possible values: `'history-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
    * `'head-watcher'`.
    */
   readonly degraded: readonly string[];
@@ -147,11 +149,14 @@ export interface ServerInstance {
  * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
  * concurrent observer somehow fires, it short-circuits symmetrically (D39).
  */
-export const PARK_SNAPSHOT_ORIGIN = Object.freeze({
-  source: 'local' as const,
-  skipStoreHooks: false,
-  context: { origin: 'park-snapshot', paired: true as const },
-}) satisfies PairedWriteOrigin;
+export const PARK_SNAPSHOT_ORIGIN = (() => {
+  const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
+  return Object.freeze({
+    source: 'local' as const,
+    skipStoreHooks: false,
+    context: ctx,
+  }) satisfies PairedWriteOrigin;
+})();
 
 export function createServer(options: ServerOptions): ServerInstance {
   const {
@@ -193,6 +198,8 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  // Mutable principal holder — populated in initAsync (D50, US-024)
+  let loadedPrincipal: Principal | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -238,6 +245,33 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
+    // D50 / US-024: Browser tabs supply { principalId, tabSessionId } via token.
+    // onAuthenticate parses the JSON token and hoists identity into connection
+    // context so persistence.resolveWriterFromOrigin sees source:'connection'
+    // with ctx.principalId set. Missing or invalid tokens are silently ignored
+    // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
+    // like test harness and MCP never send tokens).
+    const principalAuthExtension: Extension = {
+      async onAuthenticate(payload) {
+        try {
+          const tokenStr = payload.token;
+          if (!tokenStr) return;
+          const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
+          const ctx = payload.context as Record<string, unknown>;
+          if (typeof parsed.principalId === 'string') {
+            ctx.principalId = parsed.principalId;
+          }
+          if (typeof parsed.tabSessionId === 'string') {
+            ctx.tabSessionId = parsed.tabSessionId;
+          }
+          ctx.kind = 'human';
+        } catch {
+          // Invalid/missing token — connection proceeds without principal context
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(principalAuthExtension);
+
     const apiExtension = createApiExtension({
       hocuspocus,
       sessionManager,
@@ -256,6 +290,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
       projectDir,
+      getPrincipal: () => loadedPrincipal,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -891,6 +926,17 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
+    // Load (or create) the principal record — non-blocking best-effort (D50, US-024)
+    try {
+      loadedPrincipal = await loadPrincipal(contentDir);
+      log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
+    } catch (e) {
+      log.warn(
+        { err: e },
+        '[server] principal load failed — browser writes will use SERVICE_WRITER',
+      );
+    }
+
     // Auto-initialize shadow repo if not provided
     if (!historyRef.current) {
       try {
@@ -901,11 +947,11 @@ export function createServer(options: ServerOptions): ServerInstance {
         );
       } catch (e) {
         log.error({ err: e }, '[server] history repo init failed');
-        degraded.push('shadow-repo');
+        degraded.push('history-repo');
       }
     }
 
-    // Verify shadow repo integrity — reinit only on structural corruption, not transient errors
+    // Verify history repo integrity — reinit only on structural corruption, not transient errors
     if (historyRef.current) {
       try {
         const sg = historyGit(historyRef.current);
@@ -919,7 +965,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           } catch (e2) {
             log.error({ err: e2 }, '[server] history repo reinit failed');
             historyRef.current = undefined;
-            if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
+            if (!degraded.includes('history-repo')) degraded.push('history-repo');
           }
         } else {
           log.error({ err: e }, '[server] history repo check failed (transient?)');

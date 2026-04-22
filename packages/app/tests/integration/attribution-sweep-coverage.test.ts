@@ -25,15 +25,15 @@ const REQUIRED_HANDLERS = [
   'handleRenamePath',
   'handleDeletePath',
   'handleUploadImage',
-  'handleSyncTrigger',
-  'handleSyncSetEnabled',
-  'handleSyncAbortMerge',
-  'handleSyncResolveConflict',
 ];
 
 /**
  * Handlers exempt from identity threading: GET-only endpoints, test utilities,
- * and local-op handlers whose callers are not agents.
+ * local-op handlers whose callers are not agents, and sync orchestrator
+ * handlers where the HTTP boundary is control-plane only — the actual commits
+ * they produce come from the SyncEngine internally and are already attributed
+ * via classified writers (git-upstream, file-system, openknowledge-service).
+ * See D42 corrigendum on SPEC.md §10.
  */
 const EXEMPT_HANDLERS = new Set([
   'handleDocumentRead',
@@ -59,6 +59,10 @@ const EXEMPT_HANDLERS = new Set([
   'handleSyncStatus',
   'handleSyncConflicts',
   'handleSyncConflictContent',
+  'handleSyncTrigger',
+  'handleSyncSetEnabled',
+  'handleSyncAbortMerge',
+  'handleSyncResolveConflict',
   'handleLocalOpClone',
   'handleLocalOpOpen',
   'handleLocalOpAuthLogin',
@@ -69,6 +73,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleLocalOpAuthIdentity',
   'handleLocalOpAuthSetIdentity',
   'handleTestReset',
+  'handlePrincipal',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

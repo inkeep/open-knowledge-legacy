@@ -10,6 +10,26 @@
  * called only AFTER commitWip() succeeds to prevent data loss on failed commits (D16).
  */
 
+/**
+ * Optional actor-tuple metadata, populated at the API-boundary for agent/principal
+ * writes and left empty for classified service writers (file-system, git-upstream,
+ * openknowledge-service). Threads through to `OkActorEntry` in the L2-drain commit
+ * body per FR-8 / §8.7 so the full actor tuple is recoverable from git history
+ * without a session-registry lookup.
+ */
+export interface ActorMetadata {
+  /** `principal-<UUID>` from the browser/server PrincipalRegistry. */
+  principalId?: string;
+  /** Agent family — 'claude' | 'cursor' | 'codex' | 'cline' | 'bot' | ... */
+  agentType?: string;
+  /** MCP `clientInfo.name` (e.g., 'claude-code'). */
+  clientName?: string;
+  /** MCP `clientInfo.version`. */
+  clientVersion?: string;
+  /** AGENT_LABEL env (user-set label, e.g., 'refactor-1'). */
+  label?: string;
+}
+
 export interface ContributorEntry {
   /** Writer ID — any taxonomy value: agent-<uuid>, principal-<uuid>, file-system, etc. */
   writerId: string;
@@ -22,6 +42,12 @@ export interface ContributorEntry {
    * Last non-undefined value wins within a drain cycle (US-015, D53).
    */
   subjectOverride?: string;
+  /**
+   * Optional actor-tuple metadata (FR-8, §8.7). Populated for agent/principal writers
+   * at the api-extension.ts boundary; left undefined for classified service writers.
+   * Last non-undefined value wins within a drain cycle.
+   */
+  actor?: ActorMetadata;
 }
 
 /** Module-level accumulator — shared between api-extension and persistence. */
@@ -35,6 +61,9 @@ let pendingContributors = new Map<string, ContributorEntry>();
  * @param subjectOverride - Optional commit subject to use instead of the default
  *   formatWipSubject(docs) in the L2 drain. Use for action-specific subjects:
  *   `reconcile: <docName>`, `rollback: <docName> to <sha>`, `rename: <old> -> <new>`.
+ * @param actor - Optional actor-tuple metadata (FR-8). Populated for agent/principal
+ *   writers by the api-extension.ts boundary; left undefined for classified writers.
+ *   Last non-undefined values (per field) win within a drain cycle.
  */
 export function recordContributor(
   docName: string,
@@ -42,6 +71,7 @@ export function recordContributor(
   displayName: string,
   colorSeed?: string,
   subjectOverride?: string,
+  actor?: ActorMetadata,
 ): void {
   let entry = pendingContributors.get(writerId);
   if (!entry) {
@@ -51,6 +81,7 @@ export function recordContributor(
       colorSeed: colorSeed ?? displayName,
       docs: new Set(),
       subjectOverride,
+      actor,
     };
     pendingContributors.set(writerId, entry);
   }
@@ -58,6 +89,17 @@ export function recordContributor(
   // Last non-undefined subjectOverride wins (most specific action in the drain window).
   if (subjectOverride !== undefined) {
     entry.subjectOverride = subjectOverride;
+  }
+  // Last non-undefined actor metadata wins per-field — merge, don't replace, so a
+  // later write that knows only `clientName` doesn't wipe a prior known `principalId`.
+  if (actor !== undefined) {
+    const merged: ActorMetadata = entry.actor ?? {};
+    if (actor.principalId !== undefined) merged.principalId = actor.principalId;
+    if (actor.agentType !== undefined) merged.agentType = actor.agentType;
+    if (actor.clientName !== undefined) merged.clientName = actor.clientName;
+    if (actor.clientVersion !== undefined) merged.clientVersion = actor.clientVersion;
+    if (actor.label !== undefined) merged.label = actor.label;
+    entry.actor = merged;
   }
 }
 
@@ -87,6 +129,7 @@ export function restoreContributors(snapshot: Map<string, ContributorEntry>): vo
         displayName: entry.displayName,
         colorSeed: entry.colorSeed,
         docs: new Set(),
+        actor: entry.actor,
       };
       pendingContributors.set(writerId, live);
     }
@@ -138,6 +181,7 @@ export function restoreContributorEntry(writerId: string, entry: ContributorEntr
       displayName: entry.displayName,
       colorSeed: entry.colorSeed,
       docs: new Set(),
+      actor: entry.actor,
     };
     pendingContributors.set(writerId, live);
   }

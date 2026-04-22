@@ -367,6 +367,12 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     if (destroyed) return;
     destroyed = true;
     idleHandle?.detach();
+    // Cancel any pending keepalive-grace timers so they don't fire against a
+    // disposed sessionManager / agentFocusBroadcaster after destroy returns.
+    for (const timer of keepaliveGraceTimers.values()) {
+      clearTimeout(timer);
+    }
+    keepaliveGraceTimers.clear();
     await new Promise<void>((resolveClose) => {
       httpServer.close(() => resolveClose());
     });

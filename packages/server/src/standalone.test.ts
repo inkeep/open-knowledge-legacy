@@ -428,13 +428,13 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
  * failed to initialize.
  *
  * Failure injection:
- *   - shadow-repo: forced via invalid path (file-as-dir). This subsystem's
+ *   - history-repo: forced via invalid path (file-as-dir). This subsystem's
  *     init throws on invalid paths, so the SPEC's preferred technique works.
  *   - file-watcher + head-watcher: cannot be forced via invalid paths because
  *     startWatcher falls back from @parcel/watcher to chokidar (tolerates
  *     invalid paths) and startHeadWatcher returns a no-op handle on missing
  *     .git. The degraded.push wiring for these subsystems is verified by
- *     the shadow-repo test (same push pattern) + code-level assertions below.
+ *     the history-repo test (same push pattern) + code-level assertions below.
  *     mock.module was attempted but leaks across all test files in the same
  *     `bun test` process, breaking file-watcher.test.ts. See PR #62.
  */
@@ -466,7 +466,7 @@ describe('createServer() degraded signal', () => {
     await srv.destroy();
   });
 
-  test('shadow-repo init failure — degraded includes "shadow-repo"', async () => {
+  test('history-repo init failure — degraded includes "history-repo"', async () => {
     const fileAsDir = resolve(testProjectDir, 'not-a-dir');
     writeFileSync(fileAsDir, 'I am a file, not a directory');
 
@@ -479,8 +479,8 @@ describe('createServer() degraded signal', () => {
 
     await srv.ready;
 
-    expect(srv.degraded).toContain('shadow-repo');
-    expect(srv.degraded.filter((s) => s === 'shadow-repo')).toHaveLength(1);
+    expect(srv.degraded).toContain('history-repo');
+    expect(srv.degraded.filter((s) => s === 'history-repo')).toHaveLength(1);
 
     await srv.destroy();
   });
@@ -494,7 +494,7 @@ describe('createServer() degraded signal', () => {
     const src = readFileSync(resolve(dir, 'standalone.ts'), 'utf-8');
 
     // Each subsystem's catch block should push to the degraded array
-    expect(src).toContain("degraded.push('shadow-repo')");
+    expect(src).toContain("degraded.push('history-repo')");
     expect(src).toContain("degraded.push('file-watcher')");
     expect(src).toContain("degraded.push('head-watcher')");
 
