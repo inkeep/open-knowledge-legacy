@@ -514,6 +514,14 @@ app.whenReady().then(async () => {
     getAppVersion: () => app.getVersion(),
     isPackaged: app.isPackaged,
     forceDevBypass: process.env.OK_UPDATER_FORCE_DEV === '1',
+    // Tier-2 smoke override: point the updater at a local mock HTTP server
+    // that serves a hand-crafted `latest-mac.yml` + fake .zip with valid
+    // sha512. Production leaves this unset and reads `publish: github`
+    // from `app-update.yml`. Paired with `OK_UPDATER_FORCE_DEV=1` (above)
+    // so the `checkForUpdates()` gate actually hits the network in a dev
+    // build. See `packages/desktop/scripts/smoke-mock-update.mjs --keep-alive`
+    // for the server side.
+    feedUrl: process.env.OK_UPDATER_FEED_URL || undefined,
     // Toast B renderer-mount race (Review Pass 4 Major #1 part B) —
     // defer the dispatch until the primary window's renderer has
     // finished loading so its `<UpdateToast/>` subscribers are

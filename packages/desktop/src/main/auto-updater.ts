@@ -48,6 +48,21 @@ export interface UpdaterLike {
   allowPrerelease: boolean;
   /** Locked via explicit set — no downgrade path. */
   allowDowngrade: boolean;
+  /**
+   * electron-updater gates `checkForUpdates()` on `app.isPackaged ||
+   * forceDevUpdateConfig`. The Tier-2 mock-update smoke runs against an
+   * unpackaged dev build, so we flip this to `true` when `forceDevBypass`
+   * is set so the manifest fetch actually proceeds. Packaged builds leave
+   * this `false`. Per evidence/electron-updater-api.md §4 approach 2.
+   */
+  forceDevUpdateConfig: boolean;
+  /**
+   * Override the feed URL at runtime. Tier-2 smoke passes a bare string
+   * pointing at a local HTTP server — electron-updater routes bare
+   * strings through `GenericProvider`. Production leaves this unset and
+   * the updater reads the `publish:` block from `app-update.yml`.
+   */
+  setFeedURL(urlOrOptions: string): void;
   on(event: 'checking-for-update', listener: () => void): this;
   on(event: 'update-available', listener: (info: { version?: string }) => void): this;
   on(event: 'update-not-available', listener: (info: { version?: string }) => void): this;
@@ -108,6 +123,14 @@ interface StartAutoUpdaterOpts {
   isPackaged: boolean;
   /** True when `OK_UPDATER_FORCE_DEV=1` — lets Tier-2 smoke harness opt in. */
   forceDevBypass?: boolean;
+  /**
+   * Tier-2 smoke override — when set, call `updater.setFeedURL(feedUrl)`
+   * before the first check. Forwards the bare string to electron-updater's
+   * `GenericProvider`. Production leaves this unset (the updater reads the
+   * `publish: github` block from `app-update.yml` / `electron-builder.yml`).
+   * Wired from `OK_UPDATER_FEED_URL` env var at main-process boot.
+   */
+  feedUrl?: string;
   /**
    * Optional scheduler for events that might fire before the renderer
    * finishes mounting its subscribers. Only Toast B (first-launch-post-
@@ -200,6 +223,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     getAppVersion,
     isPackaged,
     forceDevBypass = false,
+    feedUrl,
     whenRendererReady,
     clock = DEFAULT_CLOCK,
     now = () => new Date(),
@@ -216,6 +240,21 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   // defaults explicitly so a future library bump can't silently flip them.
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
+
+  // Tier-2 smoke plumbing (evidence/electron-updater-api.md §4 approach 2).
+  // When `forceDevBypass` is true we flip `forceDevUpdateConfig` so the
+  // underlying `checkForUpdates()` actually hits the network even without a
+  // packaged `.app`. When `feedUrl` is set we point the updater at a local
+  // HTTP server (via electron-updater's `GenericProvider`). Production
+  // leaves both unset — `isPackaged` true on signed DMGs + `publish: github`
+  // in `app-update.yml` drives the real update path.
+  updater.forceDevUpdateConfig = forceDevBypass;
+  if (feedUrl) {
+    updater.setFeedURL(feedUrl);
+    logger.info('setFeedURL (dev override) — updater will pull manifest from local mock', {
+      feedUrl,
+    });
+  }
 
   // ————————————————————————————————————————————————————————
   // Helpers over AppState — isolate persistence seam

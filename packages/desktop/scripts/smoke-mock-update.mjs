@@ -24,17 +24,15 @@
  *
  * **Pair with an Electron dev build (the full Tier-2 round-trip):**
  *
- *   1. Terminal A: `bun run --cwd packages/desktop smoke:mock-update`
- *      Note the port printed.
- *   2. Write `packages/desktop/dev-app-update.yml`:
+ *   1. Terminal A: `bun run --cwd packages/desktop smoke:mock-update -- --keep-alive`
+ *      Note the port printed — the server keeps serving until Ctrl+C.
+ *   2. Terminal B: `OK_UPDATER_FORCE_DEV=1 OK_UPDATER_FEED_URL=http://127.0.0.1:<N> bun run --filter=@inkeep/open-knowledge-desktop dev`
+ *   3. Electron's main-process auto-updater hits the local server, downloads
+ *      the fake zip, and fires `update-downloaded`. Renderer Toast A renders
+ *      ("Update downloaded" + "Relaunch now") within 2-3 seconds of boot.
  *
- *          provider: generic
- *          url: http://localhost:<N>
- *
- *   3. Terminal B: `OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev`
- *   4. Electron's main-process auto-updater will hit the local server,
- *      download the fake zip, and fire `update-downloaded`. Renderer Toast A
- *      renders ("Update downloaded" + "Relaunch now").
+ * Without `--keep-alive`, the script exits 0 after its built-in self-test
+ * (CI mode — validates HTTP serving + sha512 without waiting for Electron).
  *
  * Approach 2 from evidence/electron-updater-api.md §4 (GenericProvider +
  * setFeedURL via forceDevUpdateConfig). Not to be confused with approach 3
@@ -65,6 +63,12 @@ import { deflateRawSync } from 'node:zlib';
 
 const VERSION = process.env.MOCK_UPDATE_VERSION ?? '0.99.0-mock';
 const TIMEOUT_MS = Number.parseInt(process.env.MOCK_UPDATE_TIMEOUT_MS ?? '30000', 10);
+/**
+ * `--keep-alive` skips the auto-shutdown after self-test and keeps serving
+ * until the process is killed (Ctrl+C, SIGTERM). Used for the 2-terminal
+ * manual Tier-2 flow where the Electron dev app needs the server to stay up.
+ */
+const KEEP_ALIVE = process.argv.includes('--keep-alive');
 
 /**
  * Build a minimal valid .zip archive with a single text file. The zip format
@@ -277,6 +281,19 @@ async function main() {
     const expected = sha512Base64(zipBytes);
     if (computed !== expected) throw new Error(`sha512 mismatch: ${computed} vs ${expected}`);
     console.log('[mock-updater] event=self-test-ok');
+    if (KEEP_ALIVE) {
+      // Manual Tier-2 flow: keep serving until Ctrl+C so the Electron dev
+      // app can hit us as many times as its periodic check fires. Clear the
+      // self-test timeout so we don't auto-exit; SIGINT/SIGTERM handlers
+      // below take over.
+      clearTimeout(timeoutHandle);
+      console.log(
+        '[mock-updater] event=keep-alive — server will stay up until Ctrl+C (pair with OK_UPDATER_FEED_URL=http://127.0.0.1:' +
+          port +
+          ' + OK_UPDATER_FORCE_DEV=1 on the dev app)',
+      );
+      return;
+    }
     shutdownReason = 'done';
     clearTimeout(timeoutHandle);
     console.log(`[mock-updater] event=shutdown reason=${shutdownReason} port=${port}`);

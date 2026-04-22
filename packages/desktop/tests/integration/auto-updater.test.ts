@@ -50,6 +50,8 @@ class FakeUpdater extends EventEmitter implements UpdaterLike {
   channel: string | null = null;
   allowPrerelease = true; // deliberately non-default so the lock-down is observable
   allowDowngrade = true;
+  forceDevUpdateConfig = false;
+  setFeedURL = mock((_urlOrOptions: string) => {});
   checkForUpdatesAndNotify = mock(() => Promise.resolve(undefined));
   quitAndInstall = mock(() => {});
   override on(event: string, listener: (...args: unknown[]) => void): this {
@@ -149,11 +151,24 @@ interface TestRig {
   };
 }
 
-function makeRig(overrides?: Partial<AppState> & { appVersion?: string; isPackaged?: boolean }): {
+function makeRig(
+  overrides?: Partial<AppState> & {
+    appVersion?: string;
+    isPackaged?: boolean;
+    forceDevBypass?: boolean;
+    feedUrl?: string;
+  },
+): {
   rig: TestRig;
   handle: ReturnType<typeof startAutoUpdater>;
 } {
-  const { appVersion = '0.3.1', isPackaged = true, ...stateOverrides } = overrides ?? {};
+  const {
+    appVersion = '0.3.1',
+    isPackaged = true,
+    forceDevBypass,
+    feedUrl,
+    ...stateOverrides
+  } = overrides ?? {};
   const rig: TestRig = {
     updater: new FakeUpdater(),
     ipc: makeFakeIpc(),
@@ -180,6 +195,8 @@ function makeRig(overrides?: Partial<AppState> & { appVersion?: string; isPackag
     getPrimaryWindow: () => primaryWindow,
     getAppVersion: () => appVersion,
     isPackaged,
+    forceDevBypass,
+    feedUrl,
     clock: rig.clock,
     now: () => rig.now,
     onDispatch: (kind) => {
@@ -221,6 +238,45 @@ describe('startAutoUpdater — initial configuration (parent §8.10 LOCKED)', ()
     expect(rig.updater.autoDownload).toBe(true);
     expect(rig.updater.autoInstallOnAppQuit).toBe(true);
     expect(rig.updater.channel).toBe('latest');
+  });
+
+  // Tier-2 smoke plumbing regression (evidence/electron-updater-api.md §4
+  // approach 2). Added when manual `bun run dev` revealed that
+  // `OK_UPDATER_FEED_URL` was documented in the PR body but never actually
+  // wired into main — feedUrl would be set but setFeedURL was never called,
+  // and `forceDevUpdateConfig` was never flipped so the check gate blocked
+  // network access anyway. These tests lock in the full Tier-2 contract so
+  // a future refactor can't silently break the manual smoke.
+
+  test('feedUrl opt → updater.setFeedURL(url) called before first check', () => {
+    const { rig } = makeRig({ feedUrl: 'http://127.0.0.1:54321' } as Partial<AppState> & {
+      feedUrl?: string;
+    });
+    expect(rig.updater.setFeedURL).toHaveBeenCalledTimes(1);
+    expect(rig.updater.setFeedURL).toHaveBeenCalledWith('http://127.0.0.1:54321');
+  });
+
+  test('feedUrl unset → setFeedURL NOT called (production default path)', () => {
+    const { rig } = makeRig();
+    expect(rig.updater.setFeedURL).not.toHaveBeenCalled();
+  });
+
+  test('forceDevBypass=true flips updater.forceDevUpdateConfig so checkForUpdates hits network', () => {
+    const { rig } = makeRig({
+      appVersion: '0.3.0',
+      isPackaged: false,
+      forceDevBypass: true,
+    } as Partial<AppState> & {
+      appVersion?: string;
+      isPackaged?: boolean;
+      forceDevBypass?: boolean;
+    });
+    expect(rig.updater.forceDevUpdateConfig).toBe(true);
+  });
+
+  test('forceDevBypass=false (default) leaves forceDevUpdateConfig=false (prod default)', () => {
+    const { rig } = makeRig();
+    expect(rig.updater.forceDevUpdateConfig).toBe(false);
   });
 
   test('explicitly locks allowPrerelease=false + allowDowngrade=false (Finding #6)', () => {
