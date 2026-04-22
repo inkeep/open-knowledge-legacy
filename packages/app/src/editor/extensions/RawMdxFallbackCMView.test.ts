@@ -425,38 +425,39 @@ describe('tryParseUpgrade', () => {
   // so we need the full parse pipeline, not a synthetic schema.
   const upgradeSchema = getSchema(sharedExtensions);
 
-  test('valid MDX for registered component → returns that jsxComponent', () => {
+  test('valid MDX for registered component → returns one-element array with that jsxComponent', () => {
     const source = '<Callout type="info">\n\nhello\n\n</Callout>';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('jsxComponent');
-    expect(result?.attrs.componentName).toBe('Callout');
+    expect(result).toHaveLength(1);
+    expect(result?.[0].type.name).toBe('jsxComponent');
+    expect(result?.[0].attrs.componentName).toBe('Callout');
   });
 
   test('valid MDX for unregistered component → returns jsxComponent (caller handles wildcard)', () => {
-    // tryParseUpgrade's contract is "parse produced a non-fallback block";
-    // it does NOT know about the descriptor registry. The caller (the CM
-    // blur handler in RawMdxFallbackCMView) returns this as-is; the
-    // upgraded jsxComponent's NodeView (JsxComponentView) then
-    // wildcard-auto-converts back to rawMdxFallback via its own mount
-    // effect (see d83a45b6 fix + S20 regression pin). Double-conversion
-    // is wasteful but harmless — catching unregistered-name here would
-    // couple this helper to the registry and tryParseUpgrade becomes a
-    // decision primitive, not a parse primitive. Keep it simple.
+    // tryParseUpgrade's contract is "parse produced no rawMdxFallback in
+    // the result"; it does NOT know about the descriptor registry. The
+    // caller (the CM blur handler in RawMdxFallbackCMView) returns this
+    // as-is; the upgraded jsxComponent's NodeView (JsxComponentView)
+    // then wildcard-auto-converts back to rawMdxFallback via its own
+    // mount effect (see d83a45b6 fix + S20 regression pin).
+    // Double-conversion is wasteful but harmless — catching
+    // unregistered-name here would couple this helper to the registry
+    // and tryParseUpgrade becomes a decision primitive, not a parse
+    // primitive. Keep it simple.
     const source = '<UnknownWidget foo="bar">\n\nbody\n\n</UnknownWidget>';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('jsxComponent');
-    expect(result?.attrs.componentName).toBe('UnknownWidget');
+    expect(result).toHaveLength(1);
+    expect(result?.[0].type.name).toBe('jsxComponent');
+    expect(result?.[0].attrs.componentName).toBe('UnknownWidget');
   });
 
-  test('plain paragraph text → returns paragraph node', () => {
-    // Edge case: user deletes everything and types a plain paragraph.
-    // This is still "valid single-block parse" → upgrade.
+  test('plain paragraph text → returns [paragraph]', () => {
     const source = 'just a paragraph';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('paragraph');
+    expect(result?.[0].type.name).toBe('paragraph');
   });
 
   test('tag mismatch → parse yields rawMdxFallback → returns null (no-op)', () => {
@@ -468,59 +469,77 @@ describe('tryParseUpgrade', () => {
     expect(result).toBeNull();
   });
 
-  test('empty source → returns null', () => {
+  test('empty source → returns [empty paragraph]', () => {
     // `mdManager.parseWithFallback("")` short-circuits to a doc with a
-    // single empty paragraph; that's still a single block so the helper
-    // WOULD return it if we didn't guard. Current implementation returns
-    // the paragraph (which is a valid upgrade target), so empty source
-    // upgrades to a paragraph. This is actually acceptable — if user
-    // erases all content, they probably want a normal empty paragraph.
-    // Keep the test honest about observed behavior.
+    // single empty paragraph — that's a valid upgrade target. Acceptable
+    // UX: if user erases all content, the fallback upgrades to a normal
+    // empty paragraph.
     const source = '';
     const result = tryParseUpgrade(source, upgradeSchema);
-    // Empty source parses to doc with one empty paragraph per
-    // MarkdownManager.parse's empty-string short-circuit. Single block,
-    // not a fallback → upgrade allowed.
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('paragraph');
+    expect(result?.[0].type.name).toBe('paragraph');
   });
 
-  test('multi-block source → returns null (no-op)', () => {
-    // When the user's edit produces multiple top-level blocks, we don't
-    // have a clear single-block replacement. Deferred — caller stays
-    // as rawMdxFallback so the user can continue editing (or manually
-    // split via some future UX).
+  test('multi-block source (headings + paragraphs) → returns all blocks', () => {
+    // User-reported bug scenario (2026-04-22): `parseWithFallback`'s R6
+    // recovery often absorbs adjacent blocks into one fallback when a
+    // broken MDX tag's scope isn't cleanly bounded. After the user
+    // fixes the broken tag, the source parses to MULTIPLE valid blocks.
+    // Single-block-only behavior would return null and leave the
+    // fallback in place — breaking the user's "I fixed the thing;
+    // upgrade the whole block" mental model. Multi-block upgrades are
+    // the correct fix.
     const source = '# Heading\n\nFirst paragraph.\n\nSecond paragraph.';
     const result = tryParseUpgrade(source, upgradeSchema);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(3);
+    expect(result?.[0].type.name).toBe('heading');
+    expect(result?.[1].type.name).toBe('paragraph');
+    expect(result?.[2].type.name).toBe('paragraph');
   });
 
-  test('multi-block with one jsxComponent and one paragraph → returns null', () => {
+  test('multi-block with one jsxComponent and one paragraph → returns both', () => {
+    // The exact shape of the user-reported bug: fallback content
+    // contains a fixed-tag jsxComponent followed by adjacent prose.
     const source = '<Callout type="info">\n\nhello\n\n</Callout>\n\nExtra paragraph.';
+    const result = tryParseUpgrade(source, upgradeSchema);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(2);
+    expect(result?.[0].type.name).toBe('jsxComponent');
+    expect(result?.[0].attrs.componentName).toBe('Callout');
+    expect(result?.[1].type.name).toBe('paragraph');
+  });
+
+  test('multi-block with one fallback among valid blocks → returns null', () => {
+    // If ANY sub-span is still invalid (yields a rawMdxFallback after
+    // re-parse), the user hasn't finished fixing — preserve the
+    // existing fallback so they can continue editing.
+    const source = '# Valid heading\n\n<Foo>still broken</Bar>\n\nTrailing para.';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).toBeNull();
   });
 
-  test('nested compound with valid MDX → returns the outer jsxComponent', () => {
+  test('nested compound with valid MDX → returns [outer jsxComponent]', () => {
     const source = '<Cards>\n\n<Card title="Foo" />\n\n</Cards>';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('jsxComponent');
-    expect(result?.attrs.componentName).toBe('Cards');
+    expect(result).toHaveLength(1);
+    expect(result?.[0].type.name).toBe('jsxComponent');
+    expect(result?.[0].attrs.componentName).toBe('Cards');
   });
 
-  test('heading source → returns heading node', () => {
+  test('heading source → returns [heading]', () => {
     const source = '## A heading';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    expect(result?.type.name).toBe('heading');
+    expect(result?.[0].type.name).toBe('heading');
   });
 
-  test('fenced code block → returns codeBlock node', () => {
+  test('fenced code block → returns [code-like node]', () => {
     const source = '```typescript\nconst x = 1;\n```';
     const result = tryParseUpgrade(source, upgradeSchema);
     expect(result).not.toBeNull();
-    // PM's code-block-like node (may be named codeBlock, codeBlockHighlighted, etc. per schema)
-    expect(result?.type.name).toMatch(/code/i);
+    // PM's code-block-like node (may be named codeBlock, codeBlockHighlighted, etc.)
+    expect(result?.[0].type.name).toMatch(/code/i);
   });
 });

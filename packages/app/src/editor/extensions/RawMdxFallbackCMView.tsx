@@ -123,9 +123,9 @@ export function computeCMSelectionForwarding(opts: {
 
 /**
  * Attempt to upgrade a `rawMdxFallback`'s source back to its parsed form.
- * Given the current CM source and the PM schema, returns a PM Node to
- * replace the rawMdxFallback with, or `null` if the upgrade shouldn't
- * happen.
+ * Given the current CM source and the PM schema, returns an array of PM
+ * Nodes to replace the rawMdxFallback with, or `null` if the upgrade
+ * shouldn't happen.
  *
  * Called on CM blur — matches Obsidian's S3 live-preview cursor-exit
  * trigger, which for our nested-CM architecture collapses to browser
@@ -133,26 +133,42 @@ export function computeCMSelectionForwarding(opts: {
  * `reports/codemirror-markdown-source-view-rendering/REPORT.md:47` +
  * `reports/cm-in-pm-nested-editor-architecture/REPORT.md:672`).
  *
+ * **Multi-block upgrades are supported** — `parseWithFallback`'s R6
+ * recovery often absorbs adjacent blocks into one fallback (a broken
+ * MDX tag's scope isn't cleanly bounded, so the parser keeps
+ * consuming until it finds a valid close or EOF, swallowing following
+ * paragraphs). If the user fixes the broken tag, the source parses to
+ * multiple VALID blocks. Returning all of them lets the caller splice
+ * them all back in — matches the user's mental model ("I fixed the
+ * broken thing; the whole fallback should go away").
+ *
  * Returns `null` (= no-op, preserve the existing rawMdxFallback) when:
- *   - Parse produces zero blocks (empty source)
- *   - Parse produces more than one block (user typed a multi-block split
- *     mid-edit — defer to a future enhancement; don't make a decision
- *     here, leaving the fallback intact lets them keep editing)
- *   - Parse result is still a `rawMdxFallback` (source still invalid —
- *     no point churning Y.XmlElement identity for a same-kind swap;
- *     see Precedent #10 on Item-preservation)
+ *   - Parse produces zero blocks (empty source → let caller decide;
+ *     `MarkdownManager.parse("")` actually short-circuits to one empty
+ *     paragraph, so this branch is rarely hit in practice)
+ *   - Parse result contains ANY `rawMdxFallback` child (source still
+ *     invalid — the fallback recovery tried the fix and still failed
+ *     on some part of the block; preserving the existing fallback
+ *     beats churning Y.XmlElement identity for the same parse state
+ *     per Precedent #10 on Item-preservation)
  *
  * The caller must guard dispatch with `updatingRef` to prevent feedback
  * loops — this function is pure state inspection.
  */
-export function tryParseUpgrade(source: string, schema: Schema): PmNode | null {
+export function tryParseUpgrade(source: string, schema: Schema): PmNode[] | null {
   const mgr = getSharedMarkdownManager();
   const json = mgr.parseWithFallback(source);
   const doc = schema.nodeFromJSON(json);
-  if (doc.childCount !== 1) return null;
-  const first = doc.child(0);
-  if (first.type.name === 'rawMdxFallback') return null;
-  return first;
+  if (doc.childCount === 0) return null;
+  const blocks: PmNode[] = [];
+  for (let i = 0; i < doc.childCount; i++) {
+    const child = doc.child(i);
+    // Any remaining rawMdxFallback means the source is still invalid in
+    // at least one sub-span — no upgrade, let the user keep editing.
+    if (child.type.name === 'rawMdxFallback') return null;
+    blocks.push(child);
+  }
+  return blocks;
 }
 
 /**
