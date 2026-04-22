@@ -1,5 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { mark } from '@/lib/perf';
@@ -34,15 +34,17 @@ interface DocumentContextValue {
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
   openDocument: (docName: string) => void;
   /**
-   * Navigation entry with a fast/slow split. If `docName` names a doc whose
-   * pool entry has `hasSynced=true` (warm path), the state update is wrapped
-   * in `startTransition` — the previously-revealed subtree stays visible
-   * through the suspending re-render (SPEC G2 / precedent #18(f)). Otherwise
-   * (cold path: no provider yet, or provider still syncing), `openDocument`
-   * runs directly — React's default Suspense behavior paints the
-   * `<EditorSkeleton />` fallback immediately so the shell feels snappy
-   * instead of stalling on the stale-content view. `openDocument` is retained
-   * for non-transition callers (tests, direct agent actions).
+   * Navigation entry — kept for API symmetry with `openTargetTransition`.
+   * Previously wrapped in `startTransition`; the wrapper was removed because
+   * deferring shell state (`activeDocName`, `activeTarget`) made the sidebar
+   * highlight and header title lag the click. React's default Suspense
+   * behavior already handles both paths: cold nav suspends →
+   * `<EditorSkeleton />` fallback paints immediately; warm nav doesn't
+   * suspend (`syncPromise` is pre-resolved for `hasSynced=true` providers)
+   * so the commit lands in a single synchronous paint. The name is
+   * preserved to keep the migration path to a future per-subtree transition
+   * open — callers shouldn't need to choose between transition and
+   * non-transition APIs.
    */
   openDocumentTransition: (docName: string) => void;
   /**
@@ -54,24 +56,15 @@ interface DocumentContextValue {
    */
   openTarget: (target: ResolvedNavigationTarget) => void;
   /**
-   * Hash-driven navigation entry (`NavigationHandler` in `App.tsx`). Applies
-   * the same fast/slow split as `openDocumentTransition` for `doc` targets:
-   * warm (provider synced) → wrapped in `startTransition`; cold → direct
-   * call, Suspense fallback paints immediately. Non-`doc` targets
-   * (folder-index, folder, missing) always go through the transition since
-   * there is no editor mount to stall on. `openTarget` is retained for
-   * non-transition callers (tests, direct agent actions).
+   * Hash-driven navigation entry (`NavigationHandler` in `App.tsx`). Kept
+   * alongside `openTarget` for API symmetry with `openDocumentTransition`
+   * — both names historically wrapped the underlying call in
+   * `startTransition`. Transitions were removed; see `openDocumentTransition`
+   * for rationale. `openTarget` is retained for non-transition callers
+   * (tests, direct agent actions).
    */
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
   clearTarget: () => void;
-  /**
-   * True while a transition-wrapped navigation is mid-flight (warm path
-   * only — cold-path nav renders the Suspense fallback directly without
-   * entering a transition). Shared across `openDocumentTransition` and
-   * `openTargetTransition` via a single `useTransition()` at the provider
-   * level, so every `useDocumentTransition()` consumer sees the same state.
-   */
-  isPending: boolean;
   closeDocument: (docName: string) => void;
   /**
    * Destroy and recreate the pool entry for `docName` while preserving
@@ -226,13 +219,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     lastError: collabLastError,
     retry: retryCollab,
   } = useCollabUrl();
-  // `useTransition` (rather than the module-level `startTransition`) is
-  // required so `isPending` is observable to context consumers that want to
-  // tailor UI while a warm-path nav is settling. Cold-path nav bypasses the
-  // transition entirely (see `openDocumentTransition` below) so the Suspense
-  // fallback paints immediately instead of waiting for the editor mount.
-  const [isPending, startTransition] = useTransition();
-
   useEffect(() => {
     if (collabUrl === null) return;
     const p = getPool(collabUrl);
@@ -315,25 +301,15 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // stays as a direct-doc affordance for non-resolver callers (tests, etc.).
     setActiveTarget({ kind: 'doc', target: docName, docName });
   };
-  // Fast/slow split: warm (provider synced) → wrap in startTransition so
-  // the previously-revealed subtree stays visible through the suspending
-  // re-render. Cold → direct call so the Suspense fallback paints the
-  // skeleton immediately. `getPool(collabUrl).entries.get(docName)` reads
-  // the most-recent pool snapshot without touching state.
-  const isWarmDoc = (docName: string): boolean => {
-    if (collabUrl === null) return false;
-    const entry = getPool(collabUrl).entries.get(docName);
-    return entry?.hasSynced === true;
-  };
+  // Historical note: this wrapper used to call `startTransition(() =>
+  // openDocument(docName))` and later a fast/slow split keyed on the
+  // provider's `hasSynced`. Both approaches held shell state (activeDocName
+  // driving the sidebar highlight + header title) for the full editor-mount
+  // window, making the click feel laggy. Now it's a pass-through — React's
+  // default Suspense behavior handles cold (skeleton) and warm (no
+  // suspension → fast commit) without deferring the shell.
   const openDocumentTransition = (docName: string) => {
-    const warm = isWarmDoc(docName);
-    mark('ok/nav/open-document', { docName, transition: warm });
-    if (warm) {
-      startTransition(() => {
-        openDocument(docName);
-      });
-      return;
-    }
+    mark('ok/nav/open-document', { docName, transition: false });
     openDocument(docName);
   };
 
@@ -351,17 +327,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   };
   const openTargetTransition = (target: ResolvedNavigationTarget) => {
     const docName = docNameForNavigationTarget(target);
-    // Non-doc targets (folder / folder-index / missing) always go through
-    // the transition — they swap the folder-overview view, no editor mount
-    // cost. Doc targets apply the warm/cold split so cold nav paints the
-    // Suspense skeleton immediately rather than stalling on stale content.
-    const warm = target.kind === 'doc' && docName !== null && isWarmDoc(docName);
-    mark('ok/nav/open-target', { docName, kind: target.kind, transition: warm });
-    if (target.kind === 'doc' && !warm) {
-      openTarget(target);
-      return;
-    }
-    startTransition(() => openTarget(target));
+    mark('ok/nav/open-target', { docName, kind: target.kind, transition: false });
+    openTarget(target);
   };
 
   const value: DocumentContextValue = {
@@ -383,7 +350,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       p.clearActive();
       setActiveTarget(null);
     },
-    isPending,
     closeDocument: (docName: string) => {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
@@ -432,20 +398,18 @@ export function useDocumentContext(): DocumentContextValue {
 /**
  * Convenience hook for navigation consumers (`NavigationHandler`,
  * `DocumentErrorBoundary` retry, sidebar click handlers) that only need the
- * transition surface and don't care about the rest of the document context.
- * Returns `{ openDocumentTransition, openTargetTransition, isPending }` — all
- * three come from the parent `DocumentProvider`'s single `useTransition()`
- * call, so every consumer sees the same pending state. `openDocumentTransition`
- * is the doc-by-name path; `openTargetTransition` is the folder-aware resolver
- * path (hash-driven nav via `NavigationHandler`).
+ * nav surface and don't care about the rest of the document context.
+ * `openDocumentTransition` is the doc-by-name path; `openTargetTransition`
+ * is the folder-aware resolver path (hash-driven nav via `NavigationHandler`).
+ * The `*Transition` suffix is a historical name — see the context values'
+ * docstrings for why there is no longer a React transition behind it.
  */
 export function useDocumentTransition(): {
   openDocumentTransition: (docName: string) => void;
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
-  isPending: boolean;
 } {
-  const { openDocumentTransition, openTargetTransition, isPending } = useDocumentContext();
-  return { openDocumentTransition, openTargetTransition, isPending };
+  const { openDocumentTransition, openTargetTransition } = useDocumentContext();
+  return { openDocumentTransition, openTargetTransition };
 }
 
 // Vite HMR dispose — when this module is hot-replaced in dev, tear down the
