@@ -44,6 +44,11 @@ import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts'
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
+  type DriverUtilityLike,
+  isDriverBootSmokeMode,
+  runDriverBootSmoke,
+} from './driver-boot-smoke.ts';
+import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
   spawnCursor as spawnCursorImpl,
@@ -171,6 +176,23 @@ const rendererDevUrl = process.env.ELECTRON_RENDERER_URL ?? null;
  */
 function isDebugKeyringSmokeAllowed(): boolean {
   return !app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1';
+}
+
+function runDriverBootSmokeInProduction(): void {
+  runDriverBootSmoke({
+    fork: (entry) => utilityProcess.fork(entry, [], {}) as unknown as DriverUtilityLike,
+    quit: () => {
+      try {
+        app.quit();
+      } catch {
+        // already quitting
+      }
+    },
+    setTimeout: (fn, ms) => {
+      setTimeout(fn, ms);
+    },
+    utilityEntryPath: join(__dirname, 'utility/server-entry.js'),
+  });
 }
 
 /**
@@ -585,13 +607,28 @@ function installLocalhostCorsInjector() {
 // argv to the primary via the `second-instance` listener registered below.
 // If we fail to acquire the lock we ARE the duplicate — exit without
 // registering any of the boot-time handlers below.
-const GOT_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
-if (!GOT_SINGLE_INSTANCE_LOCK) {
-  app.quit();
-}
+//
+// AC8 driver-mode exception (SPEC M5 D-M5-9): when the env triplet
+// `OK_DEBUG_KEYRING_SMOKE=1 + OK_DEBUG_KEYRING_SMOKE_EXIT=1` is set, the
+// packaged app is being launched by the `verify-keyring-in-packaged-dmg.mjs`
+// driver for a creds-free packaged-DMG smoke. Short-circuit at the top of
+// boot — spawn a standalone utility, wait for its auto-smoke + self-exit,
+// then `app.quit()`. No single-instance lock, no Navigator, no window
+// creation. The utility's auto-smoke writes `KeyringSmokeResult` JSON to
+// `OK_DEBUG_KEYRING_SMOKE_OUT` before exiting; the driver reads the file.
+if (isDriverBootSmokeMode(process.env)) {
+  app.whenReady().then(() => {
+    runDriverBootSmokeInProduction();
+  });
+} else {
+  const GOT_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
+  if (!GOT_SINGLE_INSTANCE_LOCK) {
+    app.quit();
+  }
 
-if (GOT_SINGLE_INSTANCE_LOCK) {
-  bootPrimaryInstance();
+  if (GOT_SINGLE_INSTANCE_LOCK) {
+    bootPrimaryInstance();
+  }
 }
 
 function bootPrimaryInstance(): void {
