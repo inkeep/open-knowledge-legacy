@@ -3,17 +3,39 @@
  *
  * **Design principle:** Zero permanent chrome in document flow. Components
  * render exactly like production. All editor affordances are hover-revealed
- * overlays: badge+gear at top-right, "add child" pill at bottom edge.
+ * overlays at top-right (move up/down, delete, settings gear) plus an
+ * "add child" pill at the bottom edge of container descriptors.
+ *
+ * A persistent component-name chip was proposed (SPEC §7a.BS01) but dropped
+ * in commit `252bce2b` — the "zero permanent chrome" principle won. The
+ * descriptor identity is surfaced through: (a) the rendered fumadocs
+ * component's own visual style (every built-in has a distinct shape), (b)
+ * the breadcrumb in `EditorHeader` when the block is selected, (c) the
+ * `aria-label` group summary announced to AT on focus.
  *
  * Three render branches:
- *   Branch 1 (Wildcard): hover-revealed name badge + editable NodeViewContent.
+ *   Branch 1 (Wildcard `'*'`): does NOT render a persistent chip — the
+ *     NodeView immediately schedules a rAF-auto-convert into an editable
+ *     `rawMdxFallback` (nested CodeMirror source editor, Precedent #14 /
+ *     #26). A transient "Unknown component: X — source editable below"
+ *     placeholder flashes for at most one frame while the conversion
+ *     dispatch lands.
  *   Branch 2 (Registered healthy): live React component + hover chrome
- *     (badge, gear→Popover PropPanel, add-child pill) + NodeViewContent.
- *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #26).
+ *     (move/delete/gear→Popover PropPanel, add-child pill) + NodeViewContent.
+ *   Branch 3 (Invalid-state / render error): same rAF-auto-convert into
+ *     `rawMdxFallback` — the error boundary catches, logs a structured
+ *     `jsx-render-failure` event, and the NodeView replaces itself with
+ *     the source editor. Identical UX shape to Branch 1 by design
+ *     (Precedent #14: parse failures AND render failures surface the same
+ *     embedded source editor).
  *
  * Per Precedent #26: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
+import {
+  incrementJsxAutoConvertFailed,
+  incrementJsxRenderFailure,
+} from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
@@ -75,6 +97,10 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
         stack: info.componentStack,
       }),
     );
+    // Counter bump alongside the log event — mirrors the `mdx-block-fallback`
+    // pattern in `parseWithFallback`. Clamped to the same label already in
+    // the `component` field so aggregate counts stay low-cardinality.
+    incrementJsxRenderFailure(this.props.descriptorName);
     this.props.onError(error);
   }
 
@@ -323,17 +349,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         // Log as a structured event so recurring failures are visible in
         // telemetry — a swallowed exception here would otherwise leave the
         // user on the "opening source editor..." placeholder with no signal.
+        const clampedComponent = descriptor.name === '*' ? 'wildcard' : descriptor.name;
         console.warn(
           JSON.stringify({
             event: 'jsx-component-auto-convert-failed',
             // Low-cardinality label for aggregation — always registered
             // descriptor name or literal 'wildcard'. Raw user text goes in
             // rawComponentName (see also ComponentErrorBoundary).
-            component: descriptor.name === '*' ? 'wildcard' : descriptor.name,
+            component: clampedComponent,
             rawComponentName: node.attrs.componentName,
             reason: err instanceof Error ? err.message : String(err),
           }),
         );
+        incrementJsxAutoConvertFailed(clampedComponent);
       }
     });
 

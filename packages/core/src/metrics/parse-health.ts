@@ -50,10 +50,35 @@ function ypsCounters(): YpsCounters {
 export interface ParseHealthMetrics {
   parseFallback: { blockLevel: number; wholeDoc: number };
   ypsMismatch: { block: number; inline: number };
+  /**
+   * Render-layer failure counters. Per-registered-descriptor + wildcard.
+   * Client-only today: the events fire inside `JsxComponentView`'s
+   * `ComponentErrorBoundary.componentDidCatch` and its post-error rAF
+   * auto-convert; React components don't render on the server. The server
+   * endpoint's row therefore stays at zero for these — but the shape is
+   * wired so DevTools and unit tests can inspect the client's running
+   * totals uniformly, and a future client→server push path exposes
+   * aggregate fleet-wide counts through the same response shape.
+   *
+   * Labels are the registered descriptor name (`'Callout'`, `'Card'`, …)
+   * or the literal `'wildcard'`. User-authored MDX names never land as
+   * a label — the raw name is kept in a separate `rawComponentName`
+   * field on the per-event `console.warn` payload (see
+   * `JsxComponentView.tsx`'s emission sites) so telemetry aggregation
+   * cannot explode cardinality.
+   */
+  jsxRenderFailure: Record<string, number>;
+  jsxAutoConvertFailed: Record<string, number>;
 }
 
-const metrics = {
+const metrics: {
+  parseFallback: { blockLevel: number; wholeDoc: number };
+  jsxRenderFailure: Record<string, number>;
+  jsxAutoConvertFailed: Record<string, number>;
+} = {
   parseFallback: { blockLevel: 0, wholeDoc: 0 },
+  jsxRenderFailure: {},
+  jsxAutoConvertFailed: {},
 };
 
 export function incrementBlockFallback(): void {
@@ -62,6 +87,22 @@ export function incrementBlockFallback(): void {
 
 export function incrementWholeDocFallback(): void {
   metrics.parseFallback.wholeDoc++;
+}
+
+/**
+ * Increment the counter for a jsx-render-failure emission. `component` is
+ * the clamped, low-cardinality label — either a registered descriptor name
+ * or the literal string `'wildcard'`. Callers MUST NOT pass user-authored
+ * MDX names; those belong in the per-event payload's `rawComponentName`
+ * field, not in the counter key.
+ */
+export function incrementJsxRenderFailure(component: string): void {
+  metrics.jsxRenderFailure[component] = (metrics.jsxRenderFailure[component] ?? 0) + 1;
+}
+
+/** See {@link incrementJsxRenderFailure} — same cardinality contract. */
+export function incrementJsxAutoConvertFailed(component: string): void {
+  metrics.jsxAutoConvertFailed[component] = (metrics.jsxAutoConvertFailed[component] ?? 0) + 1;
 }
 
 /**
@@ -85,12 +126,16 @@ export function getParseHealth(): ParseHealthMetrics {
   return {
     parseFallback: { ...metrics.parseFallback },
     ypsMismatch: { block: yps.block, inline: yps.inline },
+    jsxRenderFailure: { ...metrics.jsxRenderFailure },
+    jsxAutoConvertFailed: { ...metrics.jsxAutoConvertFailed },
   };
 }
 
 export function resetParseHealth(): void {
   metrics.parseFallback.blockLevel = 0;
   metrics.parseFallback.wholeDoc = 0;
+  for (const k of Object.keys(metrics.jsxRenderFailure)) delete metrics.jsxRenderFailure[k];
+  for (const k of Object.keys(metrics.jsxAutoConvertFailed)) delete metrics.jsxAutoConvertFailed[k];
   const yps = ypsCounters();
   yps.block = 0;
   yps.inline = 0;

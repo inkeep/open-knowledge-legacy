@@ -55,7 +55,16 @@
  * primitive at that point is worth it.
  */
 
-import { type ReactNode, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  use,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 // ─── DOM-attr subscription primitive ──────────────────────────────────────────
 // `useSyncExternalStore` over a MutationObserver lets a child NodeView react to
@@ -315,7 +324,7 @@ export function EditorAccordions({
 // private Context is what the Fallback-2 path avoided; a local Context whose
 // Provider and Consumer are both defined here is fine — the portal boundary
 // only blocks contexts whose Provider lives in a different module.
-import { createContext, use } from 'react';
+// (`createContext` + `use` are imported via the top-level React statement.)
 
 interface AccordionsCtxShape {
   type: 'single' | 'multiple';

@@ -9,15 +9,38 @@
  *   - Y.XmlElement identity is preserved by y-prosemirror for unchanged content
  *   - WeakMap entry preserved → bridgeId stable across parse cycles
  *
- * History. Originally landed for the Context Bridge Registry (Q10 Option A /
- * FR-29), which was then deleted in favor of Fallback 2 (DOM data-attributes,
- * precedent "Compound components use DOM data-attributes"). The stable-id
- * primitive lives on because `SelectionStatePlugin` needs it: the
- * `BlockSelection.ancestorChain` entries carry `bridgeId` so breadcrumb
- * clicks survive collaborative position shifts (see precedent "Selection
- * state as typed PM PluginState"). If a future consumer needs the same
- * primitive (e.g. user-authored compounds), reuse this plugin — don't
- * duplicate it.
+ * **Why Y.XmlElement-keyed (CRDT identity) and NOT a nonce + `tr.mapping`
+ * counter.** A nonce counter remapped via `tr.mapping` handles LOCAL
+ * position shifts fine — incremental inserts / deletes within one client's
+ * editor. It does NOT handle multi-peer shape: a remote peer's delete-
+ * then-reinsert produces a fresh Y.XmlElement locally, and a nonce scheme
+ * would assign a fresh id to what the user perceives as "the same block
+ * they selected a moment ago." The breadcrumb consumer below relies on
+ * the id staying stable across remote churn so clicking a breadcrumb
+ * entry still resolves to the intended block even after a collaborator's
+ * rearrangement. Y.XmlElement identity is the minimum primitive that
+ * carries peer-stable cross-client identity for free.
+ *
+ * **Current consumers.**
+ *   - `SelectionStatePlugin.BlockSelection.ancestorChain` entries carry
+ *     `bridgeId` so breadcrumb clicks (`components/editor/Breadcrumb.tsx`)
+ *     survive collaborative position shifts. Precedent "Selection state
+ *     as typed PM PluginState" (§27).
+ *   - `JsxComponentView` reads `getWrapperBridgeId(state, pos)` to decide
+ *     halo / `data-has-child-selected` state against `BlockSelection`.
+ *
+ * **Future consumers that will need this primitive rather than a nonce:**
+ * NG13 user-authored compound descriptors (require stable cross-peer id
+ * for Context bridging when / if Fallback-2 upgrades to a registry);
+ * multi-peer presence pins anchored to a block; deterministic test
+ * seed-replay (seed-scoped ids must match the CRDT's replay order).
+ *
+ * **History.** Originally landed for the Context Bridge Registry (Q10
+ * Option A / FR-29), which was then deleted in favor of Fallback 2 (DOM
+ * data-attributes, precedent "Compound components use DOM data-
+ * attributes"). The stable-id primitive stays because the breadcrumb
+ * consumer above already depends on it. If a future consumer needs the
+ * same primitive, reuse this plugin — don't duplicate it.
  *
  * jsxInline is excluded (thin zero-attr shape by design).
  */

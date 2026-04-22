@@ -52,6 +52,8 @@ export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
+  incrementJsxAutoConvertFailed,
+  incrementJsxRenderFailure,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,
   incrementYpsMismatchInline,
