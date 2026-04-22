@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import {
   type AgentDirectConnection,
   AgentSessionManager,
+  applyAgentUndo,
   iconFromClientName,
 } from './agent-sessions.ts';
 
@@ -226,6 +227,27 @@ describe('per-session origin — US-007', () => {
     expect(session.agentId).toBe('agent-alice');
     expect(session.docName).toBe('doc.md');
   });
+
+  // Regression: phantom `Agent (agent-<shortid>)` timeline commits (2026-04-22).
+  // extractAgentIdentity returns `agent-<raw>` as the sessions-map key / writerId,
+  // but `context.session_id` must be the RAW connection id — the `agent-` prefix
+  // is the writerId namespace added by `resolveWriterFromOrigin` in persistence.ts.
+  // When session_id carried the prefix, resolveWriterFromOrigin double-prefixed to
+  // `agent-agent-<raw>` and the onStoreDocument safety-net booked phantom commits
+  // under that mismatched writerId.
+  test('session_id in origin context is RAW (unprefixed) even when agentId is prefixed', async () => {
+    const session = await manager.getSession('doc.md', 'agent-85aabbcc-1234');
+    expect(session.agentId).toBe('agent-85aabbcc-1234');
+    expect(session.origin.context.session_id).toBe('85aabbcc-1234');
+    expect(session.undoOrigin.context.session_id).toBe('85aabbcc-1234');
+  });
+
+  test('session_id in origin context is unchanged when agentId has no prefix', async () => {
+    const session = await manager.getSession('doc.md', 'claude-1');
+    expect(session.agentId).toBe('claude-1');
+    expect(session.origin.context.session_id).toBe('claude-1');
+    expect(session.undoOrigin.context.session_id).toBe('claude-1');
+  });
 });
 
 // US-008 acceptance criteria (D25, D24, D21)
@@ -263,5 +285,53 @@ describe('per-session UndoManager — US-008', () => {
     // After destroy, the UM should have an empty stack (no tracking post-destroy).
     // We just verify the destroy didn't throw.
     expect(session.um.undoStack.length).toBe(0);
+  });
+});
+
+// V0-14 (FR-4) applyAgentUndo drain semantics. Complements the end-to-end
+// integration test at packages/app/tests/integration/agent-undo.test.ts.
+describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
+  test("scope='session' drains every UM frame in one call and reports it", async () => {
+    const session = await manager.getSession('doc-drain.md', 'agent-drain');
+    const ytext = session.dc.document.getText('source');
+
+    // stopCapturing() separates the next transact into its own UM frame,
+    // without waiting for the captureTimeout (500ms default).
+    session.dc.document.transact(() => ytext.insert(0, 'a'), session.origin);
+    session.um.stopCapturing();
+    session.dc.document.transact(() => ytext.insert(0, 'b'), session.origin);
+    session.um.stopCapturing();
+    session.dc.document.transact(() => ytext.insert(0, 'c'), session.origin);
+
+    expect(session.um.undoStack.length).toBe(3);
+
+    const undone = applyAgentUndo(session, 'session');
+    expect(undone).toBe(true);
+    expect(session.um.undoStack.length).toBe(0);
+
+    const undoneAgain = applyAgentUndo(session, 'session');
+    expect(undoneAgain).toBe(false);
+  });
+
+  test("scope='last' pops exactly one frame", async () => {
+    const session = await manager.getSession('doc-last.md', 'agent-last');
+    const ytext = session.dc.document.getText('source');
+
+    session.dc.document.transact(() => ytext.insert(0, 'x'), session.origin);
+    session.um.stopCapturing();
+    session.dc.document.transact(() => ytext.insert(0, 'y'), session.origin);
+
+    expect(session.um.undoStack.length).toBe(2);
+
+    const undone = applyAgentUndo(session, 'last');
+    expect(undone).toBe(true);
+    expect(session.um.undoStack.length).toBe(1);
+  });
+
+  test("scope='session' returns false on an empty stack (no-op)", async () => {
+    const session = await manager.getSession('doc-empty.md', 'agent-empty');
+    expect(session.um.undoStack.length).toBe(0);
+    expect(applyAgentUndo(session, 'session')).toBe(false);
+    expect(applyAgentUndo(session, 'last')).toBe(false);
   });
 });

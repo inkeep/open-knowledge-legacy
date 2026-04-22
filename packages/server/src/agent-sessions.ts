@@ -289,6 +289,11 @@ function createSessionOrigin(
 ): PairedWriteOrigin {
   // precedent #1: typed transaction origin object (not string).
   // D23: deep-freeze both context and outer object so accidental mutation throws.
+  // context.session_id is the RAW connection id (unprefixed) — `resolveWriterFromOrigin`
+  // in persistence.ts adds the `agent-` namespace prefix to derive the writerId.
+  // Storing a pre-prefixed form here produces `agent-agent-<id>` phantom writers
+  // that don't match the handler's `recordContributor(docName, agentId, …)` call
+  // and trigger the `onStoreDocument` safety-net stub.
   const context: Record<string, unknown> & { origin: string; paired: true } = {
     origin: 'agent-write',
     paired: true as const,
@@ -314,6 +319,7 @@ function createSessionOrigin(
  */
 function createUndoOrigin(sessionId: string, agentType?: string): PairedWriteOrigin {
   // precedent #1: typed transaction origin; paired: true so observers short-circuit (D4).
+  // context.session_id is the RAW connection id (unprefixed). See createSessionOrigin above.
   const context: Record<string, unknown> & { origin: string; paired: true } = {
     origin: 'agent-undo',
     paired: true as const,
@@ -387,15 +393,24 @@ export class AgentSessionManager {
     identity: AgentSessionIdentity | undefined,
   ): Promise<SessionRecord> {
     const agentType = identity?.clientName;
+    // extractAgentIdentity returns `agent-<raw>` (prefixed) as the sessions-map
+    // key / writerId. But `context.session_id` is the RAW connection id — the
+    // `agent-` prefix is the writerId namespace, added by
+    // `resolveWriterFromOrigin` in persistence.ts. Strip once here so downstream
+    // consumers (origin context, dc context, ok-actor agent_session field) all
+    // see the unprefixed form; otherwise `resolveWriterFromOrigin` double-prefixes
+    // to `agent-agent-<raw>` and the onStoreDocument safety-net books a phantom
+    // commit under that mismatched writerId.
+    const rawSessionId = agentId.startsWith('agent-') ? agentId.slice('agent-'.length) : agentId;
     // F1 (D2): per-session frozen origin — object-identity-unique
-    const origin = createSessionOrigin(agentId, agentType, identity?.principalId);
+    const origin = createSessionOrigin(rawSessionId, agentType, identity?.principalId);
     // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
-    const undoOrigin = createUndoOrigin(agentId, agentType);
+    const undoOrigin = createUndoOrigin(rawSessionId, agentType);
 
     // D32: thread session context to openDirectConnection so Hocuspocus
     // extensions (e.g. onAuthenticate) can resolve the session's identity.
     const sessionContext = {
-      session_id: agentId,
+      session_id: rawSessionId,
       ...(agentType !== undefined ? { agent_type: agentType } : {}),
       ...(identity?.clientName !== undefined ? { client_name: identity.clientName } : {}),
       ...(identity?.principalId !== undefined ? { principalId: identity.principalId } : {}),
