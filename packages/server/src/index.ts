@@ -14,6 +14,7 @@ export {
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
+export { seedBasenameIndex } from './asset-walk.ts';
 export {
   type BacklinkEntry,
   BacklinkIndex,

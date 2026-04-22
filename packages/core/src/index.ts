@@ -145,6 +145,10 @@ export {
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
+  type PartialUserUploadConfig,
+  resolveUploadConfig,
+} from './utils/resolve-upload-config.ts';
+export {
   disambiguateSlug,
   getHeadingSlug,
   type HeadingEntry,

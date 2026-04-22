@@ -57,37 +57,62 @@ export const UploadDedupSchema = z
   })
   .default({ mode: 'same-dir', ui: 'toast' });
 
+// `attachmentFolderPath` and `emitFormat` have NO Zod default (US-018).
+// They're the two fields `detectObsidianVault` can supply — if Zod
+// materialized a default here we could not distinguish "user kept default"
+// from "user never set it", and vault detection would either override
+// explicit user config or never get a chance to fill in. Keeping them
+// optional at schema level means the resolved-config step in the CLI /
+// dev-plugin boot path sees `undefined` when the user didn't set them
+// and falls back to the vault partial (if present) or the canonical
+// DEFAULT_UPLOAD_CONFIG. See resolveUploadConfig() in core.
 export const UploadConfigSchema = z
   .object({
-    attachmentFolderPath: z.string().default('./'),
-    emitFormat: z.enum(['wikiembed', 'markdown-image']).default('wikiembed'),
+    attachmentFolderPath: z.string().optional(),
+    emitFormat: z.enum(['wikiembed', 'markdown-image']).optional(),
     maxBytes: z.number().int().min(0).default(DEFAULT_MAX_UPLOAD_BYTES),
     dedup: UploadDedupSchema,
     wikiEmbedExtensions: z.array(z.string()).default([...DEFAULT_WIKI_EMBED_EXTENSIONS]),
   })
   .default({
-    attachmentFolderPath: './',
-    emitFormat: 'wikiembed',
     maxBytes: DEFAULT_MAX_UPLOAD_BYTES,
     dedup: { mode: 'same-dir', ui: 'toast' },
     wikiEmbedExtensions: [...DEFAULT_WIKI_EMBED_EXTENSIONS],
   });
 
-// Re-export so cli consumers (loader, commands) and server (via core) see the
-// same UploadConfig identity. Compile-time `satisfies` below catches drift if
-// the Zod schema's inferred shape ever diverges from core's interface.
+// Re-export so cli consumers (loader, commands) and server (via core) see
+// the same UploadConfig identity. `UploadConfig` describes the **resolved**
+// runtime shape — every field concrete — and is the contract consumers see
+// after `resolveUploadConfig()` runs at the CLI / dev-plugin boundary.
+//
+// The on-disk / Zod-inferred shape differs: `attachmentFolderPath` and
+// `emitFormat` are `| undefined` because they have no Zod default. That
+// divergence is intentional and the reason the bidirectional structural
+// check previously colocated here has been removed: the two shapes are
+// deliberately NOT identical. Compile-time safety for the resolved shape
+// lives in `resolveUploadConfig`'s return type — if any field drifts,
+// the return-type annotation fails TypeScript.
 export type UploadConfig = CoreUploadConfig;
 export type EmitFormat = CoreEmitFormat;
 export type DedupMode = CoreDedupMode;
 export type DedupUIMode = CoreDedupUIMode;
 
-type _UploadConfigShapeMatches =
-  z.infer<typeof UploadConfigSchema> extends UploadConfig
-    ? UploadConfig extends z.infer<typeof UploadConfigSchema>
+// Narrow sanity check: the four always-resolved fields on the Zod shape
+// must still match the resolved type. attachmentFolderPath + emitFormat
+// are excluded because they are intentionally optional pre-resolution.
+type _ResolvedFieldsMatch =
+  Omit<z.infer<typeof UploadConfigSchema>, 'attachmentFolderPath' | 'emitFormat'> extends Omit<
+    UploadConfig,
+    'attachmentFolderPath' | 'emitFormat'
+  >
+    ? Omit<UploadConfig, 'attachmentFolderPath' | 'emitFormat'> extends Omit<
+        z.infer<typeof UploadConfigSchema>,
+        'attachmentFolderPath' | 'emitFormat'
+      >
       ? true
       : never
     : never;
-const _shapeCheck: _UploadConfigShapeMatches = true;
+const _shapeCheck: _ResolvedFieldsMatch = true;
 void _shapeCheck;
 
 export const ConfigSchema = z.object({

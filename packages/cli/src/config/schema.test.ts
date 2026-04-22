@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { resolveUploadConfig } from '@inkeep/open-knowledge-core';
 import { ConfigSchema } from './schema';
 
 describe('ConfigSchema', () => {
@@ -199,10 +200,15 @@ describe('ConfigSchema', () => {
 });
 
 describe('ConfigSchema.upload (FR-5)', () => {
-  test('upload section omitted: all defaults populate', () => {
+  test('upload section omitted: other defaults populate, attachmentFolderPath + emitFormat are undefined (US-018 resolver fills them)', () => {
     const config = ConfigSchema.parse({});
-    expect(config.upload.attachmentFolderPath).toBe('./');
-    expect(config.upload.emitFormat).toBe('wikiembed');
+    // attachmentFolderPath + emitFormat are deliberately optional on the
+    // Zod shape — `resolveUploadConfig` in core fills them with vault
+    // partial first, then DEFAULT_UPLOAD_CONFIG. This lets user-wins
+    // precedence work; if Zod materialized defaults here we could not
+    // distinguish "user kept default" from "user never set it."
+    expect(config.upload.attachmentFolderPath).toBeUndefined();
+    expect(config.upload.emitFormat).toBeUndefined();
     expect(config.upload.maxBytes).toBe(25 * 1024 * 1024);
     expect(config.upload.dedup.mode).toBe('same-dir');
     expect(config.upload.dedup.ui).toBe('toast');
@@ -230,8 +236,17 @@ describe('ConfigSchema.upload (FR-5)', () => {
       upload: { maxBytes: 104857600 },
     });
     expect(config.upload.maxBytes).toBe(104857600);
-    expect(config.upload.emitFormat).toBe('wikiembed');
+    // emitFormat is optional pre-resolution (US-018)
+    expect(config.upload.emitFormat).toBeUndefined();
     expect(config.upload.dedup.mode).toBe('same-dir');
+  });
+
+  test('user sets attachmentFolderPath + emitFormat explicitly → Zod preserves exact values', () => {
+    const config = ConfigSchema.parse({
+      upload: { attachmentFolderPath: 'attachments', emitFormat: 'markdown-image' },
+    });
+    expect(config.upload.attachmentFolderPath).toBe('attachments');
+    expect(config.upload.emitFormat).toBe('markdown-image');
   });
 
   test('upload.maxBytes with string value fails with a Zod error naming the field', () => {
@@ -342,5 +357,61 @@ describe('ConfigSchema.upload (FR-5)', () => {
     // Zod strip mode silently drops unknown keys by default; assert the
     // parsed output does NOT carry the removed field.
     expect(Object.hasOwn(config.upload, 'allowedMimeTypes')).toBe(false);
+  });
+});
+
+describe('ConfigSchema.upload × resolveUploadConfig (US-018 precedence integration)', () => {
+  test('user omits both two-field toggles + no vault → resolver applies defaults', () => {
+    const config = ConfigSchema.parse({});
+    const resolved = resolveUploadConfig(config.upload, null);
+    expect(resolved.attachmentFolderPath).toBe('./');
+    expect(resolved.emitFormat).toBe('wikiembed');
+  });
+
+  test('user omits both + vault supplies both → vault wins over defaults', () => {
+    const config = ConfigSchema.parse({});
+    const resolved = resolveUploadConfig(config.upload, {
+      attachmentFolderPath: 'attachments',
+      emitFormat: 'markdown-image',
+    });
+    expect(resolved.attachmentFolderPath).toBe('attachments');
+    expect(resolved.emitFormat).toBe('markdown-image');
+  });
+
+  test('user sets attachmentFolderPath + vault sets both → user wins on conflict', () => {
+    const config = ConfigSchema.parse({
+      upload: { attachmentFolderPath: 'user-assets' },
+    });
+    const resolved = resolveUploadConfig(config.upload, {
+      attachmentFolderPath: 'vault-attachments',
+      emitFormat: 'markdown-image',
+    });
+    expect(resolved.attachmentFolderPath).toBe('user-assets');
+    expect(resolved.emitFormat).toBe('markdown-image'); // vault filled the gap
+  });
+
+  test('user sets both + vault sets both → user wins on every field', () => {
+    const config = ConfigSchema.parse({
+      upload: {
+        attachmentFolderPath: 'user-assets',
+        emitFormat: 'markdown-image',
+      },
+    });
+    const resolved = resolveUploadConfig(config.upload, {
+      attachmentFolderPath: 'vault-attachments',
+      emitFormat: 'wikiembed',
+    });
+    expect(resolved.attachmentFolderPath).toBe('user-assets');
+    expect(resolved.emitFormat).toBe('markdown-image');
+  });
+
+  test('user overrides maxBytes → resolved UploadConfig carries user value', () => {
+    const config = ConfigSchema.parse({
+      upload: { maxBytes: 104857600 },
+    });
+    const resolved = resolveUploadConfig(config.upload, null);
+    expect(resolved.maxBytes).toBe(104857600);
+    expect(resolved.attachmentFolderPath).toBe('./'); // default applied post-resolve
+    expect(resolved.emitFormat).toBe('wikiembed');
   });
 });

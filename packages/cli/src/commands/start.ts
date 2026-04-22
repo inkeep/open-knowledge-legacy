@@ -259,6 +259,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
+  const { resolveUploadConfig } = await import('@inkeep/open-knowledge-core');
   const { bootServer, detectObsidianVault, getLogger, isProcessAlive, readUiLock } = await import(
     '@inkeep/open-knowledge-server'
   );
@@ -274,24 +275,19 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     log.info({ contentDir }, 'Created content directory');
   }
 
-  // SPEC §6 FR-4: non-destructive Obsidian vault detection. The user's
-  // .open-knowledge/config.yml wins on every key (already loaded into
-  // `config.upload`), so the vault partial only fills in fields the user
-  // hasn't set explicitly. Missing app.json or unparseable JSON resolves
-  // to null and the user config alone is used.
+  // SPEC §6 FR-4 + US-018: non-destructive Obsidian vault detection with
+  // **user-wins precedence** (user > vault > default). `config.upload`
+  // is the YAML-derived partial; Zod leaves `attachmentFolderPath` and
+  // `emitFormat` undefined when the user didn't set them so the vault
+  // partial can fill the gap. The canonical resolver lives in core so
+  // the Vite dev plugin reaches the same result without duplicating the
+  // merge logic.
   const vaultPartial = detectObsidianVault(contentDir);
-  const uploadConfig = vaultPartial
-    ? {
-        ...config.upload,
-        attachmentFolderPath:
-          vaultPartial.attachmentFolderPath ?? config.upload.attachmentFolderPath,
-        emitFormat: vaultPartial.emitFormat ?? config.upload.emitFormat,
-      }
-    : config.upload;
+  const uploadConfig = resolveUploadConfig(config.upload, vaultPartial);
   if (vaultPartial) {
     log.info(
-      { vault: vaultPartial },
-      '[start] detected Obsidian vault — pre-populated upload defaults',
+      { vault: vaultPartial, resolved: uploadConfig },
+      '[start] detected Obsidian vault — filled upload defaults (user config wins)',
     );
   }
 

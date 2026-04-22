@@ -8,7 +8,15 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
-import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import {
+  type BasenameIndex,
+  createBasenameIndex,
+  MarkdownManager,
+  type PartialUserUploadConfig,
+  resolveUploadConfig,
+  sharedExtensions,
+  type UploadConfig,
+} from '@inkeep/open-knowledge-core';
 import {
   AgentSessionManager,
   acquireServerLock,
@@ -20,12 +28,14 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
+  detectObsidianVault,
   handleCollabSocketError,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
   type ShadowRef,
   SYSTEM_DOC_NAME,
+  seedBasenameIndex,
   startWatcher,
   updateServerLockPort,
   type WatcherHandle,
@@ -48,12 +58,21 @@ interface ContentConfig {
   dir: string;
   include: string[];
   exclude: string[];
+  /**
+   * Loosely-parsed user `upload.*` partial read straight from YAML. Only
+   * the fields `resolveUploadConfig` cares about are surfaced; unknown
+   * extras are silently dropped (matches Zod strip-mode on `ok start`).
+   * The full Zod validation lives in `packages/cli/src/config/schema.ts`
+   * — the dev plugin parses loose here because an app→cli dependency
+   * would invert the monorepo layering (app shouldn't import cli).
+   */
+  upload?: PartialUserUploadConfig;
 }
 
 /**
- * Read content config from .open-knowledge/config.yml.
- * Falls back to defaults (PROJECT_ROOT + all-markdown include + empty exclude) if no
- * config exists or fields are unspecified.
+ * Read content + upload config from .open-knowledge/config.yml. Falls back
+ * to defaults (PROJECT_ROOT + all-markdown include + empty exclude, upload
+ * undefined) if no config exists or fields are unspecified.
  */
 function resolveContentConfig(): ContentConfig {
   const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
@@ -77,6 +96,37 @@ function resolveContentConfig(): ContentConfig {
           (p): p is string => typeof p === 'string',
         );
         if (valid.length > 0) defaults.exclude = valid;
+      }
+      const upload = parsed?.upload as Record<string, unknown> | undefined;
+      if (upload && typeof upload === 'object') {
+        const userUpload: PartialUserUploadConfig = {};
+        if (typeof upload.attachmentFolderPath === 'string') {
+          userUpload.attachmentFolderPath = upload.attachmentFolderPath;
+        }
+        if (upload.emitFormat === 'wikiembed' || upload.emitFormat === 'markdown-image') {
+          userUpload.emitFormat = upload.emitFormat;
+        }
+        if (typeof upload.maxBytes === 'number' && Number.isInteger(upload.maxBytes)) {
+          userUpload.maxBytes = upload.maxBytes;
+        }
+        const dedup = upload.dedup as Record<string, unknown> | undefined;
+        if (dedup && typeof dedup === 'object') {
+          const dedupPartial: PartialUserUploadConfig['dedup'] = {};
+          if (dedup.mode === 'off' || dedup.mode === 'same-dir') {
+            dedupPartial.mode = dedup.mode;
+          }
+          if (dedup.ui === 'silent' || dedup.ui === 'toast' || dedup.ui === 'confirm') {
+            dedupPartial.ui = dedup.ui;
+          }
+          if (Object.keys(dedupPartial).length > 0) userUpload.dedup = dedupPartial;
+        }
+        if (Array.isArray(upload.wikiEmbedExtensions)) {
+          const valid = (upload.wikiEmbedExtensions as unknown[]).filter(
+            (e): e is string => typeof e === 'string',
+          );
+          userUpload.wikiEmbedExtensions = valid;
+        }
+        if (Object.keys(userUpload).length > 0) defaults.upload = userUpload;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
@@ -163,6 +213,13 @@ let sessionManager: AgentSessionManager;
 let persistence: ReturnType<typeof createPersistenceExtension>;
 let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 let cc1Broadcaster: CC1Broadcaster;
+// SPEC §6 FR-3b + FR-6 / D-D LOCKED: basename index for asset embed
+// resolution. Parity with `createServer()` in packages/server/src/standalone.ts.
+let basenameIndex: BasenameIndex;
+// Resolved upload config (user > vault > default) per US-018. Evaluated once
+// at plugin boot; `/api/upload-config` serves the same frozen shape until the
+// dev server restarts.
+let uploadConfig: UploadConfig;
 
 function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
   cc1Broadcaster.signal(channel);
@@ -181,6 +238,22 @@ try {
     contentFilter,
   });
 
+  // Non-destructive Obsidian vault detection + user-wins resolver.
+  // SPEC §6 FR-4, US-018: same precedence as `cli/src/commands/start.ts`.
+  const vaultPartial = detectObsidianVault(CONTENT_DIR);
+  uploadConfig = resolveUploadConfig(contentConfig.upload, vaultPartial);
+  if (vaultPartial) {
+    console.log(
+      `[hocuspocus] detected Obsidian vault — filled upload defaults (user config wins): ${JSON.stringify(vaultPartial)}`,
+    );
+  }
+
+  // SPEC §6 FR-3b: basename index seeded below once the watcher has
+  // primed the content filter's dirCount (sibling-asset admission).
+  basenameIndex = createBasenameIndex();
+  const resolveEmbed = (basename: string, sourcePath: string): string | null =>
+    basenameIndex.resolveEmbed(basename, sourcePath);
+
   persistence = createPersistenceExtension({
     contentDir: CONTENT_DIR,
     projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
@@ -189,6 +262,7 @@ try {
     shadowRef,
     backlinkIndex,
     getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    resolveEmbed,
   });
 
   hocuspocus = new Hocuspocus({
@@ -213,6 +287,7 @@ try {
       contentDir: CONTENT_DIR,
       getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
+      getUploadConfig: () => uploadConfig,
       enableTestRoutes: true,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       shadowRef,
@@ -220,6 +295,7 @@ try {
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
       signalChannel,
+      resolveEmbed,
     }),
   );
 
@@ -232,6 +308,7 @@ try {
       shadowRef,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+      resolveEmbed,
     }),
   );
 } catch (err) {
@@ -344,7 +421,12 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // --- Disk bridge: watch content directory for external .md changes ---
-      const handleExternalChange = createExternalChangeHandler(hocuspocus);
+      const resolveEmbedForExternalChange = (basename: string, sourcePath: string): string | null =>
+        basenameIndex.resolveEmbed(basename, sourcePath);
+      const handleExternalChange = createExternalChangeHandler(
+        hocuspocus,
+        resolveEmbedForExternalChange,
+      );
 
       (async () => {
         try {
@@ -389,6 +471,16 @@ export function hocuspocusPlugin(): Plugin {
                 backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
                 signalChannel('backlinks');
                 signalChannel('graph');
+              } else if (event.kind === 'asset-create') {
+                // SPEC §6 FR-6 + D-H Option A. Asset events update the
+                // basename index and signal ch:'files' only — they do not
+                // touch backlinkIndex (markdown-only) and do not load a
+                // Y.Doc (assets aren't CRDT documents).
+                basenameIndex.add(event.relativePath);
+                signalChannel('files');
+              } else if (event.kind === 'asset-delete') {
+                basenameIndex.remove(event.relativePath);
+                signalChannel('files');
               }
               void backlinkIndex.saveToDisk().catch((err: unknown) => {
                 console.warn('[hocuspocus] Failed to persist backlink cache:', err);
@@ -400,6 +492,15 @@ export function hocuspocusPlugin(): Plugin {
           void backlinkIndex.saveToDisk().catch((err: unknown) => {
             console.warn('[hocuspocus] Failed to persist startup backlink cache:', err);
           });
+          // SPEC §6 FR-3b: seed basename index now that the watcher's
+          // startup walk has finished. `seedBasenameIndex` walks the
+          // content directory separately (watcher's fileIndex is
+          // markdown-only) using the same ContentFilter admission rules.
+          try {
+            seedBasenameIndex({ contentDir: CONTENT_DIR, contentFilter, basenameIndex });
+          } catch (err) {
+            console.warn('[hocuspocus] basename-index startup seed failed:', err);
+          }
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();
