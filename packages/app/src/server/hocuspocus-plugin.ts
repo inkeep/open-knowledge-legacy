@@ -348,6 +348,53 @@ export function hocuspocusPlugin(): Plugin {
           console.error('[collab] Upgrade socket error:', err);
         });
 
+        // D-034 — MCP keep-alive channel. `ok mcp` holds a persistent WS to
+        // `/collab/keepalive?pid=<mcp-pid>` so idle-shutdown counts the MCP
+        // session as an active client (see packages/cli/src/mcp/keepalive.ts
+        // + packages/server/src/boot.ts:210-235 for the prod mirror). The WS
+        // carries no traffic — its sole purpose is to register as an upgrade.
+        //
+        // MUST be routed as a bare WS (no hocuspocus.handleConnection) because
+        // MCP never sends the sync-step-1 message Hocuspocus waits for. Before
+        // this branch, dev routed the keepalive into Hocuspocus, which left the
+        // MCP socket in a half-initialized state in Hocuspocus's connection
+        // registry — load-bearing for Dima's stuck-/collab-WS report where a
+        // real browser connect coexisted with a Claude-Code-spawned MCP
+        // process's keepalive. Matches the prod branch exactly so dev/prod
+        // parity holds for anyone testing `ok mcp` against the dev server.
+        if (req.url.startsWith('/collab/keepalive')) {
+          console.info(`[collab] keepalive handleUpgrade starting for ${req.url}`);
+          try {
+            wss.handleUpgrade(req, socket, head, (ws) => {
+              console.info(`[collab] keepalive handshake complete for ${req.url}`);
+              const pingTimer = setInterval(() => {
+                try {
+                  ws.ping();
+                } catch {
+                  // best-effort — a dead socket will fire 'close' + 'error'
+                  // which the handlers below clean up.
+                }
+              }, 30_000);
+              pingTimer.unref?.();
+              ws.on('close', () => clearInterval(pingTimer));
+              ws.on('error', (err: NodeJS.ErrnoException) => {
+                if (!handleCollabSocketError(err)) {
+                  console.error('[collab] keepalive WS error:', err);
+                }
+                ws.terminate();
+              });
+            });
+          } catch (err) {
+            console.error(`[collab] keepalive handleUpgrade threw for ${req.url}:`, err);
+            try {
+              socket.destroy();
+            } catch {
+              // already-destroyed sockets throw on destroy; swallow.
+            }
+          }
+          return;
+        }
+
         console.info(`[collab] handleUpgrade starting for ${req.url}`);
 
         // `wss.handleUpgrade` throws synchronously if the socket was already
