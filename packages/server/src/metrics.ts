@@ -53,6 +53,15 @@ export interface ReconciliationMetrics {
   shadowMigrationLegacyRefsDeleted: number;
   /** Count of captureEffect failures (US-022, D37). Prod swallows; dev/test throws. */
   effectDiffCaptureFailures: number;
+  /** Count of awareness-mutation failures in `AgentPresenceBroadcaster`
+   *  (setPresence / clearPresence / touchMode catching a throw from
+   *  `awareness.setLocalState`). Each failure logs at ERROR but the call
+   *  sites (HTTP handlers, keepalive close) swallow the return and move
+   *  on, so the counter is the operator-visible signal that presence is
+   *  silently dropping. A non-zero value means the badge state on clients
+   *  may disagree with what the server thinks it published — investigate
+   *  the correlated `[agent-presence] awareness mutation failed` log line. */
+  agentPresenceMutationErrors: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -80,6 +89,7 @@ const counters: ReconciliationMetrics = {
   collabSocketEconnresetCount: 0,
   shadowMigrationLegacyRefsDeleted: 0,
   effectDiffCaptureFailures: 0,
+  agentPresenceMutationErrors: 0,
 };
 
 export function incrementReconcile(): void {
@@ -199,6 +209,10 @@ export function incrementEffectDiffCaptureFailures(): void {
   counters.effectDiffCaptureFailures++;
 }
 
+export function incrementAgentPresenceMutationError(): void {
+  counters.agentPresenceMutationErrors++;
+}
+
 export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
     incrementCollabSocketFilteredError(err.code);
@@ -240,4 +254,5 @@ export function resetMetrics(): void {
   counters.collabSocketEconnresetCount = 0;
   counters.shadowMigrationLegacyRefsDeleted = 0;
   counters.effectDiffCaptureFailures = 0;
+  counters.agentPresenceMutationErrors = 0;
 }

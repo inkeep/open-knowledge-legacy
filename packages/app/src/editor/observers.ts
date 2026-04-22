@@ -14,7 +14,7 @@
  *      identities required by the bridge-invariant watcher's enforcing
  *      set (precedent #1 identity match).
  *   2. Record keystroke timestamps via `markUserTyping` for the
- *      `SystemDocSubscriber` agent-focus typing guard (global wall-clock
+ *      `SystemDocSubscriber` agent-presence typing guard (global wall-clock
  *      timestamp, not per-doc state).
  *
  * The observer callbacks themselves are intentionally empty: the server
@@ -68,7 +68,7 @@ export const ORIGIN_TEXT_TO_TREE = {
 } satisfies LocalTransactionOrigin;
 
 // ─────────────────────────────────────────────────────────────
-// Typing state (agent-focus guard consumer — SystemDocSubscriber)
+// Typing state (agent-presence guard consumer — SystemDocSubscriber)
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -88,7 +88,7 @@ export function getLastUserKeystroke(): number {
 /**
  * Mark that the local user just typed. Call from the editor's DOM event
  * handlers (keydown, paste, drop, etc.). Updates the global keystroke
- * timestamp consumed by `SystemDocSubscriber`'s agent-focus typing guard.
+ * timestamp consumed by `SystemDocSubscriber`'s agent-presence typing guard.
  *
  * Previous iterations accepted a `Y.Doc` parameter that drove per-doc
  * typing-defer state; that state was deleted under server-authoritative

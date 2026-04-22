@@ -80,7 +80,7 @@ Two design proposals in flight that would collapse multiple items from sections 
 
 **Covers:** #17, #18, sheet-rows for Tim/Andrew presence overlap, Justin divert-current-page, Miles Cursor-nav-slow, Nick agent-shouldn't-navigate.
 
-**Prerequisite:** [[specs/2026-04-21-multi-agent-presence/SPEC]] — substrate implementation in PR #246 (open, 2026-04-21); landing unblocks the Activity sidebar surface. Foundation spec [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] in PR #222 (draft, handed off to Miles) provides per-session CRDT identity (F1) and lifecycle cleanup (F2) that presence depends on for ghost-agent eviction + distinguishability.
+**Prerequisite:** [[specs/2026-04-21-multi-agent-presence/SPEC]] — substrate implementation in PR #246 (open, 2026-04-21); landing unblocks the Activity sidebar surface. Foundation spec [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] **shipped 2026-04-21 (merged)** provides per-session CRDT identity (F1) and lifecycle cleanup (F2) that presence depends on for ghost-agent eviction + distinguishability.
 
 **Owner:** Miles (presence + agent-identity foundation)
 
@@ -110,7 +110,7 @@ These are in the sheet but have been addressed by recent commits or Linear ticke
 | Reload needed when folders added                                       | Miles                 | Same CC1 push primitive (PRD-6499)                                                                        | ✅                                                                                                                 |
 | `<!-- open-knowledge:begin -->` confusion                              | Nick                  | Clarified in-meeting as intentional init marker — not a bug                                               | ✅                                                                                                                 |
 | GitHub auth — `allowUnsafeCredentialHelper`, keychain, callback window | Andrew, HeeGun, Miles | PR #219 (fix simple git auth and stream reader, 2026-04-20)                                               | 🟡 Verify against original reproductions — HeeGun's `exit code 1` and device-modal-no-success may still reproduce |
-| Multi-agent presence — Claude + Cursor share one slot                  | Tim, Andrew           | [[specs/2026-04-21-multi-agent-presence/SPEC]] + PR #246 (open); [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] + PR #222 (draft, owner Miles) | 🔵 Presence substrate PR open; agent-identity foundation spec in draft (Miles)                                    |
+| Multi-agent presence — Claude + Cursor share one slot                  | Tim, Andrew           | [[specs/2026-04-21-multi-agent-presence/SPEC]] + PR #246 (open); [[specs/2026-04-18-agent-identity-attribution-foundation/SPEC]] shipped 2026-04-21 | 🔵 Presence substrate PR open; agent-identity foundation shipped                                                  |
 | Auto-navigation diverts current page                                   | Justin, Miles, Nick   | `pinnedDoc` / `pin` / `unpin` in `DocumentContext.tsx` exists; Slack proposal (Cluster A) is the full fix | 🟡 Workaround shipped, root fix not built                                                                         |
 | Single-shot "install MCP for coding agent"                             | Nick                  | PR #209 (Codex MCP), PR #179 (multi-editor injection)                                                     | 🟡 Per-agent install; "all at once" still open                                                                    |
 
@@ -120,7 +120,7 @@ These are in the sheet but have been addressed by recent commits or Linear ticke
 
 1. **Scope decision:** decide which of section 1 + 2 are V0-launch blockers vs post-launch. Candidates for blocker: V1, V2, V3, V6, V7, V10, V11 — each is a flat-out failure during a fresh onboarding.
 2. **Promote verbal items to Linear:** section 2 (V1–V15) should get tickets so they stop living only here. Each row maps 1:1 to a ticket.
-3. **Land multi-agent-presence PR #246** ([[specs/2026-04-21-multi-agent-presence/SPEC]]) — substrate is scope-frozen and implemented; Activity sidebar (Cluster A's read surface) is the follow-up spec. Miles owns the presence surface going forward, including the agent-identity foundation spec in PR #222 which underpins V0-14 agent-undo + attribution completeness.
+3. **Land multi-agent-presence PR #246** ([[specs/2026-04-21-multi-agent-presence/SPEC]]) — substrate is scope-frozen and implemented; Activity sidebar (Cluster A's read surface) is the follow-up spec. Miles owns the presence surface going forward; the agent-identity foundation spec shipped 2026-04-21 and underpins V0-14 agent-undo + attribution completeness.
 4. **Agent-prompting sweep** (items #7, #12, #13): consolidate into one pass on `AGENTS.md` + init-injected instructions — these are prompt fixes, not code fixes, and can ship same-day.
 5. **Verify PR #219 coverage** against the three original GitHub-auth reproductions before closing the cluster.
 

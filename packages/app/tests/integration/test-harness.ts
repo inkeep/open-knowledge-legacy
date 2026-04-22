@@ -474,11 +474,18 @@ export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
   }
 }
 
-/** POST to agent-write-md endpoint */
+/** POST to agent-write-md endpoint. Identity fields are optional — omit to use server defaults. */
 export async function agentWriteMd(
   port: number,
   markdown: string,
-  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace'; agentId?: string },
+  opts?: {
+    docName?: string;
+    position?: 'append' | 'prepend' | 'replace';
+    agentId?: string;
+    agentName?: string;
+    clientName?: string;
+    colorSeed?: string;
+  },
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
@@ -488,6 +495,9 @@ export async function agentWriteMd(
       position: opts?.position ?? 'append',
       docName: opts?.docName,
       agentId: opts?.agentId,
+      agentName: opts?.agentName,
+      clientName: opts?.clientName,
+      colorSeed: opts?.colorSeed,
     }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);

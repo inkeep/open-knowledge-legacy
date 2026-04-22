@@ -5,18 +5,18 @@ import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { getLastUserKeystroke } from '@/editor/observers';
 import {
-  AGENT_FOCUS_DEBOUNCE_MS,
-  AGENT_FOCUS_TYPING_GUARD_MS,
-  type AgentFocusAwareness,
+  AGENT_PRESENCE_DEBOUNCE_MS,
+  AGENT_PRESENCE_TYPING_GUARD_MS,
+  type AgentPresenceAwareness,
   pickPrimary,
-} from '@/lib/agent-focus';
+} from '@/lib/agent-presence';
 import { parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { activeDocName, pinnedDoc, collabUrl } = useDocumentContext();
+  const { activeDocName, pinnedDoc, collabUrl, setSystemProvider } = useDocumentContext();
   // Hold activeDocName + pinnedDoc in refs so the awareness handler reads the
   // latest without needing to recreate the provider on every change. Writing
   // refs in effects (not during render) keeps React Compiler happy.
@@ -36,9 +36,9 @@ export function SystemDocSubscriber() {
     if (!becameUnpinned) return;
     // Respect the typing guard on unpin-nav too — don't yank focus if the
     // user just typed and then unpinned (unlikely but consistent).
-    if (Date.now() - getLastUserKeystroke() < AGENT_FOCUS_TYPING_GUARD_MS) return;
+    if (Date.now() - getLastUserKeystroke() < AGENT_PRESENCE_TYPING_GUARD_MS) return;
     const provider = providerRef.current;
-    const awareness = provider?.awareness as unknown as AgentFocusAwareness | null;
+    const awareness = provider?.awareness as unknown as AgentPresenceAwareness | null;
     if (!awareness) return;
     const primary = pickPrimary(awareness, Date.now());
     if (!primary) return;
@@ -84,9 +84,14 @@ export function SystemDocSubscriber() {
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
     });
 
-    // Agent-focus nav: debounced, reads latest awareness on each tick to
+    // Agent-presence nav: debounced, reads latest awareness on each tick to
     // coalesce bursts, navigates iff primary differs from the active doc.
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    // One-shot per-clientID warning when a stale bundled client still publishes
+    // `user.type === 'agent'` (FR-10). `AwarenessUser.type` is narrowed to
+    // `'human'` — anything else is a rollout drift signal. Gated on
+    // NODE_ENV !== 'test' to avoid test-environment noise.
+    const warnedStaleAgentClients = new Set<number>();
     const runNavCheck = (): void => {
       debounceTimer = null;
       // Pin: user has chosen to stay put. Honor unconditionally.
@@ -95,8 +100,8 @@ export function SystemDocSubscriber() {
       // Reads the module-level keystroke timestamp that TiptapEditor/SourceEditor
       // update via `markUserTyping` on every keydown/paste/drop/cut.
       const sinceLastKeystroke = Date.now() - getLastUserKeystroke();
-      if (sinceLastKeystroke < AGENT_FOCUS_TYPING_GUARD_MS) return;
-      const awareness = provider.awareness as unknown as AgentFocusAwareness | null;
+      if (sinceLastKeystroke < AGENT_PRESENCE_TYPING_GUARD_MS) return;
+      const awareness = provider.awareness as unknown as AgentPresenceAwareness | null;
       if (!awareness) return;
       const primary = pickPrimary(awareness, Date.now());
       if (!primary) return;
@@ -104,27 +109,50 @@ export function SystemDocSubscriber() {
       window.location.hash = hashFromDocName(primary);
     };
     const handleAwarenessChange = (): void => {
+      // Rollout-drift defense (FR-10): if any awareness peer is still
+      // publishing `user.type === 'agent'` (post-narrowing that's invalid),
+      // log once per clientID so operators can spot stale bundled clients.
+      if (process.env.NODE_ENV !== 'test' && provider.awareness) {
+        for (const [clientId, state] of provider.awareness.getStates().entries()) {
+          if (warnedStaleAgentClients.has(clientId)) continue;
+          const user = (state as { user?: { type?: string } }).user;
+          if (user?.type === 'agent') {
+            warnedStaleAgentClients.add(clientId);
+            console.warn(
+              `[agent-presence] observed stale AwarenessUser.type === 'agent' from clientID ${clientId} — probably a stale bundled client`,
+            );
+          }
+        }
+      }
       if (debounceTimer !== null) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(runNavCheck, AGENT_FOCUS_DEBOUNCE_MS);
+      debounceTimer = setTimeout(runNavCheck, AGENT_PRESENCE_DEBOUNCE_MS);
     };
     provider.awareness?.on('change', handleAwarenessChange);
     providerRef.current = provider;
+    // Lift the provider into DocumentContext so presence-bar consumers
+    // (use-presence in US-006) can read the __system__ awareness without
+    // re-materializing a second provider (multi-agent-presence SPEC §9).
+    setSystemProvider(provider);
 
-    // DEV-only test hook: inject a fake agent-focus awareness state as if a
-    // remote peer (the "agent") is focusing on a different doc. Fires the
+    // DEV-only test hook: inject a fake agent-presence awareness state as if
+    // a remote peer (the "agent") is writing to a different doc. Fires the
     // awareness 'change' event which triggers the debounced nav check. The
     // fake state uses a fixed clientID (999999) that will never collide with
     // real clients. No encode/decode round-trip needed — we poke the internal
     // states map directly since this runs in the same JS context.
     if (import.meta.env.DEV) {
-      window.__test_injectAgentFocus = (docName: string) => {
+      window.__test_injectAgentPresence = (docName: string) => {
         const awareness = provider.awareness;
         if (!awareness) return false;
         const fakeClientId = 999999;
         const fakeState = {
-          agentFocus: {
+          agentPresence: {
             'test-agent': {
+              displayName: 'Test Agent',
+              icon: 'claude',
+              color: '#D97757',
               currentDoc: docName,
+              mode: 'writing',
               ts: Date.now(),
             },
           },
@@ -139,14 +167,15 @@ export function SystemDocSubscriber() {
       unsubscribe();
       if (debounceTimer !== null) clearTimeout(debounceTimer);
       provider.awareness?.off('change', handleAwarenessChange);
+      setSystemProvider(null);
       provider.destroy();
       doc.destroy();
       providerRef.current = null;
       if (import.meta.env.DEV) {
-        delete (window as { __test_injectAgentFocus?: unknown }).__test_injectAgentFocus;
+        delete (window as { __test_injectAgentPresence?: unknown }).__test_injectAgentPresence;
       }
     };
-  }, [queryClient, collabUrl]);
+  }, [queryClient, collabUrl, setSystemProvider]);
 
   return null;
 }

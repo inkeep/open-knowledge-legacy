@@ -18,13 +18,7 @@
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import {
-  AGENT_ICON_COLORS,
-  applyFastDiff,
-  colorFromSeed,
-  prependFrontmatter,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
+import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
@@ -72,20 +66,12 @@ export const AGENT_WRITE_ORIGIN = {
   context: { origin: 'agent-write', paired: true },
 } as const satisfies PairedWriteOrigin;
 
-/** Map known MCP clientInfo.name values to icon identifiers. */
-export function iconFromClientName(name?: string): string {
-  const ICON_MAP: Record<string, string> = {
-    'claude-code': 'claude',
-    'claude-ai': 'claude',
-    cursor: 'cursor',
-    'cursor-vscode': 'cursor',
-    cascade: 'windsurf',
-    codex: 'openai',
-    copilot: 'github',
-    cline: 'cline',
-  };
-  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
-}
+// `iconFromClientName` lives in `@inkeep/open-knowledge-core` so both the
+// server (presence bar, api-extension) and the app (TimelinePanel dot-color
+// derivation) share the identical mapping — drift between the two is how
+// brand colors become inconsistent between surfaces. Re-exported here for
+// backwards compat with existing server-side import sites.
+export { iconFromClientName } from '@inkeep/open-knowledge-core';
 
 /**
  * XmlFragment-authoritative agent write composition (FR-1, precedent #10).
@@ -358,6 +344,11 @@ export class AgentSessionManager {
    *
    * D30: concurrent first-calls for the same (docName, agentId) share one
    * pending openDirectConnection promise — exactly one DirectConnection created.
+   *
+   * No per-doc awareness publishing: every Hocuspocus `Document` has a single
+   * shared `Awareness` clientID, so per-doc writes stomp across N concurrent
+   * agents. Presence is published on the `__system__` Y.Doc via
+   * `AgentPresenceBroadcaster` instead (precedent #3 + spec §3.3 FR-3).
    */
   async getSession(
     docName: string,
@@ -421,18 +412,11 @@ export class AgentSessionManager {
       sessionContext,
     )) as AgentDirectConnection;
 
-    const icon = iconFromClientName(identity?.clientName);
-    const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
-    dc.document.awareness.setLocalState({
-      user: {
-        name: identity?.displayName ?? 'Claude',
-        color,
-        type: 'agent',
-        icon,
-        tabId: `agent-${agentId}`,
-      },
-      mode: 'idle',
-    });
+    // FR-3: NO per-doc awareness writes here. Every Hocuspocus `Document` has a
+    // single shared `Awareness` clientID borrowed from `doc.clientID`, so a per-
+    // doc `setLocalState` stomps across N concurrent agents that all share the
+    // same Document. Presence is published on the `__system__` Y.Doc via
+    // `AgentPresenceBroadcaster` (map-valued, keyed by agentId) instead.
 
     // US-008 (D25, D24, D21): per-session UndoManager across Y.Text + metaMap + flashMap.
     // trackedOrigins uses object identity — only transactions under session.origin are stacked.
@@ -472,15 +456,19 @@ export class AgentSessionManager {
 
   /**
    * Disconnect and remove a specific agent session.
-   * Clears awareness + destroys UM before disconnect (D26: dc.disconnect() is the teardown
-   * primitive; explicit um.destroy() releases UM observers eagerly before Hocuspocus unloads
-   * the Y.Doc — UM also auto-destroys on doc.on('destroy') per Q47/Q48).
+   *
+   * Destroys UM before disconnect (D26: dc.disconnect() is the teardown
+   * primitive; explicit um.destroy() releases UM observers eagerly before
+   * Hocuspocus unloads the Y.Doc — UM also auto-destroys on doc.on('destroy')
+   * per Q47/Q48).
+   *
+   * FR-3: does NOT touch per-doc awareness — presence cleanup is the
+   * AgentPresenceBroadcaster's responsibility (keyed by agentId on __system__).
    */
   async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
     const session = this.sessions.get(key);
     if (session) {
-      session.dc.document.awareness.setLocalState(null);
       session.um.destroy();
       await session.dc.disconnect();
       this.sessions.delete(key);
@@ -507,12 +495,13 @@ export class AgentSessionManager {
       await Promise.allSettled(pendingKeys.map((k) => this.pendingSessions.get(k)));
     }
 
+    // Collect matching keys first — the async disconnect + delete below mutates
+    // `this.sessions`, so iterating directly would hit concurrent-modification.
     const keys = [...this.sessions.keys()].filter((k) => k.endsWith(suffix));
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);
@@ -525,12 +514,13 @@ export class AgentSessionManager {
   /** Close all sessions for a given document (all agents). */
   async closeAllForDoc(docName: string): Promise<void> {
     const prefix = `${docName}\0`;
+    // Collect matching keys first — the async disconnect + delete below mutates
+    // `this.sessions`, so iterating directly would hit concurrent-modification.
     const keys = [...this.sessions.keys()].filter((k) => k.startsWith(prefix));
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);
@@ -551,7 +541,6 @@ export class AgentSessionManager {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);

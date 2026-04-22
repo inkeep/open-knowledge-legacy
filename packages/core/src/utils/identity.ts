@@ -43,6 +43,32 @@ export function colorFromSeed(seed: string): string {
   return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
 }
 
+/**
+ * Map known MCP `clientInfo.name` values to icon identifiers used by both
+ * the presence bar (`AGENT_ICON_COLORS[icon]`) and the Timeline dot-color
+ * derivation. Unknown clients map to `'bot'` so the fallback indigo color
+ * is reached via the icon table, not via the colorFromSeed hash palette
+ * (which can collide between e.g. `claude-code` and `cursor-vscode`).
+ *
+ * Kept in core so app (TimelinePanel) and server (api-extension +
+ * agent-sessions) use the identical mapping — drift between surfaces is
+ * how dot-color/badge-color become inconsistent for the same agent.
+ */
+const ICON_MAP: Record<string, string> = {
+  'claude-code': 'claude',
+  'claude-ai': 'claude',
+  cursor: 'cursor',
+  'cursor-vscode': 'cursor',
+  cascade: 'windsurf',
+  codex: 'openai',
+  copilot: 'github',
+  cline: 'cline',
+};
+
+export function iconFromClientName(name?: string): string {
+  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
+}
+
 // --- Color derivation ---
 
 function hexToHsl(hex: string): [number, number, number] {

@@ -12,7 +12,7 @@
 //   1. `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object identities
 //      (consumed by the bridge-invariant watcher's enforcing set).
 //   2. `markUserTyping` / `getLastUserKeystroke` — a global wall-clock
-//      timestamp consumed by `SystemDocSubscriber`'s agent-focus guard.
+//      timestamp consumed by `SystemDocSubscriber`'s agent-presence guard.
 //   3. Diagnostic parse validation in Observer B — transient MDX SyntaxError
 //      during mid-edit swallowed at debug log; non-transient failures fire
 //      `onSyncError`. No cross-CRDT write.

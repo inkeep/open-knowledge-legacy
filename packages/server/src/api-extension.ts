@@ -25,8 +25,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  colorFromSeed,
   createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
@@ -46,10 +48,12 @@ import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
+import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
   type AgentSessionManager,
   applyAgentMarkdownWrite,
   applyAgentUndo,
+  iconFromClientName,
 } from './agent-sessions.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
@@ -70,6 +74,7 @@ import { readUiLock } from './ui-lock.ts';
 export { extractPageTitle } from './page-identity.ts';
 
 import simpleGit from 'simple-git';
+import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -499,11 +504,20 @@ export interface ApiExtensionOptions {
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   /**
-   * Optional. When present, agent write handlers publish the active doc on
-   * `__system__` awareness so clients can push-navigate to follow the agent.
-   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   * Optional. When present, agent write handlers publish per-write attribution
+   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
+   * currentDoc — the signal that drives browser push-navigation to the doc the
+   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
+   * publishes sustained session state.
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. When present, agent write handlers publish presence entries on
+   * `__system__` awareness (`agentPresence` map) so clients can render the
+   * multi-agent presence bar and follow the active agent. Omit to disable
+   * presence broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   /**
    * Optional. Called after every successful agent write (write_document /
    * edit_document). The handler is expected to be cheap and idempotent —
@@ -653,6 +667,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     onAgentWrite,
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
@@ -1121,7 +1136,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
   /**
@@ -1142,7 +1156,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
       rawAgentId = undefined;
     }
-    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
     const agentName =
       typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
@@ -1254,8 +1268,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1279,10 +1306,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           buildAgentActor({ clientName, clientVersion, label }),
         );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
+      onAgentWrite?.();
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1348,8 +1376,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1373,14 +1414,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           buildAgentActor({ clientName, clientVersion, label }),
         );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus on __system__ awareness so browser clients can
-      // push-navigate to the doc just written. Uses per-write agentId from
-      // attribution (PR #134).
+      // Focus (attribution) on __system__ awareness. Focus drives browser
+      // push-navigation to the doc the agent just wrote (writeKind); presence
+      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -1863,8 +1904,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1930,7 +1984,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             buildAgentActor({ clientName, clientVersion, label }),
           );
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (staleTarget) {
@@ -1947,6 +2001,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
+      // Focus (attribution) on __system__ awareness. Presence is separately
+      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -2000,7 +2056,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // FR-5, D42: extract identity from body so shadow-repo attribution threads through
       // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
       // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      const { agentName, colorSeed, clientName, clientVersion, label } = extractAgentIdentity(body);
+      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
+      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
 
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
@@ -2030,9 +2089,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const session = await sessionManager.getSession(docName, connectionId);
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+      // instead of the per-doc awareness — the per-doc awareness has ONE
+      // shared clientID across N concurrent agents and would stomp. The
+      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
+      // so the keepalive-WS close handler's cleanup path finds the entry.
+      //
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and the undo
+      // transact flips the badge back to idle rather than wedging it on 'writing'.
       let undone = false;
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
@@ -2051,7 +2128,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
         }
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (undone) {
@@ -2795,6 +2872,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, principal);
+  }
+
+  async function handleMetricsAgentPresence(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + Host-header gate — matches /api/workspace. The presence map
+    // exposes per-agent identity (`displayName` — operator-configured AGENT
+    // label) and the workspace-relative path each agent is currently writing
+    // to (`currentDoc`). Those are local-editing-only signals; if a user
+    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
+    // LAN peers MUST NOT be able to read the map. Authorization runs before
+    // method dispatch so a bad Host never leaks "verb the endpoint expects"
+    // via 405 (same pattern + rationale as handleWorkspace — see its
+    // comment block for the ASVS / DNS-rebinding background).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // Pre-filter stale entries using the same threshold the broadcaster
+    // uses for opportunistic eviction (runs inside setPresence). Eviction
+    // is write-triggered — if the last agent disconnects without the
+    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+    // agent writes after, the raw map keeps the zombie entry. Clients
+    // already filter with their own 5s TTL so this is invisible to the
+    // bar, but `/api/metrics/agent-presence` would otherwise lie to
+    // operators. Filtering here matches what a "live" read returns
+    // without paying for a sparse timer.
+    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    const now = Date.now();
+    const presence: typeof rawPresence = {};
+    for (const [agentId, entry] of Object.entries(rawPresence)) {
+      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+        presence[agentId] = entry;
+      }
+    }
+    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -4820,6 +4943,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/metrics/agent-presence': handleMetricsAgentPresence,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
