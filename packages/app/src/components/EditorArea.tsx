@@ -4,6 +4,7 @@ import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
+import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
-import { hashFromDocName } from '@/lib/doc-hash';
+import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
@@ -152,6 +153,17 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   }
 
   if (!activeProvider || !activeDocName) {
+    // On initial page load, the URL hash tells us a doc is about to open —
+    // render the skeleton instead of the "Select a document" empty state so
+    // the user doesn't see a flash of the OkBlob screen before
+    // `NavigationHandler`'s effect wires up the hash-driven nav. Once the
+    // provider lands, the normal editor tree below takes over. Guarded on
+    // `typeof window` so SSR / the DocumentContext bootstrap path doesn't
+    // reach the `window` reference.
+    const hashDoc = typeof window !== 'undefined' ? docNameFromHash(window.location.hash) : null;
+    if (hashDoc !== null) {
+      return <EditorSkeleton />;
+    }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4">
         <OkBlob size={80} />
