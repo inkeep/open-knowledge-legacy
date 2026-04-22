@@ -1,8 +1,8 @@
 # @inkeep/open-knowledge-server
 
-Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, shadow repo, HTTP API, and the process-lock / idle-shutdown primitives that back the `ok start` / `ok ui` lifecycle. Embedded in the Vite dev server (`packages/app`) and the published CLI (`packages/cli`).
+Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, history repo, HTTP API, and the process-lock / idle-shutdown primitives that back the `ok start` / `ok ui` lifecycle. Embedded in the Vite dev server (`packages/app`) and the published CLI (`packages/cli`).
 
-See root `CLAUDE.md` → "Package: server" for the full component inventory.
+See root `CLAUDE.md` → "Package: server" for the full component inventory. The agent-identity attribution model (per-session `LocalTransactionOrigin`, classified writer IDs, `ok-actor:` commit bodies, per-session `Y.UndoManager`) is specified in `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` and summarized in AGENTS.md precedents #24 and #25.
 
 ---
 
@@ -80,7 +80,7 @@ Observer A's Path B (used when local Y.Text has diverged from the last-synced Xm
 The error is caught only at the Observer A Path B call site (`server-observers.ts`). In production, the bridge:
 
 1. Emits a structured `bridge-merge-content-loss` JSON log via `console.warn` and increments `bridgeMergeContentLoss` in `src/metrics.ts`.
-2. Queues a silent named version-history checkpoint via `saveInMemoryCheckpoint` (`src/shadow-repo.ts`) at `refs/checkpoints/<branch>/<sha>`, with `kind: 'bridge-merge-loss'` metadata containing the lost substrings. `bridgeMergeCheckpointCreated` increments on success.
+2. Queues a silent named version-history checkpoint via `saveInMemoryCheckpoint` (`src/history-repo.ts`) at `refs/checkpoints/<branch>/<sha>`, with `kind: 'bridge-merge-loss'` metadata containing the lost substrings. `bridgeMergeCheckpointCreated` increments on success.
 3. Applies the merge result as-computed via `applyFastDiff` so the editor stays responsive — no toast, no modal, no user-visible interruption (Notion-style).
 
 `TimelinePanel` renders these checkpoints with kind-aware copy so users can `Restore` them through the existing UI. In dev/test the catch re-throws so `bun run check` and integration tests fail loudly.
@@ -89,11 +89,32 @@ The error is caught only at the Observer A Path B call site (`server-observers.t
 
 ### Silent in-memory checkpoint primitive
 
-`saveInMemoryCheckpoint(shadow, contentRoot, params)` in `src/shadow-repo.ts` is the generic write-side primitive shared by Observer A's bridge-merge recovery and external-change rescue (`reconciliation.ts` and `branch-switch.ts`). The discriminated-union `params` carries `{ kind: 'bridge-merge-loss' | 'external-change-rescue', docName, contents, label, branch, metadata }`; `parseCheckpoint` (`@inkeep/open-knowledge-core/shadow-repo-layout`) reads them back kind-aware from the commit body. Refs land at `refs/checkpoints/<branch>/<sha>` and never touch `refs/wip/*`. Concurrent same-process invocations stay safe via per-call `randomUUID` tmp-index files.
+`saveInMemoryCheckpoint(history, contentRoot, params)` in `src/history-repo.ts` is the generic write-side primitive shared by Observer A's bridge-merge recovery and external-change rescue (`reconciliation.ts` and `branch-switch.ts`). The discriminated-union `params` carries `{ kind: 'bridge-merge-loss' | 'external-change-rescue', docName, contents, label, branch, metadata }`; `parseCheckpoint` (`@inkeep/open-knowledge-core/history-repo-layout`) reads them back kind-aware from the commit body. Refs land at `refs/checkpoints/<branch>/<sha>` and never touch `refs/wip/*`. Concurrent same-process invocations stay safe via per-call `randomUUID` tmp-index files.
 
 ### `GET /api/rescue` reads both surfaces
 
 The rescue reader at `src/api-extension.ts` merges flat-file rescue buffers (legacy + shutdown-flush path) with timeline-ref checkpoints (`saveInMemoryCheckpoint` write path). Callers see one unified list; channel-of-record migration is hidden behind the API.
+
+---
+
+## Agent-write HTTP surface (identity-foundation)
+
+Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this is the canonical identity boundary (precedent #24, D42). The request body carries `{agentId, agentName, colorSeed, clientName}`; `AgentSessionManager.getSession(docName, agentId, identity)` returns the `SessionRecord` whose `origin` is a frozen per-session `LocalTransactionOrigin` (precedent #1, D2). All Y.Doc mutations from that session pass through `session.dc.document.transact(fn, session.origin)` — never `session.dc.transact(fn)` (STOP rule in AGENTS.md §Known Pitfalls).
+
+| Endpoint | Session binding | Notes |
+|---|---|---|
+| `POST /api/agent-write-md` | fires under `session.origin` via `applyAgentMarkdownWrite` (precedent #10) | XmlFragment-authoritative composition; mirrors Y.Text via `applyFastDiff` |
+| `POST /api/agent-write` | fires under `session.origin` | raw Y.XmlElement append (V3 validation surface) |
+| `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text |
+| `POST /api/agent-undo` | fires under per-session `session.undoOrigin` (distinct from `session.origin`) via `applyAgentUndo(session, scope)` — V0-14 landed surface | body: `{ connectionId, scope: 'last' \| 'session' }`. `session.um.undo()` runs inside the outer `doc.transact(..., session.undoOrigin)` so Observer A/B short-circuit; post-undo composes via `updateYFragment` + `applyFastDiff` |
+
+`POST /api/save-version` uses `Author: <principal_display_name>` + `Co-Authored-By: <agent>` trailers (FR-9, D12) on the project-git commit; gracefully skips when the project dir is absent / not a git repo (D45). The history checkpoint always lands regardless of project-git state.
+
+Classified writer IDs for non-attributable writes: `file-system` (disk reconciliation), `git-upstream` (HEAD-move import), `openknowledge-service` (park snapshots, fallback). See `packages/core/src/history-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor` and AGENTS.md → "History repo & branch runtime" for the full taxonomy table.
+
+### Session lifecycle + cleanup
+
+`closeAllForAgent(connectionId)` is the teardown primitive called from the keepalive-WebSocket close handler (`src/boot.ts`). A 30-second grace timer (D28) prevents false-positive cleanup on transient network drops; subprocess reconnect within the grace reuses the same session, after the grace fires the cleanup runs `closeAllForAgent` + `agentFocusBroadcaster.clearFocus(connectionId)`. Subprocess reconnects past the grace always create a fresh session (D29 — no resume-by-label). The 30-minute idle-shutdown is the fallback for process-crash / network-partition scenarios.
 
 ### Structured telemetry
 

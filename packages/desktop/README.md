@@ -30,7 +30,7 @@ M1 — dev loop, local, unsigned. `bun run --filter=@inkeep/open-knowledge-deskt
   │  - Navigator mode       │   │  - createServer +            │
   │    (launcher) OR        │   │    acquireServerLock         │
   │    Editor mode (doc)    │   │  - @parcel/watcher           │
-  │                         │   │  - simple-git (shadow repo)  │
+  │                         │   │  - simple-git (history repo) │
   │ Connects to             │   │  - @napi-rs/keyring          │
   │ ws://localhost:<port>   │   │  - macOS parent-death poll   │
   │ /collab                 │   │                              │
