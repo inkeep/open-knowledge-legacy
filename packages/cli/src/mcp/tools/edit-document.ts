@@ -15,6 +15,7 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
+  summaryArgSchema,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -59,13 +60,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
-      summary: z
-        .string()
-        .max(200)
-        .optional()
-        .describe(
-          'Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline.',
-        ),
+      summary: summaryArgSchema,
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
     async (args: {
@@ -113,9 +108,9 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
 
       const summaryResult =
         result.summary && typeof result.summary === 'object'
-          ? (result.summary as { value: string; truncatedFrom?: number })
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
           : undefined;
-      const summaryHint = typeof result.summaryHint === 'string' ? result.summaryHint : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
 
       const lines: string[] = ['Edit applied successfully.'];
       if (preview) lines.push(`Preview: ${preview.url}`);

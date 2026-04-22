@@ -168,10 +168,17 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
       expect(recordedRequest?.body).not.toHaveProperty('summary');
     });
 
-    test('server response summary surfaces in structuredContent; summaryHint in text', async () => {
+    test('server response summary (with nested hint) surfaces in structuredContent; hint in text', async () => {
+      // Server emits the hint nested under `summary.hint` (not a top-level
+      // sibling) so the truncation message always travels with the field it
+      // explains. MCP tools read the nested hint for the human-readable text
+      // line; structured content passes the full summary object through.
       mockResponse = {
-        summary: { value: 'fixed', truncatedFrom: 200 },
-        summaryHint: 'Summary truncated from 200 chars to 80 (max 80).',
+        summary: {
+          value: 'fixed',
+          truncatedFrom: 200,
+          hint: 'Summary truncated from 200 chars to 80 (max 80).',
+        },
       };
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());
@@ -181,7 +188,11 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
         position: 'append',
         summary: 'x'.repeat(200),
       });
-      expect(result.structuredContent?.summary).toEqual({ value: 'fixed', truncatedFrom: 200 });
+      expect(result.structuredContent?.summary).toEqual({
+        value: 'fixed',
+        truncatedFrom: 200,
+        hint: 'Summary truncated from 200 chars to 80 (max 80).',
+      });
       expect(result.content[0]?.text).toContain('Summary truncated from 200 chars to 80');
     });
 

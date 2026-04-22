@@ -105,7 +105,6 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(true);
       expect(parsed.summary).toBeUndefined();
-      expect(parsed.summaryHint).toBeUndefined();
       const m = getMetrics();
       expect(m.agentWriteCalls).toBe(1);
       expect(m.summariesProvided).toBe(0);
@@ -131,7 +130,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary).toEqual({ value: 'Fixed token-refresh race' });
-      expect(parsed.summaryHint).toBeUndefined();
+      expect(parsed.summary.hint).toBeUndefined();
       const m = getMetrics();
       expect(m.summariesProvided).toBe(1);
       expect(m.summariesTruncated).toBe(0);
@@ -178,7 +177,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const parsed = JSON.parse(response.body);
       expect(parsed.summary.truncatedFrom).toBe(100);
       expect(parsed.summary.value).toBe(`${'x'.repeat(79)}…`);
-      expect(parsed.summaryHint).toBe('Summary truncated from 100 chars to 80 (max 80).');
+      expect(parsed.summary.hint).toBe('Summary truncated from 100 chars to 80 (max 80).');
       expect(getMetrics().summariesTruncated).toBe(1);
     });
 
@@ -226,6 +225,32 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(getMetrics().summariesProvided).toBe(0);
     });
 
+    test('summary 80 chars exact → stored as-is, no hint (D20 edge)', async () => {
+      // Exactly-at-cap must NOT emit `truncatedFrom` or `hint` per D20.
+      // Guards against off-by-one regressions in `normalizeSummary` (e.g.
+      // `raw.length >= MAX_SUMMARY_LENGTH` vs `> MAX_SUMMARY_LENGTH`).
+      const s = 'z'.repeat(80);
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/agent-write-md',
+        {
+          docName: 'test-doc',
+          markdown: '# H\n',
+          position: 'replace',
+          agentId: 'claude-1',
+          agentName: 'Claude',
+          summary: s,
+        },
+      );
+      const parsed = JSON.parse(response.body);
+      expect(parsed.summary).toEqual({ value: s });
+      expect(parsed.summary.hint).toBeUndefined();
+      expect(parsed.summary.truncatedFrom).toBeUndefined();
+      expect(getMetrics().summariesTruncated).toBe(0);
+    });
+
     test('summary whitespace-only string → treated as absent (no blank bullet)', async () => {
       const response = await callApi(
         hocuspocus,
@@ -244,7 +269,6 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary).toBeUndefined();
-      expect(parsed.summaryHint).toBeUndefined();
       const m = getMetrics();
       expect(m.summariesProvided).toBe(0);
       expect(m.summariesTruncated).toBe(0);
@@ -348,7 +372,7 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       expect(response.status).toBe(200);
       const parsed = JSON.parse(response.body);
       expect(parsed.summary.truncatedFrom).toBe(100);
-      expect(parsed.summaryHint).toContain('truncated');
+      expect(parsed.summary.hint).toContain('truncated');
       expect(getMetrics().agentWriteCalls).toBe(1);
       expect(getMetrics().summariesProvided).toBe(1);
       expect(getMetrics().summariesTruncated).toBe(1);

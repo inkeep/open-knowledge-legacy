@@ -16,6 +16,7 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
+  SUMMARY_TRANSPORT_CAP,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -56,7 +57,7 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         .describe('40-character commit SHA from the shadow repo timeline'),
       summary: z
         .string()
-        .max(200)
+        .max(SUMMARY_TRANSPORT_CAP)
         .optional()
         .describe(
           'Optional one-line user-outcome description (≤80 chars). Defaults to "Restored to <sha-short>" when omitted.',
@@ -106,9 +107,9 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
 
       const summaryResult =
         result.summary && typeof result.summary === 'object'
-          ? (result.summary as { value: string; truncatedFrom?: number })
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
           : undefined;
-      const summaryHint = typeof result.summaryHint === 'string' ? result.summaryHint : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
 
       const textLines = [
         `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`,

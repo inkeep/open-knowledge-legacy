@@ -159,7 +159,6 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(getMetrics().summariesProvided).toBe(0);
     const parsed = JSON.parse(response.body);
     expect(parsed.summary).toBeUndefined();
-    expect(parsed.summaryHint).toBeUndefined();
   });
 
   test('with agentId, no summary → default "Renamed X → Y" bullet attributed to new doc only', async () => {
@@ -237,8 +236,40 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     });
     const parsed = JSON.parse(response.body);
     expect(parsed.summary.truncatedFrom).toBe(100);
-    expect(parsed.summaryHint).toBe('Summary truncated from 100 chars to 80 (max 80).');
+    expect(parsed.summary.hint).toBe('Summary truncated from 100 chars to 80 (max 80).');
     expect(getMetrics().summariesTruncated).toBe(1);
+  });
+
+  test('with agentId + overflow default (long doc paths) → server-generated default is truncated silently (no misleading hint/truncatedFrom in response; no M2 inflation)', async () => {
+    // The default "Renamed X → Y" template can exceed the 80-char cap for
+    // deeply-nested doc paths (e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
+    // pairs weigh in at ~90-100 chars with the template). The agent did not
+    // submit the long string, so the response must NOT carry `truncatedFrom`,
+    // `hint`, or inflate the `summariesTruncated` M2 counter — doing so would
+    // misattribute blame and muddy the "agent-provided truncation rate" signal.
+    // The stored summary IS still truncated (to 79 visible + '…') so the
+    // TimelinePanel bullet fits the canvas.
+    const long = 'a'.repeat(50);
+    writeFileSync(join(tmpDir, `${long}.md`), '# Long\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: long,
+      newDocName: `${long}-v2`,
+      agentId: 'claude-1',
+      agentName: 'Claude',
+    });
+
+    expect(response.status).toBe(200);
+    const parsed = JSON.parse(response.body);
+    // Default overflowed (50 + 50 + 10 chars of template = 110+), but response
+    // suppresses truncation-diagnostic fields for the server-default path.
+    expect(parsed.summary.value.endsWith('…')).toBe(true);
+    expect(parsed.summary.truncatedFrom).toBeUndefined();
+    expect(parsed.summary.hint).toBeUndefined();
+    // M2 counter stays clean — default-path truncation does not inflate it.
+    expect(getMetrics().summariesTruncated).toBe(0);
+    // But adoption metric IS incremented (the handler recorded a summary).
+    expect(getMetrics().summariesProvided).toBe(1);
   });
 
   test('no agentId + wrong-type summary → 400 (validation runs unconditionally; D22 attribution still skipped)', async () => {

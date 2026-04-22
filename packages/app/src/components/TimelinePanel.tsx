@@ -242,6 +242,13 @@ interface SummaryBulletsProps {
  * `<button>` is invalid HTML; see EntryRow comment). The expander's
  * onClick stops propagation so the row's onSelect doesn't also fire.
  *
+ * Markup shape: a SINGLE `<ul>` containing the always-visible first bullet
+ * AND the expanded rest (conditionally rendered) — screen-reader list
+ * navigation (VoiceOver rotor, JAWS list mode, NVDA) treats every bullet as
+ * part of the same list instead of seeing the first as a free-floating
+ * paragraph. The expander lives OUTSIDE the `<ul>` because `<button>` is not
+ * a valid `<ul>` child per HTML spec.
+ *
  * Keys combine the bullet's positional index with its text. The contributor
  * accumulator explicitly permits duplicate summaries within a debounce window
  * (`contributor-tracker.ts:87-91` — "No dedup: an agent may legitimately log
@@ -256,36 +263,33 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
   const [first, ...rest] = summaries;
   return (
     <div className="mt-0.5">
-      <p className="text-xs text-foreground/90">
-        <span aria-hidden="true">• </span>
-        {first}
-      </p>
+      <ul className="list-none">
+        <li className="text-xs text-foreground/90">
+          <span aria-hidden="true">• </span>
+          {first}
+        </li>
+        {expanded &&
+          rest.map((s, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: bullet list is append-only within a debounce window — no reorder, no insertion, no deletion. Index in the composite key is needed because contributor-tracker.ts:87-91 explicitly permits duplicate summaries (text-only key collides on dupes and breaks React reconciliation).
+            <li key={`${idx}-${s}`} className="text-xs text-foreground/90">
+              <span aria-hidden="true">• </span>
+              {s}
+            </li>
+          ))}
+      </ul>
       {rest.length > 0 && (
-        <>
-          <button
-            type="button"
-            aria-expanded={expanded}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded((prev) => !prev);
-            }}
-          >
-            {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-            {expanded ? `Hide ${rest.length} more` : `Show ${rest.length} more`}
-          </button>
-          {expanded && (
-            <ul className="mt-0.5 list-none">
-              {rest.map((s, idx) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: bullet list is append-only within a debounce window — no reorder, no insertion, no deletion. Index in the composite key is needed because contributor-tracker.ts:87-91 explicitly permits duplicate summaries (text-only key collides on dupes and breaks React reconciliation).
-                <li key={`${idx}-${s}`} className="text-xs text-foreground/90">
-                  <span aria-hidden="true">• </span>
-                  {s}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+        >
+          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {expanded ? `Hide ${rest.length} more` : `Show ${rest.length} more`}
+        </button>
       )}
     </div>
   );
@@ -310,6 +314,14 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
   // expander that needs to be a real <button> (nested native buttons are
   // invalid HTML). The div is clickable + Enter/Space-activatable to preserve
   // the same keyboard semantics the previous <button> had.
+  //
+  // Focus styling: native `<button>` gets the UA default focus ring for free;
+  // `<div role="button">` gets NOTHING without explicit CSS. Without a
+  // focus-visible ring, keyboard users tabbing through the timeline see no
+  // visible focus indicator (selected-state `bg-muted` follows `selected`,
+  // not focus, so a focused-but-unselected row is invisible). `ring-inset`
+  // keeps the ring within the row bounds — the timeline rows are flush with
+  // each other, so an outset ring would overflow into neighboring rows.
   const handleActivate = () => onSelect?.(entry);
   return (
     // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
@@ -317,7 +329,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
       role="button"
       tabIndex={0}
       className={[
-        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer',
+        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
         selected ? 'bg-muted' : 'hover:bg-muted/40',
         prominent ? 'border-b border-border/50' : '',
       ]

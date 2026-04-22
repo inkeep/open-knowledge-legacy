@@ -14,6 +14,7 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
+  SUMMARY_TRANSPORT_CAP,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -38,9 +39,12 @@ interface RenameDocumentSuccess {
   previewUrlSource?: PreviewUrlSource;
   /** Preview URL that used to resolve to the now-renamed doc. Present only when the helper resolves. */
   previousPreviewUrl?: string;
-  /** Stored summary + original length when truncation fired. Absent when no
-   *  agent-provided or default summary was recorded (e.g., UI-driven path). */
-  summary?: { value: string; truncatedFrom?: number };
+  /** Stored summary + original length when truncation fired + truncation hint.
+   *  Absent when no agent-provided or default summary was recorded (e.g., UI-driven path).
+   *  `truncatedFrom` + `hint` are only present when the agent-provided summary
+   *  was truncated — server-generated defaults that overflow the cap suppress
+   *  both fields so the response does not misattribute truncation to the caller. */
+  summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
 interface RenameDocumentError {
@@ -103,7 +107,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       newDocName: z.string().describe('New document name'),
       summary: z
         .string()
-        .max(200)
+        .max(SUMMARY_TRANSPORT_CAP)
         .optional()
         .describe(
           'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted.',
@@ -165,9 +169,9 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
 
       const summaryResult =
         result.summary && typeof result.summary === 'object'
-          ? (result.summary as { value: string; truncatedFrom?: number })
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
           : undefined;
-      const summaryHint = typeof result.summaryHint === 'string' ? result.summaryHint : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
 
       const structured: RenameDocumentSuccess = {
         ok: true,
