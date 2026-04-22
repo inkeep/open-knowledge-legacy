@@ -24,7 +24,6 @@ import {
   readInitialMode,
   readPersistedMode,
   shouldApplyPersistedMode,
-  useEditorMode,
 } from './use-editor-mode';
 
 // ---------------------------------------------------------------------------
@@ -354,19 +353,18 @@ describe('persistMode — localStorage write with error swallow + warn logging',
 });
 
 // ---------------------------------------------------------------------------
-// Module shape smoke test — guards against refactor drift on the public API
+// Module shape — type-level `as const` drift guard
+//
+// A `typeof X === 'function'` enumeration over named function exports was
+// removed because it was purely tautological: the compile-time `import`
+// statement above already guarantees each identifier is a function; a runtime
+// `typeof` re-check adds no signal that the import doesn't already provide.
+// Only the type-level `as const` drift guard remains — it compiles iff
+// `EDITOR_MODE_VALUES` retains its tuple-literal shape (losing the `as const`
+// would widen the type to `string[]` and fail this assignment).
 // ---------------------------------------------------------------------------
 
-describe('module exports — public API shape', () => {
-  test('useEditorMode + pure helpers are all functions', () => {
-    expect(typeof useEditorMode).toBe('function');
-    expect(typeof isEditorModeValue).toBe('function');
-    expect(typeof readPersistedMode).toBe('function');
-    expect(typeof readInitialMode).toBe('function');
-    expect(typeof persistMode).toBe('function');
-    expect(typeof shouldApplyPersistedMode).toBe('function');
-  });
-
+describe('module exports — type-level shape', () => {
   test('EDITOR_MODE_VALUES is frozen at the type level via `as const` (runtime readonly)', () => {
     // Type-only assertion: the `as const` produces `readonly [...]`; this line
     // compiles iff the constant keeps its tuple-literal shape.
