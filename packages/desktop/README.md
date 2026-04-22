@@ -6,7 +6,11 @@ See root `CLAUDE.md` → "Package: desktop" for the pointer map. Full architectu
 
 ## Status
 
-M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. M4 shipped (`openknowledge://` URL scheme deep-linking on macOS — see ["Deep linking"](#deep-linking-openknowledge-url-scheme) below). See SPEC §14 for M3, M5–M7.
+M1 shipped (dev loop, local, unsigned). M2 scaffolding landed — `electron-builder.yml` configures a Universal DMG with the `afterPack` (fuse flip) + `afterSign` (notarize + staple + fuse verify) hooks wired up. The signed path is **gated on env vars**: absent Apple credentials → unsigned DMG smoke; credentials present → full signed/notarized/stapled output. Apple Developer Program enrollment + cert procurement is in progress; the **signed+notarized** per-arch pipeline closes the moment credentials land in GitHub secrets. The **end-state M2 DOD** (Universal DMG green end-to-end) remains blocked on the bun-workspace universal-merge gap described in ["Universal DMG + bun workspace: known gap"](#-universal-dmg--bun-workspace-known-gap) below — that is a pre-existing workspace issue, not a credentials issue. M4 shipped (`openknowledge://` URL scheme deep-linking on macOS — see ["Deep linking"](#deep-linking-openknowledge-url-scheme) below).
+
+M3 shipped (electron-updater wiring + toasts + release workflow — see ["M3 — Auto-update"](#m3--auto-update-electron-updater--install-on-quit) below). M5 keyring packaged-E2E verification layer landed — utility-process `runKeyringSmoke`, main↔utility debug IPC relay, boot-time auto-smoke mode, unsigned-DMG driver, 11-step signed runbook. Creds-free ACs (AC1–AC3, AC8–AC10) are green; signed-build ACs (AC4–AC7) are executable via the [manual runbook](#signed-dmg-manual-runbook-creds-gated) once Apple Developer credentials are on the test machine. See [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](../../specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md) and [`#keychain--auth-m5`](#keychain--auth-m5) for full detail.
+
+See SPEC §14 for the remaining M6 + M7 milestones.
 
 ## Process model
 
@@ -205,14 +209,17 @@ This is how MCP tool responses (e.g. `write_document` returning a `previewUrl`) 
 | `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
 | `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
 | `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
-| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path                        |
+| `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path; M5 `ok:debug:keyring-smoke` routing to per-window utility |
 | `tests/main/url-scheme-handler.test.ts`                      | M4 handler: queue-then-flush retry loop, argv scan, dev-mode `setAsDefaultProtocolClient`, routing dispatch          |
 | `src/main/url-scheme.test.ts`                                | M4 parser: valid/malformed/null-byte/path-traversal fixtures for `parseOpenKnowledgeUrl`                            |
 | `src/main/utility-fork-env.test.ts`                          | M4 env injection: `buildUtilityForkEnv` sets `OK_ELECTRON_PROTOCOL_HOST=1` without bleeding to other forks           |
+| `src/main/debug-ipc.test.ts`                                 | M5 main↔utility debug IPC relay: correlation-ID map, 10 s default timeout, clean-on-resolve / clean-on-timeout        |
 | `tests/smoke/deep-link.e2e.ts`                               | M4 warm-start smoke (opt-in via `OK_DESKTOP_E2E_SMOKE=1` + `bun run build:desktop`)                                  |
 | `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
-| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit                                                           |
+| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit, M5 `debug-request` dispatcher + boot-time auto-smoke      |
+| `src/utility/keyring-smoke.test.ts`                          | M5 `runKeyringSmoke(deps?)` primitive: success round-trip + cleanup, error shapes, injectable-dep YAML-fallback path |
 | `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
+| `tests/unit/verify-keyring-driver.test.mjs`                  | M5 `scripts/verify-keyring-in-packaged-dmg.mjs` driver: exit-code mapping (0/1/2/3), arg parsing, env-var plumbing   |
 
 Run the full gate from the repo root (`bun run check`) or scope to this package with `cd packages/desktop && bun test`.
 
