@@ -91,7 +91,7 @@ export interface CreateTestServerOptions {
    *  (random-tmpdir behavior preserved). */
   keepContentDir?: boolean;
   /**
-   * Grace period (ms) before keepalive-close triggers session cleanup. Default 30 000.
+   * Grace period (ms) before keepalive-close triggers session cleanup. Default 10 000.
    * Integration tests pass a small value (e.g. 150) for fast teardown.
    */
   keepaliveGraceMs?: number;
@@ -161,7 +161,7 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   });
 
   const wss = new WebSocketServer({ noServer: true });
-  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 30_000;
+  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 10_000;
   const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   httpServer.on('upgrade', (req, socket, head) => {

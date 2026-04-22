@@ -110,6 +110,53 @@ describe('Agent undo — V0-14 per-session', () => {
     expect(res.status).toBe(404);
   });
 
+  test("scope='session' drains the entire UM stack across multiple writes", async () => {
+    const docName = `test-undo-session-${crypto.randomUUID()}`;
+    const client = await createTestClient(server.port, docName);
+
+    try {
+      // Three writes as the same session, each spaced > UM captureTimeout (500ms)
+      // so each lands as its own UM stack frame.
+      await agentWriteAs(server.port, 'drain', '## Frame 1\n\nfirst\n', docName);
+      await wait(700);
+      await agentWriteAs(server.port, 'drain', '## Frame 2\n\nsecond\n', docName);
+      await wait(700);
+      await agentWriteAs(server.port, 'drain', '## Frame 3\n\nthird\n', docName);
+      await wait(700);
+
+      // Sanity: all three frames landed.
+      const before = client.ytext.toString();
+      expect(before).toContain('first');
+      expect(before).toContain('second');
+      expect(before).toContain('third');
+
+      // scope='session' should pop every frame in one call.
+      const connectionId = 'agent-drain';
+      const res = await agentUndoFor(server.port, docName, connectionId, 'session');
+      expect(res.ok).toBe(true);
+      const body = (await res.json()) as { undone?: boolean };
+      expect(body.undone).toBe(true);
+
+      await wait(600);
+
+      const after = client.ytext.toString();
+      // All session content must be reverted.
+      expect(after).not.toContain('first');
+      expect(after).not.toContain('second');
+      expect(after).not.toContain('third');
+
+      // Second drain on an already-empty stack is a no-op.
+      const res2 = await agentUndoFor(server.port, docName, connectionId, 'session');
+      expect(res2.ok).toBe(true);
+      const body2 = (await res2.json()) as { undone?: boolean };
+      expect(body2.undone).toBe(false);
+
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
   test('undo is a no-op when UM stack is empty', async () => {
     const docName = `test-undo-empty-${crypto.randomUUID()}`;
     // Create a session by writing.

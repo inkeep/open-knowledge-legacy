@@ -191,15 +191,20 @@ export function applyAgentMarkdownWrite(
  * scope 'last': undo one UM stack item.
  * scope 'session': undo entire UM stack.
  *
+ * Returns `true` when at least one UM frame was popped (i.e., the undo had
+ * an observable effect), `false` when the stack was already empty. Callers
+ * can surface this to the HTTP response so MCP clients know the no-op case.
+ *
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
  */
-export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): void {
+export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
   const ytext = document.getText('source');
   const metaMap = document.getMap('metadata');
 
+  let undone = false;
   // F1 (D4): wrap undo + composition in one outer transact under undoOrigin.
   // Y.js merges um.undo()'s nested transact into this outer → fires under undoOrigin.
   // isPairedWriteOrigin(undoOrigin) === true → Observer A/B short-circuit on settle.
@@ -207,9 +212,11 @@ export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'
     if (scope === 'last') {
       if (um.undoStack.length === 0) return;
       um.undo();
+      undone = true;
     } else {
       while (um.undoStack.length > 0) {
         um.undo();
+        undone = true;
       }
     }
 
@@ -235,6 +242,8 @@ export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'
     const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
     applyFastDiff(ytext, ytext.toString(), canonicalFull);
   }, undoOrigin);
+
+  return undone;
 }
 
 export interface AgentSessionIdentity {
@@ -464,9 +473,25 @@ export class AgentSessionManager {
     }
   }
 
-  /** Close all sessions for a given agent (across all docs). */
+  /**
+   * Close all sessions for a given agent (across all docs).
+   *
+   * Settles any in-flight `pendingSessions` for this agent first so a
+   * concurrent `getSession()` can't land a newly-registered session into
+   * `this.sessions` AFTER we've drained it — otherwise a keepalive-grace
+   * timer firing during an MCP first-call would leak an orphan session.
+   */
   async closeAllForAgent(agentId: string): Promise<void> {
     const suffix = `\0${agentId}`;
+
+    // Settle any in-flight session creations for this agent before draining
+    // `this.sessions`. Each pending promise registers itself into `sessions`
+    // on resolve; awaiting here ensures the subsequent `keys` scan sees it.
+    const pendingKeys = [...this.pendingSessions.keys()].filter((k) => k.endsWith(suffix));
+    if (pendingKeys.length > 0) {
+      await Promise.allSettled(pendingKeys.map((k) => this.pendingSessions.get(k)));
+    }
+
     const keys = [...this.sessions.keys()].filter((k) => k.endsWith(suffix));
     for (const key of keys) {
       const session = this.sessions.get(key);

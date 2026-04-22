@@ -234,9 +234,15 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   });
 
   // Grace period before keepalive-close triggers session cleanup (D28).
-  const KEEPALIVE_GRACE_MS = opts.keepaliveGraceMs ?? 30_000;
+  const KEEPALIVE_GRACE_MS = opts.keepaliveGraceMs ?? 10_000;
   // connectionId → pending grace timer handle
   const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // In-flight grace-timer callbacks so destroy() can await them rather than
+  // racing against the sessionManager / agentFocusBroadcaster teardown.
+  const keepaliveGraceInflight = new Set<Promise<void>>();
+  // Set when destroy() runs so any callback that fired just before the timer
+  // was cleared can short-circuit instead of touching disposed resources.
+  let shuttingDown = false;
 
   httpServer.on('upgrade', (req, socket, head) => {
     // D-034 — MCP keep-alive channel (see CLI start.ts for full rationale).
@@ -277,19 +283,28 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
           clearInterval(pingTimer);
           if (!connectionId) return;
           // D28: start grace timer.
-          const timer = setTimeout(async () => {
+          const timer = setTimeout(() => {
             keepaliveGraceTimers.delete(connectionId as string);
-            log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
-            try {
-              await serverInstance.sessionManager.closeAllForAgent(connectionId as string);
-            } catch (err) {
-              log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
-            }
-            try {
-              serverInstance.agentFocusBroadcaster?.clearFocus(connectionId as string);
-            } catch (err) {
-              log.error({ err, connectionId }, '[keepalive] clearFocus failed');
-            }
+            // If destroy() already ran, skip — the sessionManager and
+            // agentFocusBroadcaster may be mid-teardown and calling into them
+            // would race (TOCTOU: timer fires between destroy's clearTimeout
+            // loop and the Hocuspocus teardown awaiting completion).
+            if (shuttingDown) return;
+            const work = (async () => {
+              log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
+              try {
+                await serverInstance.sessionManager.closeAllForAgent(connectionId as string);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
+              }
+              try {
+                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId as string);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] clearFocus failed');
+              }
+            })();
+            keepaliveGraceInflight.add(work);
+            work.finally(() => keepaliveGraceInflight.delete(work));
           }, KEEPALIVE_GRACE_MS);
           timer.unref?.();
           keepaliveGraceTimers.set(connectionId, timer);
@@ -387,6 +402,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
+    shuttingDown = true;
     idleHandle?.detach();
     // Cancel any pending keepalive-grace timers so they don't fire against a
     // disposed sessionManager / agentFocusBroadcaster after destroy returns.
@@ -394,6 +410,12 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
       clearTimeout(timer);
     }
     keepaliveGraceTimers.clear();
+    // A grace-timer callback may have fired between our clearTimeout loop and
+    // now — the async work is already in keepaliveGraceInflight. Await it so
+    // Hocuspocus teardown doesn't race with an in-flight closeAllForAgent.
+    if (keepaliveGraceInflight.size > 0) {
+      await Promise.allSettled([...keepaliveGraceInflight]);
+    }
     await new Promise<void>((resolveClose) => {
       httpServer.close(() => resolveClose());
     });

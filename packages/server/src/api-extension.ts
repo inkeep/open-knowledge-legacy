@@ -1953,7 +1953,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      extractAgentIdentity(body); // attribution threading (FR-5, D42)
+      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
+      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
+      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
+      const { agentName, colorSeed, clientName, clientVersion, label } = extractAgentIdentity(body);
 
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
@@ -1984,13 +1987,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const session = await sessionManager.getSession(docName, connectionId);
 
       session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      let undone = false;
       try {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        applyAgentUndo(session, scope);
+        undone = applyAgentUndo(session, scope);
+        // FR-5 / D42: record attribution for the undo write so the shadow-repo
+        // L2 drain fans it out under this session's writer-id. Skip when the
+        // UM stack was empty — a no-op undo has no mutation to attribute.
+        if (undone) {
+          recordContributor(
+            docName,
+            connectionId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+          );
+        }
       } finally {
         session.dc.document.awareness.setLocalStateField('mode', 'idle');
+      }
+
+      if (undone) {
+        flushDocToGit(docName, 'agent-undo');
       }
 
       agentFocusBroadcaster?.setFocus(connectionId, {
@@ -2000,7 +2021,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ts: Date.now(),
       });
 
-      json(res, 200, { ok: true, docName, scope });
+      json(res, 200, { ok: true, docName, scope, undone });
     } catch (e) {
       log.error({ err: e }, '[agent-undo] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
