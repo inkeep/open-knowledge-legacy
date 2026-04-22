@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
 import {
@@ -49,7 +49,7 @@ function treeRoundTrip(md: string): string {
   const pmNode = schema.nodeFromJSON(json);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, fragment, pmNode, meta);
-  const resultJson = yXmlFragmentToProsemirrorJSON(fragment);
+  const resultJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
   const result = mdManager.serialize(resultJson);
   doc.destroy();
   return result;

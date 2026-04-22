@@ -10,6 +10,7 @@ import {
   managedRenameJournalPath,
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
+import { ensureProjectGit } from './project-git.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer, type ServerInstance } from './standalone.ts';
 
@@ -168,6 +169,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
+    await ensureProjectGit(projectDir);
     const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
@@ -208,6 +210,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
+    await ensureProjectGit(projectDir);
     const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({

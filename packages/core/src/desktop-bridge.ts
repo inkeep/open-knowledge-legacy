@@ -83,6 +83,39 @@ export interface OkProjectOpenRequest {
 }
 
 /**
+ * Payload delivered to `onUpdateDownloaded` subscribers. Fires after
+ * electron-updater has completed the ZIP download and is waiting for
+ * install-on-quit (or an imperative `autoUpdater.quitAndInstall()` via
+ * Toast A's "Relaunch now" action). M3 D11.
+ */
+export interface OkUpdateDownloadedInfo {
+  readonly version: string;
+}
+
+/**
+ * Payload delivered to `onWhatsNew` subscribers. Fires once per version
+ * transition on first launch post-update (main compared `app.getVersion()`
+ * to `AppState.lastSeenVersion`). `releaseUrl` is the GitHub Releases page
+ * for the new version — renderer opens it via `bridge.shell.openExternal`.
+ * M3 D9/D11.
+ */
+export interface OkWhatsNewInfo {
+  readonly version: string;
+  readonly releaseUrl: string;
+}
+
+/**
+ * Payload delivered to `onUpdateStuckHint` subscribers. Fires at most once
+ * per installation after 7 consecutive calendar days of failed update
+ * checks. `downloadUrl` is the manual-download page (inkeep.com's
+ * Open Knowledge download CTA); renderer opens it via
+ * `bridge.shell.openExternal`. M3 D12.
+ */
+export interface OkUpdateStuckHintInfo {
+  readonly downloadUrl: string;
+}
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -100,6 +133,31 @@ export interface OkDesktopBridge {
   onProjectSwitched(cb: (next: OkDesktopConfig) => void): OkUnsubscribe;
   /** Subscribe to menu-bar actions. Returns unsubscribe. */
   onMenuAction(cb: (action: OkMenuAction) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `git-init-notice` — fired at most once per window, right after
+   * `ensureProjectGit` ran `git init` during the utility's boot. Renderer uses
+   * this to surface a sonner toast (SPEC 2026-04-21-shadow-repo-single-mode
+   * R5b / D10). Returns unsubscribe.
+   */
+  onGitInitNotice(cb: (evt: { gitDir: string }) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `autoUpdater` `update-downloaded` events. Fires once per
+   * pending-update version (gated in main by `AppState.versionPendingInstall`).
+   * Returns unsubscribe. M3 Toast A.
+   */
+  onUpdateDownloaded(cb: (info: OkUpdateDownloadedInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to post-update "What's new" events. Fires once per version
+   * transition on first launch (gated in main by `AppState.lastSeenVersion`).
+   * Returns unsubscribe. M3 Toast B.
+   */
+  onWhatsNew(cb: (info: OkWhatsNewInfo) => void): OkUnsubscribe;
+  /**
+   * Subscribe to `stuck-update` hints (D12). Fires at most once per
+   * installation after 7 consecutive failed-check days. Returns unsubscribe.
+   * M3 Toast C.
+   */
+  onUpdateStuckHint(cb: (info: OkUpdateStuckHintInfo) => void): OkUnsubscribe;
 
   /** Native folder-picker dialog surfaces. */
   dialog: {
@@ -110,13 +168,59 @@ export interface OkDesktopBridge {
   };
 
   /**
-   * IPC-relayed wrapper around `shell.openExternal`. Main-process handler
-   * enforces the outbound-scheme allowlist (`https`, `http`, `mailto`,
-   * `openknowledge` only — D47) before delegating to Electron's `shell`
-   * module. Unauthorized schemes reject.
+   * IPC-relayed wrappers around Electron's `shell` module. Main-process
+   * handlers enforce the outbound-scheme allowlist (`https`, `http`,
+   * `mailto`, `openknowledge`, plus `claude`, `codex`, `cursor` added by
+   * SPEC 2026-04-21 for the "Open in Agent Desktop" dropdown — D47) before
+   * delegating. Unauthorized schemes reject.
    */
   shell: {
     openExternal(url: string): Promise<void>;
+    /**
+     * Probe whether a URL scheme has a registered handler on this OS.
+     * Used by the "Open in Agent Desktop" dropdown to render disabled-
+     * with-tooltip rows when the target app isn't installed. Returns
+     * `{installed: false}` on timeout or platform-API error.
+     *
+     * **Scheme format contract:** `scheme` is the scheme NAME without
+     * trailing colon (e.g. `'claude'`, not `'claude:'`). Matches the Linux
+     * `xdg-mime query default x-scheme-handler/<name>` shell-command form
+     * and the main-process shell-injection sanitizer — callers with a
+     * colonful scheme MUST strip the trailing `:` first.
+     */
+    detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
+    /**
+     * Step 1 of the Cursor two-step handoff — spawns `cursor <path>` via a
+     * validated argv (shell:false, 2s timeout). Dedicated channel because
+     * the threat model is a command allowlist (PATH hijacking, arg
+     * injection) distinct from the URL-scheme allowlist above.
+     */
+    spawnCursor(
+      path: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
+    >;
+    /**
+     * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`
+     * (SPEC 2026-04-21 §5.1 / E5b). Zero phone-home (XQ3 LOCKED). Resolves
+     * even if HOME is unwritable — telemetry failure must never bubble up
+     * and affect the dispatch path. Literal-union shape mirrors
+     * `HandoffTarget` + `HandoffFailureReason` from `core/handoff/types.ts`.
+     */
+    recordHandoff(line: {
+      readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
+      readonly host: 'electron' | 'web';
+      readonly outcome: 'ok' | 'error';
+      readonly ts: string;
+      readonly reason?:
+        | 'not-installed'
+        | 'scheme-blocked'
+        | 'web-endpoint-error'
+        | 'invalid-payload'
+        | 'dispatch-error'
+        | 'web-host-cursor-unsupported';
+    }): Promise<void>;
   };
 
   /** IPC-relayed clipboard writer (sandboxed renderer cannot call clipboard directly). */
@@ -134,6 +238,15 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: OkProjectOpenRequest): Promise<void>;
     close(): Promise<void>;
+  };
+
+  /**
+   * Auto-update control surface. M3 AC18 / D3 revised: Toast A's "Relaunch
+   * now" button calls `relaunchNow()` which invokes
+   * `autoUpdater.quitAndInstall()` in main.
+   */
+  update: {
+    relaunchNow(): Promise<void>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

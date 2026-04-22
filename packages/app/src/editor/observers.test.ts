@@ -25,7 +25,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
 import {
@@ -128,7 +128,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
 
     await wait();
 
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('# Heading');
     expect(md).toContain('Paragraph text');
@@ -156,7 +156,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
 
     // XmlFragment is unchanged — Observer B no longer writes to it.
     // The test validates Observer B does not crash on parse errors.
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('Original content');
 
@@ -174,7 +174,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     await wait();
 
     // XmlFragment should have the heading (set by applyMarkdown, not observer)
-    const beforeJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const beforeJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const beforeMd = mdManager.serialize(beforeJson);
     expect(beforeMd).toContain('# Heading');
 
@@ -187,7 +187,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     await wait();
 
     // XmlFragment retains last state — Observer B no longer writes to it
-    const duringJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const duringJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const duringMd = mdManager.serialize(duringJson);
     expect(duringMd).toContain('# Heading');
 
@@ -200,7 +200,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     await wait();
 
     // XmlFragment still has heading — no cross-CRDT write from client observer
-    const afterJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const afterJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const afterMd = mdManager.serialize(afterJson);
     expect(afterMd).toContain('# Heading');
 
@@ -224,7 +224,7 @@ describe('WikiLink bridge regression', () => {
 
       expect(ytext.toString().trim()).toBe('Alpha [[Page#Heading|Alias]]');
 
-      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
       const md = mdManager.serialize(json);
       expect(md.trim()).toBe('Alpha [[Page#Heading|Alias]]');
     } finally {
@@ -304,7 +304,7 @@ describe('Frontmatter handling', () => {
     const metaMap = doc.getMap('metadata');
     expect(metaMap.get('frontmatter')).toBe('---\ntitle: New\n---\n');
 
-    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const json = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
     const md = mdManager.serialize(json);
     expect(md).toContain('# Body');
     cleanup();

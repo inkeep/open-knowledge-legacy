@@ -61,14 +61,58 @@ documented choice.
     "capturedAt": "<YYYY-MM-DD>",
     "capturedFrom": "<source description>",
     "notes": "<assertion shape + rationale>"
+  },
+  "v2g1WarmSwitch": {
+    "p50Ms": <number | null>,
+    "absoluteFloorMs": <number>,
+    "capturedAt": "<YYYY-MM-DD>",
+    "capturedFrom": "<source description>",
+    "notes": "<assertion shape + rationale>"
   }
 }
 ```
 
-Future perf tests add their own top-level keys (`qaXXX`) following the
-same shape. The schema is intentionally minimal — anything more (p95,
-percentile sweeps, env metadata) is YAGNI until a second perf test
-demands it.
+Two shapes coexist: QA-numbered tests use `qaNNN` keys with just `p50Ms`;
+V2 sprint sprint-goal gates use `v2g<N><GoalName>` keys with an additional
+`absoluteFloorMs` field (the spec G-target, used as the assertion floor
+when `p50Ms` is still `null` pre-baseline-capture). Both coexist under the
+same `schemaVersion: 1` — the extra field is additive.
+
+Future perf tests add their own top-level keys (`qaXXX` for QA-numbered
+tests, `v2g<N><GoalName>` or similar for sprint-specific gates) following
+one of these shapes. The schema is intentionally minimal — anything more
+(p95, percentile sweeps, env metadata) is YAGNI until a test demands it.
+
+## Local prod-fidelity dry-run (pre-CI validation)
+
+The protocol above requires CI medians (different runner hardware, same
+build, deterministic). But before you open a baseline-update PR, you want
+to confirm locally that your change actually moved the p50 — running
+`bun run dev` is dev-mode, which is not comparable.
+
+`packages/app/scripts/perf-prod.sh` wraps the four manual steps
+(build → start CLI → run scenario N times → tear down) into one command:
+
+```bash
+# From the repo root:
+packages/app/scripts/perf-prod.sh --scenario=cold-pool-warm --runs=5 \
+  --env="OK_PERF_BIG_DOC=STORIES"
+```
+
+What it does:
+1. Runs `bun run build` (turbo cache-friendly — no-op when clean).
+2. Starts `open-knowledge start --port 0` in the background; reads the
+   real port from `<repo>/.open-knowledge/server.lock`.
+3. Runs `bun run perf:profile --scenario=<name> --target=http://localhost:<port> --headless` N times.
+4. Sends SIGTERM to the server; waits for clean shutdown + lock release.
+5. Emits a per-run summary with the scenario's primary metric + computed
+   median.
+
+Dev-vs-prod factor observations live in
+`packages/app/tests/perf/results/` timestamped output files — the script
+itself only reports the local medians. For the canonical baseline
+capture, follow the CI-based protocol above — the local dry-run is a
+directional check, NOT a replacement.
 
 ### Key naming: `qa022` vs `QA-022`
 

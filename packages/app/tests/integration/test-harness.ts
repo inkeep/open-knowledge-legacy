@@ -33,6 +33,7 @@ import {
 import {
   AGENT_WRITE_ORIGIN,
   createServer,
+  ensureProjectGit,
   FILE_WATCHER_ORIGIN,
   MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
@@ -41,7 +42,7 @@ import {
   type ServerOptions,
 } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
@@ -107,6 +108,13 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   if (options.contentDir === undefined) {
     writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   }
+
+  // Mirror the production auto-git-init path (SPEC R2 / Q3 resolution): every
+  // fresh tmpDir gets a real .git/ so the single-mode shadow-repo layout in
+  // US-003 can locate the shadow at <contentDir>/.git/open-knowledge/ without
+  // a standalone-mode fallback. On contentDir reuse (restart tests) the second
+  // call is a cheap no-op because .git/ already exists.
+  await ensureProjectGit(contentDir);
 
   const port = await getFreePort();
   const srv = createServer({
@@ -380,7 +388,7 @@ export async function awaitDocQuiescence(
 
 /** Serialize XmlFragment to markdown string */
 export function serializeFragment(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /** Strip trailing whitespace per line + trailing newlines */
@@ -528,7 +536,12 @@ export async function pollUntil(
 export async function awaitFileWatcherIndexed(
   server: TestServer,
   docPath: string,
-  timeoutMs = 30_000,
+  // 45_000 matches the CI-worst-case budget already documented at the call
+  // sites (e.g. `ORPHAN_HINT_TEST_TIMEOUT_MS` in agent-focus-wiring.test.ts).
+  // parcel-watcher on Linux CI occasionally dispatches inotify events for
+  // files in newly-created subdirectories with >30s latency under load.
+  // Per precedent set by PR #220 ("bump integration test timeouts").
+  timeoutMs = 45_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
@@ -566,6 +579,16 @@ export async function awaitFileWatcherIndexed(
  * source→target map. Two-stage async gap that a single wall-clock sleep
  * cannot robustly close.
  *
+ * Watcher-drop recovery: on Linux CI, `@parcel/watcher` can drop `create`
+ * events for files rapidly written into freshly-created subdirectories
+ * (inotify subwatch registration race — PR #234 documents the same class
+ * at the workflow level). If the target's backlink hasn't shown up by
+ * `rescueAfterMs`, this helper POSTs to the test-only
+ * `/api/test-rescan-backlinks` endpoint once — which forces
+ * `backlinkIndex.rebuildFromDisk()` and covers dropped events. The rescue
+ * is a one-shot: if polling still fails after rescue, the timeout error
+ * surfaces (indicating a real setup bug, not a watcher flake).
+ *
  * Usage:
  *
  *   seedDoc(server.contentDir, `${folder}/README`, `[[${target}]]`);
@@ -579,9 +602,11 @@ export async function awaitBacklinkIndexed(
   targetDocName: string,
   sourceDocName: string,
   timeoutMs = 30_000,
+  rescueAfterMs = 2_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
+  let rescueTriggered = false;
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(
       `http://localhost:${server.port}/api/backlinks?docName=${encodeURIComponent(targetDocName)}`,
@@ -596,10 +621,16 @@ export async function awaitBacklinkIndexed(
     } else if (res) {
       lastStatus = res.status;
     }
+    if (!rescueTriggered && Date.now() - start >= rescueAfterMs) {
+      rescueTriggered = true;
+      await fetch(`http://localhost:${server.port}/api/test-rescan-backlinks`, {
+        method: 'POST',
+      }).catch(() => null);
+    }
     await wait(50);
   }
   throw new Error(
-    `awaitBacklinkIndexed: ${sourceDocName} → ${targetDocName} not indexed within ${timeoutMs}ms (last status=${lastStatus})`,
+    `awaitBacklinkIndexed: ${sourceDocName} → ${targetDocName} not indexed within ${timeoutMs}ms (last status=${lastStatus}, rescueTriggered=${rescueTriggered})`,
   );
 }
 
@@ -634,7 +665,7 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
   const metaMap = document.getMap('metadata');
   const activityMap = document.getMap('activity');
   const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
-  const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  const md = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
   const fullMd = prependFrontmatter(frontmatter, md);
   const connectionCount = document.getConnectionsCount?.() ?? 0;
 
@@ -729,7 +760,9 @@ export function attachBridgeInvariantWatcher(
 
     const ytextStr = ytext.toString();
     const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
-    const fragBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const fragBody = mdManager.serialize(
+      yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON(),
+    );
     const fragMd = prependFrontmatter(fm, fragBody);
 
     const ytextNorm = normalizeBridge(ytextStr);

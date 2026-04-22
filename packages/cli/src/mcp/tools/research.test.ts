@@ -11,31 +11,31 @@ interface ToolResult {
 }
 
 function captureTool() {
-  let captured: ((args: { topic: string }) => ToolResult) | undefined;
+  let captured: ((args: { topic: string; cwd?: string }) => Promise<ToolResult>) | undefined;
   const server = {
     tool(
       _name: string,
       _description: string,
       _schema: Record<string, unknown>,
-      handler: (args: { topic: string }) => ToolResult,
+      handler: (args: { topic: string; cwd?: string }) => Promise<ToolResult>,
     ) {
       captured = handler;
     },
   } as unknown as ServerInstance;
   return {
     server,
-    call(topic: string) {
+    async call(topic: string) {
       if (!captured) throw new Error('Tool was not registered');
-      return captured({ topic });
+      return await captured({ topic });
     },
   };
 }
 
 describe('research — previewUrl emission', () => {
-  test('returns structuredContent with previewUrl: null (workflow primer)', () => {
+  test('returns structuredContent with previewUrl: null (workflow primer)', async () => {
     const { server, call } = captureTool();
-    register(server, BASE_CONFIG);
-    const result = call('CRDT alternatives');
+    register(server, { config: BASE_CONFIG, resolveCwd: async () => process.cwd() });
+    const result = await call('CRDT alternatives');
     expect(result.structuredContent).toEqual({ previewUrl: null });
     expect(result.content[0]?.text).toContain('CRDT alternatives');
   });

@@ -34,7 +34,7 @@ import {
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
@@ -45,6 +45,12 @@ import {
   applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
+import {
+  createInstalledAgentsProbe,
+  createOsProbe,
+  handleInstalledAgents,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -462,10 +468,12 @@ export interface ApiExtensionOptions {
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests and
-   * local dev mode.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use (reset wipes document
+   * content; rescan-backlinks rebuilds the index from disk, dropping
+   * unpersisted in-memory state) and must never be exposed in production.
+   * Enable only in tests and local dev mode.
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
@@ -511,6 +519,14 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
+   * parity for the Electron `ok:shell:detect-protocol` IPC — see
+   * `handoff-api.ts`). When omitted, the platform's default probe is used
+   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
+   * fake so the endpoint doesn't shell out.
+   */
+  installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -526,10 +542,16 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function json(res: ServerResponse, status: number, data: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }
@@ -589,10 +611,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
     projectDir,
+    installedAgentsProbe,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
+
+  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
+  // Factory is called once per createApiExtension() so the cache lives for
+  // the lifetime of the server (cleared on server restart).
+  const installedAgentsCache = createInstalledAgentsProbe({
+    probe: installedAgentsProbe ?? createOsProbe(process.platform),
+  });
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -1713,7 +1743,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const xmlFragment = dc.document.getXmlFragment('default');
           const metaMap = dc.document.getMap('metadata');
           const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
-          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+          const currentBody = mdManager.serialize(
+            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+          );
           const currentFull = prependFrontmatter(currentFm, currentBody);
 
           const pos =
@@ -1844,6 +1876,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
+   *
+   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
+   * files written into freshly-created subdirectories (the recursive subwatch
+   * is registered asynchronously after the IN_CREATE for the directory, so
+   * rapid follow-up file writes race the registration). That leaves the
+   * backlink index out of sync with the content directory on disk, which the
+   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
+   * orphan-hint shape) cannot otherwise recover from.
+   *
+   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
+   * resync from the filesystem that covers dropped events. It is NOT suitable
+   * for production: rebuild wipes any in-memory backlink state not yet
+   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
+   * behind `enableTestRoutes` for that reason.
+   */
+  async function handleTestRescanBacklinks(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      if (!backlinkIndex) {
+        json(res, 503, { ok: false, error: 'Backlink index not configured' });
+        return;
+      }
+      backlinkIndex.rebuildFromDisk();
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+      });
+      signalChannel?.('backlinks');
+      signalChannel?.('graph');
+      json(res, 200, { ok: true });
+    } catch (e) {
+      console.error('[test-rescan-backlinks]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -4248,6 +4324,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleInstalledAgentsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4313,10 +4405,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
+    '/api/installed-agents': handleInstalledAgentsRoute,
   };
 
   if (enableTestRoutes) {
     routes['/api/test-reset'] = handleTestReset;
+    routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
   return {

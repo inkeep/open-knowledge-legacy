@@ -22,9 +22,23 @@ import {
   wait,
 } from './test-harness';
 
-function seedDoc(contentDir: string, docName: string, body: string): void {
+/**
+ * Seed a .md file into the test server's content directory.
+ *
+ * **Why async + the `parcelWatcherSubdirRaceGap`:** parcel-watcher on Linux
+ * CI occasionally misses file-creation inotify events for files written into
+ * a brand-new subdirectory when the subdir's watch hasn't yet propagated
+ * into the kernel inotify fd. Observed signature: `awaitFileWatcherIndexed`
+ * eventually times out because the event never fires (not delayed — lost).
+ * Splitting the mkdir from the writeFile with a small gap gives the watcher
+ * time to register the new subdir before files are written into it. Local
+ * runs are fast enough that 0ms works; CI needs ~50–100ms under load.
+ */
+async function seedDoc(contentDir: string, docName: string, body: string): Promise<void> {
   const filePath = join(contentDir, `${docName}.md`);
   mkdirSync(dirname(filePath), { recursive: true });
+  // parcelWatcherSubdirRaceGap — see JSDoc above.
+  await new Promise<void>((resolve) => setTimeout(resolve, 100));
   writeFileSync(filePath, body, 'utf-8');
 }
 
@@ -124,7 +138,7 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
       // `await wait(400)` wall-clock sleep which was occasionally insufficient
       // under CI file-watcher backend latency (chokidar / @parcel/watcher
       // batching). See the `awaitFileWatcherIndexed` JSDoc for the pattern.
-      seedDoc(server.contentDir, `${folder}/README`, '# README\n\nHub of the folder.\n');
+      await seedDoc(server.contentDir, `${folder}/README`, '# README\n\nHub of the folder.\n');
       await awaitFileWatcherIndexed(server, `${folder}/README`);
 
       const orphanName = `${folder}/orphan`;
@@ -145,8 +159,8 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
       const folder = `bl-${crypto.randomUUID().slice(0, 8)}`;
       // A hub exists AND it already links to the target — so target is not orphaned
       const target = `${folder}/linked`;
-      seedDoc(server.contentDir, `${folder}/README`, `# README\n\nSee [[${target}]].\n`);
-      seedDoc(server.contentDir, target, '# Linked\n\nBody.\n');
+      await seedDoc(server.contentDir, `${folder}/README`, `# README\n\nSee [[${target}]].\n`);
+      await seedDoc(server.contentDir, target, '# Linked\n\nBody.\n');
       // Two-stage wait: file watcher must index README, AND backlink index
       // must process the [[target]] link so target has a recorded backlink.
       // `awaitBacklinkIndexed` gates on the exact invariant `computeOrphanHints`

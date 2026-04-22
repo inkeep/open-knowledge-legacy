@@ -28,11 +28,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
+import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
+import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
+import { buildHandoffInput } from './handoff/useHandoffDispatch';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -113,7 +116,13 @@ export function EditorHeader({
   const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
   const { state: sidebarState } = useSidebar();
+  const workspace = useWorkspace();
   const syncStatus = useSyncStatus(activeProvider);
+  // Build the handoff input once per render — the menu's trigger disables when
+  // `input === null` (no active doc, or workspace fetch still pending on web
+  // host). Surfaces own input construction so AC9's single-dispatch contract
+  // is preserved: `dispatchHandoff` is called only from `useHandoffDispatch`.
+  const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
@@ -661,6 +670,7 @@ export function EditorHeader({
             <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
+        {!isDiffMode && activeDocName && <OpenInAgentMenu input={handoffInput} />}
         <SyncStatusBadge
           onSignIn={onSignIn}
           onSetIdentity={onSetIdentity}

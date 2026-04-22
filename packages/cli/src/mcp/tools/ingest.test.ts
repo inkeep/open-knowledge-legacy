@@ -11,31 +11,31 @@ interface ToolResult {
 }
 
 function captureTool() {
-  let captured: ((args: { source: string }) => ToolResult) | undefined;
+  let captured: ((args: { source: string; cwd?: string }) => Promise<ToolResult>) | undefined;
   const server = {
     tool(
       _name: string,
       _description: string,
       _schema: Record<string, unknown>,
-      handler: (args: { source: string }) => ToolResult,
+      handler: (args: { source: string; cwd?: string }) => Promise<ToolResult>,
     ) {
       captured = handler;
     },
   } as unknown as ServerInstance;
   return {
     server,
-    call(source: string) {
+    async call(source: string) {
       if (!captured) throw new Error('Tool was not registered');
-      return captured({ source });
+      return await captured({ source });
     },
   };
 }
 
 describe('ingest — previewUrl emission', () => {
-  test('returns structuredContent with previewUrl: null (workflow primer)', () => {
+  test('returns structuredContent with previewUrl: null (workflow primer)', async () => {
     const { server, call } = captureTool();
-    register(server, BASE_CONFIG);
-    const result = call('https://example.com/article');
+    register(server, { config: BASE_CONFIG, resolveCwd: async () => process.cwd() });
+    const result = await call('https://example.com/article');
     expect(result.structuredContent).toEqual({ previewUrl: null });
     expect(result.content[0]?.text).toContain('https://example.com/article');
   });

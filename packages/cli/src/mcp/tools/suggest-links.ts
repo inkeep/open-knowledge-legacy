@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -23,7 +23,7 @@ export const DESCRIPTION = [
 
 export interface SuggestLinksDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
@@ -33,9 +33,17 @@ export function register(server: ServerInstance, deps: SuggestLinksDeps): void {
     DESCRIPTION,
     {
       docName: z.string().describe('Target page docName'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: { docName: string; cwd?: string }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -48,10 +56,14 @@ export function register(server: ServerInstance, deps: SuggestLinksDeps): void {
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       const { ok: _ok, ...data } = result;
-      const preview = await resolvePreviewUrlForTool(normalized.docName, {
-        config: deps.config,
-        resolveCwd: deps.resolveCwd,
-      });
+      const preview = await resolvePreviewUrlForTool(
+        normalized.docName,
+        {
+          config: deps.config,
+          resolveCwd: deps.resolveCwd,
+        },
+        cwd,
+      );
       return textPlusStructured(JSON.stringify(data, null, 2), {
         ...data,
         previewUrl: preview?.url ?? null,

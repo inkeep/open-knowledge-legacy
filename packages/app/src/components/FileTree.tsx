@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
 import {
   Bot,
   ChevronRight,
@@ -85,6 +86,15 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { joinWorkspacePath } from '@/lib/workspace-paths';
+import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
+import {
+  buildHandoffInput,
+  type HandoffDispatchInput,
+  useHandoffDispatch,
+} from './handoff/useHandoffDispatch';
+import { useInstalledAgents } from './handoff/useInstalledAgents';
+import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
 
 const FileTreeDragContext = createContext<FileTreeTarget | null>(null);
 
@@ -100,22 +110,13 @@ function navigateTo(targetPath: string) {
  * Workspace-relative on-disk path for a tree node. Files get the `.md` extension;
  * folders return the bare path (no trailing slash). Mirrors how paths appear in
  * git diffs, VS Code 'Copy Relative Path', and the server's docName convention.
+ *
+ * US-011 promoted the sibling `joinWorkspacePath` to `@/lib/workspace-paths` so
+ * handoff dispatch inputs share the same normalizer. `relativePathForNode`
+ * stays local because it operates on a `TreeNode` (not a bare docName).
  */
 function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): string {
   return node.kind === 'file' ? `${node.path}.md` : node.path;
-}
-
-/**
- * Join `contentDir` with a workspace-relative path. Cross-platform — uses the
- * platform separator that `/api/workspace` returns (Node's `path.sep`), which
- * is the source of truth for the host. `TreeNode.path` and `DocEntry.docName`
- * are always POSIX-form in transit, so when the host is Windows we rewrite
- * their internal `/` to `\` before joining.
- */
-function joinWorkspacePath(contentDir: string, relative: string, sep: '/' | '\\'): string {
-  const normalizedRelative = sep === '\\' ? relative.replaceAll('/', '\\') : relative;
-  const trimmedDir = contentDir.endsWith(sep) ? contentDir.slice(0, -1) : contentDir;
-  return `${trimmedDir}${sep}${normalizedRelative}`;
 }
 
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -287,6 +288,21 @@ const FileTreeNode: FC<{
   treeActionsLocked: boolean;
   /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
   workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
+  /** Handoff install states + dispatch fn, lifted to the FileTree root so every
+   *  file-row ContextMenu shares one `useInstalledAgents` coordinator (otherwise
+   *  N file rows spin up N probe coordinators each with a 10s throttle — the
+   *  server-side cache absorbs it but the React state stays fragmented). */
+  handoff: {
+    readonly installStates: Record<HandoffTarget, InstallState>;
+    readonly isElectronHost: boolean;
+    readonly dispatch: (
+      target: HandoffTarget,
+      input: HandoffDispatchInput,
+    ) => Promise<HandoffOutcome>;
+  };
+  onNavigate: (targetPath: string) => void;
+  /** Hover-intent prewarm trigger (V2 Option G). Safe-no-op when not wired. */
+  prewarm: (docName: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
   onCommitRename: (target: FileTreeTarget) => void;
@@ -311,6 +327,9 @@ const FileTreeNode: FC<{
   busyPath,
   treeActionsLocked,
   workspace,
+  handoff,
+  onNavigate,
+  prewarm,
   onStartRename,
   onEditingValueChange,
   onCommitRename,
@@ -392,6 +411,25 @@ const FileTreeNode: FC<{
    */
   const iconClass = 'size-3.5 shrink-0 text-muted-foreground/50!';
 
+  // Hover-intent prewarm (review Major #7 / V2 SPEC FR12 Option G). Files
+  // only — hovering a folder row doesn't trigger a prewarm. The 80ms
+  // intent threshold + 3-concurrent cap live in `sidebar-hover-prewarm`;
+  // here we just wire mouseenter/mouseleave to it. The prewarm opens a
+  // cold HocuspocusProvider via `prewarm(docName)` so the target doc's
+  // Y.Doc sync starts before the user clicks. Idempotent + rate-limited.
+  const onRowEnter = isFile
+    ? () => {
+        scheduleHoverPrewarm(node.path, (docName) => {
+          prewarm(docName);
+        });
+      }
+    : undefined;
+  const onRowLeave = isFile
+    ? () => {
+        cancelHoverPrewarm(node.path);
+      }
+    : undefined;
+
   const displayContent = (
     <>
       <IconToUse
@@ -455,58 +493,78 @@ const FileTreeNode: FC<{
     </div>
   );
 
-  function handleClick() {
-    navigateTo(node.path);
-  }
-
   const triggerContent = isEditing ? (
     editingContent
+  ) : isFile ? (
+    <ButtonToUse
+      isActive={isActive}
+      onClick={() => onNavigate(node.path)}
+      className="cursor-pointer"
+      aria-current={isActive ? 'page' : undefined}
+    >
+      {displayContent}
+    </ButtonToUse>
   ) : (
-    <>
+    <div>
       <ButtonToUse
         isActive={isActive}
+        className="w-full cursor-pointer pr-8"
         aria-current={isActive ? 'page' : undefined}
-        onClick={handleClick}
+        onClick={() => onNavigate(node.path)}
       >
         {displayContent}
       </ButtonToUse>
-      {!isFile && (
-        <SidebarMenuAction
-          type="button"
-          className={expanded ? 'rotate-90' : ''}
-          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
-          aria-expanded={expanded}
-          onPointerDown={(event) => {
-            // The row wrapper is the draggable source. Stop the chevron's
-            // pointer-down here so expand/collapse never arms a drag gesture.
-            event.stopPropagation();
-          }}
-          onClick={() => {
-            onToggle(node.path);
-          }}
-        >
-          <ChevronRight className="text-muted-foreground/50" />
-        </SidebarMenuAction>
-      )}
-    </>
+      <SidebarMenuAction
+        type="button"
+        className={cn('top-1', expanded && 'rotate-90')}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
+        aria-expanded={expanded}
+        onPointerDown={(event) => {
+          // The row wrapper is the draggable source. Stop the chevron's
+          // pointer-down here so expand/collapse never arm a drag gesture.
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggle(node.path);
+        }}
+      >
+        <ChevronRight className="size-4 text-muted-foreground/50" />
+      </SidebarMenuAction>
+    </div>
   );
 
   return (
     <ComponentToUse>
       <ContextMenu>
-        <ContextMenuTrigger
-          ref={rowRef}
-          className={cn(
-            'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
-            isDragging && 'opacity-40',
-            overDropClass,
-          )}
-          {...(!isEditing && listeners)}
-          {...(!isEditing && attributes)}
-          // Disable double tab
-          tabIndex={undefined}
-        >
-          {triggerContent}
+        <ContextMenuTrigger asChild>
+          {/*
+            The accessible widget is the button inside `triggerContent`
+            (SidebarMenuButton); it already carries role/aria + keyboard
+            affordances. This <div> is a pointer/ARIA passthrough — the
+            mouseenter/mouseleave handlers fire hover-intent prewarm
+            (Major #7) across the whole row. `role="presentation"`
+            declares the div has no semantics of its own.
+          */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-intent wrapper for ContextMenuTrigger; accessible target is the SidebarMenuButton inside triggerContent (review Major #7 wiring) */}
+          <div
+            ref={rowRef}
+            className={cn(
+              'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
+              isDragging && 'opacity-40',
+              overDropClass,
+            )}
+            onMouseEnter={onRowEnter}
+            onMouseLeave={onRowLeave}
+            {...(!isEditing && listeners)}
+            {...(!isEditing && attributes)}
+            role="presentation"
+            // Disable double tab; the real focusable control is the inner button.
+            tabIndex={undefined}
+          >
+            {triggerContent}
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent
           onCloseAutoFocus={(e) => {
@@ -595,6 +653,14 @@ const FileTreeNode: FC<{
               </ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
+          {isFile && (
+            <OpenInAgentContextSubmenu
+              input={buildHandoffInput({ docName: node.path, workspace })}
+              installStates={handoff.installStates}
+              isElectronHost={handoff.isElectronHost}
+              dispatch={handoff.dispatch}
+            />
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             variant="destructive"
@@ -629,6 +695,9 @@ const FileTreeNode: FC<{
               busyPath={busyPath}
               treeActionsLocked={treeActionsLocked}
               workspace={workspace}
+              handoff={handoff}
+              onNavigate={onNavigate}
+              prewarm={prewarm}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
               onCommitRename={onCommitRename}
@@ -662,7 +731,7 @@ export interface FileTreeHandle {
 }
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -696,6 +765,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     contentDir: string;
     pathSeparator: '/' | '\\';
   } | null>(null);
+
+  // Handoff surface (US-011) — shared across every file row's right-click menu.
+  // Lifted to the tree root so one `useInstalledAgents` coordinator backs the
+  // whole sidebar; per-row hook calls would spin up N probe coordinators (each
+  // with its own 10s throttle) for no benefit.
+  const { states: handoffInstallStates } = useInstalledAgents();
+  const { dispatch: dispatchHandoff } = useHandoffDispatch();
+  const handoffIsElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+  const handoff = {
+    installStates: handoffInstallStates,
+    isElectronHost: handoffIsElectronHost,
+    dispatch: dispatchHandoff,
+  };
 
   // Ref callback: fires when the active row DOM node attaches. Handles initial
   // page load (tree mounts after /api/documents resolves), hash navigation, and
@@ -1275,6 +1357,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               busyPath={busyPath}
               treeActionsLocked={treeActionsLocked}
               workspace={workspace}
+              handoff={handoff}
+              onNavigate={navigateTo}
+              prewarm={prewarm}
               onStartRename={(target) => {
                 setEditingPath(target.path);
                 setEditingValue(target.name);

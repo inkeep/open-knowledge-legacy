@@ -45,6 +45,15 @@ mac:
   target:
     - target: dmg
       arch: [universal]
+    # `.zip` is required by the electron-updater / Squirrel.Mac swap path.
+    # MacUpdater.ts:~89 calls `findFile(files, "zip", ["pkg", "dmg"])` — it
+    # downloads the ZIP variant (not the DMG) and pipes it to Squirrel.Mac
+    # for the in-place swap. Without this target, auto-update would surface
+    # ERR_UPDATER_ZIP_FILE_NOT_FOUND at every check. M3 is the first consumer
+    # that needs `.zip`; M2 shipped DMG-only because auto-update was out of
+    # M2's scope (NG4). See specs/2026-04-21-m3-electron-updater/ D6.
+    - target: zip
+      arch: [universal]
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
