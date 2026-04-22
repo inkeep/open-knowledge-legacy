@@ -141,7 +141,7 @@ Each channel's semantics are owned by its emitter. Adding a new `ch` value count
 
 | Channel     | Emitted from                                                | Triggers                                                                                        | Canonical refetch             |
 | ----------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------- |
-| `files`     | `standalone.ts` DiskEvent dispatch (V0-2, shipped)          | `create \| delete \| rename` DiskEvents only. `update` / `conflict` do not change the file list | `GET /api/documents`          |
+| `files`     | `standalone.ts` DiskEvent dispatch (V0-2, shipped)          | Markdown `create \| delete \| rename` DiskEvents AND asset `asset-create \| asset-delete` events (editor-asset-embed-surface spec). `update` / `conflict` do not change the file list | `GET /api/documents` (and basename-index rebuild — see "Upload + asset-embed surface" below) |
 | `backlinks` | `persistence.ts` backlink-index update path (V0-3, pending) | Content changes that invalidate the backlink index                                              | `GET /api/backlinks/:docName` |
 | `graph`     | TBD (V0-11, pending)                                        | Graph-derived data changes                                                                      | TBD                           |
 
@@ -230,3 +230,150 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 - `__system__` — CC1 broadcast target (v1).
 - Future `cc1:*` names — reserved for additional CC1 internal channels. Treat as 1-way-door; lock before any consumer adopts.
+
+---
+
+## Upload + asset-embed surface
+
+Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](../../specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md). Operator-facing guide: [Assets and embeds](../../docs/content/guides/assets-and-embeds.mdx).
+
+### Endpoints
+
+| Method | Path                 | Purpose |
+| ------ | -------------------- | ------- |
+| POST   | `/api/upload`        | Upload an asset (multipart). Response: `{ok, src, deduped}` on 200; `{ok:false, error:'maxBytes', attemptedBytes, maxBytes, message}` on 413. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
+| POST   | `/api/upload-image`  | One-release deprecation shim (D-G). Forwards to `/api/upload`; logs a single per-process deprecation notice. Removed in the next minor. |
+| GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `maxBytes`. |
+
+### Accept-all (D-M LOCKED)
+
+Every file drop under `upload.maxBytes` is accepted. There is no MIME allowlist gate. `file-type` magic-byte sniffing is consulted only to:
+
+1. Preserve SVG `<img>`-only routing (NFR-3 — text-based SVG can't be detected by `file-type`; the handler has a `<svg` text-sniff fallback that tags `image/svg+xml`).
+2. Recover an extension when the client filename is a generic clipboard name (`"image.png"`, `"Clipboard 2024-04-21"`).
+
+Non-sniffable bytes are accepted under the client-supplied filename. Only `upload.maxBytes` rejects.
+
+**STOP.** Do not re-add a MIME allowlist gate — see root `AGENTS.md` §"Known Pitfalls" for the full STOP rules set. A security-focused hard-block allowlist is documented in SPEC §15 Future Work → Explored and requires a multi-tenant trigger.
+
+### sanitizeFilename
+
+`sanitizeFilename` in `src/api-extension.ts` is unicode-preserving:
+
+1. Strip-on-sight first: path separators (`/`, `\`), C0 controls, DEL. Applied before the whitelist so replacements can't dodge the strip.
+2. Whitelist via Unicode category classes (letters, numbers, marks, punctuation, emoji pictographs). Anything outside becomes `_`.
+3. Collapse runs of `_`, trim leading dots, strip trailing dots.
+
+`writeUploadAtomic` preserves extension when adding a `-N` collision suffix. Path-escape guards (`..`, absolute, NUL bytes) run separately at request time.
+
+### Same-directory sha256 dedup
+
+`findDuplicateAsset(destDir, sha)` bounded-scans `destDir` for asset-extension siblings (per `ASSET_EXTENSIONS` from `@inkeep/open-knowledge-core`), hashing each and returning the first match. Runs BEFORE filename synthesis so a duplicate clipboard paste preserves the existing name instead of producing a fresh `pasted-<ts>.png` stub. Scope is same-directory only (FR-2 / NG1). `upload.dedup.mode: 'off'` bypasses the branch.
+
+Response carries `deduped: boolean`. Client toast behavior is controlled by `upload.dedup.ui: 'silent' | 'toast' | 'confirm'` (default `'toast'`, message `"Already at <path> — reusing."` per D-B).
+
+### File watcher DiskEvent union
+
+```ts
+export type MarkdownDiskEvent =
+  | { kind: 'create'; docName: string; content: string }
+  | { kind: 'update'; docName: string; content: string }
+  | { kind: 'delete'; docName: string }
+  | { kind: 'rename'; oldDocName: string; newDocName: string; content: string }
+  | { kind: 'conflict'; ... };
+
+export type AssetDiskEvent =
+  | { kind: 'asset-create'; path: string; relativePath: string }
+  | { kind: 'asset-delete'; path: string; relativePath: string };
+
+export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
+```
+
+`classifyEvents` narrows to `MarkdownDiskEvent[]` so TypeScript refuses `event.content` access on asset variants. Markdown events flow through the reconciliation loop; asset events skip content reading and dispatch straight to:
+
+1. `basenameIndex.add(relativePath)` / `basenameIndex.remove(relativePath)`
+2. `cc1Broadcaster.signal('files')` — piggybacks on the existing debounced channel
+
+Finder-style renames arrive as `asset-delete` + `asset-create` pairs. The basename-index add/remove is idempotent, so the end state is correct without a hash-based rename probe.
+
+### Basename index runtime
+
+Constructed in `standalone.ts` via `createBasenameIndex()` (from `@inkeep/open-knowledge-core/path-resolve` — browser+Node compatible, no `node:fs` imports). Seeded at boot via `seedBasenameIndex` (`src/asset-walk.ts`) which walks `contentDir` after `startWatcher` primes the `ContentFilter`'s dir-count (so assets only index if a markdown sibling admits the subtree). `visitedInodes` set prevents symlink cycles.
+
+The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
+
+- `createApiExtension` → `handlers.wikiLinkEmbed` (during inbound mdast→PM rendering for `/api/*` read paths)
+- `createServerObserverExtension` → `setupServerObservers` → Observer B's `mdManager.parse(...)` (Y.Text → XmlFragment cross-CRDT sync)
+- `createPersistenceExtension` → load-path parse
+- `applyExternalChange` → disk→CRDT bridge (markdown reload)
+- `applyAgentMarkdownWrite` → agent write composition
+
+The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) calls `createServer()` directly and does NOT construct this closure. In dev mode, embed resolution falls back to the literal target — acceptable because dev is for contributors, not content authoring.
+
+### Obsidian vault detection (FR-4)
+
+`detectObsidianVault(contentDir)` in `src/obsidian-vault-detect.ts` reads `.obsidian/app.json` when present. Returns a `Partial<UploadConfig>` or `null` (missing file / malformed / symlink-escape).
+
+Field mapping:
+
+| `.obsidian/app.json` field | UploadConfig key         | Notes                                       |
+| -------------------------- | ------------------------ | ------------------------------------------- |
+| `attachmentFolderPath`     | `attachmentFolderPath`   | 1:1 passthrough — D-J free-form string. `"/"`, `"./"`, `"./subdir"`, bare name all preserved verbatim. |
+| `useMarkdownLinks`         | `emitFormat`             | `true → 'markdown-image'`, `false → 'wikiembed'` |
+| `newLinkFormat`            | (surfaced but unused)    | Foam-style shortest is the OK default       |
+
+Called in `packages/cli/src/commands/start.ts`. When the vault has a value, **it overrides the corresponding key in `config.upload`** (vault-first merge). Zod always materializes defaults on the user side, so there's no way to distinguish "user kept default" from "user never touched upload" — the pragmatic interpretation is "vault is authoritative when it speaks."
+
+Read-only posture: never writes to `.obsidian/` or `.open-knowledge/config.yml`. Errors emit structured JSON logs (`{event: 'obsidian-vault-detect', reason: 'symlink-escape' | 'read-failed' | 'parse-error'}`) + fall through to the user's config.
+
+### Managed-rename behavior for refs (FR-7)
+
+`src/managed-rename-rewrite.ts` rewrites image refs when a markdown doc moves:
+
+- **Plain markdown image ref `![alt](relative-src)`:** `readImageRef` regex parses the ref; `recomputeRelativeImageHref` resolves the old dirname + ref to a content-relative asset path, then emits the new relative form from the new doc's dirname. Returns `null` when old+new dirname match (no rewrite needed for same-dir sibling renames).
+- **Absolute path ref `![alt](/docs/photo.png)`:** detected and **left unchanged** (SPEC FR-7 test matrix; STOP rule). Preserves byte-identity for refs that pre-date FR-1a and for hand-authored absolutes.
+- **URL refs `http(s):`, `data:`:** detected and left unchanged.
+- **Wiki-embed ref `![[file.ext]]`:** **no rewrite** (D-K LOCKED refs-only). The basename index resolves these dynamically from the new doc's dirname. `readImageRef`'s regex naturally excludes the `![[...]]` shape because it requires a `(` after the `]`.
+
+The `MANAGED_RENAME_ORIGIN` is a paired-write origin (`context.paired: true`) so Observer A + Observer B both short-circuit symmetrically for the atomic `Y.XmlFragment` + `Y.Text` mutation.
+
+### Config flow summary
+
+```
+.open-knowledge/config.yml  ─┐
+                             ├─→  Zod (packages/cli/src/config/schema.ts, defaults)
+~/.open-knowledge/config.yml ┘        │
+                                      ↓
+                             config.upload (UploadConfig)
+                                      │
+                                      ├─→  detectObsidianVault()  (vault-first merge for attachmentFolderPath + emitFormat)
+                                      │
+                                      ↓
+                             bootServer({ uploadConfig }) → createServer({ uploadConfig })
+                                      │
+                              getUploadConfig() accessor
+                                      │
+                      ┌───────────────┼────────────────┐
+                      ↓               ↓                ↓
+          /api/upload handler   /api/upload-config  client ensureUploadConfig()
+          (reads maxBytes +     (returns the full   (fetches on first upload,
+           dedup.mode)           resolved subtree)   caches per-session)
+```
+
+### Observability
+
+Upload handler emits one structured JSON log per request:
+
+```json
+{
+  "event": "upload",
+  "endpoint": "/api/upload",
+  "dedup": true,
+  "mime": "image/png",
+  "size": 123456,
+  "destPath": "docs/photo.png",
+  "httpStatus": 200
+}
+```
+
+Plus the Obsidian vault-detect structured events noted above.
