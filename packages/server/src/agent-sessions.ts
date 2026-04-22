@@ -66,20 +66,12 @@ export const AGENT_WRITE_ORIGIN = {
   context: { origin: 'agent-write', paired: true },
 } as const satisfies PairedWriteOrigin;
 
-/** Map known MCP clientInfo.name values to icon identifiers. */
-export function iconFromClientName(name?: string): string {
-  const ICON_MAP: Record<string, string> = {
-    'claude-code': 'claude',
-    'claude-ai': 'claude',
-    cursor: 'cursor',
-    'cursor-vscode': 'cursor',
-    cascade: 'windsurf',
-    codex: 'openai',
-    copilot: 'github',
-    cline: 'cline',
-  };
-  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
-}
+// `iconFromClientName` lives in `@inkeep/open-knowledge-core` so both the
+// server (presence bar, api-extension) and the app (TimelinePanel dot-color
+// derivation) share the identical mapping — drift between the two is how
+// brand colors become inconsistent between surfaces. Re-exported here for
+// backwards compat with existing server-side import sites.
+export { iconFromClientName } from '@inkeep/open-knowledge-core';
 
 /**
  * XmlFragment-authoritative agent write composition (FR-1, precedent #10).

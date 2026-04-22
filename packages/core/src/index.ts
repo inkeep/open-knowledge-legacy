@@ -148,6 +148,7 @@ export {
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
+  iconFromClientName,
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,

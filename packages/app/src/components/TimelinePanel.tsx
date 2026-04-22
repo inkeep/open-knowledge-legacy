@@ -6,7 +6,12 @@
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
  */
-import { colorFromSeed, type TimelineEntry } from '@inkeep/open-knowledge-core';
+import {
+  AGENT_ICON_COLORS,
+  colorFromSeed,
+  iconFromClientName,
+  type TimelineEntry,
+} from '@inkeep/open-knowledge-core';
 import {
   AlertTriangle,
   ChevronDown,
@@ -64,13 +69,25 @@ export function displayAuthor(entry: TimelineEntry): string {
 /**
  * Dot color for an entry. Returns either a Tailwind className or an inline hex color.
  * Structured contributors take precedence; pre-attribution entries use the existing heuristic.
+ *
+ * Contributor color derivation matches the presence bar: first look up the
+ * per-client-type brand color via `AGENT_ICON_COLORS[iconFromClientName(seed)]`
+ * (so `claude-code` is always Claude-orange, `cursor-vscode` is always
+ * Cursor-dark, etc.), and fall back to the hash-based `colorFromSeed` palette
+ * only for unknown client names. Previously this used `colorFromSeed` directly
+ * on the contributor name, which hashes into a 7-color palette and could
+ * collide across different client types (e.g. `claude-code` and
+ * `cursor-vscode` both mapped to the indigo `bot` color).
  */
 function getAuthorColor(
   entry: TimelineEntry,
 ): { className: string; hex?: undefined } | { hex: string; className?: undefined } {
   if (entry.contributors.length > 0) {
     const c = entry.contributors[0];
-    return { hex: colorFromSeed(c.colorSeed ?? c.name) };
+    const seed = c.colorSeed ?? c.name;
+    const icon = iconFromClientName(seed);
+    const brandColor = AGENT_ICON_COLORS[icon];
+    return { hex: brandColor ?? colorFromSeed(seed) };
   }
   if (entry.type === 'upstream') return { className: 'bg-muted-foreground/50' };
   if (entry.authorEmail.includes('openknowledge.local') || entry.type === 'wip') {
