@@ -10,28 +10,32 @@ import { registerProtocolHandler } from '../../src/main/url-scheme.ts';
  * stub.
  */
 
-type AppEvent = 'open-url' | 'second-instance';
+type AppEvent = 'open-url' | 'second-instance' | 'before-quit';
 type OpenUrlListener = (event: { preventDefault: () => void }, url: string) => void;
 type SecondInstanceListener = (event: unknown, argv: readonly string[]) => void;
+type BeforeQuitListener = () => void;
+type AppListener = OpenUrlListener | SecondInstanceListener | BeforeQuitListener;
 
 interface FakeApp {
   on: ReturnType<typeof mock>;
   whenReady: () => Promise<void>;
   isPackaged: boolean;
   setAsDefaultProtocolClient: ReturnType<typeof mock>;
+  removeAsDefaultProtocolClient: ReturnType<typeof mock>;
   fireOpenUrl: (url: string) => void;
   fireSecondInstance: (argv: readonly string[]) => void;
+  fireBeforeQuit: () => void;
   resolveReady: () => void;
 }
 
 function makeFakeApp(opts?: { isPackaged?: boolean }): FakeApp {
-  const listeners = new Map<AppEvent, OpenUrlListener | SecondInstanceListener>();
+  const listeners = new Map<AppEvent, AppListener>();
   let resolveReadyFn: (() => void) | null = null;
   const whenReady = () =>
     new Promise<void>((resolve) => {
       resolveReadyFn = resolve;
     });
-  const on = mock((event: AppEvent, cb: OpenUrlListener | SecondInstanceListener) => {
+  const on = mock((event: AppEvent, cb: AppListener) => {
     listeners.set(event, cb);
   });
   return {
@@ -39,6 +43,7 @@ function makeFakeApp(opts?: { isPackaged?: boolean }): FakeApp {
     whenReady,
     isPackaged: opts?.isPackaged ?? true,
     setAsDefaultProtocolClient: mock(() => true),
+    removeAsDefaultProtocolClient: mock(() => true),
     fireOpenUrl: (url) => {
       const cb = listeners.get('open-url') as OpenUrlListener | undefined;
       if (!cb) throw new Error('open-url listener not registered');
@@ -49,6 +54,11 @@ function makeFakeApp(opts?: { isPackaged?: boolean }): FakeApp {
       const cb = listeners.get('second-instance') as SecondInstanceListener | undefined;
       if (!cb) throw new Error('second-instance listener not registered');
       cb({}, argv);
+    },
+    fireBeforeQuit: () => {
+      const cb = listeners.get('before-quit') as BeforeQuitListener | undefined;
+      if (!cb) throw new Error('before-quit listener not registered');
+      cb();
     },
     resolveReady: () => {
       if (!resolveReadyFn) throw new Error('whenReady not awaited yet');
@@ -81,12 +91,17 @@ function makeEnv(opts?: { isPackaged?: boolean }): TestEnv {
   return {
     app: makeFakeApp(opts),
     focusWindowForProject: mock((p: string) => existingWindows.get(p) ?? null),
-    openProject: mock(async (p: string): Promise<FakeWindowHandle | null> => {
-      const win: FakeWindowHandle = { id: `win-${p}` };
-      existingWindows.set(p, win);
-      if (!readyWindow) readyWindow = win;
-      return win;
-    }),
+    openProject: mock(
+      async (
+        p: string,
+        _opts?: { pendingDeepLinkDoc?: string },
+      ): Promise<FakeWindowHandle | null> => {
+        const win: FakeWindowHandle = { id: `win-${p}` };
+        existingWindows.set(p, win);
+        if (!readyWindow) readyWindow = win;
+        return win;
+      },
+    ),
     sendDeepLink: mock(() => {}),
     getAnyReadyWindow: mock(() => readyWindow),
     timers,
@@ -163,6 +178,79 @@ describe('registerProtocolHandler — setAsDefaultProtocolClient', () => {
   });
 });
 
+describe('registerProtocolHandler — before-quit Launch Services cleanup', () => {
+  test('registers before-quit handler that calls removeAsDefaultProtocolClient in dev mode', () => {
+    const env = makeEnv({ isPackaged: false });
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    // Dev-mode: `setAsDefaultProtocolClient` succeeded → `before-quit` handler
+    // should have been registered. Firing it calls `removeAsDefaultProtocolClient`
+    // so Launch Services doesn't leave a stale binding pointing at this worktree.
+    env.app.fireBeforeQuit();
+    expect(env.app.removeAsDefaultProtocolClient).toHaveBeenCalledWith('openknowledge');
+  });
+
+  test('does NOT register before-quit handler in packaged builds', () => {
+    const env = makeEnv({ isPackaged: true });
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    // Packaged builds don't touch Launch Services at runtime — the binding
+    // comes from the DMG's Info.plist (electron-builder). Nothing to remove.
+    expect(() => env.app.fireBeforeQuit()).toThrow(/before-quit listener not registered/);
+    expect(env.app.removeAsDefaultProtocolClient).not.toHaveBeenCalled();
+  });
+
+  test('does NOT register before-quit handler when setAsDefaultProtocolClient returned false', () => {
+    // If the OS refused the binding, we never claimed the scheme, so we must
+    // NOT call `removeAsDefaultProtocolClient` on quit — it would remove a
+    // binding that another app owns, breaking their deep-links.
+    const env = makeEnv({ isPackaged: false });
+    env.app.setAsDefaultProtocolClient = mock(() => false);
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+    });
+    expect(() => env.app.fireBeforeQuit()).toThrow(/before-quit listener not registered/);
+    expect(env.app.removeAsDefaultProtocolClient).not.toHaveBeenCalled();
+  });
+
+  test('swallows removeAsDefaultProtocolClient throws with a warn log line', () => {
+    const env = makeEnv({ isPackaged: false });
+    env.app.removeAsDefaultProtocolClient = mock(() => {
+      throw new Error('launch services refused');
+    });
+    const warnLog: Array<{ obj: object; msg: string }> = [];
+    registerProtocolHandler({
+      app: env.app,
+      focusWindowForProject: env.focusWindowForProject,
+      openProject: env.openProject,
+      sendDeepLink: env.sendDeepLink,
+      getAnyReadyWindow: env.getAnyReadyWindow,
+      setTimeout: (cb, ms) => env.timers.push({ cb, ms }),
+      log: { warn: (obj, msg) => warnLog.push({ obj, msg }) },
+    });
+    // Must NOT bubble up past the listener — app quit would be aborted.
+    expect(() => env.app.fireBeforeQuit()).not.toThrow();
+    expect(warnLog.some((e) => e.msg.includes('removeAsDefaultProtocolClient failed'))).toBe(true);
+  });
+});
+
 describe('registerProtocolHandler — queue-then-flush', () => {
   let env: TestEnv;
 
@@ -200,10 +288,14 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     env.app.resolveReady();
     await flushPromises();
 
-    expect(env.openProject).toHaveBeenCalledWith('/tmp/p');
-    // sendDeepLink fires after openProject resolves (the spawn path awaits).
+    // Cold path — project not in existingWindows, so focusWindowForProject
+    // returned null and routeUrl took the openProject branch. The deep-link
+    // threads through as `pendingDeepLinkDoc`; delivery happens inside
+    // window-manager's dom-ready hook, NOT via deps.sendDeepLink (which is
+    // reserved for the warm focus-existing path).
     await flushPromises();
-    expect(env.sendDeepLink).toHaveBeenCalled();
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 
   test('two deep-links received before whenReady both drain in FIFO order', async () => {
@@ -231,11 +323,17 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     await flushPromises();
     await flushPromises();
 
-    // Both URLs drained in FIFO order — no URL lost, no duplicate.
+    // Both URLs drained in FIFO order — no URL lost, no duplicate. Each
+    // cold-path call threads the doc through pendingDeepLinkDoc; the
+    // dom-ready hook inside createProjectWindow handles the send.
     expect(env.openProject).toHaveBeenCalledTimes(2);
-    expect(env.openProject).toHaveBeenNthCalledWith(1, '/tmp/p1');
-    expect(env.openProject).toHaveBeenNthCalledWith(2, '/tmp/p2');
-    expect(env.sendDeepLink).toHaveBeenCalledTimes(2);
+    expect(env.openProject).toHaveBeenNthCalledWith(1, '/tmp/p1', {
+      pendingDeepLinkDoc: 'a.md',
+    });
+    expect(env.openProject).toHaveBeenNthCalledWith(2, '/tmp/p2', {
+      pendingDeepLinkDoc: 'b.md',
+    });
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 
   test('retries flush up to 10 × 500ms while no window is up, then drains anyway', async () => {
@@ -261,8 +359,9 @@ describe('registerProtocolHandler — queue-then-flush', () => {
       tickTimer(env);
       await flushPromises();
     }
-    // 10th tick is the final attempt — drain fires regardless.
-    expect(env.openProject).toHaveBeenCalledWith('/tmp/p');
+    // 10th tick is the final attempt — drain fires regardless. Cold-path
+    // always threads pendingDeepLinkDoc through openProject.
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/p', { pendingDeepLinkDoc: 'a.md' });
   });
 
   test('silent-drops malformed URLs with a single warn log line', async () => {
@@ -332,15 +431,25 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(env.openProject).toHaveBeenCalledWith('/tmp/B');
-    expect(env.sendDeepLink).toHaveBeenCalled();
+    // Cold path: pendingDeepLinkDoc threads through; sendDeepLink not used.
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/B', { pendingDeepLinkDoc: 'x.md' });
+    expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 
-  test('skips sendDeepLink when openProject resolves null (failure already surfaced)', async () => {
+  test('handles openProject resolving null without throwing (failure already surfaced)', async () => {
     env.readyWindow = { id: 'primary' };
     // Stub openProject to resolve null — simulates the Navigator-fallback
     // path where the user already saw a dialog + the Navigator reopened.
-    const openProjectStub = mock(async (_p: string): Promise<FakeWindowHandle | null> => null);
+    // The cold path no longer calls sendDeepLink at all (delivery happens
+    // inside window-manager via dom-ready), so the null return just means
+    // "no window was created, nothing more to do." Regression assertion is
+    // "no throw, no stray sendDeepLink," not "sendDeepLink skipped."
+    const openProjectStub = mock(
+      async (
+        _p: string,
+        _opts?: { pendingDeepLinkDoc?: string },
+      ): Promise<FakeWindowHandle | null> => null,
+    );
 
     registerProtocolHandler({
       app: env.app,
@@ -357,7 +466,9 @@ describe('registerProtocolHandler — queue-then-flush', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(openProjectStub).toHaveBeenCalledWith('/tmp/broken');
+    expect(openProjectStub).toHaveBeenCalledWith('/tmp/broken', {
+      pendingDeepLinkDoc: 'x.md',
+    });
     expect(env.sendDeepLink).not.toHaveBeenCalled();
   });
 });
@@ -384,7 +495,7 @@ describe('registerProtocolHandler — second-instance argv parsing', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(env.openProject).toHaveBeenCalledWith('/tmp/si');
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/si', { pendingDeepLinkDoc: 'readme.md' });
   });
 
   test('ignores argv entries that are not openknowledge:// URLs', async () => {
@@ -433,7 +544,7 @@ describe('registerProtocolHandler — cold-start process.argv scan', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(env.openProject).toHaveBeenCalledWith('/tmp/cs');
+    expect(env.openProject).toHaveBeenCalledWith('/tmp/cs', { pendingDeepLinkDoc: 'a.md' });
   });
 
   test('no-op when no openknowledge:// URLs in initial argv', async () => {

@@ -15,7 +15,13 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, promises as fsPromises, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  promises as fsPromises,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -221,6 +227,11 @@ function ensureWindowManager() {
     readServerLock: (lockDir) => readServerLock(lockDir),
     isProcessAlive: (pid) => isProcessAlive(pid),
     hostname: () => osHostname(),
+    // Canonicalize `windowsByPath` keys via realpath so a deep-link URL
+    // carrying `realpathSync(contentDir)` (emitted by preview-url.ts) matches
+    // a window opened via a symlinked project path. See window-manager.ts's
+    // `canonicalizeKey` + `ProjectContext.canonicalKey` for the rationale.
+    realpathSync: (p) => realpathSync(p),
   });
 }
 
@@ -254,9 +265,9 @@ function openNavigator() {
   });
 }
 
-async function openProject(projectPath: string) {
+async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
   ensureWindowManager();
-  const ctx = await wm.createProjectWindow({ projectPath });
+  const ctx = await wm.createProjectWindow({ projectPath, pendingDeepLinkDoc });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
   // Keep File → Open Recent current. Menu rebuild is cheap (<1ms) and
@@ -264,9 +275,9 @@ async function openProject(projectPath: string) {
   refreshApplicationMenu();
 }
 
-async function openProjectOrFallbackToNavigator(projectPath: string) {
+async function openProjectOrFallbackToNavigator(projectPath: string, pendingDeepLinkDoc?: string) {
   try {
-    await openProject(projectPath);
+    await openProject(projectPath, pendingDeepLinkDoc);
   } catch (err) {
     const errorMessage = (err as Error).message;
     console.error('[main] openProject failed, falling back to Navigator', {
@@ -561,21 +572,28 @@ function bootPrimaryInstance(): void {
       whenReady: () => app.whenReady(),
       isPackaged: app.isPackaged,
       setAsDefaultProtocolClient: (scheme) => app.setAsDefaultProtocolClient(scheme),
+      removeAsDefaultProtocolClient: (scheme) => app.removeAsDefaultProtocolClient(scheme),
     },
     focusWindowForProject: (projectPath) => {
       if (!wm) return null;
       return wm.focusWindowForProject(projectPath) as unknown as object | null;
     },
-    openProject: async (projectPath) => {
+    openProject: async (projectPath, opts) => {
       // Use the Navigator-fallback path: on failure (bad path, git-init error,
       // stale lock) the user sees a dialog and is returned to the Navigator
       // rather than a silent "link doesn't work." Success path returns the
       // BrowserWindow so the caller can dispatch `ok:deep-link`.
-      await openProjectOrFallbackToNavigator(projectPath);
+      //
+      // `pendingDeepLinkDoc` threads through `wm.createProjectWindow`, which
+      // registers `webContents.once('dom-ready', ...)` BEFORE `loadURL` awaits
+      // — co-located with git-init-notice. The caller (url-scheme.ts routeUrl)
+      // therefore does NOT call `sendDeepLink` after this resolves; delivery
+      // happens inside the window-manager hook.
+      await openProjectOrFallbackToNavigator(projectPath, opts?.pendingDeepLinkDoc);
       const ctx = wm?.getWindowFor(projectPath);
       if (!ctx) {
         // The fallback ran — dialog shown, Navigator reopened. Return null so
-        // the caller's `sendDeepLink` is skipped.
+        // the caller knows the spawn failed (nothing to dispatch).
         return null;
       }
       return ctx.window as unknown as object;

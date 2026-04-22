@@ -73,9 +73,15 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     //      Apple Event that fires before `whenReady`.
   });
 
-  test('open(1) shell-out post-launch updates renderer hash to target doc', async () => {
-    // Seed a temp project with a real .open-knowledge/ + target doc so the
-    // window-manager spawn path can boot an editor window for it.
+  test('open(1) shell-out post-launch routes extension-less docName to renderer hash', async () => {
+    // Regression: smoke must mirror the real MCP producer contract.
+    // `preview-url.ts` normalizes docNames via `normalizeDocName` /
+    // `docNameFromPath` → extension is stripped before encodeURIComponent.
+    // Hardcoding `doc=target.md` here would exercise a path the producer
+    // never emits, so a regression that strips / doesn't strip correctly
+    // on the producer side would go uncaught. We seed `target.md` on disk
+    // (the on-disk form) but fire the deep-link with `doc=target` (the
+    // wire form) and assert the renderer hash matches the wire form.
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-'));
     mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
     writeFileSync(
@@ -96,25 +102,72 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
       const firstWindow = await app.firstWindow({ timeout: 15_000 });
       expect(firstWindow).toBeDefined();
 
-      // Fire the deep-link via `open(1)` — this dispatches through macOS
-      // Launch Services → Apple Event → the app's `open-url` listener. We
-      // can't use `app.context().newPage()` to navigate because Electron
-      // deep-link routing happens at the MAIN process level, not renderer.
-      //
-      // `-g` keeps focus off to reduce flake under CI display servers.
-      const deepLink = `openknowledge://open?project=${encodeURIComponent(projectDir)}&doc=target.md`;
+      // Fire the deep-link via `open(1)` — dispatches through macOS Launch
+      // Services → Apple Event → the app's `open-url` listener.  `-g` keeps
+      // focus off to reduce flake under CI display servers.
+      const deepLink = `openknowledge://open?project=${encodeURIComponent(projectDir)}&doc=target`;
       execSync(`open -g "${deepLink}"`, { stdio: 'pipe' });
 
       // Wait up to 5s for SOME window in the app to have a hash ending in
-      // `target.md`. We poll across all windows because the main process may
-      // have spawned a new window for the project (when the initial window
-      // was the Navigator, which is not project-scoped).
+      // `target` (exact renderer-side form). The install-deep-link-listener
+      // writes `#/<encodeURIComponent(doc)>` — no extension, matching the
+      // producer. Cross-worker Playwright poll all windows because the main
+      // process may have spawned a new window for the project.
       await expect(async () => {
         for (const page of app.windows()) {
           const hash = await page.evaluate(() => window.location.hash).catch(() => '');
-          if (hash.endsWith('target.md')) return;
+          if (hash.endsWith('#/target')) return;
         }
-        throw new Error('no window has hash ending in target.md yet');
+        throw new Error('no window has hash matching the extension-less producer form yet');
+      }).toPass({ timeout: 5_000 });
+    } finally {
+      await app.close();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('open(1) shell-out with nested docName round-trips encoded slash', async () => {
+    // Regression for the pass-1 Critical fix (US-003 AC4 — nested docNames
+    // like `notes/meeting` are the common MCP producer shape). Guards
+    // against any regression that would re-narrow the `doc` validator or
+    // break encodeURIComponent round-tripping through the renderer's
+    // hash-route listener.
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-nested-'));
+    mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
+    writeFileSync(
+      join(projectDir, '.open-knowledge', 'config.yml'),
+      "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
+    );
+    mkdirSync(join(projectDir, 'notes'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'notes', 'meeting.md'),
+      '# Meeting Notes\n\nNested doc smoke.\n',
+    );
+
+    const app = await electron.launch({
+      args: [MAIN_ENTRY],
+      timeout: 30_000,
+    });
+
+    try {
+      const firstWindow = await app.firstWindow({ timeout: 15_000 });
+      expect(firstWindow).toBeDefined();
+
+      // Nested docName — `/` encoded as `%2F` on the wire. Matches what
+      // `preview-url.ts` emits via `encodeURIComponent(docName)`.
+      const deepLink = `openknowledge://open?project=${encodeURIComponent(projectDir)}&doc=notes%2Fmeeting`;
+      execSync(`open -g "${deepLink}"`, { stdio: 'pipe' });
+
+      // Renderer encodes via `encodeURIComponent(doc)` before setting hash,
+      // so `notes/meeting` → `#/notes%2Fmeeting`. Alternative form `#/notes/meeting`
+      // is also acceptable if the install-deep-link-listener ever switches to
+      // per-segment encoding; assert either shape to avoid brittle coupling.
+      await expect(async () => {
+        for (const page of app.windows()) {
+          const hash = await page.evaluate(() => window.location.hash).catch(() => '');
+          if (hash === '#/notes%2Fmeeting' || hash === '#/notes/meeting') return;
+        }
+        throw new Error('no window has nested-doc hash yet');
       }).toPass({ timeout: 5_000 });
     } finally {
       await app.close();

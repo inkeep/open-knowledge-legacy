@@ -121,20 +121,39 @@ export interface ProtocolHandlerDeps {
   app: {
     on(event: 'open-url', cb: (event: { preventDefault: () => void }, url: string) => void): void;
     on(event: 'second-instance', cb: (event: unknown, argv: readonly string[]) => void): void;
+    on(event: 'before-quit', cb: () => void): void;
     whenReady(): Promise<void>;
     isPackaged: boolean;
     setAsDefaultProtocolClient(scheme: string): boolean;
+    /**
+     * Remove the runtime Launch Services binding for this scheme. Called in
+     * dev mode on `before-quit` to avoid "openknowledge:// sometimes opens
+     * the wrong build" when developers switch worktrees — without this,
+     * Launch Services routes subsequent `open openknowledge://...` calls
+     * to the last-registered binary path until another app claims the
+     * scheme.
+     */
+    removeAsDefaultProtocolClient(scheme: string): boolean;
   };
   /** Resolve an existing BrowserWindow for a project path, or null. */
   focusWindowForProject(projectPath: string): BrowserWindowHandle | null;
   /**
    * Spawn a new window for a project path. Returns `null` when the spawn
    * failed AND the error has already been surfaced to the user (dialog,
-   * Navigator fallback) — the caller must skip downstream `sendDeepLink` so
-   * the failure isn't double-logged.
+   * Navigator fallback) — the caller need not dispatch anything downstream.
+   *
+   * `pendingDeepLinkDoc` threads the M4 deep-link payload through so the
+   * implementation registers `webContents.once('dom-ready', ...)` BEFORE
+   * `loadURL` awaits — co-located with the git-init-notice pattern so the
+   * event lands after the renderer's subscriber mounts but not after
+   * `did-finish-load` (which would miss dom-ready entirely). See
+   * `window-manager.ts:createProjectWindow` for the wiring.
    */
-  openProject(projectPath: string): Promise<BrowserWindowHandle | null>;
-  /** Typed event dispatch — pushes `ok:deep-link` with the doc name. */
+  openProject(
+    projectPath: string,
+    opts?: { pendingDeepLinkDoc?: string },
+  ): Promise<BrowserWindowHandle | null>;
+  /** Typed event dispatch — pushes `ok:deep-link` with the doc name. Used only on the warm (focus-existing) path where the renderer subscriber has been mounted for the lifetime of the window. Cold-spawn delivery is handled inside `openProject` via dom-ready gating, not via this dep. */
   sendDeepLink(win: BrowserWindowHandle, payload: { doc: string }): void;
   /**
    * Returns any currently-ready BrowserWindow, or null if none. The flush loop
@@ -205,6 +224,25 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
           {},
           '[url-scheme] setAsDefaultProtocolClient returned false — dev deep-links may not reach this instance',
         );
+      } else {
+        // Unregister on dev-exit so a stale Launch Services binding doesn't
+        // route subsequent `open openknowledge://...` to a moved/deleted
+        // worktree — a developer-UX footgun when switching between checkouts.
+        // Hard exits (SIGKILL) skip `before-quit`, so the guarantee is
+        // best-effort: the next successful dev-exit re-registers cleanly.
+        // Packaged builds skip this entirely — their `CFBundleURLTypes`
+        // binding is installed by the OS at DMG install time and owned by
+        // Launch Services, not by us.
+        deps.app.on('before-quit', () => {
+          try {
+            deps.app.removeAsDefaultProtocolClient('openknowledge');
+          } catch (err) {
+            deps.log?.warn(
+              { err: (err as Error).message },
+              '[url-scheme] removeAsDefaultProtocolClient failed on before-quit',
+            );
+          }
+        });
       }
     } catch (err) {
       deps.log?.warn(
@@ -223,26 +261,29 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps): void {
     }
     const existing = deps.focusWindowForProject(parsed.project);
     if (existing) {
+      // Warm path — renderer subscriber has been mounted for the lifetime of
+      // this window. Fire `ok:deep-link` immediately; no dom-ready gate needed.
       deps.sendDeepLink(existing, { doc: parsed.doc });
       return;
     }
-    // No existing window for this project → spawn a new one. `openProject`
-    // returns `null` when the spawn failed AND the error was already surfaced
-    // to the user (dialog + Navigator fallback); in that case we skip
-    // `sendDeepLink` because there's no window to send to and the user has
-    // already seen why.
-    void deps
-      .openProject(parsed.project)
-      .then((win) => {
-        if (!win) return;
-        deps.sendDeepLink(win, { doc: parsed.doc });
-      })
-      .catch((err) => {
-        deps.log?.warn(
-          { err: (err as Error).message, project: parsed.project },
-          '[url-scheme] openProject failed',
-        );
-      });
+    // Cold path — no existing window for this project. Thread the deep-link
+    // through `openProject` so `window-manager.createProjectWindow` registers
+    // `webContents.once('dom-ready', ...)` BEFORE `loadURL` awaits (co-located
+    // with git-init-notice). This defeats the subscriber-mount race in which
+    // `ok:deep-link` fires before main.tsx's `installDeepLinkListener` has
+    // attached — which today works only because main.tsx runs synchronously at
+    // module-init, a load-bearing assumption we do NOT want to depend on.
+    //
+    // `openProject` returns `null` when the spawn failed AND the error was
+    // surfaced to the user (dialog + Navigator fallback). Nothing to do here
+    // in that case — the dom-ready hook registered at spawn time is what would
+    // have fired the event, but there's no window to receive it.
+    void deps.openProject(parsed.project, { pendingDeepLinkDoc: parsed.doc }).catch((err) => {
+      deps.log?.warn(
+        { err: (err as Error).message, project: parsed.project },
+        '[url-scheme] openProject failed',
+      );
+    });
   };
 
   const enqueueOrRoute = (url: string): void => {

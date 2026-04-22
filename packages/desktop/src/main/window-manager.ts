@@ -26,6 +26,7 @@
  * making them unit-testable without a real Electron runtime.
  */
 
+import { realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 
@@ -90,7 +91,22 @@ export interface ServerLockMetadataLike {
 }
 
 interface ProjectContext {
+  /**
+   * User-facing absolute project path — as the caller supplied it after
+   * `path.resolve`. Used for UI labels, recents list, and argv flags so
+   * users continue to see the path they picked (e.g. a symlinked
+   * workspace dir) rather than the realpath.
+   */
   projectPath: string;
+  /**
+   * Canonical realpath — `realpathSync(projectPath)` if accessible, else
+   * `projectPath` (fallback on ENOENT / EACCES). Used as the key into
+   * `windowsByPath` so a deep-link URL carrying the canonical realpath
+   * (emitted by `preview-url.ts:realpathSync(ctx.contentDir)`) matches a
+   * window opened via a symlinked path. Without this, the producer/consumer
+   * asymmetry causes `focusWindowForProject` to miss and spawn a duplicate.
+   */
+  canonicalKey: string;
   projectName: string;
   port: number;
   apiOrigin: string;
@@ -111,6 +127,16 @@ interface ProjectContext {
 
 interface CreateProjectWindowOpts {
   projectPath: string;
+  /**
+   * Optional deep-link doc to deliver to the renderer after window mount.
+   * Used by the `openknowledge://` URL scheme handler (M4) so the send is
+   * registered BEFORE `await loadURL` and fires via `webContents.once(
+   * 'dom-ready', ...)` — same pattern as the git-init-notice toast.
+   * Delivery ordering is load-bearing: registering after loadURL resolves
+   * silently misses dom-ready (which fires before did-finish-load). Pairs
+   * with the renderer's `ok:deep-link` subscriber in `main.tsx`.
+   */
+  pendingDeepLinkDoc?: string;
 }
 
 /** Test-injectable side-effect surface (Electron + node:fs primitives). */
@@ -143,6 +169,20 @@ export interface WindowManagerDeps {
   killProbe(pid: number, signal: number | NodeJS.Signals): void;
   /** Optional hook to run runClean before forking the utility (D44). */
   runClean?(opts: { lockDir: string }): Promise<void>;
+  /**
+   * Resolve a path to its canonical realpath (dereference symlinks). Only
+   * used for `windowsByPath` keying — a deep-link URL emitted by MCP's
+   * `preview-url.ts` carries `realpathSync(contentDir)` as its `project`
+   * query param (M4 AC8). Without matching canonicalization here, a user
+   * who opened a project via a symlinked path would see the deep-link miss
+   * `focusWindowForProject` and spawn a duplicate window.
+   *
+   * Production: `fs.realpathSync`. Tests inject to simulate symlinks
+   * without touching the filesystem. Throws (ENOENT, EACCES) fall back to
+   * the input path so the pre-canonicalization behavior is preserved on
+   * unreadable paths.
+   */
+  realpathSync?(p: string): string;
   /**
    * Read the Open Knowledge server lock at `<lockDir>/server.lock`. Returns
    * null if absent or corrupt. Production: `readServerLock` from
@@ -181,21 +221,43 @@ export interface WindowManagerDeps {
 }
 
 export class WindowManager {
-  /** contentDir (realpath) → ProjectContext */
+  /**
+   * canonicalKey → ProjectContext. Key is `realpathSync(resolve(projectPath))`
+   * with an ENOENT fallback to `resolve(projectPath)`, so a deep-link URL
+   * carrying the canonical realpath (emitted by `preview-url.ts:182`) matches
+   * a window opened via a symlinked path. See `canonicalizeKey` + the
+   * `canonicalKey` field on `ProjectContext`.
+   */
   private readonly windowsByPath = new Map<string, ProjectContext>();
 
   constructor(private readonly deps: WindowManagerDeps) {}
 
   /**
+   * Canonicalize a project path to its realpath. Dereferences symlinks so the
+   * map key matches what `preview-url.ts` emits in `openknowledge://` URLs.
+   * Falls back to `resolve(projectPath)` on ENOENT / EACCES so unreadable
+   * paths don't throw past the call site.
+   */
+  private canonicalizeKey(projectPath: string): string {
+    const absolute = resolve(projectPath);
+    const rp = this.deps.realpathSync ?? realpathSync;
+    try {
+      return rp(absolute);
+    } catch {
+      return absolute;
+    }
+  }
+
+  /**
    * Read-only snapshot for tests + the J7b dialog handler. Canonicalizes the
-   * input via `path.resolve` — matches the key shape used when
-   * `createProjectWindow` stores entries in `windowsByPath`. Without this,
-   * callers that pass a non-resolved path (e.g. a path from `process.argv`
-   * that contains `./` or `/..` segments) get `undefined` even when the
-   * window actually exists. Symmetric with `focusWindowForProject`.
+   * input via `canonicalizeKey` (realpath + resolve) — matches the key shape
+   * used when `createProjectWindow` stores entries in `windowsByPath`.
+   * Without this, callers that pass a non-resolved or symlinked path get
+   * `undefined` even when the window actually exists. Symmetric with
+   * `focusWindowForProject`.
    */
   getWindowFor(projectPath: string): ProjectContext | undefined {
-    return this.windowsByPath.get(resolve(projectPath));
+    return this.windowsByPath.get(this.canonicalizeKey(projectPath));
   }
 
   /**
@@ -209,12 +271,14 @@ export class WindowManager {
    * open project" decision to the caller (SPEC D24: every project pick spawns
    * a new window; only the same-project warm deep-link case reuses).
    *
-   * Path matching is exact on `path.resolve(projectPath)` — the same
+   * Path matching uses `canonicalizeKey` (realpath + resolve) — the same
    * canonicalization `createProjectWindow` applies before storing in
-   * `windowsByPath`.
+   * `windowsByPath`. A deep-link URL carrying the canonical realpath
+   * (emitted by `preview-url.ts:realpathSync(ctx.contentDir)`) therefore
+   * matches a window opened via a symlinked project path.
    */
   focusWindowForProject(projectPath: string): BrowserWindowLike | null {
-    const ctx = this.windowsByPath.get(resolve(projectPath));
+    const ctx = this.windowsByPath.get(this.canonicalizeKey(projectPath));
     if (!ctx) return null;
     const win = ctx.window;
     if (win.isMinimized?.()) win.restore?.();
@@ -244,7 +308,8 @@ export class WindowManager {
 
   async createProjectWindow(opts: CreateProjectWindowOpts): Promise<ProjectContext> {
     const projectPath = resolve(opts.projectPath);
-    const existing = this.windowsByPath.get(projectPath);
+    const canonicalKey = this.canonicalizeKey(projectPath);
+    const existing = this.windowsByPath.get(canonicalKey);
     if (existing) {
       // D44 case (a) — focus existing rather than spawn a duplicate.
       existing.window.focus();
@@ -261,7 +326,13 @@ export class WindowManager {
     // skipped here because an attachable lock is by definition NOT stale.
     const attached = this.tryAttachExistingServer(lockDir);
     if (attached) {
-      return this.attachToExistingServer({ projectPath, projectName, lock: attached });
+      return this.attachToExistingServer({
+        projectPath,
+        canonicalKey,
+        projectName,
+        lock: attached,
+        pendingDeepLinkDoc: opts.pendingDeepLinkDoc,
+      });
     }
 
     if (this.deps.runClean) {
@@ -352,7 +423,7 @@ export class WindowManager {
     // can coexist on the same `exit` event — they observe independently.
     utility.on('exit', (code) => {
       this.deps.log?.info({ pid: utility.pid, code }, 'utility exited');
-      this.windowsByPath.delete(projectPath);
+      this.windowsByPath.delete(canonicalKey);
       const pid = utility.pid;
       if (typeof pid === 'number') {
         this.deps.setTimeout(() => {
@@ -396,6 +467,23 @@ export class WindowManager {
       });
     }
 
+    // M4 deep-link gate — same pattern as git-init-notice: register the
+    // `dom-ready` listener BEFORE `await loadURL` so the event lands AFTER
+    // the renderer's `ok:deep-link` subscriber has mounted (main.tsx module-
+    // init) but not so late that it's missed entirely. Without this gate,
+    // `ok:deep-link` was sent synchronously from the cold-path `.then()` in
+    // `url-scheme.ts`'s routeUrl, which worked in practice only because
+    // main.tsx's subscriber install is synchronous at module-init — a
+    // future refactor (dynamic import, Suspense boundary, React effect)
+    // would silently drop the event. Co-located with git-init-notice so
+    // both one-shot renderer events share one ordering primitive.
+    if (opts.pendingDeepLinkDoc) {
+      const doc = opts.pendingDeepLinkDoc;
+      window.webContents.once('dom-ready', () => {
+        sendToRenderer(window.webContents, 'ok:deep-link', { doc });
+      });
+    }
+
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
     } else {
@@ -420,6 +508,7 @@ export class WindowManager {
 
     const context: ProjectContext = {
       projectPath,
+      canonicalKey,
       projectName,
       port,
       apiOrigin,
@@ -427,13 +516,13 @@ export class WindowManager {
       utility,
       ownsServer: true,
     };
-    this.windowsByPath.set(projectPath, context);
+    this.windowsByPath.set(canonicalKey, context);
     return context;
   }
 
   /** Close a specific project window (called by IPC `ok:project:close`). */
   closeProjectWindow(projectPath: string): boolean {
-    const ctx = this.windowsByPath.get(resolve(projectPath));
+    const ctx = this.windowsByPath.get(this.canonicalizeKey(projectPath));
     if (!ctx) return false;
     if (!ctx.ownsServer || !ctx.utility) {
       // Attach mode — the server belongs to a sibling process. Closing our
@@ -498,10 +587,12 @@ export class WindowManager {
    */
   private async attachToExistingServer(args: {
     projectPath: string;
+    canonicalKey: string;
     projectName: string;
     lock: ServerLockMetadataLike;
+    pendingDeepLinkDoc?: string;
   }): Promise<ProjectContext> {
-    const { projectPath, projectName, lock } = args;
+    const { projectPath, canonicalKey, projectName, lock, pendingDeepLinkDoc } = args;
     const port = lock.port;
     const apiOrigin = `http://localhost:${port}`;
 
@@ -521,6 +612,17 @@ export class WindowManager {
       title: formatEditorTitle(projectName),
     });
 
+    // M4 deep-link gate — same pattern as the spawn path. Register the
+    // `dom-ready` listener BEFORE `await loadURL` so the one-shot event
+    // lands after the renderer subscriber mounts but not after
+    // `did-finish-load` (which would miss dom-ready entirely).
+    if (pendingDeepLinkDoc) {
+      const doc = pendingDeepLinkDoc;
+      window.webContents.once('dom-ready', () => {
+        sendToRenderer(window.webContents, 'ok:deep-link', { doc });
+      });
+    }
+
     if (this.deps.rendererDevUrl) {
       await window.loadURL(this.deps.rendererDevUrl);
     } else {
@@ -531,11 +633,12 @@ export class WindowManager {
       // Drop from our map so a subsequent open either re-attaches (if the
       // sibling is still live) or spawns (if it has since exited). Critically,
       // NO shutdown IPC — the server is not ours to stop.
-      this.windowsByPath.delete(projectPath);
+      this.windowsByPath.delete(canonicalKey);
     });
 
     const context: ProjectContext = {
       projectPath,
+      canonicalKey,
       projectName,
       port,
       apiOrigin,
@@ -543,7 +646,7 @@ export class WindowManager {
       utility: null,
       ownsServer: false,
     };
-    this.windowsByPath.set(projectPath, context);
+    this.windowsByPath.set(canonicalKey, context);
     return context;
   }
 }

@@ -667,6 +667,148 @@ describe('WindowManager.focusWindowForProject (M4 URL-scheme warm-start)', () =>
     // storage key must match. `/tmp/canon/.` resolves to `/tmp/canon`.
     expect(wm.focusWindowForProject('/tmp/canon/.')).not.toBeNull();
   });
+
+  test('realpath canonicalization: open via symlink, focus via realpath matches', async () => {
+    // Simulated symlink: `/Users/me/workspaces/dragon` → `/Users/me/projects/dragon`.
+    // User opens via the symlink path; MCP's preview-url.ts emits the URL with
+    // `realpathSync(contentDir)` = the realpath. Without realpath canonicalization
+    // on the window-manager side, focusWindowForProject(realpath) would miss and
+    // spawn a duplicate window. This test drives the injected realpathSync stub.
+    const realpathMap = new Map([
+      ['/Users/me/workspaces/dragon', '/Users/me/projects/dragon'],
+      ['/Users/me/projects/dragon', '/Users/me/projects/dragon'],
+    ]);
+    env.deps.realpathSync = (p: string) => {
+      const mapped = realpathMap.get(p);
+      if (mapped) return mapped;
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    };
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({ projectPath: '/Users/me/workspaces/dragon' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51210, apiOrigin: 'http://localhost:51210' });
+    const ctx = await pending;
+
+    // Lookup via the realpath (what preview-url.ts emits) — must hit.
+    const found = wm.focusWindowForProject('/Users/me/projects/dragon');
+    expect(found).toBe(ctx.window);
+    expect(ctx.window.focus).toHaveBeenCalled();
+    // Symmetric: getWindowFor also hits.
+    expect(wm.getWindowFor('/Users/me/projects/dragon')).toBe(ctx);
+    // canonicalKey is stored so cleanup handlers use the same key.
+    expect(ctx.canonicalKey).toBe('/Users/me/projects/dragon');
+    // User-facing projectPath retains the symlink path for UI / recents.
+    expect(ctx.projectPath).toBe('/Users/me/workspaces/dragon');
+  });
+
+  test('realpathSync throws (ENOENT) → falls back to resolve(projectPath)', async () => {
+    // Unreadable path — realpath throws. The canonicalizeKey helper falls back
+    // to resolve(path) so the old behavior is preserved for nonexistent paths.
+    env.deps.realpathSync = () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    };
+    const wm = new WindowManager(env.deps);
+    const p = wm.createProjectWindow({ projectPath: '/tmp/ghost-path' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51211, apiOrigin: 'http://localhost:51211' });
+    const ctx = await p;
+    // Same fallback path on lookup → match.
+    expect(wm.focusWindowForProject('/tmp/ghost-path')).toBe(ctx.window);
+    expect(ctx.canonicalKey).toBe('/tmp/ghost-path');
+  });
+});
+
+describe('WindowManager — pendingDeepLinkDoc dom-ready gate (M4 US-007 / Finding 2)', () => {
+  let env: TestEnv;
+
+  beforeEach(() => {
+    env = buildEnv();
+  });
+
+  test('spawn path: pendingDeepLinkDoc registers dom-ready listener BEFORE loadURL resolves', async () => {
+    // Regression: the send must be registered BEFORE `await loadURL` so the
+    // one-shot `ok:deep-link` event lands after the renderer's subscriber
+    // mounts but not after did-finish-load (which misses dom-ready entirely).
+    let onceCalledBeforeLoadResolved = false;
+    let domReadyRegistrations = 0;
+    env.deps.createWindow = () => {
+      const w = makeWindow();
+      const baseOnce = w.webContents.once as (event: 'dom-ready', cb: () => void) => void;
+      w.webContents.once = ((event: 'dom-ready', cb: () => void) => {
+        domReadyRegistrations++;
+        baseOnce(event, cb);
+      }) as typeof w.webContents.once;
+      const baseLoadFile = w.loadFile as () => Promise<void>;
+      w.loadFile = mock(async () => {
+        onceCalledBeforeLoadResolved = domReadyRegistrations > 0;
+        return baseLoadFile();
+      }) as typeof w.loadFile;
+      env.windows.push(w);
+      env.createWindowOpts.push({ additionalArguments: [], title: '' });
+      return w;
+    };
+
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({
+      projectPath: '/tmp/deep-link-proj',
+      pendingDeepLinkDoc: 'notes/meeting',
+    });
+    env.utilities[0]?.fire({ type: 'ready', port: 51220, apiOrigin: 'http://localhost:51220' });
+    await pending;
+
+    expect(onceCalledBeforeLoadResolved).toBe(true);
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+
+    // dom-ready callback sends the deep-link event.
+    expect((window.webContents.send as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    const deepLinkCall = sendCalls.find((c) => c[0] === 'ok:deep-link');
+    expect(deepLinkCall).toBeDefined();
+    expect(deepLinkCall?.[1]).toEqual({ doc: 'notes/meeting' });
+  });
+
+  test('spawn path: no pendingDeepLinkDoc → no ok:deep-link event fires on dom-ready', async () => {
+    const wm = new WindowManager(env.deps);
+    const pending = wm.createProjectWindow({ projectPath: '/tmp/no-deep-link' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51221, apiOrigin: 'http://localhost:51221' });
+    await pending;
+
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    expect(sendCalls.find((c) => c[0] === 'ok:deep-link')).toBeUndefined();
+  });
+
+  test('attach path: pendingDeepLinkDoc also fires on dom-ready', async () => {
+    // Attach mode skips utility fork but still mounts a renderer, so the
+    // dom-ready gate applies symmetrically.
+    const liveLock: ServerLockMetadataLike = {
+      pid: 65793,
+      hostname: 'my-host',
+      port: 59600,
+      startedAt: '2026-04-21T10:00:00.000Z',
+      worktreeRoot: '/tmp/attach-deep-link',
+    };
+    env.deps.readServerLock = () => liveLock;
+    env.deps.isProcessAlive = () => true;
+    env.deps.hostname = () => 'my-host';
+
+    const wm = new WindowManager(env.deps);
+    const ctx = await wm.createProjectWindow({
+      projectPath: '/tmp/attach-deep-link',
+      pendingDeepLinkDoc: 'attached/note',
+    });
+    expect(ctx.ownsServer).toBe(false);
+
+    const window = env.windows[0];
+    if (!window) throw new Error('expected window to be created');
+    window.fireDomReady();
+    const sendCalls = (window.webContents.send as ReturnType<typeof mock>).mock.calls;
+    const deepLinkCall = sendCalls.find((c) => c[0] === 'ok:deep-link');
+    expect(deepLinkCall).toBeDefined();
+    expect(deepLinkCall?.[1]).toEqual({ doc: 'attached/note' });
+  });
 });
 
 describe('WindowManager.getWindowFor — canonicalization symmetry with focusWindowForProject', () => {
