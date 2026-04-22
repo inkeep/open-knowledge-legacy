@@ -7,6 +7,7 @@ import { getEditorForDoc } from './active-editor';
 import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
+import { tabSessionId } from './tab-identity';
 
 /**
  * Read-only projection of a `PoolEntry` — exposes the fields downstream React
@@ -236,6 +237,24 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // Hydrate pin state from localStorage (client-only; safe no-op on SSR).
     const persisted = loadPinFromStorage();
     if (persisted !== null) setPinnedDoc(persisted);
+
+    // D50 / US-024: fetch principal and wire tab identity so HocuspocusProvider
+    // includes {principalId, tabSessionId} in its auth token. The server's
+    // onAuthenticate hook reads this to set connection.context.principalId for
+    // correct writer attribution. Silent on failure — pool uses anonymous token.
+    fetch('/api/principal')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((principal: unknown) => {
+        if (principal && typeof (principal as { id?: unknown }).id === 'string') {
+          p.setTabIdentity({
+            principalId: (principal as { id: string }).id,
+            tabSessionId,
+          });
+        }
+      })
+      .catch(() => {
+        // principal unavailable — pool opens providers with anonymous auth token
+      });
 
     // Expose pool + test hooks on window for Playwright E2E access. Gated on
     // `import.meta.env.DEV` so production bundles don't ship a sync-promise
