@@ -99,11 +99,11 @@ The rescue reader at `src/api-extension.ts` merges flat-file rescue buffers (leg
 
 `src/metrics.ts` exposes the bridge counters via `GET /api/metrics/reconciliation`:
 
-| Counter | Meaning |
-|---|---|
-| `bridgeMergeContentLoss` | Observer A Path B post-condition violations since process start |
-| `bridgeMergeCheckpointCreated` | Silent checkpoints written successfully via `saveInMemoryCheckpoint` |
-| `serverObserverFiresA` / `serverObserverFiresB` | Drain-level dispatch count per direction |
+| Counter                                           | Meaning                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `bridgeMergeContentLoss`                          | Observer A Path B post-condition violations since process start                     |
+| `bridgeMergeCheckpointCreated`                    | Silent checkpoints written successfully via `saveInMemoryCheckpoint`                |
+| `serverObserverFiresA` / `serverObserverFiresB`   | Drain-level dispatch count per direction                                            |
 | `serverObserverErrorsA` / `serverObserverErrorsB` | Caught failures inside the observer body (parse, serialize, baseline) per direction |
 
 The counters are the load-bearing signal for SS-1 (single-CRDT collapse) urgency calibration over the post-launch observation window.
@@ -230,3 +230,39 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 - `__system__` — CC1 broadcast target (v1).
 - Future `cc1:*` names — reserved for additional CC1 internal channels. Treat as 1-way-door; lock before any consumer adopts.
+
+---
+
+## `GET /api/installed-agents` — web-host install detection
+
+Web-host parity for the Electron `ok:shell:detect-protocol` IPC in `packages/desktop/src/main/ipc-handlers.ts`. The browser can't enumerate the OS's scheme handlers directly, so the [[Open in Agent Desktop|Open-in-Agent dropdown]] in the `open-knowledge start` web build asks the server to probe on its behalf.
+
+Governing spec: [[specs/2026-04-21-open-in-agent-desktop/SPEC|Open in Agent Desktop SPEC]] §6.4.
+
+### Response shape
+
+```json
+{ "claude": true, "codex": false, "cursor": true }
+```
+
+One boolean per scheme — Cowork and Code share `claude:` so they flatten to one field. The client UI always renders the Cursor row disabled on web hosts regardless of the boolean returned (E4 DIRECTED — local-use-case posture; the probe stays in place to keep the response shape stable).
+
+### Per-OS probes
+
+Each probe is install-registration (does the scheme have a handler?), NOT a running-process check. Implemented in `src/handoff-api.ts`.
+
+| Platform | Command                                             | Signal               |
+| -------- | --------------------------------------------------- | -------------------- |
+| macOS    | `osascript -e 'id of app "<AppName>"'`              | stdout has bundle id |
+| Windows  | `reg query "HKCU\\Software\\Classes\\<scheme>" /ve` | exit code 0          |
+| Linux    | `xdg-mime query default x-scheme-handler/<scheme>`  | non-empty stdout     |
+
+2-second per-probe timeout; any timeout, non-zero exit, or shell error resolves to `installed: false` so the row renders disabled-with-tooltip instead of crashing.
+
+### Caching
+
+Per-scheme 60-second TTL with in-flight dedup — a burst of three client requests within the window triggers exactly one OS probe per scheme. The cache lives for the lifetime of the server process (cleared on restart). Clients additionally throttle dropdown-open refreshes to ≤1 per 10 seconds per target.
+
+### Test injection
+
+`createApiExtension({ installedAgentsProbe })` accepts a probe override so unit tests and integration tests don't shell out. The default uses `createOsProbe(process.platform)` from `handoff-api.ts`.

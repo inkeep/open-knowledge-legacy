@@ -14,8 +14,9 @@
  * this entry wires it into Electron lifecycle + IPC handlers.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname as osHostname } from 'node:os';
+import { spawn } from 'node:child_process';
+import { existsSync, promises as fsPromises, readFileSync, writeFileSync } from 'node:fs';
+import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
@@ -34,6 +35,11 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { promptForFolder } from './dialog-helpers.ts';
+import {
+  detectProtocol as detectProtocolImpl,
+  recordHandoff as recordHandoffImpl,
+  spawnCursor as spawnCursorImpl,
+} from './ipc-handlers.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { checkOutboundUrl } from './shell-allowlist.ts';
@@ -323,6 +329,72 @@ function registerIpcHandlers() {
       throw new Error(`shell.openExternal blocked: ${check.reason}`);
     }
     await shell.openExternal(url);
+    return undefined;
+  });
+
+  handle('ok:shell:detect-protocol', async (_event, scheme) => {
+    return detectProtocolImpl(
+      {
+        platform: process.platform,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+      },
+      scheme,
+    );
+  });
+
+  handle('ok:shell:spawn-cursor', async (event, path) => {
+    // Scope the spawn to the caller window's project directory (Review M5).
+    // A BrowserWindow without a ProjectContext (e.g. the Navigator, before it
+    // spawns an editor) should never reach this handler, but we treat that
+    // case as "no project scope" — a missing `projectPath` passes through to
+    // `spawnCursorImpl` which gates on the presence of the field. The
+    // validateSpawnPath + isPathWithinProject checks inside the impl refuse
+    // any out-of-scope path when a project IS bound.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    return spawnCursorImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        getApplicationInfoForProtocol: (url) => app.getApplicationInfoForProtocol(url),
+        spawn: (exec, args, timeoutMs) =>
+          new Promise((resolve) => {
+            try {
+              const child = spawn(exec, [...args], {
+                shell: false,
+                timeout: timeoutMs,
+                stdio: ['ignore', 'ignore', 'pipe'],
+              });
+              // Drain stderr so a chatty child can't block on a full pipe buffer.
+              child.stderr?.on('data', () => {});
+              // `spawn` event fires once the process is successfully launched —
+              // that's the success criterion per SPEC (not a clean exit). The
+              // macOS `/usr/bin/open` helper exits immediately after handing
+              // off to Launch Services, but the `spawn` event still resolves
+              // before exit, so this remains correct under the open-a routing.
+              child.once('spawn', () => resolve({ ok: true }));
+              child.once('error', () => resolve({ ok: false, reason: 'spawn-error' }));
+            } catch {
+              resolve({ ok: false, reason: 'spawn-error' });
+            }
+          }),
+      },
+      path,
+    );
+  });
+
+  handle('ok:shell:record-handoff', async (_event, line) => {
+    await recordHandoffImpl(
+      {
+        homedir: osHomedir,
+        appendFile: (path, content) => fsPromises.appendFile(path, content, 'utf-8'),
+        mkdir: (path) => fsPromises.mkdir(path, { recursive: true }).then(() => undefined),
+      },
+      line,
+    );
     return undefined;
   });
 

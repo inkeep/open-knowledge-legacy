@@ -45,6 +45,12 @@ import {
   applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
+import {
+  createInstalledAgentsProbe,
+  createOsProbe,
+  handleInstalledAgents,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -481,6 +487,14 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
+   * parity for the Electron `ok:shell:detect-protocol` IPC — see
+   * `handoff-api.ts`). When omitted, the platform's default probe is used
+   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
+   * fake so the endpoint doesn't shell out.
+   */
+  installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -565,10 +579,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
     projectDir,
+    installedAgentsProbe,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
+
+  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
+  // Factory is called once per createApiExtension() so the cache lives for
+  // the lifetime of the server (cleared on server restart).
+  const installedAgentsCache = createInstalledAgentsProbe({
+    probe: installedAgentsProbe ?? createOsProbe(process.platform),
+  });
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -4217,6 +4239,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleInstalledAgentsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4282,6 +4320,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
+    '/api/installed-agents': handleInstalledAgentsRoute,
   };
 
   if (enableTestRoutes) {

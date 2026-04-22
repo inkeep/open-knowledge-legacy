@@ -73,6 +73,33 @@ export interface OkDesktopBridge {
   };
   shell: {
     openExternal(url: string): Promise<void>;
+    /**
+     * Scheme format contract: `scheme` is the scheme NAME without trailing
+     * colon (e.g. `'claude'`, not `'claude:'`). Matches the main-process
+     * shell-injection sanitizer and the Linux `xdg-mime` shell-command form
+     * — callers with a colonful scheme MUST strip the trailing `:` first.
+     * See `packages/desktop/src/shared/bridge-contract.ts` for canonical JSDoc.
+     */
+    detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
+    spawnCursor(
+      path: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
+    >;
+    recordHandoff(line: {
+      readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
+      readonly host: 'electron' | 'web';
+      readonly outcome: 'ok' | 'error';
+      readonly ts: string;
+      readonly reason?:
+        | 'not-installed'
+        | 'scheme-blocked'
+        | 'web-endpoint-error'
+        | 'invalid-payload'
+        | 'dispatch-error'
+        | 'web-host-cursor-unsupported';
+    }): Promise<void>;
   };
   clipboard: {
     writeText(text: string): Promise<void>;

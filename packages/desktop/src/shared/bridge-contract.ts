@@ -90,6 +90,51 @@ export interface OkDesktopBridge {
 
   shell: {
     openExternal(url: string): Promise<void>;
+    /**
+     * Probe whether a URL scheme has a registered handler on this OS.
+     * Used by the "Open in Agent Desktop" dropdown (SPEC 2026-04-21) to
+     * render disabled-with-tooltip rows when the target app isn't installed.
+     * Returns `{installed: false}` on timeout or platform-API error.
+     *
+     * **Scheme format contract:** `scheme` is the scheme NAME without
+     * trailing colon (e.g. `'claude'`, not `'claude:'`). Matches the Linux
+     * `xdg-mime query default x-scheme-handler/<name>` shell-command form
+     * and the main-process shell-injection sanitizer — callers with a
+     * colonful scheme MUST strip the trailing `:` first.
+     */
+    detectProtocol(scheme: string): Promise<{ installed: boolean; displayName?: string }>;
+    /**
+     * Step 1 of the Cursor two-step handoff — spawns `cursor <path>` via a
+     * validated argv (shell:false, 2s timeout). Dedicated channel because
+     * the threat model is a command allowlist distinct from the URL-scheme
+     * allowlist. See SPEC §6.5 TQ4b LOCKED.
+     */
+    spawnCursor(
+      path: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
+    >;
+    /**
+     * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`
+     * (SPEC 2026-04-21 §5.1 / E5b). Zero phone-home (XQ3 LOCKED). Resolves
+     * even if HOME is unwritable — telemetry failure must never bubble up
+     * and affect the dispatch path. The literal-union shape mirrors
+     * `HandoffTarget` + `HandoffFailureReason` from the core handoff types.
+     */
+    recordHandoff(line: {
+      readonly target: 'claude-cowork' | 'claude-code' | 'codex' | 'cursor';
+      readonly host: 'electron' | 'web';
+      readonly outcome: 'ok' | 'error';
+      readonly ts: string;
+      readonly reason?:
+        | 'not-installed'
+        | 'scheme-blocked'
+        | 'web-endpoint-error'
+        | 'invalid-payload'
+        | 'dispatch-error'
+        | 'web-host-cursor-unsupported';
+    }): Promise<void>;
   };
 
   clipboard: {
