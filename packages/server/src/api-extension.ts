@@ -260,6 +260,24 @@ function sha256Hex(buf: Buffer): string {
  * dir) back to O(sibling count × stat). Non-ENOENT read failures log at
  * WARN so silent dedup degradation has a signal.
  */
+/**
+ * Upper bound on size-matched candidates we'll read+hash in a single
+ * dedup call. A capture-device folder with 1000+ screenshots at the same
+ * resolution could theoretically produce that many same-size siblings;
+ * each candidate costs a sync readFileSync + sha256Hex of the entire
+ * buffer, which would block the event loop for seconds per upload under
+ * adversarial / pathological load.
+ *
+ * Past the bound, dedup degrades to best-effort: we log a structured
+ * WARN and return null (treat as no-match → write a new file with the
+ * collision-suffix loop). This is a bounded-resource defense, not a
+ * correctness change — a duplicate that slips through produces the
+ * cheap storage cost of one extra on-disk copy, not silent data loss.
+ * The O(1) hash-cache alternative proposed in the review note is a
+ * larger architectural change and a follow-on.
+ */
+const MAX_DEDUP_SCAN_CANDIDATES = 1000;
+
 function findDuplicateAsset(destDir: string, sha: string, expectedSize: number): string | null {
   let entries: string[];
   try {
@@ -268,6 +286,7 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
     return null;
   }
   const log = getLogger('upload');
+  let scanned = 0;
   for (const entry of entries) {
     const ext = extname(entry).slice(1).toLowerCase();
     if (!ASSET_EXTENSIONS.has(ext)) continue;
@@ -279,6 +298,23 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
       continue;
     }
     if (!stat.isFile() || stat.size !== expectedSize) continue;
+    // Bounded scan: only count candidates that passed the cheap size
+    // prefilter, since same-size siblings are the ones that cost a
+    // multi-MB buffer read + hash each.
+    scanned++;
+    if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
+      log.warn(
+        {
+          event: 'upload-dedup-skip',
+          reason: 'scan-cap-exceeded',
+          destDir,
+          scanned: MAX_DEDUP_SCAN_CANDIDATES,
+          expectedSize,
+        },
+        `[upload-dedup] candidate scan exceeded ${MAX_DEDUP_SCAN_CANDIDATES} same-size siblings — degrading to no-dedup for this upload`,
+      );
+      return null;
+    }
     let buf: Buffer;
     try {
       buf = readFileSync(fullPath);

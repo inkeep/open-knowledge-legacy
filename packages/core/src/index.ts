@@ -50,6 +50,21 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// `WikiLinkEmbed` is transient: client-insert-only at drop time, never
+// emitted by server-side mdast→PM dispatch (US-013). Post round-trip
+// the node becomes PM `image` (image ext) or PM text+link mark (non-
+// image), NOT this PM node type. Still re-exported symmetrically with
+// the `WikiLink` peer so future consumers that need the node type or
+// attr shape directly (e.g. a non-default editor surface, a schema
+// introspection tool, a typed-component-nodes Phase 2 consumer) have a
+// public import path. Binding to the shape is an intentional contract
+// — the attrs (`target` / `alias` / `anchor` / `resolvedSrc`) are
+// schema-add-only per precedent #9, so the export commits to additive
+// evolution only.
+export {
+  WikiLinkEmbed,
+  type WikiLinkEmbedAttrs,
+} from './extensions/wiki-link-embed.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,

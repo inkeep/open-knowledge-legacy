@@ -1276,9 +1276,38 @@ export function createServer(options: ServerOptions): ServerInstance {
             // would resolve to the old branch's path (or a path that no
             // longer exists). Mirror backlinkIndex's branch-scoped reset:
             // drop the index, walk the new branch's disk, re-seed.
+            //
+            // `onSkip` wiring is symmetric with the boot path — a mid-
+            // session permission flip (EACCES), fd exhaustion (EMFILE),
+            // or root-scope read failure during the reseed walk surfaces
+            // the same `basename-index-partial` degraded indicator the
+            // boot path uses. Without this, the exact silent-truncation
+            // failure mode that Major #8 patches at boot would reappear
+            // mid-session one `git checkout` later.
             try {
+              let reseedSkipCount = 0;
               basenameIndex.clear();
-              seedBasenameIndex({ contentDir, contentFilter, basenameIndex });
+              seedBasenameIndex({
+                contentDir,
+                contentFilter,
+                basenameIndex,
+                onSkip: (reason, code, path) => {
+                  reseedSkipCount++;
+                  log.warn(
+                    { reason, code, path, branch: newBranch },
+                    `[basename-index] skipped entry during branch-switch reseed (${reason}${code ? ` ${code}` : ''})`,
+                  );
+                },
+              });
+              if (reseedSkipCount > 0) {
+                log.warn(
+                  { count: reseedSkipCount, branch: newBranch },
+                  `[basename-index] branch-switch reseed completed with ${reseedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve on this branch`,
+                );
+                if (!degraded.includes('basename-index-partial')) {
+                  degraded.push('basename-index-partial');
+                }
+              }
             } catch (err) {
               log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
             }

@@ -279,20 +279,37 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
 
     expect(resultJson.status).toBe(200);
     expect(resultJson.body.ok).toBe(true);
-    expect(resultJson.elapsedMs).toBeLessThan(2000);
+
+    // Smoke ceiling: 10s proves the upload went through without hanging
+    // on a 24MB payload through multipart → busboy → sha256 → dedup
+    // scan → atomic write. The tight NFR-1 perf bound (2×p50Baseline
+    // with a 2s absolute-floor per the AGENTS.md "E2E perf baselines"
+    // protocol) lives in the standalone benchmark track — a median-of-5
+    // baseline captured from post-merge CI, not local, per the
+    // `perf-baseline-update.md` protocol. Asserting `< 2000ms` inline
+    // here would flake under CI contention and dilute the NFR-1 signal;
+    // see `packages/app/tests/stress/perf-baseline.json` for the
+    // framework and Minor #5 in the review iteration log for the
+    // calibration rationale.
+    expect(resultJson.elapsedMs).toBeLessThan(10_000);
 
     // Disk bytes are exactly what we sent, end-to-end.
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'big.bin');
     expect(onDisk.length).toBe(payloadBytes);
 
-    // Log as evidence for qa-progress.json.
+    // Log as evidence for qa-progress.json — include the smoke ceiling
+    // plus the aspirational NFR-1 bound so the JSONL trail carries both
+    // signals. `nfr1Pass` is diagnostic; the test fails on the smoke
+    // bound alone.
     console.log(
       JSON.stringify({
         event: 'qa-041-perf',
         sentBytes: resultJson.sentBytes,
         elapsedMs: resultJson.elapsedMs,
-        budgetMs: 2000,
-        pass: resultJson.elapsedMs < 2000,
+        smokeBudgetMs: 10_000,
+        nfr1BudgetMs: 2000,
+        smokePass: resultJson.elapsedMs < 10_000,
+        nfr1Pass: resultJson.elapsedMs < 2000,
       }),
     );
   });
