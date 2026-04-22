@@ -414,6 +414,14 @@ export class AgentSessionManager {
     // trackedOrigins uses object identity — only transactions under session.origin are stacked.
     // captureTransaction excludes undoOrigin writes to prevent undo-of-undo cycles.
     // ignoreRemoteMapChanges: true — remote agent map updates do not trigger undo eligibility.
+    //
+    // Y.Map('agent-flash') is tracked here so that undo of an agent write also
+    // reverts the flash entry the same write dropped into the attribution
+    // side-channel — otherwise undo leaves a stale "who wrote this" marker
+    // pointing at content that no longer exists. The map is included only to
+    // keep the flash side-channel in lock-step with source text, not to track
+    // cross-session flash updates (those fire under remote origins and are
+    // filtered by trackedOrigins + ignoreRemoteMapChanges).
     const um = new Y.UndoManager(
       [
         dc.document.getText('source'),

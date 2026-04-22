@@ -105,7 +105,7 @@ export function resolveWriterFromOrigin(
       // mirror the user's git identity. Fall back to a stub only when the
       // server has no principal loaded or the claim doesn't match.
       const loaded = getPrincipal?.();
-      if (loaded && loaded.id === principalId) {
+      if (loaded && loaded.id === principalId && loaded.display_name && loaded.display_email) {
         return {
           id: loaded.id,
           name: loaded.display_name,

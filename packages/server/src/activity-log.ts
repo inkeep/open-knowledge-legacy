@@ -10,6 +10,7 @@
  * Error handling (D37): structured JSON warn, metrics counter, dev/test throw.
  */
 
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type * as Y from 'yjs';
 import { incrementEffectDiffCaptureFailures } from './metrics.ts';
 
@@ -17,6 +18,18 @@ const RING_BUFFER_LIMIT = 50;
 
 /** Module-level counter for unique transactIdx values across all docs. */
 let _effectCounter = 0;
+
+/**
+ * Typed origin for effect-capture writes to Y.Map('agent-effects') (precedent #1).
+ * `paired: false` because this origin mutates only the agent-effects ring-buffer,
+ * not the bridge-coupled Y.Text/Y.XmlFragment pair — server observers must NOT
+ * short-circuit on this origin (isPairedWriteOrigin returns false).
+ */
+export const EFFECT_CAPTURE_ORIGIN: LocalTransactionOrigin = Object.freeze({
+  source: 'local',
+  skipStoreHooks: true,
+  context: Object.freeze({ origin: 'effect-capture', paired: false }),
+}) as LocalTransactionOrigin;
 
 export interface EffectValue {
   sessionId: string;
@@ -49,6 +62,7 @@ export function captureEffect(
 
   const observer = (event: Y.YTextEvent) => {
     ytext.unobserve(observer);
+    doc.off('destroy', onDocDestroy);
     const key = `${sessionId}:${transactIdx}`;
     const value: EffectValue = {
       sessionId,
@@ -68,7 +82,7 @@ export function captureEffect(
             effectsMap.delete(k);
           }
         }
-      });
+      }, EFFECT_CAPTURE_ORIGIN);
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       console.warn(JSON.stringify({ event: 'effect-diff-capture-failed', sessionId, reason }));
@@ -77,5 +91,10 @@ export function captureEffect(
     }
   };
 
+  const onDocDestroy = () => {
+    ytext.unobserve(observer);
+  };
+
   ytext.observe(observer);
+  doc.once('destroy', onDocDestroy);
 }

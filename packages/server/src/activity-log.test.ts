@@ -157,21 +157,49 @@ describe('captureEffect — ring-buffer eviction', () => {
 });
 
 describe('captureEffect — error handling (D37)', () => {
-  test('increments effectDiffCaptureFailures metric on observer error', () => {
+  test('increments effectDiffCaptureFailures metric when inner transact throws', () => {
     const { doc, ytext } = makeDoc();
-    // Destroy the doc before the observer fires to simulate a failure.
-    // We need to capture the observer THEN destroy the doc.
-    // Y.js throws when accessing a destroyed doc.
+    const effectsMap = doc.getMap<EffectValue>('agent-effects');
+
+    // Force the inner effectsMap.set() to throw by patching the method after
+    // captureEffect wires the observer but before the user's transact fires.
+    // This is the most reliable reproducer: observer runs, inner transact throws,
+    // catch block records the failure + increments the metric (D37).
     captureEffect(ytext, 'agent-fail', 'seed');
 
-    // Destroy the effectsMap by removing it from the doc (simulate corruption).
-    // The easiest reproducible error: destroy the doc then fire the transact.
-    // This causes the inner doc.transact() to throw.
+    const originalSet = effectsMap.set.bind(effectsMap);
+    (effectsMap as unknown as { set: typeof originalSet }).set = () => {
+      throw new Error('synthetic effectsMap.set failure');
+    };
+
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      doc.transact(() => {
+        ytext.insert(0, 'trigger');
+      });
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+      (effectsMap as unknown as { set: typeof originalSet }).set = originalSet;
+    }
+
+    const metrics = getMetrics();
+    expect(metrics.effectDiffCaptureFailures).toBe(1);
+  });
+
+  test('unobserves on doc destroy to prevent observer leak', () => {
+    const { doc, ytext } = makeDoc();
+    captureEffect(ytext, 'agent-leak', 'seed');
+
+    // Destroying the doc before any write must detach the observer so a later
+    // (post-destroy) write on a reused ytext reference cannot fire the capture
+    // into a destroyed doc (would throw in production with NODE_ENV=production).
     doc.destroy();
 
-    // Firing the observer on a destroyed doc's ytext... ytext.observe callbacks
-    // won't fire because the doc is destroyed. So we test the metric is 0 here.
-    const metrics = getMetrics();
-    expect(metrics.effectDiffCaptureFailures).toBe(0); // no error triggered
+    // After destroy, the observer should already be unhooked. Verify by checking
+    // the internal observer set on Y.Text has no observers left.
+    // yjs stores observers on `_eH` (EventHandler). If it's empty the leak is fixed.
+    const eH = (ytext as unknown as { _eH?: { l: unknown[] } })._eH;
+    expect(eH?.l.length ?? 0).toBe(0);
   });
 });

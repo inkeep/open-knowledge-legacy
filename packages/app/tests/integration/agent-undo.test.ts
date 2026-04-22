@@ -128,24 +128,33 @@ describe('Agent undo — V0-14 per-session', () => {
     expect(res2.ok).toBe(true);
   });
 
-  test('undoOrigin is a paired write origin (observer short-circuit)', () => {
-    // Structural check: session.undoOrigin.context.paired === true.
-    // This validates isPairedWriteOrigin(session.undoOrigin) at unit level.
+  test('session.undoOrigin is a real PairedWriteOrigin (observer short-circuit)', async () => {
+    const docName = `test-undo-origin-${crypto.randomUUID()}`;
+    // Create a session via the manager so we inspect the real frozen origin,
+    // not a hand-constructed literal. isPairedWriteOrigin is a structural
+    // check (context.paired === true) used by server-observers to short-circuit.
     const sessionManager = server.instance.sessionManager;
-    // The session manager exposes hasSession; for any existing session we can
-    // verify the undoOrigin shape via the internal sessions Map (test-only).
-    // Since isPairedWriteOrigin is structural, we test the shape directly.
-    const undoOriginShape = {
-      source: 'local' as const,
-      skipStoreHooks: false,
-      context: { origin: 'agent-undo', paired: true as const, session_id: 'test' },
-    };
-    expect(undoOriginShape.context.paired).toBe(true);
-    expect(undoOriginShape.context.origin).toBe('agent-undo');
-    // isPairedWriteOrigin structural check (same logic as server-observers.ts)
-    const ctx = (undoOriginShape as { context?: { paired?: boolean } }).context;
-    expect(ctx?.paired).toBe(true);
-    // sessionManager must be defined (sanity)
-    expect(sessionManager).toBeDefined();
+    const session = await sessionManager.getSession(docName, 'undo-origin-test', {
+      clientName: 'claude-code',
+    });
+
+    try {
+      expect(session.undoOrigin).toBeDefined();
+      expect(session.undoOrigin.source).toBe('local');
+
+      const ctx = (session.undoOrigin as { context?: Record<string, unknown> }).context;
+      expect(ctx).toBeDefined();
+      expect(ctx?.origin).toBe('agent-undo');
+      expect(ctx?.paired).toBe(true);
+      expect(Object.isFrozen(ctx)).toBe(true);
+      expect(Object.isFrozen(session.undoOrigin)).toBe(true);
+
+      // session.origin (write) and session.undoOrigin (undo) must be distinct
+      // object refs so the UndoManager's captureTransaction filter can
+      // distinguish undo-of-undo from the write it reverts (D21).
+      expect(session.undoOrigin).not.toBe(session.origin);
+    } finally {
+      await sessionManager.closeAllForAgent('undo-origin-test');
+    }
   });
 });

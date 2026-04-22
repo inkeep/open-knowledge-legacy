@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
@@ -113,6 +113,10 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
   // Idempotent — no-op once all legacy refs are gone.
   const handle: ShadowHandle = { gitDir: shadowDir, workTree: projectRoot };
   await sweepLegacyShadowRefs(handle);
+
+  // Sweep orphaned temp-index files left behind by crashed `buildWipTree`
+  // calls from a prior process. Idempotent — no-op on a clean shutdown.
+  sweepOrphanedTmpIndexFiles(handle);
 
   // Acquire exclusive writer lock
   acquireLock(shadowDir, projectRoot);
@@ -296,6 +300,31 @@ export async function commitWip(
  * Uses a fresh index (no seeding from any ref) so the tree reflects
  * current filesystem state of contentRoot.
  */
+/**
+ * Sweep orphaned `index-wip-fanout-*` files left in the shadow gitDir by a
+ * crashed `buildWipTree` call from a prior process. Each entry is a transient
+ * index scratch file; the owning process is always gone by the time we run
+ * (initShadowRepo acquires an exclusive writer lock immediately after), so
+ * unconditional deletion is safe.
+ */
+export function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
+  let deleted = 0;
+  try {
+    for (const name of readdirSync(shadow.gitDir)) {
+      if (!name.startsWith('index-wip-fanout-')) continue;
+      try {
+        rmSync(resolve(shadow.gitDir, name));
+        deleted++;
+      } catch {
+        // best effort — next startup will retry
+      }
+    }
+  } catch {
+    // gitDir missing or unreadable — initShadowRepo will catch the real error
+  }
+  return deleted;
+}
+
 export async function buildWipTree(shadow: ShadowHandle, contentRoot: string): Promise<string> {
   const tmpIndex = resolve(shadow.gitDir, `index-wip-fanout-${randomUUID()}`);
   const sg = shadowGit(shadow);
