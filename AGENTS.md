@@ -173,7 +173,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
-- `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/types/awareness.ts` — AwarenessState, AwarenessUser, AgentFlashEntry (renamed from `ActivityEntry` per D57), AgentFocusEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
 - `src/desktop-bridge.ts` — `OkDesktopBridge` interface — canonical shape of the Electron `window.okDesktop` surface. Documentation anchor; desktop's runtime consumer is a duplicated copy in `packages/desktop/src/shared/bridge-contract.ts` (see Package: desktop for why the duplication is deliberate)
@@ -183,20 +183,20 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 
 ## Package: server
 
-Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, shadow repo, and HTTP API.
+Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, history repo, and HTTP API.
 
 ```
 Hocuspocus Server
-├── Persistence Extension (CRDT → markdown → disk → shadow git)
+├── Persistence Extension (CRDT → markdown → disk → history git)
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Server Observer Extension (server-authoritative cross-CRDT sync — precedent #14)
-├── Agent Sessions (DirectConnection + UndoManager per agent)
+├── Agent Sessions (DirectConnection + per-session UndoManager per (docName, agentId))
 ├── Content Filter (gitignore + config exclude/include filtering)
 ├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
-├── Shadow Repo (.git/openknowledge/ — attribution journal)
+├── History Repo (.open-knowledge/history/ — attribution journal; D55 + D56)
 ├── Reconciliation (three-way merge for external writes)
-├── Shadow Branch GC (orphaned ref cleanup)
+├── History Branch GC (orphaned ref cleanup)
 └── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
 ```
 
@@ -218,15 +218,37 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 
 **File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
 
-### Shadow repo & branch runtime
+### History repo & branch runtime
 
-The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode, no project `.git/`). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store.
+The history repo is a bare git repo at `<projectRoot>/.open-knowledge/history/` (D55 rename from "shadow repo" + D56 unified state dir — replaces the legacy `.git/openknowledge/` integrated-mode + `.openknowledge/` standalone-mode split). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store. First-run on upgrade, the init code atomically relocates legacy shadow directories (`rename()` + `[history-migration]` log).
 
 **Branch-scoped state:** `reconciledBase` (the three-way merge base) is `Map<branch, Map<docName, string>>`. On branch switch, the active scope switches to the target branch's map. WIP refs are namespaced as `refs/wip/<branch>/<writer-id>`.
 
-**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to shadow refs via `parkBranch()`. On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+**Writer-ID taxonomy (D7, D8, D34, precedent #25).** Every history commit is authored by exactly one classified writer ID. Five categories:
 
-**Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
+| Writer ID | Display name | Email | Source |
+|---|---|---|---|
+| `agent-<connectionId>` | `<agent_type_display> (<short-id>)` e.g. `Claude (a4f2)` | `agent-<connectionId>@openknowledge.local` | MCP subprocess session |
+| `<principalId>` (= `principal-<UUID>`) | `<principal.display_name>` | `<principal.display_email>` | Browser principal (D34 — `human-` prefix dropped) |
+| `file-system` | `File System` | `file-system@openknowledge.local` | Direct disk edit reconciled via file-watcher |
+| `git-upstream` | `Git (upstream)` | `git@openknowledge.local` | Project-repo HEAD-move import |
+| `openknowledge-service` | `Open Knowledge (service)` | `service@openknowledge.local` | Service-level fallback (park snapshots, migrations) |
+
+Subject-prefix action encoding (FR-13, D53): `wip:`, `checkpoint:`, `reconcile:`, `import:`, `park:`, `rollback:`, `rename:` — each commit subject starts with one of these and includes the target doc path / short SHA for `git log` legibility. See `packages/core/src/history-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor`.
+
+**Structured `ok-actor:` commit body (FR-8, D13).** Every history commit body includes one `ok-actor:` JSON line per contributing actor:
+
+```
+ok-actor: {"v":1,"principal":"principal-6f3a...","agent_session":"conn-abc","agent_type":"claude","client_name":"claude-code","client_version":"1.5.2","label":null,"display_name":"Claude (a4f2)","color_seed":"claude-code","docs":["notes.md"]}
+```
+
+Parsed by `parseOkActor` in `history-repo-layout.ts`; renders back to the Timeline UI.
+
+**L2 drain per-writer fan-out (FR-7, D38).** At the persistence L2 debounce, `contributor-tracker.swapContributors()` drains a snapshot, the loop emits one `commitWip(history, writer, ...)` per distinct writer. All per-writer commits in the same drain share the same tree SHA but have distinct commit SHAs + distinct author/committer/body. Per-writer failure restores only that writer's entries via `restoreContributorEntry()` (no global all-or-nothing).
+
+**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to history refs via `parkBranch()` under the `openknowledge-service` writer (D58 — per-session park deferred). On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+
+**Writer lock:** Only one active writer instance may mutate a given history root. The lock file at `<historyDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
 
 ### `bootServer` — canonical HTTP-wrapping entry point
 
@@ -254,7 +276,7 @@ One `createServer()` instance at a time per content directory. The lock file at 
 
 `bun run dev` (Vite plugin) and `open-knowledge start` share this lock, so running both against the same content directory fails the second invocation fast. Different content directories are unaffected.
 
-**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
+**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release history lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
 
 ### Symlinks
 
@@ -284,11 +306,9 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/agent-write`            | Agent write via Y.Text                                                    |
 | POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                  |
 | POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated          |
-| POST   | `/api/agent-undo`             | Undo last agent edit (agent-write origin only)                            |
-| POST   | `/api/agent-redo`             | Redo last undone agent edit                                               |
-| GET    | `/api/agent-undo-status`      | Check canUndo/canRedo                                                     |
+| POST   | `/api/agent-undo`             | Per-session Y.UndoManager undo; body `{ connectionId, scope: 'last' \| 'session' }` (FR-4, V0-14) |
 | POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                    |
-| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                    |
+| POST   | `/api/save-version`           | Save Version — project repo commit (graceful skip in non-git dirs per D45) + history checkpoint |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
@@ -298,20 +318,25 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 ### Key files
 
 - `src/standalone.ts` — `createServer()` factory; wires HEAD watcher callbacks (park on BatchBegin, reconcile/restore on BatchEnd)
-- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
-- `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
-- `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
+- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating; `onStoreDocument` destructures `lastTransactionOrigin` + `lastContext` and routes the commit to the matching session's writer-ID at L2 drain (FR-16)
+- `src/history-repo.ts` — `initHistoryRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()` (renamed from `shadow-repo.ts` per D55)
+- `src/history-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive history-root writer access (renamed from `shadow-lock.ts` per D55)
 - `src/server-lock.ts` — `acquireServerLock()` / `updateServerLockPort()` / `readServerLock()` / `releaseServerLock()` + `ServerLockCollisionError`. One server per contentDir; advertises real port for MCP discovery
-- `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock and server-lock
+- `src/process-alive.ts` — `isProcessAlive(pid)` shared between history-lock and server-lock
 - `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
-- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
+- `src/history-branch-gc.ts` — `gcHistoryBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection, per-writer TTL (30d for session writers, never for classified writers per D54; FR-18). Renamed from `shadow-branch-gc.ts` per D55
+- `src/contributor-tracker.ts` — per-doc contributor snapshot drained at L2 debounce; broadened first-arg semantics from "agentId" to "writerId" so `applyExternalChange` records `file-system` writer without a new function (D41)
+- `src/principal.ts` — `loadOrCreatePrincipal(contentDir)` — stable-UUID + git-config display for the browser-principal identity (FR-10, D9); persists to `.open-knowledge/principal.json`
+- `src/activity-log.ts` — bounded `Y.Map('agent-effects')` ring-buffer (50 entries per doc, oldest-by-timestamp eviction; D49, FR-11). Captures `YTextEvent.delta` per agent transact inside the paired-write drain — no server-side store, no CC1, no REST
+- `src/agent-sessions.ts` — `AgentSessionManager` class; `getSession(docName, agentId, identity)` creates per-session `LocalTransactionOrigin` + per-session `Y.UndoManager` scoped across `[Y.Text('source'), Y.Map('metadata'), Y.Map('agent-flash')]` with `trackedOrigins = new Set([session.origin])` + `ignoreRemoteMapChanges: true` (D3, D25); `applyAgentMarkdownWrite`; `applyAgentUndo(session, scope)` under `session.undoOrigin` (per-session, distinct from `session.origin`; V0-14, precedent #10, #24); `closeAllForAgent(connectionId)` is the teardown primitive wired to keepalive-WS close (boot.ts:263) with 30s grace (D28)
+- `src/agent-focus.ts` — AgentFocus push-nav broadcaster keyed by session; `AgentFocusEntry.writeKind` extends to `'write' | 'edit' | 'undo' | 'rollback-apply' | null` (D43)
+- `src/git-identity-sanitize.ts` — shared `sanitizeGitIdentity()` utility; strips `<>`, CRLF, trims + slices to 128 chars (D36). Applied at `extractAgentIdentity` + principal.json → WriterIdentity boundaries
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
-- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
-- `src/agent-sessions.ts` — `AgentSessionManager` class
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin; records `file-system` classified writer via `contributor-tracker` (D41, FR-6)
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
+- `src/api-extension.ts` — HTTP API; `extractAgentIdentity(body)` is the canonical identity boundary every mutating POST handler calls at entry before any Y.Doc mutation (FR-5, D42, precedent #24). Includes save-version, rescue buffer, link-graph, agent-undo, and metrics endpoints. Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and asserts every POST handler calls `extractAgentIdentity` or is on the explicit allowlist.
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
@@ -367,7 +392,8 @@ Y.Doc
 ├── Y.XmlFragment('default')  ← TipTap binds here
 ├── Y.Text('source')          ← CodeMirror binds here via y-codemirror.next
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution side-channel
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57 rename of legacy 'activity')
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49; 50 entries total per doc)
 
 Cross-CRDT sync (server-authoritative — precedent #14):
   Server Observer A: XmlFragment → Y.Text  (origin: OBSERVER_SYNC_ORIGIN)
@@ -410,9 +436,9 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 ### Presence & awareness
 
 - Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
-- Agent activity flash via Y.Map('activity') → CSS @keyframes
-- Per-origin undo via server-side UndoManager
-- Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
+- Agent activity flash via `Y.Map('agent-flash')` → CSS @keyframes (D57 rename of legacy `Y.Map('activity')`)
+- Per-session undo via per-session `Y.UndoManager` (precedent #24, D3, D25). `session.um.undo()` reverts only that session's last transaction; cross-session undo is scoped by `trackedOrigins = new Set([session.origin])` identity match
+- Agent writes use `session.dc.document.transact(fn, session.origin)` (precedent #24, D32) — never `session.dc.transact(fn)` (covered by STOP rule in §Known Pitfalls)
 - Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
 
 ### Theming
@@ -516,7 +542,8 @@ Y.Doc
 │  Client observers: baseline tracking only (cross-CRDT write paths deleted)
 │
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
 ```
 
 ### Three invariants
@@ -533,7 +560,7 @@ Y.Doc
 | W2: Source (Y.Text)       | (direct)                         | Server Observer B             | Persistence debounce |
 | W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
 | W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
-| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
+| W5: Agent Undo | applyAgentUndo (per-session, XmlFragment-authoritative — precedent #10) | applyAgentUndo on server | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -575,7 +602,7 @@ Y.Doc
 - File: `packages/server/src/agent-sessions.ts`
 - **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
 - Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyFastDiff` (character-level DMP `diff_main`; minimal mutation, preserves non-agent Y.Text Items and their origins). See `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` for the reference implementation.
-- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
+- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. Both `applyAgentMarkdownWrite` and the landed `applyAgentUndo` follow this template; any new agent write surface must too (see the agent-undo contract STOP rule below and `evidence/bug-d-mechanism.md`).
 
 ### Origin-guard truth table
 
@@ -660,7 +687,7 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 **Regression gates committed by US-011 / US-012:**
 - `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
 - `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
-- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
+- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — unskipped with V0-14 landed (FR-10); covers the post-undo XmlFragment-authoritative rebuild under concurrent user typing.
 
 **Mutation validation gates (server-authoritative bridge, US-012):**
 - **Mutation E:** revert server Observer B attachment → C2 + concurrent-source-mode fuzzer seeds fail with XmlFragment duplicates.
@@ -778,7 +805,7 @@ No environment variables must be set by hand for any of these scenarios.
 ### STOP rules
 
 - **STOP:** Do NOT call `session.dc.transact(fn)` in server-side agent code. Always use `session.dc.document.transact(fn, session.origin)` instead — the per-session frozen origin object must be passed explicitly so every Y.Doc transaction is attributed to the correct session (precedent #24, D32). Calling `dc.transact(fn)` omits the origin, causing persistence to route the write to `openknowledge-service` instead of the triggering session's writer ref, and breaking per-session undo (the UndoManager's `trackedOrigins` Set-identity match finds no match and silently skips the transaction).
-- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` + `applyAgentUndo` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Any future handler that mutates the Y.Doc on an agent's behalf must follow the same template — see `evidence/bug-d-mechanism.md` for the reference.
 - **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
@@ -787,15 +814,14 @@ No environment variables must be set by hand for any of these scenarios.
 - **STOP:** Do NOT remove or widen the typed paired-write marker (`LocalTransactionOrigin.context.paired`). Any new origin that atomically mutates BOTH Y.XmlFragment and Y.Text in a single `doc.transact(..., ORIGIN)` block MUST declare `context.paired: true` so Observer A + Observer B both short-circuit symmetrically (precedent #1 extension; bridge-correctness SPEC §6 R0). Adding such an origin without the marker re-surfaces the observer-layer amplification class that US-001/US-002 regression-tests T8/T9/T10 guard against.
 - **STOP:** Do not add Y.js observers, CRDT-update handlers, or awareness listeners inside an `<Activity>` subtree without accounting for hidden-mode CPU cost. Y.js observers are NOT React effects and do NOT pause when Activity flips to `hidden` — a hidden Activity entry with a live provider still processes every remote-peer update at full cost. If the cost matters (multi-client collaboration, large docs, remote Hocuspocus), bound the Activity-mount count explicitly via an `ACTIVITY_MOUNT_LIMIT`-style derivation (precedent #18(c); reference: `EditorActivityPool.computeActivityMountList`). For truly per-document observers, prefer wiring them off the pool (which is bounded independently) rather than off the editor component's mount lifecycle.
 - **STOP:** Do not replace the hybrid render tree (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) with a pure key-based remount pattern (e.g. `<Editor key={activeDocName} />`). The hybrid is load-bearing for the flash-free content-continuity UX delivered by SPEC G1-G2-G5 and precedent #18(b). If you need to add a new write surface, wrap it in its own `DocumentBoundary` (Suspense-ready) rather than short-circuiting the tree. See `packages/app/src/components/EditorArea.tsx` for the canonical shape.
-- **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
-  1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
-  2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
-  3. **Extend the FR-17 fuzzer op set** (`packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) with an `agent-undo` op kind AND extend the conversion PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`) with a matching chain if the new surface traverses any of the conversion functions covered there. The D18 coverage gate (precedent #13(d)) fails `bun run measure:fuzz` until the fuzzer op is added; the fidelity PBT update is what makes the signal fire at PR tier. Both are required — the fuzzer sidesteps automated CI enforcement as of 2026-04-19 (`specs/2026-04-19-ci-signal-quality/`), so the fidelity PBT is the PR-blocking gate for conversion-class regressions.
-  4. **Do NOT re-add client-side cross-CRDT write paths** — even if convenient for client-side undo UX. Mutation G enforces that the deletion is load-bearing; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
-  5. **Depend on the event-loop serialization guarantee** from the server-authoritative spec §7a + A7 — `applyAgentUndo` runs as a synchronous `doc.transact()` block with the subsequent observer fires as `setTimeout` callbacks. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
-  6. **Unskip** `packages/app/tests/integration/bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` (skip-guarded per FR-10).
+- **STOP (agent-undo contract, landed V0-14 / US-009):** `applyAgentUndo(session, scope)` in `packages/server/src/agent-sessions.ts` is the only sanctioned server-side undo write surface. It must continue to satisfy all of the following — any regression reverts the attribution + bridge invariants that US-009 locks in:
+  1. **XmlFragment-authoritative composition** from `applyAgentMarkdownWrite` (precedent #10, #12). After `session.um.undo()`, Y.Text holds the post-undo state — parse → `updateYFragment` → mirror via `applyFastDiff`. Never rebuild XmlFragment from raw Y.Text (Bug-A/Bug-D anti-pattern).
+  2. **Fires under the per-session `session.undoOrigin`** (a `PairedWriteOrigin` with `context.origin: 'agent-undo'` and `paired: true`), distinct from `session.origin` (`'agent-write'`) and `OBSERVER_SYNC_ORIGIN`. Observer A/B short-circuit on `isPairedWriteOrigin` structural check. Per-session UM's `captureTransaction: tr => tr.origin !== session.undoOrigin` keeps undo-of-undo off the stack (D21 defense-in-depth).
+  3. **Fuzzer coverage** — `bridge-convergence.fuzz.test.ts` carries an `agent-undo` op kind + `WRITE_SURFACE_TO_OP_KIND` surface entry (FR-17, NFR-3). The conversion PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`) is the PR-blocking gate for conversion-class regressions — the fuzz suite is ad-hoc as of 2026-04-19 (`specs/2026-04-19-ci-signal-quality/`).
+  4. **No client-side cross-CRDT write paths** — precedent #14. Mutation G enforces the deletion; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
+  5. **Event-loop serialization** — `applyAgentUndo` runs as a single `doc.transact()` block; the observer fires are `setTimeout` callbacks on the same loop. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
 
-  Reference template: `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` (lines 68-113). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`.
+  Reference implementation: `packages/server/src/agent-sessions.ts:applyAgentUndo` (paired with `applyAgentMarkdownWrite`). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`, `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` §8.4.
 
 ### WARN rules
 
@@ -995,7 +1021,7 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Default mental model (no jargon):** unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
 
-**STOP — your host's built-in file tools on in-scope `.md` / `.mdx`.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** reach for native tools on in-scope markdown. Same failure mode as native `Edit` on them: no frontmatter, no backlinks, no shadow-repo activity, no recent-edit signal. The ban is broader than just `Read` / `Grep` / `Glob` — it names every common rationalization:
+**STOP — your host's built-in file tools on in-scope `.md` / `.mdx`.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** reach for native tools on in-scope markdown. Same failure mode as native `Edit` on them: no frontmatter, no backlinks, no history-repo activity, no recent-edit signal. The ban is broader than just `Read` / `Grep` / `Glob` — it names every common rationalization:
 
 - **Native `Read` / `Grep` / `Glob` on in-scope `.md` / `.mdx`** — the original case.
 - **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent-activity per child.
@@ -1022,7 +1048,7 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Source code and everything else** (`.ts`, `.py`, `package.json`, …): native `Read` / `Grep` / `Glob`.
 
-**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow repo.
+**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the history repo.
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
 1. Call `get_preview_url` to obtain the browser URL for the target doc.
