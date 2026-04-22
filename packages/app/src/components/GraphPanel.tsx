@@ -290,7 +290,7 @@ async function toggleFullscreen(el: HTMLElement | null): Promise<void> {
   }
 }
 
-export function GraphPanel({ activeDocName }: { activeDocName: string }) {
+export function GRAPH_PANEL_REACT_LAZY_ONLY({ activeDocName }: { activeDocName: string }) {
   const panelRef = useRef<HTMLElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');

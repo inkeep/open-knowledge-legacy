@@ -100,7 +100,7 @@ function applyRawMdxNavigation(view: EditorView, detail: RawMdxNavDetail): void 
   });
 }
 
-export function SourceEditor({
+export function SOURCE_EDITOR_REACT_LAZY_ONLY({
   docName,
   ytext,
   provider,

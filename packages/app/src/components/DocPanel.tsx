@@ -15,13 +15,9 @@ const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'graph', label: 'Graph', icon: Network },
 ];
 
-export function loadGraphPanelModule() {
-  return import('@/components/GraphPanel');
-}
-
 const LazyGraphPanel = lazy(async () => {
-  const mod = await loadGraphPanelModule();
-  return { default: mod.GraphPanel };
+  const mod = await import('@/components/GraphPanel');
+  return { default: mod.GRAPH_PANEL_REACT_LAZY_ONLY };
 });
 
 interface DocPanelProps {

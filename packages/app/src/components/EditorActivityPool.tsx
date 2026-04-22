@@ -176,13 +176,9 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 
-export function loadSourceEditorModule() {
-  return import('@/editor/SourceEditor');
-}
-
 const LazySourceEditor = lazy(async () => {
-  const mod = await loadSourceEditorModule();
-  return { default: mod.SourceEditor };
+  const mod = await import('@/editor/SourceEditor');
+  return { default: mod.SOURCE_EDITOR_REACT_LAZY_ONLY };
 });
 
 interface EditorActivityPoolProps {
