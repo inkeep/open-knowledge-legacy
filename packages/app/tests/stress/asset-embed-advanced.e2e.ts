@@ -27,45 +27,6 @@ import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
-async function dropFileIntoEditor(
-  page: Page,
-  buffer: number[],
-  filename: string,
-  mime: string,
-): Promise<void> {
-  await page.evaluate(
-    ({ bytes, name, type }) => {
-      const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
-      if (!editor) throw new Error('no editor');
-      const file = new File([new Uint8Array(bytes)], name, { type });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      const rect = editor.getBoundingClientRect();
-      const cx = rect.left + Math.floor(rect.width / 2);
-      const cy = rect.top + Math.floor(rect.height / 2);
-      editor.dispatchEvent(
-        new DragEvent('dragover', {
-          dataTransfer: dt,
-          bubbles: true,
-          cancelable: true,
-          clientX: cx,
-          clientY: cy,
-        }),
-      );
-      editor.dispatchEvent(
-        new DragEvent('drop', {
-          dataTransfer: dt,
-          bubbles: true,
-          cancelable: true,
-          clientX: cx,
-          clientY: cy,
-        }),
-      );
-    },
-    { bytes: buffer, name: filename, type: mime },
-  );
-}
-
 async function getSourceText(page: Page): Promise<string> {
   return page.evaluate(() => {
     const provider = window.__activeProvider;
@@ -90,10 +51,42 @@ test.describe('asset-embed — advanced scenarios (SPEC §6 FR-1, FR-7)', () => 
     page,
   }) => {
     // Default maxBytes is 25 MB per FR-5. Drop a ~30 MB buffer to trip it.
-    const size = 30 * 1024 * 1024;
-    const oversized = Array.from({ length: size }, () => 0);
-
-    await dropFileIntoEditor(page, oversized, 'huge.bin', 'application/octet-stream');
+    // Allocate the Uint8Array INSIDE the browser context so the 30MB buffer
+    // doesn't have to traverse page.evaluate's structured-clone serializer
+    // (which turned the previous `Array.from({length: 30M}, () => 0)` shape
+    // into ~240MB of heap pressure + SIGABRT on the Node side).
+    await page.evaluate(
+      ({ size, name, type }) => {
+        const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
+        if (!editor) throw new Error('no editor');
+        const bytes = new Uint8Array(size);
+        const file = new File([bytes], name, { type });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const rect = editor.getBoundingClientRect();
+        const cx = rect.left + Math.floor(rect.width / 2);
+        const cy = rect.top + Math.floor(rect.height / 2);
+        editor.dispatchEvent(
+          new DragEvent('dragover', {
+            dataTransfer: dt,
+            bubbles: true,
+            cancelable: true,
+            clientX: cx,
+            clientY: cy,
+          }),
+        );
+        editor.dispatchEvent(
+          new DragEvent('drop', {
+            dataTransfer: dt,
+            bubbles: true,
+            cancelable: true,
+            clientX: cx,
+            clientY: cy,
+          }),
+        );
+      },
+      { size: 30 * 1024 * 1024, name: 'huge.bin', type: 'application/octet-stream' },
+    );
 
     // Wait for a sonner toast that names both the attempted size AND the
     // configured limit (P1.3 "no generic 'too large' phrase"). The toast
@@ -140,10 +133,11 @@ test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / 
 
     // The body at the new location carries a recomputed relative path.
     // Fetch via /api/document (bypasses debounce) to read live Y.Text.
+    // API response shape: { ok, docName, content } — NOT `text`.
     const docRes = await page.request.get(`/api/document?docName=archive/2026/${origDoc}`);
     expect(docRes.ok()).toBe(true);
-    const body = (await docRes.json()) as { text?: string };
-    const text = body.text ?? '';
+    const body = (await docRes.json()) as { content?: string };
+    const text = body.content ?? '';
     // From archive/2026/<name>.md, the image in docs/ is two levels up
     // and one across — posix.relative produces this exact shape
     // deterministically (unit test `managed-rename-rewrite.test.ts`
@@ -181,8 +175,8 @@ test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / 
 
     const docRes = await page.request.get(`/api/document?docName=archive/2026/${origDoc}`);
     expect(docRes.ok()).toBe(true);
-    const body = (await docRes.json()) as { text?: string };
-    const text = body.text ?? '';
+    const body = (await docRes.json()) as { content?: string };
+    const text = body.content ?? '';
     // The wiki-embed ref stays verbatim.
     expect(text).toContain('![[first-draft.png]]');
   });
