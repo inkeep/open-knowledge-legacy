@@ -25,9 +25,9 @@ Test-tier discipline: this file enumerates **acceptance-level** scenarios. Lower
 
 ---
 
-## Path P1 — Dogfooder drops binaries (G1, M1)
+## Path P1 — Dogfooder drops anything (G1, M1)
 
-Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor is dead to me for non-image assets."*
+Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor is dead to me for non-image assets."* — AND, after 2026-04-21 D-M flip: *"I drag my CSV in and it rejects me with a toast telling me to paste-into-a-code-fence; I just wanted a link to the file."* Post-D-M: any file drop under `maxBytes` accepts. Non-sniffable / unrecognized types become opaque markdown links (ecosystem norm: matches Obsidian, Logseq, Notion, Bear, iA, Roam, Craft). Only oversized files reject (see P1.3).
 
 ### P1.1 Drop a PDF from Finder into an open note ★
 
@@ -57,30 +57,32 @@ Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor i
 
 ---
 
-### P1.2 Drop a text file — actionable rejection (message A) ★
+### P1.2 Drop a text file — accepted as opaque markdown link ★
 
 **Setup.** Real browser. Temp file is a real `.csv` with plausible CSV bytes.
 
 **Action.** Drag-drop the CSV into a WYSIWYG editor.
 
 **Invariants.**
-1. No POST to `/api/upload` occurs (FileHandler rejects at client boundary) — OR if it reaches the server, server returns 400 with D-A strict reject.
-2. A toast appears containing the **exact** D-L message A: *"Text files (CSV, TXT, JSON, MD) aren't supported as binary drops. To include contents, paste into a code fence. To link to a text file in the repo, reference it with a regular markdown link."*
-3. No placeholder left in the doc — editor state byte-identical to pre-drop.
-4. No file written under content dir.
+1. `POST /api/upload` succeeds with 200 and returns `{ ok: true, src: "<basename>.csv", deduped: false }`.
+2. File `docs/<basename>.csv` exists on disk after response — real file, matches dropped bytes.
+3. Editor's `Y.Text('source')` contains literal `[<basename>.csv](<basename>.csv)` at the drop position (opaque markdown-link emit per FR-1a; `.csv` is not in `wikiEmbedExtensions` default).
+4. WYSIWYG shows a clickable link with the filename as label.
+5. Clicking the link triggers browser download (content-type not inline-renderable).
+6. No rejection toast.
 
-**Perturbation check.** If message A text changes to anything else (losing the actionable "paste into a code fence" guidance), invariant 2 catches it verbatim.
+**Perturbation check.** If D-M accept-all is silently reverted (e.g. the `ALLOWED_MIME_TYPES.has(detectedMime)` gate is re-added), invariant 1 fails with 400 "Unsupported file type." If the emit-dispatch regresses and emits `![[...]]` for text, invariant 3 catches the wiki-embed leak into the opaque path.
 
 **Edge-case siblings.**
-- P1.2a Drop `.txt` — message A fires.
-- P1.2b Drop `.json` — message A fires.
-- P1.2c Drop `.md` — message A fires.
-- P1.2d **Drop `.xyz` unknown extension with no magic-byte signature — message B fires per D-L two-message rule.** Message B exact: *"This file type isn't supported. Try a different file, or reference it with a markdown link: [label](path/to/file)."*
-- P1.2e Drop a file whose bytes sniff as PDF but whose extension is `.txt` — accepts (magic-byte wins per D-A); emit uses extension `.txt` → opaque markdown-link.
+- P1.2a Drop `.txt` — same opaque markdown-link treatment.
+- P1.2b Drop `.json` — same.
+- P1.2c Drop `.md` — same; does NOT interpret as a nested document (user who wants document-content can paste contents manually, per D-M user-learns-mental-model tradeoff).
+- P1.2d Drop `.xyz` unknown extension, bytes don't sniff to any known type — accepted; opaque markdown-link.
+- P1.2e Drop a file whose bytes sniff as PDF but extension is `.txt` — accepts; emit uses extension `.txt` → opaque markdown-link (extension is authoritative for emit-shape dispatch, regardless of sniff).
 
 ---
 
-### P1.3 Drop exceeds `maxBytes` — rejection with byte-size reason
+### P1.3 Drop exceeds `maxBytes` — only rejection path ★
 
 **Setup.** Default config (25MB `maxBytes`). Temp file is a 30MB video with real MP4 magic bytes.
 
@@ -88,11 +90,13 @@ Story killed: *"I drag a PDF in and get 'Unsupported file type' — the editor i
 
 **Invariants.**
 1. `POST /api/upload` returns 413 (or 400) identifying the violation (`"maxBytes"` category).
-2. Toast includes both the attempted file size AND the configured limit — not a generic "too large."
-3. No file written.
-4. No placeholder lingers.
+2. Toast includes both the attempted file size AND the configured limit in the message body — not a generic "too large" phrase. (Exact copy flexibility — specific bytes must appear; exact wording is implementation choice.)
+3. No file written under content dir after rejection.
+4. No widget-decoration placeholder lingers in the editor.
 
-**Perturbation check.** If size check fires after bytes are written to disk (insecure path), invariant 3 catches the orphan file.
+**Perturbation check.** If size-check fires AFTER bytes are written to disk (insecure path), invariant 3 catches the orphan file. If the toast is generic ("Too large") without specific bytes, invariant 2 catches it. Per D-M, this is now the ONLY type-based rejection path in the spec — regressions show up here directly.
+
+**Note.** Promoted to top-10 per M2 in Session 2 cycle-2 assessment. Distinct from P1.1/P1.2 bug class (size-check layer vs type-dispatch layer); not covered by any other top-10 scenario.
 
 ---
 
@@ -179,34 +183,32 @@ Start dev server against this directory.
 
 ## Path P4 — Operator tuning (G4, M5)
 
-### P4.1 Operator widens allowlist and size cap
+### P4.1 Operator bumps `maxBytes` — config-driven, no rebuild
 
-**Setup.** Operator edits `.open-knowledge/config.yml` (server off):
+**Setup.** User-operator (OK is local-first; operator = user) edits `.open-knowledge/config.yml` (server off):
 ```yaml
 upload:
   maxBytes: 104857600     # 100MB
-  allowedMimeTypes:
-    - image/png
-    - image/jpeg
-    - application/zip
-    - font/woff2
 ```
 Start server. Open browser.
 
 **Action.**
-1. Drop 60MB MP4 — should REJECT (MP4 not in custom allowlist).
-2. Drop 80MB ZIP — should ACCEPT (under 100MB, in allowlist).
+1. Drop 30MB MP4 — under default 25MB this would reject; under 100MB config it should ACCEPT.
+2. Drop 110MB ZIP — still exceeds cap; should REJECT with byte-size-specific message (P1.3-class).
 
 **Invariants.**
-1. Step 1: POST returns 400. Toast fires D-L message B (operator narrowed — no text-ext). No file written.
-2. Step 2: POST returns 200 within NFR-1. File `docs/notes-archive.zip` on disk. Inserted markdown `[notes-archive.zip](notes-archive.zip)` per emit-matrix opaque-always-markdown-link.
+1. Step 1: POST returns 200 within NFR-1. File `docs/<basename>.mp4` on disk. Inserted markdown `![[<basename>.mp4]]` (MP4 is in `wikiEmbedExtensions` default → wiki-embed emit).
+2. Step 2: POST returns 413 (or 400) with byte-size-specific toast naming both attempted size (110MB) and configured limit (100MB). No file written.
 3. No rebuild of server binary needed — just config edit + restart.
 
-**Perturbation check.** If `upload.*` config isn't wired, invariant 1 fails (MP4 accepted under old hardcoded allowlist).
+**Perturbation check.** If `upload.maxBytes` config isn't wired, invariant 1 fails (MP4 rejected under hardcoded 25MB). If `maxBytes` is ignored entirely, invariant 2 fails (110MB accepted when it shouldn't be).
 
 **Edge-case siblings.**
-- P4.1a Invalid `allowedMimeTypes` — server startup logs Zod validation error, refuses to start with clear message. Config file unmodified.
+- P4.1a Invalid `upload.*` config shape (e.g., `maxBytes: "not a number"`) — server startup logs Zod validation error, refuses to start with clear message. Config file unmodified.
 - P4.1b `upload.emitFormat: 'markdown-image'` override — drop PNG, emits `![foo](foo.png)` not `![[foo.png]]`.
+- P4.1c `upload.attachmentFolderPath: 'attachments'` — drop lands in `attachments/<basename>` instead of colocated.
+
+**Note on scope change.** Session 2 cycle-1 draft of P4.1 tested `allowedMimeTypes` narrow + MP4 rejection against custom allowlist. Session 2 cycle-2 removed `allowedMimeTypes` from FR-5 per D-M accept-all + no `allowedMimeTypes` config. P4.1 simplified to `maxBytes` control only.
 
 ---
 
@@ -251,6 +253,25 @@ docs/first-draft.png       # real PNG, 100KB
 2. Polled on each observer fire (not time-based), ref-resolution outcome is always "hit" — never "not found."
 
 **Perturbation check.** If basename index is rebuilt out of order (or if FR-6 wiring forgets asset DiskEvents), some refs transiently fail to resolve — observer-fire poll catches the gap.
+
+### P5.3 Markdown-image eventual-consistency under concurrent rename + asset-move ★
+
+**Setup.** Config has `upload.emitFormat: 'markdown-image'` (the F8-absorbed opt-out path — now reliable post-FR-1a algorithmic rewrite). Doc `docs/notes.md` contains `![alt](photo.png)`. Asset `docs/photo.png` exists (100KB real PNG).
+
+**Action.** In a rapid fs-event burst (within one file-watcher debounce window): (a) rename the doc via `managed-rename-rewrite` from `docs/notes.md` → `archive/notes.md`; (b) create a second asset `docs/diagram.png` (real PNG, 50KB).
+
+**Quiescence.** Wait for managed-rename transactions to settle AND CC1 asset signals to drain. Use **condition-based wait** (poll until queue empty + last-event timestamp older than 100ms debounce window), NOT a wall-clock `wait(N)` — explicitly non-flaky per /tdd's "never sleep" rule.
+
+**Invariants.**
+1. Post-quiescence: `archive/notes.md` body contains correctly recomputed relative path to `docs/photo.png` (i.e., `![alt](../docs/photo.png)` or equivalent depending on depth).
+2. Image renders via fetch: network request returns 200, bytes match original `docs/photo.png`.
+3. The new `docs/diagram.png` is indexed in the basename index and reachable via `resolveEmbed('diagram.png', '<any-sourcePath>')`.
+4. No orphan asset at the old doc's co-located path (asset did NOT move per D-K refs-only).
+5. No intermediate state where `archive/notes.md` contains BOTH the old path and the new path (write is atomic per managed-rename CRDT semantics).
+
+**Perturbation check.** If FR-7's absolute-path-leave-unchanged branch is buggy, invariant 1 catches a path that got rewritten when it shouldn't have. If the basename-index rebuild loses the new `diagram.png` event (FR-6 misses asset DiskEvents), invariant 3 fails. If the path recompute has an off-by-one under burst conditions, invariant 2 fails (image 404s).
+
+**Why this scenario matters.** P5.2 tests wiki-embed architectural immunity (happy path). The `emitFormat: 'markdown-image'` opt-out is the F8-absorbed path — users opt in for GitHub-compat per R9. Without P5.3, regressions in FR-7's path recompute under burst conditions would land silently and only surface when a user notices a broken image days later. Per M4 in Session 2 cycle-2 assessment: the eventual-consistency assertion is deterministic (quiescence is well-defined); the bounded-time assertion would be flaky. This scenario adds the former.
 
 ---
 
@@ -336,6 +357,10 @@ In descending order of what-would-break-most-visibly-if-it-regressed:
 8. **P5.2** Wiki-embed immunity under concurrent burst — D-E architectural-immunity regression guard.
 9. **P6.1** Multi-user CRDT propagation of new embed — proves FR-3d writes through CRDT.
 10. **P6.2** Multi-user basename-index invalidation via CC1 — proves FR-6 reused the primitive correctly.
+11. **P1.3** Oversized-file rejection with byte-size-specific toast — the only rejection path in the spec post-D-M; distinct bug class (size-check layering) not covered by other scenarios. Promoted from #11 push-down to top-list per M2 in Session 2 cycle-2 assessment.
+12. **P5.3** Markdown-image eventual-consistency under concurrent burst — guards the F8-absorbed opt-out path (`emitFormat: 'markdown-image'`) against silent FR-7 regressions. Promoted per M4.
+
+Note: "top 10" is a soft cap; post-Session-2-cycle-2 this list is 12, reflecting M2 + M4 resolutions. If you treat it as hard, P1.3 (rare happy path) would cut before P5.3 (covers a genuine regression surface). Don't — the extra ~2 scenarios are cheap at E2E tier and cover bug classes nothing else catches.
 
 Everything else pushes to lower tiers below.
 
@@ -358,26 +383,44 @@ These would be ceremony as E2E; they belong at cheaper tiers where each test run
 
 ---
 
-## Phase 2 coordination
+## Phase 2 coordination — permanent fallback markers (L4 B resolution)
 
-Several P0 invariants will flip when `specs/2026-04-08-typed-component-nodes/` Phase 2 ships (D-F read-time promotion, D-C extension-dispatch). Marked with *(Phase 2)* in the scenarios above:
+Per L4-challenger in Session 2 cycle-2: **cross-spec coupling by "Phase 2 edits this file" convention was too fragile.** Replaced with permanent-fallback-marker pattern: P0 scenarios assert the plain-link fallback behavior explicitly as the `[P0-phase1-fallback]` path and persist as fallback-path regression guards indefinitely. Phase 2 **additively writes new scenarios to its own spec** for typed-component rendering — it does NOT edit THIS file.
 
-- P1.1 invariant 5 "plain-link fallback" → "PDFViewer component visible"
-- P1.1a / P1.1b / P1.1c (video/audio variants) — same flip to Video / Audio components
-- P6.1 invariant 2 — same flip
+**Scenarios that assert the `[P0-phase1-fallback]` behavior:**
+
+- P1.1 invariant 5: *"WYSIWYG shows a plain-link fallback with visible text 'draft.pdf' that is clickable"* — stable forever. When Phase 2 ships PDFViewer, this invariant still holds: the plain-link fallback remains the P0 emit shape, guarded as a regression test against "Phase 2 broke the fallback path."
+- P1.1a (MP4), P1.1b (MP3), P1.1c (WebM), P1.1d (ZIP), P1.1e (fonts) — all assert opaque link / plain-link rendering as the stable P0 behavior.
+- P6.1 invariant 2: *"User B's WYSIWYG re-renders the plain-link fallback for the new embed"* — stable.
 
 **Storage shape (`![[file.ext]]`) does NOT change at Phase 2** — that's the point of D-F. Zero content migration.
 
-**Coordination protocol.** When Phase 2 lands, update THESE assertions in THIS file (and corresponding test code) to assert the typed-component render instead of plain-link fallback. Do not rewrite scenarios; do not make current assertions Phase-2-agnostic. The typed-component-nodes spec's In-Scope list should include "update E2E assertions in `specs/2026-04-16-editor-asset-and-embed-surface/evidence/e2e-acceptance-scenarios.md` at [marked lines]."
+**Phase 2's scope of NEW scenarios** (authored in `specs/2026-04-08-typed-component-nodes/` when that spec drafts):
+
+- "Drop PDF in Phase-2-enabled editor → PDFViewer component renders with native controls"
+- "Drop MP4 → Video component renders with playback controls"
+- "Drop MP3 → Audio component renders with playback controls"
+- etc.
+
+These are ADDITIVE. No edits to this file needed; the P0 fallback assertions stay as they are. Regression safety: if Phase 2 introduces a bug that silently degrades back to plain-link (e.g., feature flag misconfigured in production), the P0 assertions still pass — but Phase 2's own scenarios fail, localizing the bug. Under-coverage impossible: both fallback AND typed-component behaviors are independently asserted.
 
 ---
 
 ## Resolved-in-session notes
 
-These were flagged as "unsettled" during the /tdd + /gtm:analyze pass (2026-04-21) and resolved before this file landed:
+Captures the evolution of this file across two resolution cycles on 2026-04-21. The file now reflects all Session 2 cycle-2 user decisions.
+
+**Session 2 cycle-1 (AM 2026-04-21 — /tdd + /gtm:analyze):**
 
 - **Dedup toast template** — pinned as `"Already at <path> — reusing."` per D-B. Asserted in P3.1 invariant 2.
-- **FR-1 rejection copy coverage** — resolved via D-L two-message rule. Message A for text-ext, Message B for all other non-sniffable. Asserted in P1.2 + P1.2d.
-- **D-E rename race testability** — write P5.2 (wiki-embed immunity, deterministic). Skip markdown-image bound (inherently flaky under real fs-events; D-E accepts temporary incoherence).
-- **R9 GitHub export** — no new scenario; P2.2 doubles as escape-hatch validator (via `useMarkdownLinks: true` / `emitFormat: 'markdown-image'` producing GitHub-renderable shape).
-- **Phase 2 promotion coordination** — protocol documented above; coordination lives in typed-component-nodes spec's In-Scope when it's drafted.
+- **D-E rename race testability** — P5.2 (wiki-embed immunity) added as deterministic test.
+- **R9 GitHub export** — P2.2 doubles as escape-hatch validator via `useMarkdownLinks: true` / `emitFormat: 'markdown-image'`.
+
+**Session 2 cycle-2 (PM 2026-04-21 — post-audit, user escalation resolutions):**
+
+- **D-L two-message rule → REMOVED, D-A → REFUTED by D-M.** User observed this is overengineering; no major editor does type-based rejection UX (Obsidian / Logseq / Notion / Bear / iA / Roam / Craft all accept-all). Refutation also dissolves M1 admin-narrowed case (OK is local-first; no admin distinct from user). P1.2 + P1.2d scenarios rewritten as accept-with-opaque-emit rather than rejection.
+- **M2 E2E top-10 budget** → soft cap. P1.3 promoted alongside P5.3 (now 12 scenarios; cheap at E2E tier, covers distinct bug classes).
+- **M3 `warnBytes`** → DELETED from FR-5. No behavior contract, no journey, no dogfood signal. Future Work Explored entry added in SPEC §15.
+- **M4 P5.3 eventual-consistency** → ADDED as sibling of P5.2. Guards F8-absorbed `emitFormat: 'markdown-image'` opt-out from silent FR-7 regression under concurrent fs-event burst.
+- **L4 Phase 2 coordination** → flipped to permanent-fallback-marker pattern. P0 assertions stay as regression guards; Phase 2 adds its own scenarios in `specs/2026-04-08-typed-component-nodes/` additively.
+- **Cross-cutting greenfield principle** → no action per user; CLAUDE.md §118 already names the "greenfield directive (2026-04-13)" as governance.

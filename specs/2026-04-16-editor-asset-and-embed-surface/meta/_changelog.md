@@ -258,3 +258,60 @@ All Challenger MODERATE findings (M1-M5) plus L4 and a cross-cutting meta-observ
 
 Step 7 complete pending user resolution of the above. Step 8 (verify + finalize) blocked on those resolutions.
 
+---
+
+## 2026-04-21 — Session 2 cycle-2 (PM): user resolutions applied
+
+### Biggest decision: D-A refuted, D-L removed, D-M locked (accept-all)
+
+User challenged the entire rejection-UX surface with the question *"what's the point of these toast messages? do other editors do this?"* Ecosystem check: every comparable editor (Obsidian, Logseq, Notion, Bear, iA Writer, Roam, Craft, Typora) accepts all file drops and emits a link for unrecognized types. OK as outlier produced overengineered rejection UX.
+
+Resolution:
+- **D-A → REFUTED by D-M.** Strict magic-byte-only reject stance overturned. User mental-model argument ("text drops should redirect to paste-into-code-fence") was paternalistic.
+- **D-L → REMOVED.** Two-message rule, admin-narrowed carve-out, and Message A/B constants all dissolve.
+- **D-M → LOCKED.** Accept all file drops up to `maxBytes`. Non-sniffable / unrecognized types emit as opaque markdown-link per FR-1a. SVG extension-fallback preserved for NFR-3 `<img>`-only security.
+- **M1 admin-narrowed case → dissolved.** OK is local-first (Electron desktop, single-user per install); the "admin vs user" distinction doesn't exist in the product model. User IS the operator.
+- **`allowedMimeTypes` config → deleted from FR-5.** No runtime gate consumer post-D-M. Added Future Work Explored entry "Security-focused upload allowlist" (revisit if multi-tenant deployment becomes relevant).
+
+### M2 — P1.3 promoted to top-list (soft cap)
+
+"Top 10 E2E budget" was a soft guide, not a hard constraint. P1.3 (oversized-file rejection with byte-size-specific toast) covers a distinct bug class (size-check layer vs type-dispatch layer) not caught by any other scenario. Especially load-bearing post-D-M since it's the ONLY rejection path in the spec.
+
+Resolution: promoted P1.3 as #11 in the top-list. Along with P5.3 (see M4 below), the list is now 12 scenarios. Documented as soft-cap in the budget section.
+
+### M3 — `warnBytes` deleted from FR-5
+
+Config field existed with no behavior contract. No dogfood signal on whether 5-25MB uploads produce perceptible sync lag. Per greenfield "fix or remove": remove.
+
+Resolution: deleted `warnBytes` from FR-5 field list. Added Future Work Explored entry "Soft-limit warn UX (5-25MB range)" with trigger "first user report that 5-25MB drops feel slow or unexpected."
+
+### M4 — P5.3 eventual-consistency scenario added
+
+D-E LOCKED accepts "temporary incoherence for markdown-image during bursts." But **eventual-consistency (post-quiescence correctness) is a different, deterministic assertion** that wasn't tested. The F8-absorbed `emitFormat: 'markdown-image'` opt-out path had no acceptance-tier guard for FR-7 regressions under concurrent rename + asset-create bursts.
+
+Resolution: added P5.3 scenario as sibling of P5.2. Condition-based quiescence wait (not wall-clock sleep, per /tdd flakiness rule). Invariants: post-quiescence path correctness, image renders, new asset indexed, no orphan. Promoted to top-list as #12.
+
+### L4 — Phase 2 coordination: permanent fallback markers
+
+Cross-spec coupling by convention ("Phase 2 author edits this file's assertions") was fragile. Flipped to permanent-fallback-marker pattern per challenger's Option B:
+- P0 fallback assertions stay indefinitely as `[P0-phase1-fallback]` regression guards.
+- Phase 2 additively writes new scenarios to its own `specs/2026-04-08-typed-component-nodes/` — does NOT edit this spec's evidence file.
+- Regression safety: if Phase 2 introduces a bug silently degrading back to plain-link, Phase 2's own scenarios fail; P0 assertions still pass. Clean bug localization.
+
+Resolution: rewrote the Phase 2 Coordination section in `evidence/e2e-acceptance-scenarios.md` to document the permanent-marker approach and enumerate which scenarios carry the fallback guards.
+
+### Cross-cutting (no action)
+
+Greenfield principle articulation: already named in CLAUDE.md §118 as "(greenfield directive, 2026-04-13)" + elaborated in PRECEDENTS.md §3. Specific corollary "no deferred tech debt" is implicit in the directive. No additional rule needed.
+
+### Net scope delta from cycle-1 to cycle-2
+
+- SPEC.md: §3 status updated, FR-1 rewritten (accept-all), FR-5 reduced to 6 fields (removed `warnBytes` + `allowedMimeTypes`), NFR-3 unchanged (SVG guard preserved), §9 D1 + D30 rows updated, §10 D-A refuted + D-L removed + D-M added, §13 In Scope simplified (no rejection-copy constants), §14 R1 + R7 re-rationaled, §15 Future Work gained 2 Explored entries, §16 SCOPE + STOP_IF updated.
+- evidence/e2e-acceptance-scenarios.md: P1.2 rewritten (accept → opaque markdown-link), P1.2a-e updated siblings, P1.3 rewrite and promote, P4.1 simplified (just `maxBytes`), P5.3 added, Phase 2 coordination rewritten (permanent markers), Resolved-in-session notes expanded, top-list updated (12 scenarios).
+- `evidence/current-shipped-state.md`: no change (factual record of current baseline unchanged).
+- `meta/_changelog.md`: this entry.
+
+### Remaining before Step 8 finalize
+
+None. All MODERATE + LOW design escalations resolved. Ready for Step 8 mechanical checks + resolution status verification + baseline commit advance.
+
