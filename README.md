@@ -4,7 +4,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11
+- [Bun](https://bun.sh) >= 1.3.13
 - Git
 
 ## Quick Start
@@ -130,7 +130,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11
+- [Bun](https://bun.sh) >= 1.3.13
 - Git
 
 ## Quick Start
@@ -256,7 +256,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11
+- [Bun](https://bun.sh) >= 1.3.13
 - Git
 
 ## Quick Start
@@ -382,7 +382,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11
+- [Bun](https://bun.sh) >= 1.3.13
 - Git
 
 ## Quick Start

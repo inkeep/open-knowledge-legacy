@@ -1,6 +1,6 @@
 # Open Knowledge
 
-Bun monorepo (`bun@1.3.11`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
+Bun monorepo (`bun@1.3.13`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
 
 ## Monorepo Structure
 
@@ -1125,7 +1125,7 @@ NEVER call `write_document` or `edit_document` without first navigating the prev
 
 # Open Knowledge
 
-Bun monorepo (`bun@1.3.11`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
+Bun monorepo (`bun@1.3.13`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
 
 ## Monorepo Structure
 
