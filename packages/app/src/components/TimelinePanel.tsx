@@ -20,7 +20,7 @@ import {
   FileArchive,
   RotateCcw,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -259,11 +259,18 @@ interface SummaryBulletsProps {
  */
 function SummaryBullets({ summaries }: SummaryBulletsProps) {
   const [expanded, setExpanded] = useState(false);
+  // `useId` is React 19's idiomatic source for associating the expander
+  // `<button aria-controls>` with its `<ul>` — each row instance gets its own
+  // unique id, so multiple TimelinePanel rows mounted on one page don't
+  // collide. NVDA and JAWS use this association to announce which region
+  // just grew/shrank when the user activates "Show N more"; without it the
+  // user only hears "expanded" with no cue about what changed.
+  const listId = useId();
   if (summaries.length === 0) return null;
   const [first, ...rest] = summaries;
   return (
     <div className="mt-0.5">
-      <ul className="list-none">
+      <ul id={listId} className="list-none">
         <li className="text-xs text-foreground/90">
           <span aria-hidden="true">• </span>
           {first}
@@ -281,6 +288,7 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
         <button
           type="button"
           aria-expanded={expanded}
+          aria-controls={listId}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           onClick={(e) => {
             e.stopPropagation();
