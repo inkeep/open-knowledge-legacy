@@ -53,7 +53,8 @@ packages/desktop/
 │   │   ├── window-manager.ts      # createProjectWindow — spawns BrowserWindow + utility
 │   │   ├── navigator-window.ts    # createNavigatorWindow — persistent launcher
 │   │   ├── state-store.ts         # electron-store for recents + window bounds
-│   │   └── shell-allowlist.ts     # shell.openExternal scheme allowlist (D47)
+│   │   ├── shell-allowlist.ts     # shell.openExternal scheme allowlist (D47 + Open-in-Agent)
+│   │   └── ipc-handlers.ts        # pure handlers: detect-protocol, spawn-cursor, record-handoff
 │   ├── preload/
 │   │   └── index.ts               # contextBridge.exposeInMainWorld('okDesktop', ...)
 │   ├── utility/
@@ -106,7 +107,19 @@ File-scoped allowlist for direct IPC access (the wrapper implementations themsel
 
 Subscription methods on the bridge (`onProjectSwitched`, `onMenuAction`, etc.) **must** use the preload-side listener-wrapper pattern — the contextBridge wraps callbacks, so passing the renderer's callback reference directly to `ipcRenderer.removeListener` silently fails ([electron/electron#33328](https://github.com/electron/electron/issues/33328)). The existing bridge in `src/preload/index.ts` is the reference.
 
-`shell.openExternal` is proxied through main with an explicit scheme allowlist (`https | http | mailto | openknowledge`) per D47 to close the Shabarkin 2022 "1-click RCE" class via OS-native schemes. Adding a new scheme requires editing `src/main/shell-allowlist.ts` and updating its test.
+`shell.openExternal` is proxied through main with an explicit scheme allowlist (`https | http | mailto | openknowledge | claude | codex | cursor`) per D47 + the [[specs/2026-04-21-open-in-agent-desktop/SPEC|Open-in-Agent extension]] to close the Shabarkin 2022 "1-click RCE" class via OS-native schemes. Adding a new scheme requires editing `src/main/shell-allowlist.ts` and updating its exact-set test. The drift-detector test in `tests/main/shell-allowlist.test.ts` imports `KNOWN_TARGETS` from `packages/app/src/lib/handoff/targets.ts` and fails if a target's scheme is not covered by `ALLOWED_SCHEMES`.
+
+## Open-in-Agent IPC channels
+
+Three channels added for the [[Open in Agent Desktop|Open-in-Agent]] handoff feature (SPEC `2026-04-21-open-in-agent-desktop`). Handlers are pure injectable functions in `src/main/ipc-handlers.ts` (registered from `main/index.ts`, the only file on the D19 direct-IPC allowlist). The same channels are mirrored in `src/shared/bridge-contract.ts` and `packages/core/src/desktop-bridge.ts` so the typed `window.okDesktop.shell.*` surface stays in sync via the contract-equality integration test.
+
+| Channel                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ok:shell:detect-protocol` | Probe whether `<scheme>://` has a registered handler. macOS + Windows use `app.getApplicationInfoForProtocol` (2 s timeout); Linux falls back to `xdg-mime query default x-scheme-handler/<scheme>` because the Electron API is mac+win only. Returns `{ installed, displayName? }`; any failure collapses to `{ installed: false }`.                                                                                                                                                                                          |
+| `ok:shell:spawn-cursor`    | Step 1 of Cursor's two-step handoff — spawn `cursor <projectDir>` so the workspace is open before the `cursor://` prompt URL fires. Binary resolution prefers `getApplicationInfoForProtocol('cursor://').path`, falls back to `which cursor` / `where cursor` (500 ms budget). Spawn uses argv array + `shell: false` + 2 s timeout. Deliberately a separate channel from `ok:shell:open-external` — the threat model is command allowlisting with argument-injection + PATH-hijacking concerns, not URL-scheme allowlisting. |
+| `ok:handoff:record`        | Append one JSONL line per dispatch to `~/.open-knowledge/stats.jsonl`. Local-only telemetry; failures are logged and swallowed so dispatch never depends on telemetry success. Zero network.                                                                                                                                                                                                                                                                                                                                   |
+
+The Cursor two-step step 1 is wired on the Electron host only — the web host renders the Cursor row disabled-with-tooltip ("Cursor handoff requires the desktop build") per E4 DIRECTED. Claude and Codex dispatch via `ok:shell:open-external` with the URL builders in `packages/core/src/handoff/`.
 
 ## Lifecycle primitives
 
