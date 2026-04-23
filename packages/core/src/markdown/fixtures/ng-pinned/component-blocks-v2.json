@@ -47,11 +47,11 @@
   {
     "id": "case-6",
     "name": "flush-left-nested-jsx-container",
-    "input": "<Steps>\n<Step>\n\nFirst step\n\n</Step>\n<Step>\n\nSecond step\n\n</Step>\n</Steps>\n",
+    "input": "<Callout type=\"note\">\n\n<Accordion title=\"Details\">\n\nNested body\n\n</Accordion>\n\n</Callout>\n",
     "expectedOutput": null,
     "idempotent": true,
     "highlighted": true,
-    "note": "HIGHLIGHTED: nested JSX in a Steps container. Flush-left handler emits consistent blank-line separation between children."
+    "note": "HIGHLIGHTED (US-012 rewrite): nested JSX in a 5-pack composition (Callout > Accordion). Flush-left handler emits consistent blank-line separation between children. Was `<Steps>/<Step>` pre-US-012 rewrite; semantics identical."
   },
   {
     "id": "case-7",

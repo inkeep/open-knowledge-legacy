@@ -104,10 +104,10 @@ describe('Guard precision: valid MDX survives protectFromMdx() unchanged', () =>
       '<Image src="https://example.com?a=1&b=2" />',
       '<Chart data="https://api.example.com/v1/data" />',
       '<Link href="/path/to/page" />',
-      '<Card\n  variant="large"\n/>',
+      '<Widget\n  variant="large"\n/>',
       '<Widget\n  title="hello"\n  data="https://api.com/v1"\n/>',
       '<Callout type="warning">\n\nContent here\n\n</Callout>',
-      '<Tab label="First">\n\nContent\n\n</Tab>',
+      '<Accordion title="First">\n\nContent\n\n</Accordion>',
     ];
 
     for (const mdx of valid) {

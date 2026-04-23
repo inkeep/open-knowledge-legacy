@@ -108,17 +108,17 @@ describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures
     {
       id: 'M01',
       name: 'unclosed-paired-tag',
-      input: '# Doc\n\n<Card>\n\nContent that never closes.\n\n# Later\n',
+      input: '# Doc\n\n<Widget>\n\nContent that never closes.\n\n# Later\n',
     },
     {
       id: 'M02',
       name: 'tag-mismatch-open-close',
-      input: '# Doc\n\n<Card>Content</Callout>\n\n# Later\n',
+      input: '# Doc\n\n<Widget>Content</Callout>\n\n# Later\n',
     },
     {
       id: 'M03',
       name: 'nested-unclosed-inner',
-      input: '# Doc\n\n<Steps>\n\n<Step>\n\nForgot to close\n\n</Steps>\n',
+      input: '# Doc\n\n<Outer>\n\n<Inner>\n\nForgot to close\n\n</Outer>\n',
     },
     {
       id: 'M04',
@@ -138,7 +138,7 @@ describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures
     {
       id: 'M07',
       name: 'double-open-same-tag',
-      input: '# Doc\n\n<Card><Card>nested open\n\n</Card>\n',
+      input: '# Doc\n\n<Widget><Widget>nested open\n\n</Widget>\n',
     },
     {
       id: 'M08',

@@ -84,18 +84,18 @@ describe('parse-health metrics', () => {
   test('incrementJsxRenderFailure keys by clamped descriptor name', () => {
     incrementJsxRenderFailure('Callout');
     incrementJsxRenderFailure('Callout');
-    incrementJsxRenderFailure('Card');
+    incrementJsxRenderFailure('Image');
     incrementJsxRenderFailure('wildcard');
     const h = getParseHealth();
-    expect(h.jsxRenderFailure).toEqual({ Callout: 2, Card: 1, wildcard: 1 });
+    expect(h.jsxRenderFailure).toEqual({ Callout: 2, Image: 1, wildcard: 1 });
   });
 
   test('incrementJsxAutoConvertFailed keys by clamped descriptor name', () => {
     incrementJsxAutoConvertFailed('wildcard');
     incrementJsxAutoConvertFailed('wildcard');
-    incrementJsxAutoConvertFailed('Tabs');
+    incrementJsxAutoConvertFailed('Video');
     const h = getParseHealth();
-    expect(h.jsxAutoConvertFailed).toEqual({ wildcard: 2, Tabs: 1 });
+    expect(h.jsxAutoConvertFailed).toEqual({ wildcard: 2, Video: 1 });
   });
 
   test('getParseHealth returns defensive copies of jsx counter objects', () => {

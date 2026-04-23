@@ -8,13 +8,23 @@
  * enforce FR-5: a pristine ancestor with ANY dirty descendant MUST go
  * through the reconstruction path so the edit reaches the serialized output.
  *
- * PBT: generate nested jsxComponent trees (Steps→Step, Tabs→Tab,
- * Accordions→Accordion, Cards→Card, Card→Card+inner content), mark a
- * random subset of descendants `sourceDirty=true`, serialize, re-parse,
- * and assert that every dirty descendant's injected edit appears in the
- * serialized output. A regression in `hasDirtyDescendant`'s walk (missed
- * node type, broken short-circuit, jsxInline handling wrong) would surface
- * as silent loss of descendant edits.
+ * PBT: generate nested jsxComponent trees from the 5-pack nested-composition
+ * fixtures (Callout>Accordion, Accordion>Callout, Accordion>Accordion,
+ * Callout>Callout, Callout-collapsible>Accordion), mark a random subset of
+ * descendants `sourceDirty=true`, serialize, re-parse, and assert that
+ * every dirty descendant's injected edit appears in the serialized output.
+ * A regression in `hasDirtyDescendant`'s walk (missed node type, broken
+ * short-circuit, jsxInline handling wrong) would surface as silent loss of
+ * descendant edits.
+ *
+ * ## US-012 (D-MF18) restoration
+ *
+ * Pre-US-012 this file targeted fumadocs compound containers (Steps, Tabs,
+ * Cards, Accordions). Those descriptors were cut in US-003 per the 5-pack
+ * narrow. `D-MF18` reversed NG25 — nested compositions of the 5-pack
+ * (jsxComponent with `content: 'block*'`) still exercise the
+ * hasDirtyDescendant walk. Fixtures rewritten to cover the 5-pack shapes;
+ * invariant unchanged.
  *
  * SPEC §7.1 I16.
  */
@@ -27,12 +37,14 @@ import { assertAcrossSeeds, mdManager, NUM_RUNS } from './helpers';
 
 const fixtures = loadBuiltInFixtures();
 
-// Input corpus: the nested-container fixtures. These all have jsxComponent
-// descendants inside jsxComponent containers, which is the shape the walk
-// must handle correctly.
-const nestedFixtures = fixtures.filter((f) =>
-  ['Cards', 'Steps', 'Tabs', 'Accordion'].includes(f.componentName),
-);
+// Input corpus: the 5-pack nested-composition fixtures (US-012 / D-MF18).
+// These all have jsxComponent descendants inside jsxComponent containers —
+// the shape the hasDirtyDescendant walk must handle correctly under
+// jsxComponent `content: 'block*'` (D1). Pre-US-012 this filter targeted
+// compound fumadocs containers (Cards/Steps/Tabs/Accordions); those were
+// cut in US-003. The 5-pack still carries the structural invariant via
+// (Callout|Accordion) {in} (Callout|Accordion) shape combinations.
+const nestedFixtures = fixtures.filter((f) => f.componentName.startsWith('Nested-'));
 
 /**
  * Collect every jsxComponent node into a flat list with its path (indices
@@ -135,32 +147,61 @@ describe('I16 — Nested-dirty correctness PBT', () => {
 });
 
 describe('I16 — Nested-dirty deterministic pin', () => {
-  // Explicit regression pin: Steps with a dirty inner Step. If
-  // hasDirtyDescendant returns false for a dirty grandchild, the Steps
-  // container emits its stale sourceRaw and the Step's edit is silently lost.
-  test('Steps > dirty Step: descendant edit appears in serialized output', () => {
+  // Explicit regression pin (US-012 / D-MF18): Callout wrapping a dirty
+  // inner Accordion. If hasDirtyDescendant returns false for the dirty
+  // descendant, the Callout container emits its stale sourceRaw and the
+  // Accordion's edit is silently lost.
+  test('Callout > dirty Accordion: descendant edit appears in serialized output', () => {
     const input =
-      '<Steps>\n\n<Step>\n\nOriginal first step\n\n</Step>\n\n<Step>\n\nOriginal second step\n\n</Step>\n\n</Steps>\n';
+      '<Callout type="note">\n\nOuter intro\n\n<Accordion title="Original title">\n\nOriginal inner content\n\n</Accordion>\n\nOriginal outro\n\n</Callout>\n';
     const tree = mdManager.parse(input);
 
-    // Find first Step descendant and mark dirty with an injected marker.
+    // Find the Accordion descendant and mark dirty with an injected marker.
     const paths = collectJsxComponentPaths(tree);
-    expect(paths.length).toBeGreaterThanOrEqual(3); // Steps + 2 Step
+    expect(paths.length).toBeGreaterThanOrEqual(2); // Callout + inner Accordion
 
-    // paths[0] = Steps (outer); paths[1] = first Step; paths[2] = second Step.
-    const firstStep = nodeAtPath(tree, paths[1]);
-    expect(firstStep?.type).toBe('jsxComponent');
-    if (firstStep?.attrs) {
-      firstStep.attrs.sourceDirty = true;
-      const props = (firstStep.attrs.props ?? {}) as Record<string, unknown>;
+    // paths[0] = outer Callout; paths[1] = inner Accordion.
+    const accordion = nodeAtPath(tree, paths[1]);
+    expect(accordion?.type).toBe('jsxComponent');
+    expect(accordion?.attrs?.componentName).toBe('Accordion');
+    if (accordion?.attrs) {
+      accordion.attrs.sourceDirty = true;
+      const props = (accordion.attrs.props ?? {}) as Record<string, unknown>;
       props.title = 'INJECTED-EDIT-MARKER';
-      firstStep.attrs.props = props;
+      accordion.attrs.props = props;
     }
 
     const output = mdManager.serialize(tree);
     expect(output.includes('INJECTED-EDIT-MARKER')).toBe(true);
-    // And the second Step's original content must still be present too
-    // (pristine siblings unaffected by dirty sibling).
-    expect(output.includes('Original second step')).toBe(true);
+    // And the outer Callout's original intro/outro text must still be
+    // present (pristine siblings unaffected by dirty descendant).
+    expect(output.includes('Outer intro')).toBe(true);
+    expect(output.includes('Original outro')).toBe(true);
+  });
+
+  // Second pin: Callout-collapsible (D-MF17 foldable Callout) wrapping a
+  // nested Accordion. Exercises the hasDirtyDescendant walk under the
+  // specific foldable-Callout shape introduced in US-010.
+  test('Callout-collapsible > dirty Accordion: descendant edit survives', () => {
+    const input =
+      '<Callout type="warning" collapsible defaultOpen>\n\nFoldable outer\n\n<Accordion title="Inner">\n\nOriginal body\n\n</Accordion>\n\n</Callout>\n';
+    const tree = mdManager.parse(input);
+
+    const paths = collectJsxComponentPaths(tree);
+    expect(paths.length).toBeGreaterThanOrEqual(2);
+
+    const accordion = nodeAtPath(tree, paths[1]);
+    if (accordion?.attrs) {
+      accordion.attrs.sourceDirty = true;
+      const props = (accordion.attrs.props ?? {}) as Record<string, unknown>;
+      props.title = 'FOLDABLE-NESTED-MARKER';
+      accordion.attrs.props = props;
+    }
+
+    const output = mdManager.serialize(tree);
+    expect(output.includes('FOLDABLE-NESTED-MARKER')).toBe(true);
+    // The outer Callout must preserve its foldable-Callout attrs (collapsible
+    // + defaultOpen) through the reconstruction path.
+    expect(output.includes('collapsible')).toBe(true);
   });
 });

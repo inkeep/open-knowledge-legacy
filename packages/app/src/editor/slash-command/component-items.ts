@@ -11,25 +11,10 @@
 import type { Editor } from '@tiptap/react';
 import {
   Box,
-  ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
-  FileText,
   Film,
-  Flag,
-  FolderOpen,
-  FolderTree,
-  GitGraph,
-  Hash,
-  LayoutGrid,
-  List,
-  ListOrdered,
   type LucideIcon,
   MessageSquareWarning,
-  PanelTop,
-  Square,
-  SquareMousePointer,
-  Table,
   Volume2,
   ZoomIn,
 } from 'lucide-react';
@@ -44,26 +29,21 @@ import type { SlashCommandItem } from './items';
  * lucide icons and blow the bundle-size gate. New icons require adding both
  * the import above and the map entry here; the registry stays React-free
  * (`packages/core/`) by carrying icons as strings.
+ *
+ * US-012: narrowed to the 5-pack descriptor set post-US-003. Removed the
+ * 14 orphan icons for cut descriptors (ChevronDown, ChevronsUpDown,
+ * FileText, Flag, FolderOpen, FolderTree, Hash, LayoutGrid, List,
+ * ListOrdered, PanelTop, Square, SquareMousePointer, Table) plus the
+ * dangling `GitGraph` import (Mermaid was cut 2026-04-21 per the manifest
+ * header). New descriptors in the 5-pack each add exactly one icon: Callout
+ * → MessageSquareWarning, Image → ZoomIn, Video → Film, Audio → Volume2,
+ * Accordion → ChevronRight. `Box` is the wildcard fallback for the `'*'`
+ * descriptor.
  */
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
-  ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
-  FileText,
   Film,
-  Flag,
-  FolderOpen,
-  FolderTree,
-  GitGraph,
-  Hash,
-  LayoutGrid,
-  List,
-  ListOrdered,
   MessageSquareWarning,
-  PanelTop,
-  Square,
-  SquareMousePointer,
-  Table,
   Volume2,
   ZoomIn,
 };

@@ -7,16 +7,30 @@ import {
 } from './index.ts';
 
 describe('fixture loaders — count + shape contracts', () => {
-  test('loadBuiltInFixtures returns 29 entries (18 legacy + 7 GFM-alert + 4 <details>-Accordion per US-010/US-011)', () => {
-    // US-010 added 7 GFM-alert fixtures (5 GFM types + 2 Obsidian foldable)
-    // to exercise the callout-transformer parse path + γ pristine preservation.
-    // US-011 added 4 HTML5 <details>→Accordion fixtures covering single-line,
-    // multi-paragraph, `name` attr, and `id` attr forms.
-    // The legacy 18-entry corpus pre-dates narrowing — it still rides on I12
-    // byte-identity and NG12 idempotence. US-012 will narrow the pre-existing
-    // cases to 5-pack-only; until then the entry count is additive.
+  test('loadBuiltInFixtures returns 37 entries (26 5-pack + 11 parse-path per US-012 narrow)', () => {
+    // US-012 narrowed the pre-existing corpus to 5-pack-only: dropped 6
+    // fumadocs-specific fixtures (Card, Cards, Steps, Tabs, Banner,
+    // Card-with-unknown-attrs) and ADDED widened-shape + nested-composition
+    // fixtures for the 5-pack descriptors (~13 new entries including I16
+    // nested-dirty compositions per D-MF18).
+    //
+    // Current breakdown:
+    //   - 6 Callout fixtures (base + self-closing + info-alias + boolean-shorthand
+    //     + widened-foldable + color-override)
+    //   - 3 Accordion fixtures (title-only + name-grouping + defaultOpen-id)
+    //   - 2 Image fixtures (basic + widened-caption-zoom)
+    //   - 2 Video fixtures (basic + with-poster-autoplay)
+    //   - 2 Audio fixtures (basic + widened-preload)
+    //   - 5 nested-composition fixtures (D-MF18 I16: Callout>Accordion,
+    //     Accordion>Callout, Accordion>Accordion, Callout>Callout,
+    //     Callout-collapsible>Accordion)
+    //   - 3 wildcard/expression fixtures (Unregistered-CustomThing,
+    //     Comp-expression-attr, Comp-spread-attr)
+    //   - 3 inline thin-shape fixtures (Icon, Badge, Comp-inline-expression)
+    //   - 7 GFM-alert fixtures (US-010: 5 GFM + 2 Obsidian foldable)
+    //   - 4 <details>→Accordion fixtures (US-011)
     const fixtures = loadBuiltInFixtures();
-    expect(fixtures).toHaveLength(29);
+    expect(fixtures).toHaveLength(37);
   });
 
   test('every BuiltInFixture has non-empty componentName + blockForm', () => {
