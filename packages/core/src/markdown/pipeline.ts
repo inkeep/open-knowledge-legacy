@@ -5,7 +5,11 @@
  *   [R23 `protectFromMdx` pre-pass on source bytes]
  *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
  *     → remark-gfm → remarkWikiLink
+ *     → remarkGithubAlerts → `calloutTransformerPlugin`
+ *        (US-010 / FR-7: GFM-alerts + Obsidian foldable → Callout mdxJsxFlow)
  *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
+ *     → `detailsAccordionPromoterPlugin`
+ *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
  *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
  *        doc-start thematic fix + position slice + unknown-mdast guard)
  *     → `ensureNonEmptyDoc` → remarkProseMirror

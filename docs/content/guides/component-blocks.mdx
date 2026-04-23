@@ -1,89 +1,203 @@
 ---
 title: Component blocks
-description: Insert, edit, and troubleshoot MDX components (Callout, Cards, Tabs, Steps, …) inside the Open Knowledge editor.
+description: Insert, edit, and troubleshoot the five component block primitives (Callout, Image, Video, Audio, Accordion) inside the Open Knowledge editor.
 ---
 
 Open Knowledge ships a WYSIWYG editor that renders MDX components as live
-React components. You write your MDX on disk (or via the MCP write tools);
-the editor parses it, renders each component with its real implementation,
-and lets you edit props + children without leaving the visual canvas.
+React components. You write your markdown or MDX on disk (or via the MCP
+write tools); the editor parses it, renders each component with its real
+implementation, and lets you edit props and children without leaving the
+visual canvas.
+
+## The 5-pack foundation
+
+The editor ships five built-in component primitives, each with a
+researched prop surface and a DIY React renderer using Open Knowledge's
+own brand (shadcn/Tailwind). Every descriptor pairs an **MDX form** with
+a **markdown form** where a standard parse path exists, and round-trips
+byte-identically on pristine save.
+
+| Component | Category | Markdown form | MDX form |
+|---|---|---|---|
+| `Callout` | Content | `> [!NOTE]\nText` (GFM alerts; `+`/`-` suffix for foldable) | `<Callout type="note" title="…" icon="lucide:…" color="#…" collapsible defaultOpen>…</Callout>` |
+| `Image` | Media | `![alt](src)` (standard CommonMark) | `<Image src="…" alt="…" width={…} height={…} caption="…" title="…" loading="lazy" zoom />` |
+| `Video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<Video src="…" poster="…" autoPlay muted loop playsInline controls preload="…">…</Video>` |
+| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoplay loop muted preload="…">…</Audio>` |
+| `Accordion` | Content | `<details open><summary>X</summary>Y</details>` | `<Accordion title="X" defaultOpen icon="lucide:…" description="…" id="…" name="…">Y</Accordion>` |
+
+### Callout
+
+GFM-style alert / admonition with five type variants and optional
+foldable chrome.
+
+**Props** (7): `type` (`note` \| `tip` \| `important` \| `warning` \|
+`caution`, default `note`), `title` (string), `icon` (namespaced lucide
+like `lucide:Lightbulb`), `color` (hex accent override), `collapsible`
+(boolean), `defaultOpen` (boolean, default `true` when collapsible),
+`children`.
+
+```mdx title="Static Callout"
+<Callout type="warning">
+Always run tests.
+</Callout>
+```
+
+```md title="GFM alerts — same rendered shape"
+> [!WARNING]
+> Always run tests.
+```
+
+```md title="Obsidian foldable — collapsed by default"
+> [!NOTE]-
+> Click to reveal.
+```
+
+```md title="Obsidian foldable — open by default"
+> [!TIP]+
+> Visible on first render.
+```
+
+The foldable marker `-` maps to `collapsible: true, defaultOpen: false`;
+`+` maps to `collapsible: true, defaultOpen: true`. No suffix renders a
+static Callout. The `+`/`-` marker is supported only inside the five
+GFM types; broader Obsidian type syntax (`[!success]`, `[!idea]`, etc.)
+folds to the closest GFM type via the parser alias map but does not
+trigger foldable rendering unless the type is one of the GFM five.
+
+**Parser alias map.** Common Obsidian / Mintlify types fold losslessly
+on disk but render as their GFM-family closest (`success` → `tip`,
+`danger` → `caution`, `idea` → `tip`, `info` → `note`, etc.). Unknown
+`type` values on disk round-trip byte-identical but the renderer falls
+back to `note`.
+
+### Image
+
+Click-to-zoom image with optional caption, explicit dimensions, and
+loading strategy.
+
+**Props** (8): `src` (required), `alt`, `width` (number), `height`
+(number), `caption` (string), `title` (native HTML `title` tooltip),
+`loading` (`'eager'` \| `'lazy'`, default `'lazy'`), `zoom` (boolean,
+default `true`).
+
+```mdx title="Full Image with caption + zoom"
+<Image
+  src="/assets/diagram.png"
+  alt="Architecture"
+  width={640}
+  caption="Service topology"
+/>
+```
+
+```md title="Standard CommonMark renders the same descriptor"
+![Architecture](/assets/diagram.png)
+```
+
+When `caption` is set, the renderer wraps the image in a `<figure>` with
+a `<figcaption>`. Click-to-zoom uses `react-medium-image-zoom` with a
+native `<dialog>` modal; the library honors `prefers-reduced-motion`
+internally. Opt out of zoom with `zoom={false}`.
+
+### Video
+
+Pure HTML5 `<video>` wrapper with native controls. Matches Mintlify's
+explicit-iframe pattern for embedded services: **no YouTube / Vimeo URL
+auto-promotion**, no iframe emission. Authors embedding service videos
+write a raw `<iframe>` in MDX directly.
+
+**Props** (9): `src` (required), `title` (tooltip), `controls` (default
+`true`), `autoPlay`, `muted`, `loop`, `playsInline`, `poster`, `preload`
+(`'none'` \| `'metadata'` \| `'auto'`). `<track>` / `<source>` tags
+round-trip as children.
+
+```mdx title="Video with poster + autoplay"
+<Video src="/clip.mp4" poster="/p.jpg" autoPlay muted loop />
+```
+
+### Audio
+
+HTML5 `<audio>` wrapper with native controls always on (no way to hide
+the chrome — per the "no confidently-broken UI" rule).
+
+**Props** (7): `src` (required), `title`, `autoplay`, `loop`, `muted`,
+`preload` (`'none'` \| `'metadata'` \| `'auto'`). `<source>` / `<track>`
+tags round-trip as children.
+
+```mdx title="Audio with preload hint"
+<Audio src="/clip.mp3" autoplay loop preload="metadata" />
+```
+
+Authors who want background audio with no visible controls write a raw
+`<audio>` element in MDX — the descriptor always renders controls.
+
+### Accordion
+
+Standalone expand/collapse built on native HTML5 `<details>` /
+`<summary>`. No wrapper parent required; cross-browser exclusive
+grouping via HTML5 `<details name="…">` (Chrome 120+, Safari 17.2+,
+Firefox 130+).
+
+**Props** (6): `title` (required), `defaultOpen`, `icon` (namespaced
+lucide), `description`, `id` (for deep-linking), `name` (exclusive-group
+identifier).
+
+```mdx title="Standalone accordion"
+<Accordion title="Advanced options" defaultOpen id="advanced">
+- `--fetch-retry-maxtimeout=60000`
+- `--loglevel=warn`
+</Accordion>
+```
+
+```md title="HTML5 details renders the same descriptor"
+<details open>
+<summary>Advanced options</summary>
+
+- `--fetch-retry-maxtimeout=60000`
+- `--loglevel=warn`
+
+</details>
+```
+
+```mdx title="Exclusive-accordion group via HTML5 name"
+<Accordion title="One" name="group-a">First answer</Accordion>
+<Accordion title="Two" name="group-a">Second answer</Accordion>
+<Accordion title="Three" name="group-a">Third answer</Accordion>
+```
+
+Opening any accordion in the group closes the others via the browser's
+native behavior — no JavaScript state.
 
 ## The slash menu
 
-Type <kbd>/</kbd> at the start of an empty line to open the insertion menu.
-Start typing to filter. Pick an entry with the arrow keys and press
-<kbd>Enter</kbd> to insert.
+Type <kbd>/</kbd> at the start of an empty line to open the insertion
+menu. Start typing to filter; pick an entry with the arrow keys and
+press <kbd>Enter</kbd> to insert.
 
-Every entry inserts a fully-formed MDX block with sensible default props.
-For components with editable props, the settings panel opens automatically
-so you can fill in required fields before you move on.
-
-### Built-in components
-
-The menu is grouped by category. Every built-in is a thin wrapper over the
-[fumadocs-ui](https://fumadocs.dev) component of the same name and renders
-with the real fumadocs styles inside the editor.
-
-**Content**
-
-| Component | Purpose |
-|---|---|
-| `Callout` | Admonition box (`info` / `warning` / `error` / …) |
-| `Steps` | Numbered list of `Step` children |
-| `Step` | A single step inside `Steps` |
-| `Banner` | Full-width notice strip |
-| `Inline TOC` | Inline table of contents |
-
-**Layout**
-
-| Component | Purpose |
-|---|---|
-| `Card` | Linked card with title, description, icon |
-| `Cards` | Grid of `Card` children |
-| `Tabs` | Tabbed switcher over `Tab` children |
-| `Tab` | A single tab panel |
-| `Accordions` | Collapsible group of `Accordion` children |
-| `Accordion` | A single collapsible item |
-| `Files` | File-tree layout |
-| `Folder` | Folder row inside `Files` |
-| `File` | Leaf file inside `Files` or `Folder` |
-
-**Media**
-
-| Component | Purpose |
-|---|---|
-| `Image Zoom` | Click-to-zoom image |
-| `Audio` | Audio player |
-
-**Data**
-
-| Component | Purpose |
-|---|---|
-| `Type Table` | API/type documentation table |
+Every entry inserts a fully-formed MDX block with sensible defaults.
+For components with editable props, the settings panel opens
+automatically so you can fill in required fields before you move on.
 
 ## Editing props
 
-When a component is selected, a hover chrome bar appears at the top-right
-with four icons:
+When a component is selected, a hover chrome bar appears at the
+top-right with three icons:
 
-1. **Move up / Move down** — reorder the component within its parent
-   container (only shown for children of container components — Steps,
-   Cards, Tabs, Accordions, Files).
-2. **Delete** — remove the component (and its children).
+1. **Move up / Move down** — reorder the component within its parent.
+2. **Delete** — remove the component and its children.
 3. **Settings (gear)** — open the floating **settings panel**.
 
-The settings panel is auto-generated from the component's TypeScript
-interface:
+The settings panel is auto-generated from the component's prop
+descriptor:
 
 - **String props** render as text inputs.
 - **Boolean props** render as toggle switches.
 - **Enum props** render as `<select>` dropdowns with the valid values.
 - **Number props** render as numeric inputs.
-- **React-node props** (children, icon, …) are edited in the canvas, not
-  the panel.
+- **React-node props** (children) are edited in the canvas, not the
+  panel.
 
-Your edits write to the underlying MDX immediately — storage is the CRDT,
-and every keystroke propagates to other connected clients.
+Your edits write to the underlying MDX immediately — storage is the
+CRDT, and every keystroke propagates to other connected clients.
 
 ### Keyboard shortcuts
 
@@ -94,73 +208,90 @@ and every keystroke propagates to other connected clients.
 | Move selection between blocks | <kbd>↑</kbd> / <kbd>↓</kbd> |
 | Move a top-level block up / down | <kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
 
-To reorder a child inside a container (e.g. swap two `Step`s inside
-`Steps`), select the child and use the **Move up** / **Move down** icons
-in the chrome bar.
+## Authoring-form preservation
 
-## Containers and the "Add child" pill
+Components round-trip **byte-identical** on pristine save — content you
+haven't edited since parse serializes back to whatever form you wrote
+on disk. Hybrid γ serialization preserves the authoring shape:
 
-Container components (Steps, Cards, Tabs, Accordions, Files) show a pill
-at the bottom edge once hovered:
+- `> [!NOTE]` stays `> [!NOTE]`.
+- `> [!WARNING]-` stays `> [!WARNING]-` with the `+`/`-` marker intact.
+- `<details><summary>X</summary>Y</details>` stays in that form.
+- `<Callout>…</Callout>` stays in that form.
+- `![alt](src)` stays as a standard CommonMark image.
 
-- `Click to add a step` — empty container state.
-- `+ Add Tab` — non-empty container.
+When you edit a component in WYSIWYG (title change, prop toggle, …),
+the save canonicalizes to the MDX JSX form with the new props. The
+original form is only reconstructed if all props match and no children
+were touched.
 
-Clicking the pill inserts the appropriate child (a new `Step`, `Tab`,
-`Card`, …) and places focus on it so you can type immediately.
-
-A **typed-children guard** prevents you from inserting a paragraph or
-arbitrary block directly inside a container. If you try — for example by
-pasting plain text inside `<Steps>` — the insertion is rejected at the
-PM transaction level and a toast explains why. Use the "Add child" pill,
-or type a new block above/below the container.
+**Unknown attributes round-trip losslessly.** Attrs not declared by the
+descriptor (e.g. `<Accordion variant="accent">`, `<Callout
+severity="critical">`) are preserved on disk, ignored by the renderer,
+and hidden from the prop panel. Narrowing a descriptor never corrupts
+content authored against a broader descriptor elsewhere.
 
 ## Unregistered and broken components
 
-Open Knowledge's rule: all user content stays visible and editable. If a
-component can't be rendered live, it falls through to an editable
+Open Knowledge's rule: all user content stays visible and editable. If
+a component cannot be rendered live, it falls through to an editable
 source-code block instead of disappearing.
 
 Two situations trigger the fallback:
 
-1. **Unregistered component name.** The editor doesn't ship a live React
-   renderer for every MDX component in the world. Unknown names (your own
-   project-specific components, imported libraries we don't bundle) are
-   shown as an editable source block — a nested CodeMirror editor
-   containing the raw source. Fix the source; on blur the editor
-   re-parses and, if the source is valid MDX again, replaces the fallback
-   with a live component.
+1. **Unregistered component name.** The editor ships live React
+   renderers only for the 5-pack. Unknown names (your own
+   project-specific components, imported libraries we don't bundle, or
+   cut primitives like `<Tabs>` / `<Card>` / `<Steps>` that lived in
+   earlier iterations) render as an editable source block — a nested
+   CodeMirror editor containing the raw source. Fix the source; on blur
+   the editor re-parses and, if the source is valid MDX again, replaces
+   the fallback with a live component.
 
 2. **Render errors.** A valid component that throws during React render
    (bad prop, missing required value, runtime crash) is caught by an
-   error boundary and auto-converted to the same editable source block.
-   The error message is shown in the chrome bar so you can diagnose what
-   needs fixing.
+   error boundary and auto-converts to the same editable source block.
+   The error message is shown in the chrome bar so you can diagnose
+   what needs fixing.
 
 Either way: your MDX bytes are preserved exactly as you authored them.
 The raw source never disappears.
 
-### `<Mermaid />` and deprecated components
+### `<Mermaid />` and other deprecated placeholders
 
-Earlier versions shipped non-functional placeholders for `<Mermaid />` and
-`<AudioPlaceholder />`. Those stubs were removed; existing content auto-
-converts to the editable source fallback on first open. Rename
-`<AudioPlaceholder />` to `<Audio />` to pick up the built-in audio-player
-descriptor chrome.
+Earlier versions shipped non-functional placeholders for `<Mermaid />`
+and `<AudioPlaceholder />`. Those stubs were removed; existing content
+auto-converts to the editable source fallback on first open. Rename
+`<AudioPlaceholder />` to `<Audio />` to pick up the built-in
+audio-player descriptor.
 
 ## Authoring via MCP / agents
 
 Agents writing to the document through MCP's `write_document` /
-`edit_document` tools produce MDX exactly as above. Round-trip fidelity
-is byte-exact for pristine content (content that hasn't been edited in
-the WYSIWYG canvas since parse); modified content is re-serialized
-through the structured prop path with `mdxJsxFlowElement` reconstruction.
+`edit_document` tools produce markdown and MDX exactly as above. AI
+agents tend to emit GFM alerts (`> [!NOTE]`) and standard MDX JSX
+natively from their training distribution; both forms parse to the
+same descriptors and round-trip faithfully.
 
 If an agent writes an unregistered component name, the editor behaves
-exactly as it does for a human-authored unknown tag: the component
-appears as an editable source fallback, the MDX source is preserved,
-and on blur the fallback upgrades back to a live component if the
-source now parses.
+exactly as for a human-authored unknown tag: the component appears as
+an editable source fallback, the MDX source is preserved, and on blur
+the fallback upgrades to a live component if the source now parses.
+
+## Future work
+
+The 5-pack is the current foundation. A **compound tier** (Tabs /
+Tab, `<Accordions>` grouping wrapper, Steps / Step) is deferred — the
+supporting machinery (Context Bridge Registry, typed-children guard)
+was cut on this branch because the primitive tier has no compound
+parent-child consumers. It can be un-deferred when dev-docs or
+help-center authoring demand surfaces; the preserved design lives on
+the PR #165 branch.
+
+Other deferred additions include Card / CardGroup, Banner, Files-tree,
+TypeTable, InlineTOC, Math / KaTeX, and Mermaid rendering. User-
+registered custom components and live-rendered inline-component
+editing remain out of scope.
 
 ## See also
 
