@@ -110,7 +110,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Types
 // ---------------------------------------------------------------------------
 
-interface EditorMcpResult {
+export interface EditorMcpResult {
   editorId: EditorId;
   label: string;
   action: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
@@ -269,7 +269,17 @@ function isEditorTargetAvailable(target: EditorMcpTarget, cwd: string, home?: st
   }
 }
 
-function writeEditorMcpConfig(
+/**
+ * Per-editor MCP config writer. Exported (US-006) so `@inkeep/open-knowledge`
+ * consumers — specifically Electron main's M6b first-launch consent flow via
+ * `writeUserMcpConfigs` — can invoke the same write logic that the terminal-
+ * origin `ok init` command uses. The `installOptions.skipAvailabilityCheck`
+ * flag distinguishes the two call sites: `ok init` enforces
+ * `isEditorTargetAvailable` so users don't get empty config dirs for editors
+ * they haven't installed; the M6b consent flow bypasses the check because
+ * the user explicitly toggled the editor checkbox in the dialog.
+ */
+export function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
   installOptions: McpInstallOptions,
@@ -290,7 +300,10 @@ function writeEditorMcpConfig(
     };
   }
 
-  if (!isEditorTargetAvailable(target, cwd, home)) {
+  // M6b bypass (US-006): the consent dialog showed the editor's checkbox and
+  // the user explicitly toggled it. Skipping on `isEditorTargetAvailable` would
+  // silently drop their choice — treat the click as the consent.
+  if (!installOptions.skipAvailabilityCheck && !isEditorTargetAvailable(target, cwd, home)) {
     return {
       editorId: target.id,
       label: target.label,
@@ -376,6 +389,68 @@ function collectLegacyProjectConfig(
     label: target.label,
     path: legacyPath,
   };
+}
+
+// ---------------------------------------------------------------------------
+// User-scoped MCP config writer (Electron main entry, NOT CLI `ok init`)
+// ---------------------------------------------------------------------------
+
+export interface WriteUserMcpConfigsOptions {
+  /**
+   * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
+   * is responsible for filtering out editors whose existing entry is a
+   * customized shape that should be preserved — those are classified via
+   * `readExistingMcpEntry` + `computeForce` and excluded from this array
+   * BEFORE the call. This function unconditionally overwrites every editor
+   * it receives (aligning with main's `writeEditorMcpConfig` always-rewrite
+   * semantic from PR #282 / "installs stay aligned with current defaults").
+   */
+  editors: EditorId[];
+  /**
+   * Absolute path to the MCP-spawning CLI binary. Written into every editor's
+   * entry as `{ command: cliPath, args: ['mcp'] }`. When unset, falls back to
+   * the canonical `{command:'npx', args:['@inkeep/open-knowledge','mcp']}` shape.
+   */
+  cliPath?: string;
+  /** Override `$HOME` for resolving user-scoped config paths (test hook). */
+  home?: string;
+}
+
+/**
+ * Write MCP config entries for a set of editors without any of `runInit`'s
+ * project-scoped side effects.
+ *
+ * Specifically does NOT run:
+ *   - `ensureProjectGit` — would `git init` wherever `cwd` is (packaged Electron
+ *     apps have `process.cwd() === '/'` by default)
+ *   - `initContent` — scaffolds `.open-knowledge/` in a project
+ *   - `scaffoldLaunchJson` — writes `.claude/launch.json`
+ *   - `upsertRootInstructions` — mutates `AGENTS.md` / `CLAUDE.md`
+ *   - `collectLegacyProjectConfig` — scans for `.mcp.json` / `.cursor/mcp.json`
+ *
+ * Per D-M6-R8, this is the entry point Electron main's first-launch MCP
+ * consent flow calls after the user clicks Add. The terminal-invoked `ok init`
+ * path still uses `runInit` and never sets `cliPath`, so backward compatibility
+ * of the `{command:'npx',...}` shape is preserved.
+ *
+ * Bypasses `isEditorTargetAvailable` via `skipAvailabilityCheck: true` — the
+ * user explicitly toggled the editor checkbox; their click IS the consent,
+ * so skip-on-missing would silently drop their selection.
+ */
+export async function writeUserMcpConfigs(
+  opts: WriteUserMcpConfigsOptions,
+): Promise<EditorMcpResult[]> {
+  const targets = resolveEditorTargets(opts.editors);
+  const installOptions: McpInstallOptions = {
+    mode: 'published',
+    cliPath: opts.cliPath,
+    skipAvailabilityCheck: true,
+  };
+  // `cwd` is empty — every user-scoped target ignores it (each editor's
+  // `configPath` + `serverName` resolves from `home` or a constant).
+  return targets.map((target) =>
+    writeEditorMcpConfig(target, '', installOptions, opts.home),
+  );
 }
 
 // ---------------------------------------------------------------------------
