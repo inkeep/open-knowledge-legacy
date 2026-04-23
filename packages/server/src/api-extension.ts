@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -264,10 +265,6 @@ export function resolveUploadDestDir(
   return resolve(resolvedContentDir, trimmed);
 }
 
-function sha256Hex(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
-
 /**
  * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
  * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
@@ -318,7 +315,27 @@ function readTempFileHead(path: string, n: number): Buffer {
  */
 const MAX_DEDUP_SCAN_CANDIDATES = 1000;
 
-function findDuplicateAsset(destDir: string, sha: string, expectedSize: number): string | null {
+/**
+ * Stream a file's bytes through a sha256 Hash transform and return the hex
+ * digest. Keeps memory O(1) regardless of file size — a 500 MB candidate
+ * read by the buffer-based `readFileSync` path would otherwise materialize
+ * the whole file in heap, which defeats the streaming-upload amendment's
+ * O(1) memory guarantee (SPEC.md §Post-finalization amendment, NFR-1).
+ *
+ * Throws on read errors so the caller can classify ENOENT (concurrent
+ * rename — stay silent) vs other errors (log and skip).
+ */
+async function streamingHashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(path), hash);
+  return hash.digest('hex');
+}
+
+async function findDuplicateAsset(
+  destDir: string,
+  sha: string,
+  expectedSize: number,
+): Promise<string | null> {
   let entries: string[];
   try {
     entries = readdirSync(destDir);
@@ -340,7 +357,7 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
     if (!stat.isFile() || stat.size !== expectedSize) continue;
     // Bounded scan: only count candidates that passed the cheap size
     // prefilter, since same-size siblings are the ones that cost a
-    // multi-MB buffer read + hash each.
+    // full-file hash each (streaming now, not buffered).
     scanned++;
     if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
       log.warn(
@@ -355,9 +372,12 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
       );
       return null;
     }
-    let buf: Buffer;
+    let candidateSha: string;
     try {
-      buf = readFileSync(fullPath);
+      // Stream + hash the candidate to preserve the O(1) memory guarantee
+      // the upload pipeline otherwise maintains end-to-end. A 500 MB
+      // candidate otherwise spiked heap to 500 MB per scan.
+      candidateSha = await streamingHashFile(fullPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       // ENOENT is the legitimate concurrent-rename race — stay silent.
@@ -369,7 +389,7 @@ function findDuplicateAsset(destDir: string, sha: string, expectedSize: number):
       }
       continue;
     }
-    if (sha256Hex(buf) === sha) return entry;
+    if (candidateSha === sha) return entry;
   }
   return null;
 }
@@ -4101,7 +4121,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // never runs.
     const dedupMode = getUploadConfig?.().dedup.mode ?? 'same-dir';
     if (dedupMode === 'same-dir') {
-      const existing = findDuplicateAsset(destDir, sha, byteLength);
+      const existing = await findDuplicateAsset(destDir, sha, byteLength);
       if (existing) {
         cleanupTempfile();
         const relPath = relative(contentDir, resolve(destDir, existing));

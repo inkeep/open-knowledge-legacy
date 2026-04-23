@@ -102,7 +102,7 @@ describe('HashingPassThrough', () => {
     const sink = new CollectingSink();
     await pipeline(Readable.from([Buffer.from('abc')]), hasher, sink);
     expect(hasher.digest()).toBe(referenceSha([Buffer.from('abc')]));
-    expect(() => hasher.digest()).toThrow('digest() called twice');
+    expect(() => hasher.digest()).toThrow('digest() already called');
   });
 
   test('byteLength() works mid-stream (not only post-finish)', async () => {

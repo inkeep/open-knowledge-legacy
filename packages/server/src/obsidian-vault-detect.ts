@@ -23,6 +23,9 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { EmitFormat, UploadConfig } from '@inkeep/open-knowledge-core';
+import { getLogger } from './logger.ts';
+
+const log = getLogger('obsidian-vault-detect');
 
 /**
  * Subset of `.obsidian/app.json` fields we map. Surfaced separately so tests
@@ -74,12 +77,9 @@ export function detectObsidianVault(contentDir: string): ObsidianVaultPartialCon
 
   // Symlink-escape: refuse to read if .obsidian/app.json resolves outside contentDir.
   if (realPathWithinBoundary(appJsonPath, resolvedContent) === null) {
-    console.warn(
-      JSON.stringify({
-        event: 'obsidian-vault-detect',
-        reason: 'symlink-escape',
-        path: appJsonPath,
-      }),
+    log.warn(
+      { event: 'obsidian-vault-detect', reason: 'symlink-escape', path: appJsonPath },
+      '[obsidian-vault-detect] refused symlink that escapes contentDir',
     );
     return null;
   }
@@ -89,13 +89,9 @@ export function detectObsidianVault(contentDir: string): ObsidianVaultPartialCon
     raw = readFileSync(appJsonPath, 'utf-8');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(
-      JSON.stringify({
-        event: 'obsidian-vault-detect',
-        reason: 'read-failed',
-        path: appJsonPath,
-        message,
-      }),
+    log.warn(
+      { event: 'obsidian-vault-detect', reason: 'read-failed', path: appJsonPath, message },
+      '[obsidian-vault-detect] read failed',
     );
     return null;
   }
@@ -105,13 +101,9 @@ export function detectObsidianVault(contentDir: string): ObsidianVaultPartialCon
     parsed = JSON.parse(raw) as ObsidianAppJson;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(
-      JSON.stringify({
-        event: 'obsidian-vault-detect',
-        reason: 'parse-error',
-        path: appJsonPath,
-        message,
-      }),
+    log.warn(
+      { event: 'obsidian-vault-detect', reason: 'parse-error', path: appJsonPath, message },
+      '[obsidian-vault-detect] parse error',
     );
     return null;
   }

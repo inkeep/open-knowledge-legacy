@@ -66,7 +66,7 @@ export class HashingPassThrough extends Transform {
 
   digest(): string {
     if (this.digested) {
-      throw new Error('HashingPassThrough.digest() called twice');
+      throw new Error('HashingPassThrough.digest() already called');
     }
     this.digested = true;
     return this.hash.digest('hex');
