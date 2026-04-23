@@ -86,7 +86,7 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
 // orients on the layer + sibling tools + typical flow before diving into
 // step-by-step instructions. One definition, four consumers.
 
-export type WorkflowRole = 'ingest' | 'research' | 'consolidate' | 'init-content';
+type WorkflowRole = 'ingest' | 'research' | 'consolidate' | 'init-content';
 
 const ROLE_LABEL: Record<WorkflowRole, string> = {
   ingest: 'raw-sources layer (preserve external material, no analysis)',
