@@ -80,7 +80,7 @@ function summarizeArgValue(key: string, value: unknown): unknown {
   return { type: typeof value };
 }
 
-export function summarizeArgsForLog(tool: string, args: unknown): unknown {
+function summarizeArgsForLog(tool: string, args: unknown): unknown {
   if (!isPlainObject(args)) {
     return summarizeArgValue(tool, args);
   }
@@ -141,7 +141,7 @@ function summarizeStructuredContentForLog(
   return summary;
 }
 
-export function summarizeToolResultForLog(result: unknown): Record<string, unknown> {
+function summarizeToolResultForLog(result: unknown): Record<string, unknown> {
   if (!isPlainObject(result)) {
     return { resultType: typeof result };
   }

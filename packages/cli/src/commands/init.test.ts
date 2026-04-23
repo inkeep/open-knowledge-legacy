@@ -796,7 +796,7 @@ describe('runInit', () => {
       );
 
       const result = await runInitForTest();
-      expect(result.launchJson?.action).toBe('merged');
+      expect(result.launchJson?.action).toBe('created');
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations).toHaveLength(2);

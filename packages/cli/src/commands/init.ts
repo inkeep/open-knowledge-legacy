@@ -246,7 +246,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       configurations: configs,
     };
     writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
-    return { action: existingIdx >= 0 ? 'merged' : 'merged', configPath };
+    return { action: existingIdx >= 0 ? 'merged' : 'created', configPath };
   } catch (err) {
     return {
       action: 'failed',
