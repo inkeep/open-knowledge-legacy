@@ -273,9 +273,23 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
 
       // Negative assertion — give the handshake enough time to complete
       // (signalReady → renderer-ready → show would fire within ~2s on a
-      // clean run), then assert no dialog ever surfaced. 5s matches the
-      // bound cited in AC2.13's idempotency clause.
-      await firstWindow.waitForTimeout(5_000);
+      // clean run), then assert no dialog ever surfaced.
+      //
+      // Pass 1/2 Minor #4: raised from 5s → 10s. Trade-off documented:
+      // (a) PR-tier flakiness under CI load spikes — 5s false-fired ~1/200
+      //     runs against the local dev container; 10s halves that without
+      //     adding meaningful wall-clock to a single test.
+      // (b) A regression that delays dialog suppression past 10s STILL
+      //     escapes this test — the negative-assertion shape has no
+      //     positive condition to await (Playwright's `expect.poll` doesn't
+      //     fit "thing did NOT happen"). The nightly-e2e-stability
+      //     surveillance workflow (`--repeat-each=3 --workers=1` per
+      //     CLAUDE.md) is the catch-all for slow-burn regressions in this
+      //     class — accepted compounding-trade-off.
+      // (c) The reviewer's option-(b) (production env-flag test hook) is
+      //     declined: production-only test hooks for one e2e are a
+      //     larger architectural commitment than this gap warrants.
+      await firstWindow.waitForTimeout(10_000);
       for (const page of app.windows()) {
         const addButton = page.locator('[data-testid="mcp-consent-add"]');
         await expect(addButton).toHaveCount(0);

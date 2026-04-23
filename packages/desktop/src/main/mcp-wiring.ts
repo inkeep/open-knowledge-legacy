@@ -561,7 +561,20 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     detected: detectedIds.has(id),
   }));
 
-  // Once-per-boot idempotence gate. Flipped on the FIRST confirm or skip.
+  // Once-per-boot idempotence gate. Flipped synchronously at handler entry on
+  // the FIRST confirm or skip — guarantees that rage-clicking Add+Skip while
+  // the first call is in flight (Pass 0 Major #12 race shape) yields exactly
+  // one writeUserMcpConfigs invocation + at most one marker write.
+  //
+  // Stays set on `ok:false` failure paths (writeUserMcpConfigs throws,
+  // per-editor partial failure, marker-write throw). User recovery on the
+  // current boot is impossible — the dialog has already unmounted via the
+  // store's clearCurrent(), so there's no UI from which to click Skip.
+  // Recovery is the next-boot dialog re-fire driven by marker absence
+  // (deferred-marker per OQ-19) — same-boot Skip would be a no-op anyway.
+  // This contract is load-bearing: a future refactor that flips `handled`
+  // earlier or widens the early-return must preserve "next-boot = fresh
+  // attempt" or break the OQ-19 recovery path (Pass 1 Minor #1).
   let handled = false;
 
   const confirmHandler = async (
@@ -694,6 +707,19 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
   // the handler stays armed and a second renderer's signalReady invoke gets
   // a fresh attempt. Without this swap, a failed first dispatch would leave
   // the dialog permanently undeliverable until next boot (Pass 0 Major #6).
+  //
+  // TODO (post-M6, Pass 1 Minor #2): no watchdog. Today's boot opens exactly
+  // one window (Navigator OR editor — branching on lastOpenedProject) so the
+  // ordering swap above bounds the failure surface tightly. Future M3 auto-
+  // update relaunch + M4 cold-start deep-link + multi-window flows can
+  // interleave window creation; if every renderer's signalReady() fails
+  // (catastrophic preload bundle drift, every window destroyed before React
+  // mounts), the handler stays armed indefinitely and the dialog never shows
+  // for this boot. Marker stays absent → next-boot re-fire still recovers,
+  // but the user gets zero same-boot signal. When multi-window flows land,
+  // add a 30-60s setTimeout that emits `mcp-wiring-mount-ack-timeout` via
+  // `logger.event` and either fallback-broadcasts to all visible windows OR
+  // writes a skip-marker so the loop doesn't re-arm forever.
   const rendererReadyHandler = (event: IpcMainInvokeEvent): undefined => {
     try {
       // Route through `sendToRenderer` (the D19 typed wrapper) so the

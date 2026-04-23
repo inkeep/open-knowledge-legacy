@@ -442,12 +442,20 @@ function refreshApplicationMenu() {
 }
 
 /**
- * One-time-per-session launch-time broken-symlink repair prompt (G5 / AC1.6).
+ * Launch-time broken-symlink repair prompt (G5 / AC1.6).
  *
- * Fires when `getInstallStatus` reports 'broken' — the drag-to-Trash-then-
- * reinstall case where `/usr/local/bin/ok` points at a bundle path that no
- * longer exists, OR a foreign file stomped our symlink after install. Dev
- * mode is gated out because `app.getPath('exe')` in dev resolves to the
+ * Fires on every app launch while `getInstallStatus` reports 'broken' — the
+ * drag-to-Trash-then-reinstall case where `/usr/local/bin/ok` points at a
+ * bundle path that no longer exists, OR a foreign file stomped our symlink
+ * after install. The user has two affordances each boot: Repair (re-link via
+ * `installCli`) or Skip (one-time dismiss for THIS boot only — Skip does not
+ * persist across relaunches; the modal re-fires next boot if status is still
+ * 'broken'). Pass 1/2 Minor noted "session" was ambiguous (Electron's
+ * `app.getPath('sessionData')` reads as cross-boot); the per-boot semantics
+ * are intentional — recovery is the user's repair action OR moving the .app
+ * back into place, not a long-lived skip token.
+ *
+ * Dev mode is gated out because `app.getPath('exe')` in dev resolves to the
  * electron binary (not a packaged bundle), so a symlink from a prior DMG
  * install would always classify as 'broken' relative to the dev exe —
  * triggering the repair in dev would install a dev-path symlink into the
