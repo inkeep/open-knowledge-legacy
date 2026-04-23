@@ -1125,6 +1125,31 @@ bun run release          # Publish to npm
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
+### Comment discipline (code comments, not docs)
+
+Comments explain the non-obvious **why** — a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader. If removing the comment wouldn't confuse a future reader, don't write it. Well-named identifiers explain the **what**; don't duplicate them in prose.
+
+**Do NOT cite the process that produced the code.** The following all rot and belong in the PR body or commit message, not in source:
+
+- SPEC paths — `specs/2026-04-21-open-in-agent-desktop/SPEC.md §6.4`, `Governing spec: …`.
+- Internal decision numbers — `D5`, `D8`, `D24`, `LOCKED`, `DIRECTED`, `NOT NOW`, `per D44 case (a)`.
+- Non-goal tags — `NG2`, `per NG6`, `NG3 — no beta channel`.
+- Acceptance-criteria / user-story / functional-requirement numbers — `AC9 asserts`, `US-007 wires a mock`, `FR-8 "Warning logged"`, `MQ1`.
+- Audit finding IDs — `DC-M4`, `DC-L7`, `Review M5`, `Review Minor #1`, `audit M6`, `Mutation H`.
+- Dated audit-trail narratives — `post-ship amendment`, `post-implementation fix`, `Per post-ship review`, `2026-04-21 amendment`.
+- Feature-work or milestone tags that mean nothing after the work ships — `M3`, `V0-14`, `V0-1 shipped`, `added for …`.
+
+When one of these appears next to substance worth keeping, strip the citation and keep the substance. When the whole comment only exists to cite, delete it.
+
+**Exempt — keep these:**
+
+- STOP / WARN rules and cross-file contracts (the ones already codified in the "Known Pitfalls" and "STOP rules" sections of this file).
+- External standards with stable numbering: `CommonMark §2.4`, `RFC 3986`, `OAuth 2.1 §4.1.3`, upstream issue numbers like `electron/electron#32600`.
+- `precedent #N` references in this repo — they target [PRECEDENTS.md](./PRECEDENTS.md), which is an intentionally curated long-lived rulebook (not a rotating spec).
+- Explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
+
+**Rule of thumb before writing a comment:** if the "why" is the task ticket, a review suggestion, or a spec paragraph, put it in the PR body and leave the code alone. If it's a permanent structural reason a future reader would stub their toe on, write the permanent reason without the dated pointer.
+
 <!-- open-knowledge:begin -->
 
 ## Open Knowledge
