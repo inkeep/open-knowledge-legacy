@@ -39,7 +39,10 @@ import {
   type InstallState,
   type TargetData,
 } from '@inkeep/open-knowledge-core';
-import type { ReactNode } from 'react';
+import type { ReactNode, SVGProps } from 'react';
+import { ClaudeIcon } from '@/components/icons/claude';
+import { CodexIcon } from '@/components/icons/codex';
+import { CursorIcon } from '@/components/icons/cursor';
 import {
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -49,6 +52,25 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
 import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external';
+
+/**
+ * Vendor icon per target. Claude Cowork and Claude Code share `ClaudeIcon`
+ * since both dispatch to Claude Desktop. Unknown ids render nothing — the
+ * row still reads correctly without an icon (graceful no-op if a 5th target
+ * lands here before the map is updated).
+ *
+ * DropdownMenuItem + DropdownMenuSubTrigger both auto-size `<svg>` children
+ * to `size-4`, so the icon doesn't need an explicit size prop.
+ */
+export function TargetIcon({
+  id,
+  ...props
+}: { id: TargetData['id'] } & SVGProps<SVGSVGElement>): ReactNode {
+  if (id === 'claude-cowork' || id === 'claude-code') return <ClaudeIcon {...props} />;
+  if (id === 'codex') return <CodexIcon {...props} />;
+  if (id === 'cursor') return <CursorIcon {...props} />;
+  return null;
+}
 
 /**
  * Stable URL for the "Install the Open Knowledge desktop app →" affordance
@@ -234,8 +256,13 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
   // Enabled row — direct DropdownMenuItem, click dispatches.
   if (rowState.enabled) {
     return (
-      <DropdownMenuItem onSelect={onSelect} data-testid={`open-in-agent-item-${target.id}`}>
-        <span>Open in {target.displayName}</span>
+      <DropdownMenuItem
+        onSelect={onSelect}
+        data-testid={`open-in-agent-item-${target.id}`}
+        aria-label={`Open in ${target.displayName}`}
+      >
+        <TargetIcon id={target.id} aria-hidden="true" />
+        <span>{target.displayName}</span>
       </DropdownMenuItem>
     );
   }
@@ -253,7 +280,8 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
         data-testid={`open-in-agent-item-${target.id}`}
         aria-label={preProbeLabel}
       >
-        <span className="flex-1">Open in {target.displayName}</span>
+        <TargetIcon id={target.id} aria-hidden="true" />
+        <span className="flex-1">{target.displayName}</span>
         {hint ? (
           <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
             {hint}
@@ -286,7 +314,8 @@ export function OpenInAgentMenuItem(props: OpenInAgentMenuItemProps): ReactNode 
         data-row-disabled=""
         aria-label={accessibleLabel}
       >
-        <span className="flex-1">Open in {target.displayName}</span>
+        <TargetIcon id={target.id} aria-hidden="true" className="mr-2" />
+        <span className="flex-1">{target.displayName}</span>
         {hint ? (
           <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
             {hint}
