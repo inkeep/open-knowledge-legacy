@@ -25,7 +25,7 @@ This gives you domain-allowlist network enforcement (via Anthropic's proxy) **wi
 | [`Containerfile`](./Containerfile) | Extends the Tier 1 base image with `@anthropic-ai/sandbox-runtime` preinstalled + a pre-baked `~/.claude/settings.json` enabling `/sandbox` |
 | [`settings.json`](./settings.json) | In-container Claude Code settings that enable the built-in sandbox |
 | [`verify-matryoshka.sh`](./verify-matryoshka.sh) | Runs inside the container; checks whether bubblewrap works and what sandbox mode activates |
-| [`ok-sandbox-matryoshka.sh`](./ok-sandbox-matryoshka.sh) | Wrapper: launches the matryoshka image with proper mounts |
+| [`ok-sandbox.sh`](./ok-sandbox.sh) | Wrapper: launches the matryoshka image with proper mounts |
 
 ## Smoke-test recipe
 
@@ -49,7 +49,7 @@ container run --rm claude-matryoshka:latest /home/claude/verify-matryoshka.sh
 ## Session launch
 
 ```bash
-./ok-sandbox-matryoshka.sh
+./ok-sandbox.sh
 # Inside the container, /sandbox is already enabled and auto-allow mode is set.
 # Claude's bash subprocess runs under bubblewrap; network egress goes through
 # Anthropic's proxy enforcing the domain allowlist in settings.json.

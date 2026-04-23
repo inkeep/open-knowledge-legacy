@@ -68,4 +68,4 @@ echo "[ok-sandbox] Entering VM '$NAME' in $PWD"
 echo "[ok-sandbox] Cmd:     ${CLAUDE_CMD[*]}"
 echo ""
 
-exec limactl shell "${ENVS[@]}" --workdir "$PWD" "$NAME" -- "${CLAUDE_CMD[@]}"
+exec limactl shell ${ENVS[@]+"${ENVS[@]}"} --workdir "$PWD" "$NAME" -- "${CLAUDE_CMD[@]}"

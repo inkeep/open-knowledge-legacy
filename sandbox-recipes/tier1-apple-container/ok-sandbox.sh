@@ -49,7 +49,7 @@ if [[ "${OK_MOUNT_CLAUDE:-1}" == "1" && -d "$HOME/.claude" ]]; then
 fi
 
 if [[ -f "$HOME/.gitconfig" ]]; then
-  MOUNTS+=(--mount "type=bind,source=$HOME/.gitconfig,target=/home/claude/.gitconfig,readonly")
+  MOUNTS+=(-v "$HOME/.gitconfig:/home/claude/.gitconfig:ro")
 fi
 
 # Env passthrough (only things the sandbox legitimately needs)
@@ -84,12 +84,19 @@ echo "[ok-sandbox] Mounts:  $PWD:/workspace + ~/.claude (if present) + ~/.gitcon
 echo "[ok-sandbox] Cmd:     ${CLAUDE_ARGS[*]}"
 echo ""
 
+# -i (interactive) / -t (tty) conditional on whether stdin/stdout are actually a TTY.
+# Without these guards the container CLI errors out with ENODEV when invoked from
+# non-interactive contexts (CI pipelines, piped-output wrappers, etc).
+TTY_FLAGS=()
+[[ -t 0 ]] && TTY_FLAGS+=(-i)
+[[ -t 1 ]] && TTY_FLAGS+=(-t)
+
 exec container run \
   --rm \
-  -it \
+  ${TTY_FLAGS[@]+"${TTY_FLAGS[@]}"} \
   -c "$CPU" \
   -m "$MEM" \
   "${MOUNTS[@]}" \
-  "${ENVS[@]}" \
+  ${ENVS[@]+"${ENVS[@]}"} \
   "$TAG" \
   "${CLAUDE_ARGS[@]}"

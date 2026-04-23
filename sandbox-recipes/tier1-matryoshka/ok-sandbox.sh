@@ -40,7 +40,7 @@ if [[ "${OK_MOUNT_HOST_CLAUDE:-0}" == "1" && -d "$HOME/.claude" ]]; then
 fi
 
 if [[ -f "$HOME/.gitconfig" ]]; then
-  MOUNTS+=(--mount "type=bind,source=$HOME/.gitconfig,target=/home/claude/.gitconfig,readonly")
+  MOUNTS+=(-v "$HOME/.gitconfig:/home/claude/.gitconfig:ro")
 fi
 
 ENVS=()
@@ -68,12 +68,16 @@ echo "[matryoshka] Cmd:     ${CLAUDE_ARGS[*]}"
 echo "[matryoshka] The inner /sandbox is pre-enabled via baked settings.json."
 echo ""
 
+TTY_FLAGS=()
+[[ -t 0 ]] && TTY_FLAGS+=(-i)
+[[ -t 1 ]] && TTY_FLAGS+=(-t)
+
 exec container run \
   --rm \
-  -it \
+  ${TTY_FLAGS[@]+"${TTY_FLAGS[@]}"} \
   -c "$CPU" \
   -m "$MEM" \
   "${MOUNTS[@]}" \
-  "${ENVS[@]}" \
+  ${ENVS[@]+"${ENVS[@]}"} \
   "$TAG" \
   "${CLAUDE_ARGS[@]}"
