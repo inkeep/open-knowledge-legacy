@@ -45,9 +45,9 @@
     "notes": "no attrs"
   },
   {
-    "componentName": "ImageZoom",
-    "blockForm": "<ImageZoom src=\"/img.png\" alt=\"Photo\" />\n",
-    "notes": "self-closing with src + alt attrs"
+    "componentName": "Image",
+    "blockForm": "<Image src=\"/img.png\" alt=\"Photo\" />\n",
+    "notes": "self-closing with src + alt attrs (renamed from ImageZoom in US-003)"
   },
   {
     "componentName": "Unregistered-CustomThing",

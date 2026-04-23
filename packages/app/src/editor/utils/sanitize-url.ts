@@ -97,9 +97,10 @@ function emitPropDroppedEvent(reason: string, key: string): void {
  * React camelCase form (`formAction`) and the HTML lowercase form
  * (`formaction`) route through the filter.
  *
- * Covers the fumadocs surface (Card.href, ImageZoom.src, Audio.src), the
- * full HTML URL-attribute set, and SVG xlink:* (xlinkHref on <use>/<image>
- * is an under-documented XSS vector).
+ * Covers the 5-pack foundation surface (Image.src, Video.src, Audio.src, and
+ * Callout.icon when namespaced lucide:X — future US-005), the full HTML
+ * URL-attribute set, and SVG xlink:* (xlinkHref on <use>/<image> is an
+ * under-documented XSS vector).
  */
 export const URL_PROP_NAMES = new Set([
   'href',

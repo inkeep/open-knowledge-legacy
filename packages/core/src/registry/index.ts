@@ -41,9 +41,12 @@ export interface ComponentRegistry {
 }
 
 /**
- * Creates a registry pre-populated with the 17 built-in components
- * and the wildcard '*' fallback. Additional entries can be added
- * via `registry.set()` (future NG13 extensibility seam).
+ * Creates a registry pre-populated with the 5-pack foundation (Callout, Image,
+ * Audio shipped in US-003; Video in US-007; Accordion in US-009) and the
+ * wildcard '*' fallback. Additional entries can be added via `registry.set()`
+ * (future NG13 extensibility seam). Descriptors cut in US-003 fall through to
+ * the wildcard — their names remain valid in user content but render
+ * generically.
  */
 export function createRegistry(): ComponentRegistry {
   const map = new Map<string, JsxComponentMeta>();

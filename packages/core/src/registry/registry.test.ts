@@ -3,11 +3,12 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns all 17 built-in components + wildcard', () => {
+  test('returns the partial 5-pack (3 registered + wildcard) after US-003 narrow', () => {
+    // US-003 cut 14 fumadocs descriptors; Callout/Image/Audio stay. Video + Accordion
+    // land in US-007 / US-009 via `coreRegistry.set(...)` once their descriptors ship.
     const registry = createRegistry();
-    // 17 built-ins + 1 wildcard (Mermaid removed 2026-04-21 — stub was non-functional)
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(18);
+    expect(entries.length).toBe(4);
   });
 
   test('get returns registered component by name', () => {
@@ -69,15 +70,19 @@ describe('createRegistry', () => {
   test('registry.has returns true for registered, false for unknown', () => {
     const registry = createRegistry();
     expect(registry.has('Callout')).toBe(true);
-    expect(registry.has('Steps')).toBe(true);
+    expect(registry.has('Image')).toBe(true);
+    expect(registry.has('Audio')).toBe(true);
     expect(registry.has('*')).toBe(true);
+    // Cut-in-US-003 descriptors (Steps, Cards, Tabs, etc.) are no longer registered —
+    // user content using those names falls through to wildcard via `getOrWildcard`.
+    expect(registry.has('Steps')).toBe(false);
     expect(registry.has('DataViz')).toBe(false);
   });
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains exactly 17 entries', () => {
-    expect(builtInComponents.length).toBe(17);
+  test('contains exactly 3 entries (partial 5-pack — Video in US-007, Accordion in US-009)', () => {
+    expect(builtInComponents.length).toBe(3);
   });
 
   test('all entries have required fields', () => {
@@ -96,20 +101,19 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('container components have emptyChildName', () => {
+  test('no registered descriptor has emptyChildName (5-pack is standalone-first — no compound parents)', () => {
+    // US-002/US-003 retired the compound-components bridge (precedent #27
+    // retracted on this branch). The surviving 5-pack descriptors ship without
+    // `emptyChildName` — they render standalone, not as compound parents.
+    // NG19 preserves the compound-tier revival path via PR #165 branch.
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
-    expect(names).toEqual([
-      'Accordions→Accordion',
-      'Cards→Card',
-      'Files→File',
-      'Folder→File',
-      'Steps→Step',
-      'Tabs→Tab',
-    ]);
+    expect(names).toEqual([]);
   });
 
   test('Callout has correct enum values for type prop', () => {
+    // US-003 holds the enum at its 6-value pre-narrow shape. US-005 tightens
+    // to the GFM 5-type set (note/tip/important/warning/caution) per D-MF11.
     const callout = builtInComponents.find((m) => m.name === 'Callout');
     expect(callout).toBeDefined();
     if (!callout) return;

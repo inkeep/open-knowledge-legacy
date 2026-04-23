@@ -91,57 +91,59 @@ describe('formatSelectionMessage', () => {
   });
 
   test('nested chain formats "N of M in Parent"', () => {
-    // Cards container at pos 0; three Card children; select second Card.
-    const cards = jsx('Cards', [jsx('Card'), jsx('Card'), jsx('Card')]);
-    const doc = schema.node('doc', null, [cards]);
-    // Second Card pos = 1 (inside cards) + first Card nodeSize (2) = 3.
+    // Outer Callout at pos 0; three inner Image children; select second Image.
+    // (Both Callout + Image are registered 5-pack descriptors post-US-003 —
+    // pre-cut this test used Cards/Card which are now unregistered.)
+    const callout = jsx('Callout', [jsx('Image'), jsx('Image'), jsx('Image')]);
+    const doc = schema.node('doc', null, [callout]);
+    // Second Image pos = 1 (inside callout) + first Image nodeSize (2) = 3.
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 3) });
     // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
-      selectedBlockId: 'card-b2',
+      selectedBlockId: 'image-b2',
       ancestorChain: [
-        { bridgeId: 'cards-b1', componentName: 'Cards', pos: 0 },
-        { bridgeId: 'card-b2', componentName: 'Card', pos: 3 },
+        { bridgeId: 'callout-b1', componentName: 'Callout', pos: 0 },
+        { bridgeId: 'image-b2', componentName: 'Image', pos: 3 },
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
     };
     const msg = formatSelectionMessage(editor, sel);
     // Index within parent is 0-based, announced 1-based.
-    expect(msg).toBe('Selected: Card, 2 of 3 in Cards');
+    expect(msg).toBe('Selected: Image, 2 of 3 in Callout');
   });
 
   test('nested chain with unresolvable pos falls back to no-index form', () => {
-    const cards = jsx('Cards', [jsx('Card')]);
-    const doc = schema.node('doc', null, [cards]);
+    const callout = jsx('Callout', [jsx('Image')]);
+    const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc });
     // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
-      selectedBlockId: 'card-b2',
+      selectedBlockId: 'image-b2',
       ancestorChain: [
-        { bridgeId: 'cards-b1', componentName: 'Cards', pos: 0 },
+        { bridgeId: 'callout-b1', componentName: 'Callout', pos: 0 },
         // Pos 99999 is past end of doc — resolve() throws.
-        { bridgeId: 'card-b2', componentName: 'Card', pos: 99999 },
+        { bridgeId: 'image-b2', componentName: 'Image', pos: 99999 },
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
     };
     const msg = formatSelectionMessage(editor, sel);
-    expect(msg).toBe('Selected: Card in Cards');
+    expect(msg).toBe('Selected: Image in Callout');
   });
 
   test('nested chain with unregistered innermost still identifies the component', () => {
-    const cards = jsx('Cards', [jsx('FooBar')]);
-    const doc = schema.node('doc', null, [cards]);
+    const callout = jsx('Callout', [jsx('FooBar')]);
+    const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 1) });
     // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
     const editor = { state } as any;
     const sel: BlockSelection = {
       selectedBlockId: 'foobar-b2',
       ancestorChain: [
-        { bridgeId: 'cards-b1', componentName: 'Cards', pos: 0 },
+        { bridgeId: 'callout-b1', componentName: 'Callout', pos: 0 },
         { bridgeId: 'foobar-b2', componentName: 'FooBar', pos: 1 },
       ],
       selectionOrigin: 'pointer',
@@ -149,6 +151,6 @@ describe('formatSelectionMessage', () => {
     };
     const msg = formatSelectionMessage(editor, sel);
     expect(msg).toContain('FooBar (unregistered)');
-    expect(msg).toContain('in Cards');
+    expect(msg).toContain('in Callout');
   });
 });

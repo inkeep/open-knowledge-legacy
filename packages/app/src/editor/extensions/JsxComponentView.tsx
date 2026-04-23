@@ -502,7 +502,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // ── BRANCH 2: Registered healthy render ───────────────────────────────
   const Comp = descriptor.Component;
 
-  // For components with no editable children (Card, File, ImageZoom, …), a
+  // For components with no editable children (self-closing like Image, …), a
   // click on the rendered body would otherwise land the caret in the node's
   // empty content hole — the user then sees "stuck caret" chrome with no
   // visible cursor and no productive keystrokes. Instead: NodeSelect the
@@ -690,7 +690,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             onOpenChange={(open) => {
               setPopoverOpen(open);
               // When the popover closes for a component with no editable
-              // children (Card, File, ImageZoom, …), the caret may still be
+              // children (self-closing like Image, …), the caret may still be
               // on/inside the node. Defer to the next frame so PM's click
               // handler settles first, then — if the caret is still within
               // the node's range — advance it to the NEAREST VALID TEXT

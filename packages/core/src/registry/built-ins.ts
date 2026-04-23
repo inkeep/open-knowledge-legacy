@@ -1,32 +1,37 @@
 /**
- * Built-ins manifest — 17 component JsxComponentMeta entries.
+ * Built-ins manifest — 5-pack foundation (Callout + Image + Audio slotted here,
+ * Video in US-007, Accordion in US-009).
  *
- * 16 fumadocs-ui + 1 Audio (HTML5 `<audio>` wrapper; see componentMap.tsx).
- * Hand-authored PropDef arrays (react-docgen-typescript has known extraction
- * failures with ForwardRefExoticComponent, Omit<>/Pick<>, and generic <T> —
- * see FR-28). Generated props can supplement these via build-registry.ts.
+ * Scope contract for this file after US-003 (`specs/2026-04-23-cb-v2-md-foundation/`):
+ * exactly three registered descriptors (+ wildcard `'*'` injected by the
+ * registry factory). Cut in US-003: Banner, Card, Cards, Step, Steps, Tab,
+ * Tabs, Accordion (fumadocs shape), Accordions, File, Files, Folder,
+ * TypeTable, InlineTOC — 14 fumadocs descriptors retired because the 5-pack
+ * has no compound-wrapper machinery (US-002 deleted `compound-wrappers.tsx`
+ * and the precedent #27 compound-components bridge was retracted on this
+ * branch in US-001). Names that still appear in user content fall through to
+ * the wildcard `'*'` descriptor (`hasChildren: true`, empty props) per
+ * `createRegistry()` / `getOrWildcard()`.
  *
- * Mermaid was removed 2026-04-21 — see the block comment next to the `Audio`
- * descriptor below. Un-deferral framework in
- * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`.
+ * ImageZoom renamed to Image (US-003 / FR-20) — prop shape stays as-is for
+ * now; US-006 widens to the FR-2 8-prop shape (alt, width, height, caption,
+ * title, loading, zoom) alongside the DIY `react-medium-image-zoom` renderer.
+ * Callout and Audio prop shapes are untouched here; US-005 widens Callout to
+ * 7 props (GFM 5-type enum + title/icon/color/collapsible/defaultOpen) and
+ * US-008 widens Audio to 7 props (src/title/autoplay/loop/muted/preload +
+ * children).
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
- * This manifest is the shipped default for the fumadocs-ui consumer (the
- * `@inkeep/open-knowledge-app` frontend). If open-knowledge is embedded in
- * a non-fumadocs shell, that consumer should build an alternative manifest
- * via `createRegistry()` + `.set(...)` rather than extend or mutate this
- * one. The decision to adopt the fumadocs vocabulary as the shipped default
- * is locked in SPEC §9 and rests on: (1) the first-party consumer renders
- * fumadocs-ui; (2) precedent #5 (contract-first) favors one authoritative
- * vocabulary over a menu of optional ones; (3) the greenfield directive
- * forbids shipping empty-scaffolding registries.
+ * This manifest is the shipped default for the OK editor. The greenfield
+ * directive (2026-04-13) forbids shipping empty-scaffolding registries; this
+ * file is the authoritative source of truth. Downstream embedders can call
+ * `createRegistry()` + `.set(...)` to add their own descriptors, but the
+ * 5-pack is the in-app baseline.
  *
- * When a second first-party consumer materializes (editor embedded in a
- * non-fumadocs shell), split this file into a separate
- * `@inkeep/open-knowledge-fumadocs-components` workspace package and keep
- * `packages/core/src/registry/` down to the factory + types. Re-evaluating
- * before that materializes would be a premature abstraction.
+ * Mermaid was removed 2026-04-21 — placeholder stub was non-functional. See
+ * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
+ * for the un-deferral framework.
  */
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
@@ -55,209 +60,9 @@ const calloutProps: PropDef[] = [
   },
 ];
 
-// ── Card / Cards ─────────────────────────────────────────────────────────────
+// ── Image (renamed from ImageZoom in US-003; prop shape widens in US-006) ───
 
-const cardProps: PropDef[] = [
-  {
-    name: 'title',
-    type: 'string',
-    required: true,
-    description: 'Card title',
-  },
-  {
-    name: 'description',
-    type: 'string',
-    required: false,
-    description: 'Card description',
-  },
-  {
-    name: 'href',
-    type: 'string',
-    required: false,
-    description: 'Link URL',
-  },
-  {
-    name: 'external',
-    type: 'boolean',
-    defaultValue: false,
-    required: false,
-    description: 'Open in new tab',
-  },
-  {
-    name: 'icon',
-    type: 'reactnode',
-    required: false,
-    description: 'Card icon',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: false,
-    description: 'Card body content',
-  },
-];
-
-const cardsProps: PropDef[] = [
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Card children',
-  },
-];
-
-// ── Steps / Step ─────────────────────────────────────────────────────────────
-
-const stepsProps: PropDef[] = [
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Step children',
-  },
-];
-
-const stepProps: PropDef[] = [
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Step content',
-  },
-];
-
-// ── Tabs / Tab ───────────────────────────────────────────────────────────────
-
-const tabsProps: PropDef[] = [
-  {
-    name: 'items',
-    type: 'string',
-    required: false,
-    description: 'Tab names (simple mode)',
-    hidden: true,
-  },
-  {
-    name: 'defaultIndex',
-    type: 'number',
-    defaultValue: 0,
-    required: false,
-    description: 'Initially active tab index',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Tab children',
-  },
-];
-
-const tabProps: PropDef[] = [
-  {
-    name: 'value',
-    type: 'string',
-    required: false,
-    description: 'Tab value identifier',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Tab panel content',
-  },
-];
-
-// ── Accordion / Accordions ───────────────────────────────────────────────────
-
-const accordionsProps: PropDef[] = [
-  {
-    name: 'type',
-    type: 'enum',
-    enumValues: ['single', 'multiple'],
-    defaultValue: 'single',
-    required: false,
-    description: 'Accordion selection mode',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Accordion items',
-  },
-];
-
-const accordionProps: PropDef[] = [
-  {
-    name: 'title',
-    type: 'string',
-    required: true,
-    description: 'Accordion item title',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Accordion item content',
-  },
-];
-
-// ── Files / Folder / File ────────────────────────────────────────────────────
-
-const filesProps: PropDef[] = [
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'File tree children',
-  },
-];
-
-const folderProps: PropDef[] = [
-  {
-    name: 'name',
-    type: 'string',
-    required: true,
-    description: 'Folder name',
-  },
-  {
-    name: 'defaultOpen',
-    type: 'boolean',
-    defaultValue: false,
-    required: false,
-    description: 'Initially expanded',
-  },
-  {
-    name: 'disabled',
-    type: 'boolean',
-    defaultValue: false,
-    required: false,
-    description: 'Disable toggle',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Folder children',
-  },
-];
-
-const fileProps: PropDef[] = [
-  {
-    name: 'name',
-    type: 'string',
-    required: true,
-    description: 'File name',
-  },
-  {
-    name: 'icon',
-    type: 'reactnode',
-    required: false,
-    description: 'Custom file icon',
-  },
-];
-
-// ── ImageZoom ────────────────────────────────────────────────────────────────
-
-const imageZoomProps: PropDef[] = [
+const imageProps: PropDef[] = [
   {
     name: 'src',
     type: 'string',
@@ -288,60 +93,6 @@ const imageZoomProps: PropDef[] = [
     type: 'reactnode',
     required: false,
     description: 'Image caption',
-  },
-];
-
-// ── Banner ───────────────────────────────────────────────────────────────────
-
-const bannerProps: PropDef[] = [
-  {
-    name: 'id',
-    type: 'string',
-    required: false,
-    description: 'Banner dismissal ID',
-  },
-  {
-    name: 'variant',
-    type: 'enum',
-    enumValues: ['normal', 'rainbow'],
-    defaultValue: 'normal',
-    required: false,
-    description: 'Visual variant',
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: true,
-    description: 'Banner content',
-  },
-];
-
-// ── TypeTable ────────────────────────────────────────────────────────────────
-
-const typeTableProps: PropDef[] = [
-  {
-    name: 'type',
-    type: 'string',
-    required: true,
-    description: 'Type definitions (JSON object)',
-    hidden: true,
-  },
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: false,
-    description: 'Additional content',
-  },
-];
-
-// ── InlineTOC ────────────────────────────────────────────────────────────────
-
-const inlineTocProps: PropDef[] = [
-  {
-    name: 'children',
-    type: 'reactnode',
-    required: false,
-    description: 'TOC content',
   },
 ];
 
@@ -376,186 +127,19 @@ export const builtInComponents: JsxComponentMeta[] = [
     description: 'Callout box with type variants (info, warning, error, etc.)',
     searchTerms: ['note', 'warning', 'tip', 'info', 'alert', 'admonition'],
   },
-  {
-    name: 'Card',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: cardProps,
-    icon: 'SquareMousePointer',
-    category: 'content',
-    displayName: 'Card',
-    description: 'Linked card with title, description, and optional icon',
-    searchTerms: ['link', 'preview', 'card'],
-  },
-  {
-    name: 'Cards',
-    hasChildren: true,
-    props: cardsProps,
-    icon: 'LayoutGrid',
-    category: 'layout',
-    displayName: 'Cards',
-    description: 'Grid container for Card components',
-    searchTerms: ['grid', 'cards', 'layout'],
-    emptyChildName: 'Card',
-  },
-  {
-    name: 'Steps',
-    hasChildren: true,
-    props: stepsProps,
-    icon: 'ListOrdered',
-    category: 'content',
-    displayName: 'Steps',
-    description: 'Numbered step-by-step guide container',
-    searchTerms: ['guide', 'tutorial', 'howto', 'steps', 'numbered'],
-    emptyChildName: 'Step',
-  },
-  {
-    name: 'Step',
-    hasChildren: true,
-    props: stepProps,
-    icon: 'Hash',
-    category: 'content',
-    displayName: 'Step',
-    description: 'Individual step inside Steps',
-    searchTerms: ['step'],
-  },
-
-  // Layout — Tabs
-  {
-    name: 'Tabs',
-    hasChildren: true,
-    props: tabsProps,
-    icon: 'PanelTop',
-    category: 'layout',
-    displayName: 'Tabs',
-    description: 'Tabbed content container',
-    searchTerms: ['tabs', 'tabbed', 'switch'],
-    emptyChildName: 'Tab',
-  },
-  {
-    name: 'Tab',
-    hasChildren: true,
-    props: tabProps,
-    icon: 'Square',
-    category: 'layout',
-    displayName: 'Tab',
-    description: 'Individual tab panel inside Tabs',
-    searchTerms: ['tab', 'panel'],
-  },
-
-  // Layout — Accordion
-  {
-    name: 'Accordions',
-    hasChildren: true,
-    props: accordionsProps,
-    icon: 'ChevronsUpDown',
-    category: 'layout',
-    displayName: 'Accordions',
-    description: 'Collapsible accordion container',
-    searchTerms: ['accordion', 'collapse', 'expand', 'faq'],
-    emptyChildName: 'Accordion',
-  },
-  {
-    name: 'Accordion',
-    hasChildren: true,
-    props: accordionProps,
-    icon: 'ChevronDown',
-    category: 'layout',
-    displayName: 'Accordion',
-    description: 'Individual accordion item with title',
-    searchTerms: ['accordion', 'item'],
-  },
-
-  // Layout — Files
-  {
-    name: 'Files',
-    hasChildren: true,
-    props: filesProps,
-    icon: 'FolderTree',
-    category: 'layout',
-    displayName: 'Files',
-    description: 'File tree visualization',
-    searchTerms: ['files', 'tree', 'directory', 'filesystem'],
-    emptyChildName: 'File',
-  },
-  {
-    name: 'Folder',
-    hasChildren: true,
-    props: folderProps,
-    icon: 'FolderOpen',
-    category: 'layout',
-    displayName: 'Folder',
-    description: 'Folder node in file tree',
-    searchTerms: ['folder', 'directory'],
-    emptyChildName: 'File',
-  },
-  {
-    name: 'File',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: fileProps,
-    icon: 'FileText',
-    category: 'layout',
-    displayName: 'File',
-    description: 'File node in file tree',
-    searchTerms: ['file'],
-  },
 
   // Media
   {
-    name: 'ImageZoom',
+    name: 'Image',
     hasChildren: false,
     isSelfClosing: true,
-    props: imageZoomProps,
+    props: imageProps,
     icon: 'ZoomIn',
     category: 'media',
-    displayName: 'Image Zoom',
+    displayName: 'Image',
     description: 'Image with click-to-zoom',
     searchTerms: ['image', 'zoom', 'picture', 'photo'],
   },
-  {
-    name: 'Banner',
-    hasChildren: true,
-    props: bannerProps,
-    icon: 'Flag',
-    category: 'content',
-    displayName: 'Banner',
-    description: 'Top-of-page announcement banner',
-    searchTerms: ['banner', 'announcement', 'notice'],
-  },
-
-  // Data
-  {
-    name: 'TypeTable',
-    hasChildren: false,
-    props: typeTableProps,
-    icon: 'Table',
-    category: 'data',
-    displayName: 'Type Table',
-    description: 'API type/prop documentation table',
-    searchTerms: ['type', 'table', 'api', 'props', 'parameters'],
-  },
-  {
-    name: 'InlineTOC',
-    hasChildren: false,
-    props: inlineTocProps,
-    icon: 'List',
-    category: 'content',
-    displayName: 'Inline TOC',
-    description: 'Inline table of contents',
-    searchTerms: ['toc', 'table of contents', 'outline'],
-  },
-
-  // Media
-  // Mermaid removed (2026-04-21): the shipped placeholder stub was non-functional
-  // (rendered chart source as <pre>, no SVG). Per greenfield directive, stubs
-  // that don't ship the claimed capability are tech debt. Existing `<Mermaid />`
-  // content in user docs falls through to the wildcard `'*'` descriptor, which
-  // `JsxComponentView` auto-converts to `rawMdxFallback` — a nested CodeMirror
-  // editing surface (Precedent #26 + #28). The chart source stays fully
-  // editable; future real-renderer work is captured in
-  // `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
-  // with landscape research at `reports/mermaid-rendering-options-for-mdx-editors/`.
   {
     name: 'Audio',
     hasChildren: false,
