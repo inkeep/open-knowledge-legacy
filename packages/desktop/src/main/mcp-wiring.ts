@@ -624,11 +624,18 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
         if (existing !== null) {
           willReplace = computeForce(existing, target);
         }
-      } catch {
+      } catch (err) {
         // Tolerant on purpose: a read failure in one editor's config
         // must not pull the whole dialog down. Default to `false` —
         // the confirm-time classification is the authoritative source;
-        // this arming-time probe is purely a disclosure aid.
+        // this arming-time probe is purely a disclosure aid. Info-level
+        // log so operators have a breadcrumb when debugging "why did the
+        // dialog not show Will Replace for <editor> when I know I have
+        // an entry" — the recovery behavior is unchanged.
+        logger.info('willReplace probe failed for editor', {
+          id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       return { id, label: target.label, detected: detectedIds.has(id), willReplace };
     });
