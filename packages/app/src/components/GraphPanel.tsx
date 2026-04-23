@@ -1,6 +1,13 @@
 import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, CheckCircle2, Globe, Maximize2, Minimize2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CheckCircle2,
+  Globe,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
@@ -8,6 +15,8 @@ import {
   type GraphNodeSelection,
   getHashForGraphDocSelection,
 } from '@/components/graph-view-utils';
+import { usePageList } from '@/components/PageListContext';
+import { resolveTargetNavigationIntent } from '@/components/target-navigation-intent';
 import { Button } from '@/components/ui/button';
 import {
   Panel,
@@ -292,6 +301,7 @@ async function toggleFullscreen(el: HTMLElement | null): Promise<void> {
 
 export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const panelRef = useRef<HTMLElement>(null);
+  const { folderPaths, loading: pageListLoading, pages } = usePageList();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
@@ -338,16 +348,23 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const activeMode = isFullscreen ? fullscreenMode : 'explore';
   const showUrlNodes = isFullscreen ? showUrlNodesFull : showUrlNodesDocked;
   const setShowUrlNodes = isFullscreen ? setShowUrlNodesFull : setShowUrlNodesDocked;
+  const selectedDocDisplayState =
+    selectedNode?.kind === 'doc' && !pageListLoading
+      ? resolveTargetNavigationIntent(selectedNode.docName, {
+          pages,
+          folderPaths,
+        }).displayState
+      : 'doc';
   const selectedNodeState =
     selectedNode === null
       ? null
-      : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
+      : selectedNode.kind === 'doc' && selectedDocDisplayState === 'missing'
         ? {
-            eyebrow: 'Already open',
+            eyebrow: 'Broken link',
             description:
-              'This document is already active in the editor. Use Open to leave fullscreen.',
-            Icon: CheckCircle2,
-            actionLabel: 'Open',
+              "This page doesn't exist yet. Open it to create the page in the editor and leave fullscreen.",
+            Icon: AlertTriangle,
+            actionLabel: 'Create page',
             secondaryLabel: selectedNode.docName,
             onAction: () => {
               const hash = getHashForGraphDocSelection(selectedNode);
@@ -358,11 +375,12 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               })();
             },
           }
-        : selectedNode.kind === 'doc'
+        : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
           ? {
-              eyebrow: 'Selected in graph',
-              description: 'Open this document in the editor and leave fullscreen.',
-              Icon: ArrowUpRight,
+              eyebrow: 'Already open',
+              description:
+                'This document is already active in the editor. Use Open to leave fullscreen.',
+              Icon: CheckCircle2,
               actionLabel: 'Open',
               secondaryLabel: selectedNode.docName,
               onAction: () => {
@@ -374,17 +392,33 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
                 })();
               },
             }
-          : {
-              eyebrow: 'Selected in graph',
-              description: 'Open this link in a new tab and leave fullscreen.',
-              Icon: ArrowUpRight,
-              actionLabel: 'Open link',
-              secondaryLabel: selectedNode.url,
-              onAction: () => {
-                window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
-                void exitFullscreen();
-              },
-            };
+          : selectedNode.kind === 'doc'
+            ? {
+                eyebrow: 'Selected in graph',
+                description: 'Open this document in the editor and leave fullscreen.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open',
+                secondaryLabel: selectedNode.docName,
+                onAction: () => {
+                  const hash = getHashForGraphDocSelection(selectedNode);
+
+                  void (async () => {
+                    await exitFullscreen();
+                    window.location.assign(hash);
+                  })();
+                },
+              }
+            : {
+                eyebrow: 'Selected in graph',
+                description: 'Open this link in a new tab and leave fullscreen.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open link',
+                secondaryLabel: selectedNode.url,
+                onAction: () => {
+                  window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
+                  void exitFullscreen();
+                },
+              };
 
   return (
     <Panel ref={panelRef} className={isFullscreen ? 'min-h-[100dvh] bg-background' : undefined}>
