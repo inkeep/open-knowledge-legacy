@@ -157,4 +157,30 @@ describe('McpConsentDialog module shape', () => {
     expect(spy.mock.calls.length).toBe(1);
     expect(spy.mock.calls[0]).toEqual(['hello']);
   });
+
+  test('Pass 1 Major #1: onAdd / onSkip must reset `busy` on !result.ok so retry is possible', () => {
+    // Behavioral regression guard for Review Pass 1 Major #1. The store now
+    // preserves `currentRequest` on `ok:false` / thrown rejections so the
+    // dialog stays mounted for same-boot retry. But if onAdd/onSkip don't
+    // reset `busy`, the Add button stays disabled and the user has no way
+    // to retry — the dialog is mounted but unusable. Without @testing-
+    // library/react a full mount-and-interact test isn't practical under
+    // the repo convention, so read the source and assert the pattern is in
+    // place. A future refactor that drops the setBusy(false) call fires
+    // this test (instead of silently reintroducing the locked-UI bug).
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const source = readFileSync(join(import.meta.dir, 'McpConsentDialog.tsx'), 'utf8');
+    // Both onAdd and onSkip must reset `busy` inside their `!result.ok`
+    // branch. Match non-greedily so a formatting change (line break between
+    // toast.error and setBusy) doesn't break the regression guard.
+    const onAddBlock = source.match(/async function onAdd\(\)\s*\{[\s\S]*?\n\s\s\}/);
+    const onSkipBlock = source.match(/async function onSkip\(\)\s*\{[\s\S]*?\n\s\s\}/);
+    expect(onAddBlock).not.toBeNull();
+    expect(onSkipBlock).not.toBeNull();
+    expect(onAddBlock?.[0]).toContain('if (!result.ok)');
+    expect(onAddBlock?.[0]).toContain('setBusy(false)');
+    expect(onSkipBlock?.[0]).toContain('if (!result.ok)');
+    expect(onSkipBlock?.[0]).toContain('setBusy(false)');
+  });
 });

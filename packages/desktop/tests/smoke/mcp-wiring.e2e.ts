@@ -86,7 +86,7 @@ function seedEditorDetectionDirs(tmpHome: string, editorHints: readonly string[]
 }
 
 function markerPath(tmpHome: string): string {
-  return join(tmpHome, '.open-knowledge', '.mcp-status.json');
+  return join(tmpHome, '.open-knowledge', 'mcp-status.json');
 }
 
 function readMarker(tmpHome: string): Record<string, unknown> | null {

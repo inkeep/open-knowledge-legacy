@@ -427,12 +427,19 @@ function refreshApplicationMenu() {
         }
       } catch (err) {
         // installCli/uninstallCli handle their own admin-cancel + failure
-        // dialogs internally (see cli-install.ts); any uncaught throw here
-        // is a programmer error (bad deps / unexpected fs state) that
-        // should surface to operations rather than crash the menu.
-        console.error('[main] toggleCliInstall failed', {
-          err: (err as Error).message,
-        });
+        // dialogs internally (see cli-install.ts) — `AdminFailureError`
+        // paths show their own modal. Uncaught throws reaching here mean
+        // something pre-`runAsAdmin` (EACCES from existsSync, malformed
+        // executablePath, a future edge case). Surface those to the user
+        // so they see a signal instead of "menu does nothing" (Pass 0
+        // Minor #20). `showErrorBox` is sync and self-contained; operators
+        // still get the console trace for debugging.
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[main] toggleCliInstall failed', { err: message });
+        dialog.showErrorBox(
+          'Install Command-Line Tools failed',
+          `Open Knowledge couldn't complete the Command-Line Tools ${status === 'installed' ? 'uninstall' : 'install'}:\n\n${message}`,
+        );
       }
       refreshApplicationMenu();
     },
@@ -473,7 +480,12 @@ async function maybeOfferBrokenSymlinkRepair(): Promise<void> {
       "The Command-Line Tools for Open Knowledge point at a path that's no longer valid. This happens if the app was moved or reinstalled from a new DMG. Repair to re-link them at this bundle, or skip to dismiss.",
     buttons: ['Skip', 'Repair'],
     cancelId: 0,
-    defaultId: 1,
+    // Flip the Enter-default to Skip (Pass 0 Major #4). Repair leads into
+    // the osascript admin-password prompt — a user reflexively dismissing
+    // a startup modal with Enter should land on the no-op path, not on
+    // a root-write they didn't intend. Users who want to repair still get
+    // there with one explicit keystroke (Tab then Enter) or one click.
+    defaultId: 0,
   });
   if (response === 1) {
     await installCli({ executablePath, dialog });

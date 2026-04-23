@@ -113,7 +113,7 @@ CLI-origin `ok init` continues to produce the `{"command": "npx", "args": ["@ink
 
 ### Marker file
 
-The dialog records its outcome in `~/.open-knowledge/.mcp-status.json` (next to `~/.open-knowledge/config.yml`):
+The dialog records its outcome in `~/.open-knowledge/mcp-status.json` (next to `~/.open-knowledge/config.yml`):
 
 ```json
 {
@@ -128,7 +128,7 @@ Skipped runs write `{ "configured": false, "skippedAt": "..." }` instead. Either
 
 ### Re-triggering the dialog
 
-Delete `~/.open-knowledge/.mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
+Delete `~/.open-knowledge/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
 
 <Callout type="info" title="CLI users">
 If you installed via `npx @inkeep/open-knowledge` and ran `ok init` from the terminal, MCP is already wired — the consent dialog is only relevant for users who arrived via the DMG. Both paths coexist safely; if you later install the DMG, the dialog detects your existing OK entries and overwrites them with the bundle-absolute `cliPath` shape (foreign customizations are preserved).

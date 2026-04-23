@@ -71,9 +71,14 @@ export interface HandoffStatsLine {
 }
 
 /** Editor IDs known to the first-launch MCP consent flow (M6b). Mirrors
- *  `EditorId` in `packages/cli/src/commands/editors.ts`. Duplicated here so
- *  the IPC surface stays self-contained — desktop does NOT dep `@inkeep/open-knowledge`
- *  as a package. Drift caught at typecheck if the CLI adds a new editor. */
+ *  `EditorId` in `packages/cli/src/commands/editors.ts`. Desktop `main/` DOES
+ *  dep `@inkeep/open-knowledge` (M6b added the workspace dep for the
+ *  `writeUserMcpConfigs` / `EDITOR_TARGETS` surface), but `shared/` modules
+ *  stay zero-dep — any cross-package value import from the IPC surface
+ *  forces every preload / renderer consumer to pull CLI internals into its
+ *  bundle. Keeping the literal-union local preserves that split; drift with
+ *  the CLI's `EditorId` is caught at typecheck via the `McpWiringCliSurface`
+ *  interface in `main/mcp-wiring.ts` (which references BOTH types). */
 export type McpWiringEditorId =
   | 'claude'
   | 'claude-desktop'
@@ -179,7 +184,7 @@ export interface RequestChannels {
    * M6b first-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
    * Main resolves the hybrid `cliPath` per D-M6-R9, classifies each editor's
    * existing entry via `computeForce`, calls `writeUserMcpConfigs`, and writes
-   * the user-scoped marker at `<home>/.open-knowledge/.mcp-status.json` IFF
+   * the user-scoped marker at `<home>/.open-knowledge/mcp-status.json` IFF
    * every per-editor write succeeds (deferred-marker per OQ-19). Per-editor
    * failures emit `mcp-wiring-write-failed` structured logs and leave the
    * marker absent so the dialog re-fires next launch. Foreign (user-customized)

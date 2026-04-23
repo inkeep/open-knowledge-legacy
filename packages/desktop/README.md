@@ -531,13 +531,13 @@ First-launch MCP consent dialog on packaged-app first-open — user-scoped (not 
 
 ### What fires and when
 
-On every packaged-app launch (`app.isPackaged === true`, macOS-only in v0), `runMcpWiringOnFirstLaunch` (`src/main/mcp-wiring.ts`) checks for `~/.open-knowledge/.mcp-status.json`. Marker absent → install IPC handlers, wait for the first renderer's `ok:mcp-wiring:renderer-ready` ack, send `ok:mcp-wiring:show` back with the detected-editors payload. `<McpConsentDialog>` is subscribed from BOTH `NavigatorApp` and `App.tsx` (host-agnostic per D-M6-R10), so whichever window opens first — Navigator (common case), editor via `lastOpenedProject`, or editor via `openknowledge://` cold-start deep-link — renders the dialog.
+On every packaged-app launch (`app.isPackaged === true`, macOS-only in v0), `runMcpWiringOnFirstLaunch` (`src/main/mcp-wiring.ts`) checks for `~/.open-knowledge/mcp-status.json`. Marker absent → install IPC handlers, wait for the first renderer's `ok:mcp-wiring:renderer-ready` ack, send `ok:mcp-wiring:show` back with the detected-editors payload. `<McpConsentDialog>` is subscribed from BOTH `NavigatorApp` and `App.tsx` (host-agnostic per D-M6-R10), so whichever window opens first — Navigator (common case), editor via `lastOpenedProject`, or editor via `openknowledge://` cold-start deep-link — renders the dialog.
 
 Marker present (either shape below) → skip immediately; dialog never re-fires on that boot.
 
 ### Marker shape and location
 
-`~/.open-knowledge/.mcp-status.json` — user-scoped, sits next to `~/.open-knowledge/config.yml`.
+`~/.open-knowledge/mcp-status.json` — user-scoped, sits next to `~/.open-knowledge/config.yml`.
 
 Confirmed:
 

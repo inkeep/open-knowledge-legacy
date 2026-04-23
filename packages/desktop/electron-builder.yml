@@ -38,6 +38,15 @@ extraResources:
     filter:
       - "**/*"
       - "!**/*.map"
+      # Post-review Minor #21: tsdown emits `.d.mts` + `.d.mts.map` for
+      # every source module. TypeScript declarations have no runtime
+      # function inside the packaged `.app` and add ~12 MB of dead
+      # weight (tiny info-leak surface too — internal type names
+      # minable from a customer .app). Exclude both shapes.
+      - "!**/*.d.mts"
+      - "!**/*.d.mts.map"
+      - "!**/*.d.ts"
+      - "!**/*.d.ts.map"
   - from: "resources/cli/bin/ok.sh"
     to: "cli/bin/ok.sh"
 

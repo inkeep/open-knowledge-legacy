@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  type AdminFailureError,
+  AdminFailureError,
   type AdminFailureReason,
   buildAdminAppleScript,
   buildAdminFailureError,
@@ -260,6 +260,18 @@ describe('buildAdminFailureError (Pass 0 Major #7)', () => {
   test('omits stderr when caller passes undefined', () => {
     const err = buildAdminFailureError('spawn-error', 'ENOENT');
     expect(err.stderr).toBeUndefined();
+  });
+
+  test('Pass 0 Major #11: is a real class, not an `as` cast — instanceof narrows correctly', () => {
+    // Plain `Error` must NOT match the narrowing path that reads `.reason`.
+    // If this slipped to `true`, the install-failure dialog would read
+    // `.reason = undefined` and mis-classify plain errors as shell-error.
+    const plain = new Error('boom');
+    expect(plain instanceof AdminFailureError).toBe(false);
+    const classified = buildAdminFailureError('spawn-error', 'boom');
+    expect(classified instanceof AdminFailureError).toBe(true);
+    expect(classified instanceof Error).toBe(true);
+    expect(classified.name).toBe('AdminFailureError');
   });
 });
 
@@ -545,7 +557,11 @@ describe('installCli', () => {
     // Admin prompt WAS invoked once even though it was cancelled.
     expect(adminCalls).toHaveLength(1);
     expect(adminCalls[0].shellCmd).toContain('mkdir -p /usr/local/bin');
-    expect(adminCalls[0].promptCopy).toMatch(/install/i);
+    // Pass 0 Major #3: admin prompt names the concrete symlink paths so the
+    // user sees what root will create, not a generic "install" phrasing.
+    expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
+    expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
+    expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
     // One dialog — the manual-install fallback (no pre-admin collision
     // prompt because both paths are absent).
     expect(dialogCalls).toHaveLength(1);
@@ -722,5 +738,21 @@ describe('uninstallCli', () => {
     expect(adminCalls[0].shellCmd).toContain(`rm -f '/usr/local/bin/open-knowledge'`);
     expect(dialogCalls).toHaveLength(1);
     expect(dialogCalls[0].message).toBe('Command-Line Tools removed.');
+  });
+
+  test('Pass 0 Major #3: admin prompt names the concrete symlink paths on uninstall', async () => {
+    const fs = stubFs({
+      readlink: {
+        '/usr/local/bin/ok': INSTALLED_TARGET,
+        '/usr/local/bin/open-knowledge': INSTALLED_TARGET,
+      },
+    });
+    const { deps, adminCalls } = makeDeps({ fs, adminOutcome: 'ok' });
+    await uninstallCli(deps);
+    // Symmetric with install — user sees what root will delete, not a
+    // generic "Open Knowledge needs permission" string.
+    expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
+    expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
+    expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
   });
 });

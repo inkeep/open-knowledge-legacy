@@ -168,7 +168,12 @@ describe('createMcpConsentStore — confirm', () => {
     expect(store.getSnapshot()).toBeNull();
   });
 
-  test('clears snapshot + returns error shape on thrown rejection', async () => {
+  // Partial-failure recovery contract (Pass 0 Major #2): thrown rejections
+  // from the bridge (IPC channel dead, main-side exception) must NOT
+  // unmount the dialog. The surface is transient (channel can recover on
+  // retry); the store keeps `currentRequest` populated so the user can
+  // click Add again from the same still-visible dialog.
+  test('keeps snapshot mounted + returns error shape on thrown rejection', async () => {
     const store = createMcpConsentStore();
     const bridge = makeBridge({ confirmThrows: true });
     store.install({ bridge });
@@ -176,10 +181,12 @@ describe('createMcpConsentStore — confirm', () => {
 
     const result = await store.confirm(['claude']);
     expect(result).toEqual({ ok: false, error: 'confirm-boom' });
-    expect(store.getSnapshot()).toBeNull();
+    // Dialog stays mounted — partial-failure recovery contract. User
+    // can click Add again without waiting for next-boot re-fire.
+    expect(store.getSnapshot()).toEqual(sampleShowPayload);
   });
 
-  test('clears snapshot on ok:false result (main-side write failure)', async () => {
+  test('keeps snapshot mounted on ok:false result (main-side write failure)', async () => {
     const store = createMcpConsentStore();
     const bridge = makeBridge({ confirmResult: { ok: false, error: 'no editors selected' } });
     store.install({ bridge });
@@ -187,7 +194,10 @@ describe('createMcpConsentStore — confirm', () => {
 
     const result = await store.confirm([]);
     expect(result).toEqual({ ok: false, error: 'no editors selected' });
-    expect(store.getSnapshot()).toBeNull();
+    // Dialog stays mounted so the user can adjust selections + retry.
+    // The main handler has reset its `handled` flag on the failure path
+    // (mcp-wiring.ts:confirmHandler), so the retry is live.
+    expect(store.getSnapshot()).toEqual(sampleShowPayload);
   });
 });
 
@@ -210,7 +220,11 @@ describe('createMcpConsentStore — skip', () => {
     expect(store.getSnapshot()).toBeNull();
   });
 
-  test('clears snapshot + returns error shape on thrown rejection', async () => {
+  test('keeps snapshot mounted + returns error shape on thrown rejection', async () => {
+    // Symmetric with confirm (Pass 0 Major #2). A transient IPC failure
+    // on skip shouldn't permanently dismiss the dialog — the user may
+    // retry and reach success, or pick Add instead. Dialog stays mounted
+    // until a truly-acknowledged outcome lands.
     const store = createMcpConsentStore();
     const bridge = makeBridge({ skipThrows: true });
     store.install({ bridge });
@@ -218,7 +232,7 @@ describe('createMcpConsentStore — skip', () => {
 
     const result = await store.skip();
     expect(result).toEqual({ ok: false, error: 'skip-boom' });
-    expect(store.getSnapshot()).toBeNull();
+    expect(store.getSnapshot()).toEqual(sampleShowPayload);
   });
 });
 

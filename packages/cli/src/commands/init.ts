@@ -246,6 +246,9 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       configurations: configs,
     };
     writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
+    // Main's #282 refactor fixed the dead ternary my review-fix also targeted
+    // (W1) by distinguishing 'merged' (existing entry updated) from 'created'
+    // (new entry). Main's version is strictly more informative — keep it.
     return { action: existingIdx >= 0 ? 'merged' : 'created', configPath };
   } catch (err) {
     return {

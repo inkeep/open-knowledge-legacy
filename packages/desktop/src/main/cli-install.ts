@@ -211,9 +211,18 @@ export function classifySymlinkState(
  * rule is unit-testable without spawning.
  */
 export function buildAdminAppleScript(shellCmd: string, promptCopy: string): string {
-  const escapedCmd = shellCmd.replace(/"/g, '\\"');
-  const escapedPrompt = promptCopy.replace(/"/g, '\\"');
-  return `do shell script "${escapedCmd}" with prompt "${escapedPrompt}" with administrator privileges`;
+  // AppleScript string literals treat `\\` as a literal backslash and `\"`
+  // as a literal double-quote. Escaping MUST happen backslash-first:
+  // otherwise a `\` inserted by the `"` escape gets re-escaped on the next
+  // pass, corrupting the literal. macOS file paths can contain `\` (APFS /
+  // HFS+ both permit it), so even though the only current caller routes
+  // `shellCmd` through `shellEscapeSingleQuoted` first (which produces no
+  // `\`), the exported helper's contract must be total for future callers.
+  // Named `escapeAppleScriptLiteral` (not `escape`) to avoid shadowing the
+  // deprecated global.
+  const escapeAppleScriptLiteral = (s: string): string =>
+    s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `do shell script "${escapeAppleScriptLiteral(shellCmd)}" with prompt "${escapeAppleScriptLiteral(promptCopy)}" with administrator privileges`;
 }
 
 /**
@@ -282,25 +291,40 @@ export function buildUninstallShellCmd(paths: readonly string[]): string {
  */
 export type AdminFailureReason = 'user-cancel' | 'spawn-error' | 'shell-error';
 
-export interface AdminFailureError extends Error {
-  reason: AdminFailureReason;
+/**
+ * Real class (not an `as` cast onto a plain `Error`) so consumers can
+ * branch via `err instanceof AdminFailureError` and get sound narrowing of
+ * `.reason` / `.stderr`. Previously constructed via
+ * `new Error(msg) as AdminFailureError + mutation` which let a plain
+ * `Error` from an injected `runAsAdmin` test stub silently pass through
+ * the cast — consumers would then read `.reason === undefined` and fall
+ * through to the `'shell-error'` default, showing users a shell-error
+ * dialog for what may have been a spawn error or programmer bug. The
+ * class + `instanceof` path makes the unsoundness impossible (Pass 0
+ * Major #11).
+ */
+export class AdminFailureError extends Error {
+  readonly reason: AdminFailureReason;
   /** stderr from osascript when available — surfaced in error dialogs. */
-  stderr?: string;
+  readonly stderr?: string;
+  constructor(reason: AdminFailureReason, message: string, stderr?: string) {
+    super(message);
+    this.name = 'AdminFailureError';
+    this.reason = reason;
+    if (stderr !== undefined && stderr !== '') this.stderr = stderr;
+  }
 }
 
 /**
- * Wrap a runAsAdmin error so callers can branch on `reason`. Pure helper —
- * exported for unit test coverage of the cancel-vs-failure copy paths.
+ * Construct an `AdminFailureError`. Legacy helper kept for the exported
+ * unit-test surface; wraps `new AdminFailureError(...)` directly.
  */
 export function buildAdminFailureError(
   reason: AdminFailureReason,
   message: string,
   stderr?: string,
 ): AdminFailureError {
-  const err = new Error(message) as AdminFailureError;
-  err.reason = reason;
-  if (stderr !== undefined && stderr !== '') err.stderr = stderr;
-  return err;
+  return new AdminFailureError(reason, message, stderr);
 }
 
 /**
@@ -432,10 +456,16 @@ export async function installCli(deps: CliInstallDeps): Promise<void> {
   }
 
   const shellCmd = buildInstallShellCmd(target);
+  // Admin-prompt copy names the destination paths so the user sees what
+  // root will write. VS Code's "Install code command in PATH" lists its
+  // path too; Docker Desktop's helper enumerates its writes. A bare
+  // "install the Command-Line Tools" string, when the user later finds a
+  // rogue symlink at /usr/local/bin/ok from a different app, gives no
+  // audit trail for why they granted root access (Pass 0 Major #3).
   try {
     await runAsAdmin(
       shellCmd,
-      'Open Knowledge needs permission to install the Command-Line Tools.',
+      `Open Knowledge will create symlinks at ${SYMLINK_PATHS.join(' and ')} so you can run 'ok' from your terminal. This requires administrator access.`,
     );
   } catch (err) {
     // Distinguish user-cancel from spawn-error / shell-error so the user
@@ -443,9 +473,12 @@ export async function installCli(deps: CliInstallDeps): Promise<void> {
     // (Pass 0 Major #7). user-cancel → soft manual-install fallback dialog;
     // spawn-error / shell-error → red error dialog with the underlying
     // message AND the manual-install fallback so the user has a path
-    // forward.
-    const adminErr = err as AdminFailureError;
-    const reason = adminErr?.reason ?? 'shell-error';
+    // forward. `instanceof` narrowing (Pass 0 Major #11) — an injected
+    // `runAsAdmin` stub that throws a plain `Error` falls through to the
+    // shell-error branch with the underlying message preserved, instead of
+    // silently masquerading as one of our three classified reasons.
+    const adminErr = err instanceof AdminFailureError ? err : null;
+    const reason: AdminFailureReason = adminErr?.reason ?? 'shell-error';
     const stderr = adminErr?.stderr ?? '';
     const binDir = target.replace(/\/ok\.sh$/, '');
     if (reason === 'user-cancel') {
@@ -512,16 +545,23 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
 
   const shellCmd = buildUninstallShellCmd(toRemove);
   try {
-    await runAsAdmin(shellCmd, 'Open Knowledge needs permission to remove the Command-Line Tools.');
+    // Symmetric-with-install copy (Pass 0 Major #3): name the paths so the
+    // user sees what root will delete.
+    await runAsAdmin(
+      shellCmd,
+      `Open Knowledge will remove the symlinks at ${toRemove.join(' and ')}. This requires administrator access.`,
+    );
   } catch (err) {
     // user-cancel → silent no-op (the menu label stays "Uninstall", user
     // can click again). spawn-error / shell-error → surface a warning so
     // the user knows the menu click landed somewhere bad — without this,
     // a partial-uninstall (e.g., `ok` removed but `open-knowledge` failed)
     // leaves the install in a 'broken' state with no signal that anything
-    // happened (Pass 0 Major #8).
-    const adminErr = err as AdminFailureError;
-    const reason = adminErr?.reason ?? 'shell-error';
+    // happened (Pass 0 Major #8). `instanceof` narrowing (Pass 0 Major #11):
+    // plain `Error` from an injected `runAsAdmin` falls to shell-error with
+    // its message preserved rather than silently adopting `.reason = undefined`.
+    const adminErr = err instanceof AdminFailureError ? err : null;
+    const reason: AdminFailureReason = adminErr?.reason ?? 'shell-error';
     if (reason === 'user-cancel') return;
     const stderr = adminErr?.stderr ?? '';
     console.warn('[cli-install] admin uninstall failed', {

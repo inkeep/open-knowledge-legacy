@@ -119,9 +119,9 @@ function stubFsForResolve(opts: {
 }
 
 describe('mcpStatusMarkerPath', () => {
-  test('resolves to <home>/.open-knowledge/.mcp-status.json', () => {
+  test('resolves to <home>/.open-knowledge/mcp-status.json', () => {
     expect(mcpStatusMarkerPath('/Users/andrew')).toBe(
-      '/Users/andrew/.open-knowledge/.mcp-status.json',
+      '/Users/andrew/.open-knowledge/mcp-status.json',
     );
   });
 });
@@ -134,13 +134,13 @@ describe('readMcpStatusMarker', () => {
 
   test('returns null when marker is unparseable JSON', () => {
     const { fs, files } = createVirtualFs();
-    files.set('/Users/andrew/.open-knowledge/.mcp-status.json', 'not-json{{{');
+    files.set('/Users/andrew/.open-knowledge/mcp-status.json', 'not-json{{{');
     expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
   });
 
   test('returns null when shape is neither configured:true nor configured:false', () => {
     const { fs, files } = createVirtualFs();
-    files.set('/Users/andrew/.open-knowledge/.mcp-status.json', JSON.stringify({ foo: 'bar' }));
+    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify({ foo: 'bar' }));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
   });
 
@@ -152,7 +152,7 @@ describe('readMcpStatusMarker', () => {
       editors: ['claude', 'cursor'],
       cliPath: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
     };
-    files.set('/Users/andrew/.open-knowledge/.mcp-status.json', JSON.stringify(marker));
+    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify(marker));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual(marker);
   });
 
@@ -162,7 +162,7 @@ describe('readMcpStatusMarker', () => {
       configured: false,
       skippedAt: '2026-04-23T00:00:00Z',
     };
-    files.set('/Users/andrew/.open-knowledge/.mcp-status.json', JSON.stringify(marker));
+    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify(marker));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual(marker);
   });
 });
@@ -178,7 +178,7 @@ describe('writeMcpStatusMarker', () => {
     };
     writeMcpStatusMarker('/Users/andrew', status, fs);
     expect(dirs.has('/Users/andrew/.open-knowledge')).toBe(true);
-    const written = files.get('/Users/andrew/.open-knowledge/.mcp-status.json');
+    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
     expect(written).toBeDefined();
     if (written === undefined) throw new Error('marker not written');
     expect(JSON.parse(written)).toEqual(status);
@@ -191,7 +191,7 @@ describe('writeMcpStatusMarker', () => {
       skippedAt: '2026-04-23T00:00:00Z',
     };
     writeMcpStatusMarker('/Users/andrew', status, fs);
-    const written = files.get('/Users/andrew/.open-knowledge/.mcp-status.json');
+    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
     if (written === undefined) throw new Error('marker not written');
     expect(JSON.parse(written)).toEqual(status);
   });
@@ -215,7 +215,7 @@ describe('writeMcpStatusMarker', () => {
       { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
       fs,
     );
-    const written = files.get('/Users/andrew/.open-knowledge/.mcp-status.json');
+    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
     if (written === undefined) throw new Error('marker not written');
     expect(written.endsWith('\n')).toBe(true);
   });
@@ -227,7 +227,7 @@ describe('writeMcpStatusMarker', () => {
       { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
       fs,
     );
-    const canonical = '/Users/andrew/.open-knowledge/.mcp-status.json';
+    const canonical = '/Users/andrew/.open-knowledge/mcp-status.json';
     // Canonical path present.
     expect(files.has(canonical)).toBe(true);
     // No stray .tmp-<pid>-<ts> sibling — rename cleaned it up.
@@ -276,7 +276,7 @@ describe('writeMcpStatusMarker', () => {
     const strayTmps = [...files.keys()].filter((p) => p.includes('.tmp-'));
     expect(strayTmps).toEqual([]);
     // Canonical marker was NEVER created — failure must not leave partial state.
-    expect(files.has('/Users/andrew/.open-knowledge/.mcp-status.json')).toBe(false);
+    expect(files.has('/Users/andrew/.open-knowledge/mcp-status.json')).toBe(false);
   });
 });
 
@@ -476,10 +476,26 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
 /** Minimal ipcMain stub capturing handler registration for assertion. */
 interface IpcMainStub extends IpcMainLike {
   handlers: Map<string, (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>>;
-  /** Simulate a renderer `invoke(channel, ...args)`. Event is stubbed to `{}`. */
+  /**
+   * Simulate a renderer `invoke(channel, ...args)`. Uses the stub's
+   * currently-bound sender id (set by `bindSender`) so confirm/skip pass the
+   * sender-binding gate. Defaults to sender id `999` before any binding —
+   * which the gate rejects per Pass 0 Major #1. Tests that want happy-path
+   * flow call `await ipcMain.bindSender()` first; tests that want to
+   * exercise the rejection branch call `invoke` without priming.
+   */
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   /** Simulate an invoke with a custom sender event (for renderer-ready tests). */
   invokeWithEvent(channel: string, event: unknown, ...args: unknown[]): Promise<unknown>;
+  /**
+   * Fire the registered `ok:mcp-wiring:renderer-ready` handler with an event
+   * whose `sender.id === id`. Captures the `sendToRenderer` callback so
+   * tests can assert the show payload shape. After success, the stub uses
+   * `id` as the default sender for `invoke`, letting subsequent confirm /
+   * skip tests pass the sender-binding gate without explicitly constructing
+   * an event. Pass 1 Major #7 — tests for the binding gate.
+   */
+  bindSender(id?: number): Promise<Array<{ channel: string; args: unknown[] }>>;
 }
 
 function createIpcMainStub(): IpcMainStub {
@@ -487,6 +503,12 @@ function createIpcMainStub(): IpcMainStub {
     string,
     (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
   >();
+  // Pass 0 Major #1: the main-side sender-binding captures `event.sender.id`
+  // inside the renderer-ready handler and validates confirm/skip invokes
+  // against it. The stub needs to thread the bound id through to subsequent
+  // `invoke` calls so happy-path tests can keep their shape (`invoke(channel,
+  // args)`) without each one manually constructing a sender event.
+  let boundSenderId: number | null = null;
   return {
     handlers,
     handle(channel, handler) {
@@ -498,12 +520,35 @@ function createIpcMainStub(): IpcMainStub {
     async invoke(channel, ...args) {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`no handler for ${channel}`);
-      return handler({}, ...args);
+      // Default sender id `999` before binding — an arbitrary non-match
+      // that the gate rejects. Post-bind, use the bound id so confirm /
+      // skip pass. `event.sender.id` MUST always be defined: the log
+      // path inside the rejection branch reads it for telemetry.
+      const senderId = boundSenderId ?? 999;
+      return handler({ sender: { id: senderId } }, ...args);
     },
     async invokeWithEvent(channel, event, ...args) {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`no handler for ${channel}`);
       return handler(event, ...args);
+    },
+    async bindSender(id = 1): Promise<Array<{ channel: string; args: unknown[] }>> {
+      const readyHandler = handlers.get('ok:mcp-wiring:renderer-ready');
+      if (!readyHandler) {
+        throw new Error('renderer-ready handler not registered — bindSender must run after arm');
+      }
+      const captured: Array<{ channel: string; args: unknown[] }> = [];
+      const event = {
+        sender: {
+          id,
+          send(channel: string, ...args: unknown[]) {
+            captured.push({ channel, args });
+          },
+        },
+      };
+      await readyHandler(event);
+      boundSenderId = id;
+      return captured;
     },
   };
 }
@@ -679,7 +724,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
   test('returns inert handle when marker is present (idempotent)', () => {
     const { fs, files } = createVirtualFs();
     files.set(
-      '/Users/andrew/.open-knowledge/.mcp-status.json',
+      '/Users/andrew/.open-knowledge/mcp-status.json',
       JSON.stringify({
         configured: true,
         configuredAt: '2026-04-23T00:00:00Z',
@@ -707,7 +752,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
   test('returns inert handle when skip marker is present (still idempotent)', () => {
     const { fs, files } = createVirtualFs();
     files.set(
-      '/Users/andrew/.open-knowledge/.mcp-status.json',
+      '/Users/andrew/.open-knowledge/mcp-status.json',
       JSON.stringify({
         configured: false,
         skippedAt: '2026-04-23T00:00:00Z',
@@ -861,6 +906,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const result = await ipcMain.invoke('ok:mcp-wiring:confirm', {
         editorIds: ['claude', 'cursor'],
       });
@@ -872,7 +918,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       expect(call.cliPath).toBe(INSTALLED_BUNDLE_WRAPPER);
       expect(call.home).toBe('/Users/andrew');
       const markerRaw =
-        createVirtualFs().files.get('/Users/andrew/.open-knowledge/.mcp-status.json') ?? null;
+        createVirtualFs().files.get('/Users/andrew/.open-knowledge/mcp-status.json') ?? null;
       expect(markerRaw).toBeNull(); // written to the LIVE fs, not a fresh virtual fs
       expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual({
         configured: true,
@@ -914,6 +960,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
       const call = writeCalls[0];
       if (!call) throw new Error('no write call recorded');
@@ -943,6 +990,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude', 'cursor'] });
       const call = writeCalls[0];
       if (!call) throw new Error('no write call recorded');
@@ -975,6 +1023,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
       const call = writeCalls[0];
       if (!call) throw new Error('no write call recorded');
@@ -1025,6 +1074,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
         editorIds: ['claude', 'cursor'],
       })) as { ok: boolean; error?: string };
@@ -1067,6 +1117,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
         editorIds: ['claude'],
       })) as { ok: boolean; error?: string };
@@ -1094,6 +1145,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
       const second = await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
       expect(second).toEqual({ ok: true });
@@ -1123,6 +1175,7 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const result = await ipcMain.invoke('ok:mcp-wiring:skip');
       expect(result).toEqual({ ok: true });
       expect(writeCalls.length).toBe(0);
@@ -1164,6 +1217,7 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const result = (await ipcMain.invoke('ok:mcp-wiring:skip')) as {
         ok: boolean;
         error?: string;
@@ -1194,6 +1248,7 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
       logger,
     });
     try {
+      await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: [] });
       // Marker is now `configured:true, editors:[]` — exercise the idempotence
       // gate by issuing skip right after. Marker should NOT be overwritten.
@@ -1251,6 +1306,7 @@ describe('runMcpWiringOnFirstLaunch — handled flag concurrency (Pass 0 Major #
       logger,
     });
     try {
+      await ipcMain.bindSender();
       // Fire confirm WITHOUT awaiting; immediately fire skip while confirm's
       // write is stalled. The `handled` flag MUST be flipped synchronously
       // at handler entry so skip's first line returns the no-op.
@@ -1315,6 +1371,7 @@ describe('runMcpWiringOnFirstLaunch — handled flag concurrency (Pass 0 Major #
       logger,
     });
     try {
+      await ipcMain.bindSender();
       const first = ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
       const second = ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
       const secondResult = await second;

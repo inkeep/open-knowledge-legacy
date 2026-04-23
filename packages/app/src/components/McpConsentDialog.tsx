@@ -124,12 +124,16 @@ function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyPro
   async function onAdd() {
     setBusy(true);
     const result = await store.confirm(selectedIdsOrdered(selection, detectedEditors));
-    // The store clears currentRequest on resolution → useSyncExternalStore
-    // unmounts this subtree. Sonner is mounted globally in main.tsx so the
-    // toast survives the unmount and is the only surface for partial-failure
-    // signal (Review Pass 0 Critical #1 — AC2.14 / OQ-19 toast contract).
+    // Success: the store clears `currentRequest` → useSyncExternalStore
+    // unmounts this subtree, so there's nothing to reset. Failure
+    // (ok:false / thrown rejection): the store KEEPS the snapshot
+    // populated (Pass 1 Major #1 recovery contract), so we must reset
+    // `busy` here or the Add button stays disabled forever and same-boot
+    // retry is impossible. Sonner is mounted globally in main.tsx; the
+    // toast surfaces even if the dialog were to unmount.
     if (!result.ok) {
       toast.error(result.error);
+      setBusy(false);
     }
   }
 
@@ -138,6 +142,9 @@ function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyPro
     const result = await store.skip();
     if (!result.ok) {
       toast.error(result.error);
+      // Matching rationale to onAdd — reset `busy` so Skip stays
+      // clickable after a transient marker-write failure.
+      setBusy(false);
     }
   }
 
@@ -162,8 +169,9 @@ function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyPro
         <DialogHeader>
           <DialogTitle>Add Open Knowledge to your AI tools</DialogTitle>
           <DialogDescription>
-            Open Knowledge can register as an MCP server so your AI tools can read and write your
-            notes. Detected editors are preselected — you can toggle any row.
+            Connect Open Knowledge to your AI tools so they can read and write your notes. Once
+            added, asking Claude to summarize or update a page works without copy-paste. Detected
+            editors are preselected — you can toggle any row.
           </DialogDescription>
         </DialogHeader>
 

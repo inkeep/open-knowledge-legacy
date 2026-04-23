@@ -63,8 +63,10 @@ fi
 # — they would otherwise be inherited into the Electron-as-Node
 # process and can crash with "--require of ESM". Re-export under a
 # scoped name so the CLI can opt to honor them explicitly (VS Code
-# pattern).
-export OK_NODE_OPTIONS=$NODE_OPTIONS
+# pattern). Quote the expansion so that multi-token values like
+# `NODE_OPTIONS='--require /tmp/x.js'` are captured verbatim instead
+# of being re-split on whitespace (Review Pass 0 Minor #15).
+export OK_NODE_OPTIONS="$NODE_OPTIONS"
 unset NODE_OPTIONS
 
 ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" "$@"

@@ -3,7 +3,7 @@
  *
  * Three pure pieces, all dependency-injected for bun-test loadability:
  *
- *   1. Marker read/write at `<home>/.open-knowledge/.mcp-status.json`. The
+ *   1. Marker read/write at `<home>/.open-knowledge/mcp-status.json`. The
  *      user-scoped marker fires the consent dialog exactly once per user per
  *      Mac (D-M6-R1). Shape is either `{configured: true, configuredAt,
  *      editors, cliPath}` on Add, or `{configured: false, skippedAt}` on
@@ -49,6 +49,7 @@ import {
   writeFileSync as fsWriteFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import type { EditorMcpTarget } from '@inkeep/open-knowledge';
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import type {
   McpWiringConfirmRequest,
@@ -59,16 +60,16 @@ import type {
 } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
-import { wrapperPathInBundle as cliWrapperPathInBundle } from './cli-install.ts';
+import { wrapperPathInBundle } from './cli-install.ts';
 
 /** Canonical symlink path created by M6a (`Install Command-Line Tools…`). */
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
 
 const MCP_STATUS_DIR_NAME = '.open-knowledge';
-const MCP_STATUS_FILE_NAME = '.mcp-status.json';
+const MCP_STATUS_FILE_NAME = 'mcp-status.json';
 
 /**
- * Shape of `<home>/.open-knowledge/.mcp-status.json`. Either a confirmed
+ * Shape of `<home>/.open-knowledge/mcp-status.json`. Either a confirmed
  * wiring (`configured: true`) or a recorded skip (`configured: false`).
  * Absence of the file means "no prior decision" — distinct from a
  * persisted skip, which suppresses the dialog forever.
@@ -223,15 +224,6 @@ export function writeMcpStatusMarker(
 }
 
 /**
- * Bundle-absolute wrapper path — re-exports `cli-install.wrapperPathInBundle`
- * so M6a + M6b share one definition (Pass 0 Minor #5). Both modules live in
- * the same `main/` namespace; the cross-module import is intra-module and
- * keeps universal-binary subpath migrations (or any future change to the
- * bundle layout) localized to ONE function.
- */
-const wrapperPathInBundle = cliWrapperPathInBundle;
-
-/**
  * Hybrid `cliPath` resolution (D-M6-R9). Decides which path M6b writes
  * into MCP config entries at consent-confirm time.
  *
@@ -279,20 +271,14 @@ export function resolveCliPath(executablePath: string, fs: McpWiringFsOps = defa
 }
 
 /**
- * Structurally-compatible subset of `EditorMcpTarget.isCompatible` from
- * `packages/cli/src/commands/editors.ts`. A real `EditorMcpTarget` is
- * structurally assignable to this interface, so call sites in US-008
- * can pass `EDITOR_TARGETS[id]` directly without a wrapper. Defined
- * inline here so mcp-wiring doesn't require a cross-package import
- * from `@inkeep/open-knowledge`.
+ * Subset of `EditorMcpTarget` that `computeForce` needs — just
+ * `isCompatible`. Kept as a type alias rather than a hand-rolled
+ * structural interface (Pass 0 Minor #17) now that desktop has a real
+ * workspace dep on `@inkeep/open-knowledge` (the M6b substrate), so the
+ * authoritative type shape comes from the CLI package rather than a
+ * duplicated interface that can drift.
  */
-export interface ForceComputeTarget {
-  isCompatible(
-    existing: Record<string, unknown>,
-    cwd: string,
-    options?: { mode?: 'published' | 'dev'; cliPath?: string; cliEntryPath?: string },
-  ): boolean;
-}
+export type ForceComputeTarget = Pick<EditorMcpTarget, 'isCompatible'>;
 
 /**
  * Decide whether to overwrite an editor's existing entry with the new
@@ -352,21 +338,39 @@ function isHistoricalNpxVariant(existing: Record<string, unknown>): boolean {
 }
 
 /**
- * Match any prior cliPath shape: `{command:<any-string>, args:['mcp']}`
- * where `command` is not `npx` (which would be the canonical published
- * shape, not a cliPath shape).
+ * Match a PRIOR OK cliPath shape: `{command:<path-ending-in-ok-wrapper-basename>, args:['mcp']}`
+ * where the basename identifies the binary as an OK bin (not some
+ * third-party tool that happens to take `mcp` as its sole argument).
  *
- * Published canonical has `args.length === 2` (`[@inkeep/..., 'mcp']`),
- * dev-mode has `args.length === 2` (`[<cli.mjs>, 'mcp']`), and the
- * `-y` variant has `args.length === 3`. Only our cliPath shape has
- * exactly `['mcp']` — this makes the detection robust to the exact
- * cliPath value (which varies across auto-update + app-move).
+ * The arg-shape discriminator (`['mcp']` — exactly one element, value
+ * `'mcp'`) is necessary but NOT sufficient. Published canonical has
+ * `args.length === 2` (`[@inkeep/..., 'mcp']`), dev-mode has
+ * `args.length === 2` (`[<cli.mjs>, 'mcp']`), and the `-y` variant has
+ * `args.length === 3` — all distinct from our cliPath shape. But a
+ * foreign tool like `{command:'/opt/homebrew/bin/some-other-mcp-tool',
+ * args:['mcp']}` would also match the arg shape alone. Pass 0 Major #12
+ * tightens the command match to the OK-owned wrapper basenames so a
+ * non-OK binary with incidental `['mcp']` args is not silently stomped.
+ *
+ * Accepted basenames:
+ *   - `ok` / `ok.sh` — the short-form symlink created by M6a + the
+ *     bundled wrapper script.
+ *   - `open-knowledge` — the long-form symlink.
+ *
+ * This stays robust to path variation: auto-update moves the bundle but
+ * the basename is stable; user installs to `/Applications/` or
+ * `~/Applications/` — same basename; M6a symlink at `/usr/local/bin/ok`
+ * or `/usr/local/bin/open-knowledge` — same basenames. Non-OK binaries
+ * like `mcp-tool`, `llm-gateway`, or `some-mcp-wrapper.sh` fall through
+ * to foreign-shape preservation.
  */
 function isPriorCliPathShape(existing: Record<string, unknown>): boolean {
   if (typeof existing.command !== 'string') return false;
   if (existing.command === 'npx') return false;
   if (!Array.isArray(existing.args)) return false;
-  return existing.args.length === 1 && existing.args[0] === 'mcp';
+  if (existing.args.length !== 1 || existing.args[0] !== 'mcp') return false;
+  const basename = existing.command.split('/').pop();
+  return basename === 'ok' || basename === 'ok.sh' || basename === 'open-knowledge';
 }
 
 /**
@@ -395,6 +399,28 @@ export function formatPartialFailureMessage(
 // ---------------------------------------------------------------------------
 // Runtime orchestration — US-008 (M6b runMcpWiringOnFirstLaunch)
 // ---------------------------------------------------------------------------
+
+/**
+ * Pass 0 Major #1 — sender-binding predicate. Returns true iff the
+ * invoking `WebContents.id` matches the captured show-dispatch sender,
+ * OR if no dispatch has captured a sender yet (binding is null during
+ * the inert-handle / pre-dispatch window but both handlers self-guard
+ * via `handled` so this branch is unreachable in practice — see comment
+ * in `runMcpWiringOnFirstLaunch`).
+ *
+ * Pure helper so unit tests can assert the binding logic without
+ * threading a closure-scoped variable through the test harness.
+ */
+function isPermittedSender(
+  event: Pick<IpcMainInvokeEvent, 'sender'>,
+  capturedSenderId: number | null,
+): boolean {
+  // Null binding means no dispatch has succeeded yet — refuse all
+  // confirms/skips so a fast renderer can't call confirm/skip before
+  // the show event has been delivered anywhere.
+  if (capturedSenderId === null) return false;
+  return event.sender.id === capturedSenderId;
+}
 
 /**
  * Structurally-compatible subset of Electron's `IpcMain`. Declared inline
@@ -447,20 +473,11 @@ export interface McpWiringCliSurface {
   readExistingMcpEntry(editorId: McpWiringEditorId, home: string): Record<string, unknown> | null;
   /** Full `ALL_EDITOR_IDS` — used to build the dialog-payload detection list. */
   allEditorIds: readonly McpWiringEditorId[];
-  /** `EDITOR_TARGETS[id]` keyed by editor. Structurally a superset of
-   *  `ForceComputeTarget`; used for `computeForce` + label lookup. */
-  editorTargets: Record<McpWiringEditorId, EditorTargetForWiring>;
-}
-
-/**
- * Shape of an `EDITOR_TARGETS[id]` value as M6b needs it. Structural subset
- * of `EditorMcpTarget` in editors.ts — we only read `id`, `label`, and call
- * `isCompatible` (via `ForceComputeTarget`). The real `EditorMcpTarget` is
- * structurally assignable.
- */
-export interface EditorTargetForWiring extends ForceComputeTarget {
-  readonly id: McpWiringEditorId;
-  readonly label: string;
+  /** `EDITOR_TARGETS[id]` keyed by editor. Imported directly from
+   *  `@inkeep/open-knowledge` (Pass 0 Minor #17) so drift with the CLI's
+   *  authoritative `EditorMcpTarget` shape is a compile error, not a
+   *  runtime surprise. */
+  editorTargets: Record<McpWiringEditorId, EditorMcpTarget>;
 }
 
 /** Minimal logger surface — bracket-prefix operational + structured events. */
@@ -554,37 +571,71 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     return inertHandle;
   }
 
-  const detectedIds = new Set<McpWiringEditorId>(cli.detectInstalledEditors('', home));
-  const detections: McpWiringEditorDetection[] = cli.allEditorIds.map((id) => ({
-    id,
-    label: cli.editorTargets[id].label,
-    detected: detectedIds.has(id),
-  }));
+  // Detection + payload construction under try/catch (Pass 0 Major #5). A
+  // drift between `cli.allEditorIds` and `cli.editorTargets` (CLI refactor
+  // that adds an id without the matching target, or a future platform-
+  // conditional getter that throws) must NOT crash `app.whenReady()` and
+  // leave the user with a failing boot. Treat any detection error as
+  // "wiring inert for this boot" — marker stays absent → dialog re-fires
+  // next launch after the CLI is fixed. Emits a structured event so ops
+  // can correlate "dialog never appeared" reports to the drift that caused
+  // it.
+  let detections: McpWiringEditorDetection[];
+  try {
+    const detectedIds = new Set<McpWiringEditorId>(cli.detectInstalledEditors('', home));
+    detections = cli.allEditorIds.map((id) => {
+      const target = cli.editorTargets[id];
+      if (!target) {
+        throw new Error(`editorTargets missing entry for id=${id}`);
+      }
+      return { id, label: target.label, detected: detectedIds.has(id) };
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error('detection failed — wiring inert for this boot', { message });
+    logger.event({ event: 'mcp-wiring-detect-failed', error: message });
+    return inertHandle;
+  }
 
-  // Once-per-boot idempotence gate. Flipped synchronously at handler entry on
-  // the FIRST confirm or skip — guarantees that rage-clicking Add+Skip while
-  // the first call is in flight (Pass 0 Major #12 race shape) yields exactly
-  // one writeUserMcpConfigs invocation + at most one marker write.
-  //
-  // Stays set on `ok:false` failure paths (writeUserMcpConfigs throws,
-  // per-editor partial failure, marker-write throw). User recovery on the
-  // current boot is impossible — the dialog has already unmounted via the
-  // store's clearCurrent(), so there's no UI from which to click Skip.
-  // Recovery is the next-boot dialog re-fire driven by marker absence
-  // (deferred-marker per OQ-19) — same-boot Skip would be a no-op anyway.
-  // This contract is load-bearing: a future refactor that flips `handled`
-  // earlier or widens the early-return must preserve "next-boot = fresh
-  // attempt" or break the OQ-19 recovery path (Pass 1 Minor #1).
+  // Once-per-boot idempotence for SUCCESSFUL handler runs. Flipped
+  // synchronously at handler entry on first confirm/skip so a rage-click
+  // race (Add+Skip in quick succession) collapses to at most one effective
+  // run. Reset to false on failure branches (Pass 0 Major #2) so the user
+  // can retry the SAME dialog without waiting for a next-boot re-fire —
+  // the store keeps the dialog mounted on `ok:false` results, so the user
+  // clicks Add again and the retry flows through. Set and left true on
+  // ok:true to prevent double-write on success-then-rage-click.
   let handled = false;
 
+  // Pass 0 Major #1 — bind confirm/skip acceptance to the WebContents that
+  // actually received `ok:mcp-wiring:show`. Captured inside the one-shot
+  // renderer-ready handler after a successful dispatch. Before capture
+  // (happy-path cold boot) the binding is null — confirm/skip from any
+  // renderer is rejected. After capture, only the same sender id is
+  // accepted. This closes the window where any future BrowserWindow with
+  // bridge access (e.g. M3 update-toast relaunch, a second-instance spawn
+  // that hasn't received the show event) could pre-empt the user's choice
+  // by calling `mcpWiring.confirm({editorIds: ALL_EDITOR_IDS})` before the
+  // dialog is even visible.
+  let capturedSenderId: number | null = null;
+
   const confirmHandler = async (
-    _event: IpcMainInvokeEvent,
-    ...args: unknown[]
+    event: IpcMainInvokeEvent,
+    request: McpWiringConfirmRequest,
   ): Promise<McpWiringConfirmResult> => {
+    if (!isPermittedSender(event, capturedSenderId)) {
+      logger.warn('rejecting confirm — sender is not the renderer that received show', {
+        capturedSenderId,
+        gotSenderId: event.sender.id,
+      });
+      return {
+        ok: false,
+        error: 'Consent must come from the window that displayed the dialog.',
+      };
+    }
     if (handled) return { ok: true };
     handled = true;
-    const request = (args[0] ?? {}) as McpWiringConfirmRequest;
-    const selectedEditors = Array.isArray(request.editorIds)
+    const selectedEditors = Array.isArray(request?.editorIds)
       ? [...request.editorIds].filter((id): id is McpWiringEditorId =>
           cli.allEditorIds.includes(id as McpWiringEditorId),
         )
@@ -622,14 +673,19 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('writeUserMcpConfigs threw — marker not written', { message });
+      // Pass 0 Major #2 — reset `handled` on failure so user can retry
+      // from the SAME still-mounted dialog (store keeps it open on
+      // ok:false).
+      handled = false;
       return { ok: false, error: message };
     }
 
     // Deferred-marker (OQ-19). If any per-editor write failed, leave the
     // marker absent so the next app launch re-fires the dialog. Return
-    // `ok:false` with a user-readable error so the renderer can fire a
-    // sonner toast — the dialog itself unmounts on result resolution, so a
-    // toast is the only surface for this signal (Review Pass 0 Critical #1).
+    // `ok:false` with a user-readable error so the renderer's sonner toast
+    // surfaces the failure; the store keeps the dialog mounted (Pass 0
+    // Major #2) so the user can adjust selections and click Add again
+    // without waiting for next-boot re-fire.
     const failedResults = results.filter((r) => r.action === 'failed');
     for (const r of failedResults) {
       logger.event({
@@ -641,6 +697,8 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     }
     if (failedResults.length > 0) {
       logger.info('partial failure — marker not written; dialog will re-fire next boot');
+      // Pass 0 Major #2 — reset handled so a same-boot retry lands.
+      handled = false;
       return {
         ok: false,
         error: formatPartialFailureMessage(failedResults, results.length),
@@ -661,6 +719,8 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('marker write failed', { message });
+      // Pass 0 Major #2 — reset handled so a same-boot retry lands.
+      handled = false;
       return { ok: false, error: message };
     }
 
@@ -668,7 +728,17 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     return { ok: true };
   };
 
-  const skipHandler = async (_event: IpcMainInvokeEvent): Promise<McpWiringSkipResult> => {
+  const skipHandler = async (event: IpcMainInvokeEvent): Promise<McpWiringSkipResult> => {
+    if (!isPermittedSender(event, capturedSenderId)) {
+      logger.warn('rejecting skip — sender is not the renderer that received show', {
+        capturedSenderId,
+        gotSenderId: event.sender.id,
+      });
+      return {
+        ok: false,
+        error: 'Consent must come from the window that displayed the dialog.',
+      };
+    }
     if (handled) return { ok: true };
     handled = true;
     try {
@@ -685,10 +755,11 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       // so the renderer can fire a sonner toast — without this signal the
       // user sees the dialog close and assumes Skip persisted, then the
       // dialog re-fires next boot with no explanation (Review Pass 0
-      // Major #9). `handled` is already true so this surface stays
-      // once-per-boot regardless of failure.
+      // Major #9). Reset `handled` so the user can retry Skip from the
+      // still-mounted dialog (Pass 0 Major #2 — same-boot retry).
       const message = err instanceof Error ? err.message : String(err);
       logger.error('skip-marker write failed', { message });
+      handled = false;
       return {
         ok: false,
         error: `Could not record your preference (${message}). The consent dialog may reappear on next launch.`,
@@ -701,12 +772,16 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
   // D-M6-R10 mount-ack handshake. The renderer-ready invoke fires AFTER
   // React has subscribed to `ok:mcp-wiring:show`, so sending show on its
   // receipt avoids the `did-finish-load` race (subscribe-order vs. send).
-  // One-shot: first renderer-ready wins the dialog. Remove ordering: dispatch
-  // FIRST, then `removeHandler` only on success — so if `sendToRenderer`
-  // throws (WebContents destroyed mid-handshake, channel-name drift, etc.)
-  // the handler stays armed and a second renderer's signalReady invoke gets
-  // a fresh attempt. Without this swap, a failed first dispatch would leave
-  // the dialog permanently undeliverable until next boot (Pass 0 Major #6).
+  // One-shot: first renderer-ready wins the dialog AND captures its
+  // WebContents sender id (Pass 0 Major #1), which confirm/skip both
+  // validate against before accepting. Remove ordering: dispatch FIRST,
+  // then `removeHandler` + `capturedSenderId` update only on success — so
+  // if `sendToRenderer` throws (WebContents destroyed mid-handshake,
+  // channel-name drift, etc.) the handler stays armed AND no binding is
+  // captured, so a second renderer's signalReady invoke gets a fresh
+  // attempt with fresh sender binding. Without this swap, a failed first
+  // dispatch would leave the dialog permanently undeliverable until next
+  // boot (Pass 0 Major #6).
   //
   // TODO (post-M6, Pass 1 Minor #2): no watchdog. Today's boot opens exactly
   // one window (Navigator OR editor — branching on lastOpenedProject) so the
@@ -731,7 +806,10 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       sendToRenderer(event.sender, 'ok:mcp-wiring:show', {
         detectedEditors: detections,
       });
-      logger.info('dispatched show to renderer', { detectedCount: detections.length });
+      logger.info('dispatched show to renderer', {
+        detectedCount: detections.length,
+        senderId: event.sender.id,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('show dispatch failed — handler remains armed for next renderer', {
@@ -739,8 +817,11 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       });
       return undefined;
     }
-    // Successful dispatch — drop the one-shot now so a second renderer's
-    // signalReady doesn't double-fire the show event.
+    // Successful dispatch — bind the sender id AND drop the one-shot now
+    // so a second renderer's signalReady doesn't double-fire the show
+    // event. Binding must be set BEFORE handler removal so a confirm
+    // arriving concurrently on the event loop sees the captured id.
+    capturedSenderId = event.sender.id;
     try {
       ipcMain.removeHandler('ok:mcp-wiring:renderer-ready');
     } catch {
@@ -750,8 +831,12 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
   };
 
   // D19: register via the typed `createHandler` wrapper (not raw
-  // `ipcMain.handle`). Teardown still calls `ipcMain.removeHandler` directly —
-  // that primitive isn't part of the banned surface.
+  // `ipcMain.handle`). Handler parameters are now typed against
+  // `RequestChannels[K]['args']` (Pass 0 Major #10) rather than
+  // `...args: unknown[]` so a future channel-shape change produces a
+  // compile error at the handler signature, not a silent `.as` cast.
+  // Teardown still calls `ipcMain.removeHandler` directly — that primitive
+  // isn't part of the banned surface.
   const register = createHandler(ipcMain as IpcMain);
   register('ok:mcp-wiring:confirm', confirmHandler);
   register('ok:mcp-wiring:skip', skipHandler);

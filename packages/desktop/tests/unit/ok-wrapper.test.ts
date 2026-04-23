@@ -84,21 +84,31 @@ describe('ok.sh wrapper', () => {
     expect(parsed.source).toBe(wrapperCopy);
   });
 
-  test('NODE_OPTIONS is rescoped to OK_NODE_OPTIONS before exec', () => {
+  test('NODE_OPTIONS is rescoped to OK_NODE_OPTIONS before exec (quoted, per Pass 0 Minor #15)', () => {
     // We cannot observe the unset within the final exec since the
     // wrapper short-circuits on missing bundle before exec fires.
     // Instead, inspect the script source — the rescope + unset is a
     // compile-time invariant, not a runtime one, so a source-level
     // assertion is the right tier for this.
+    //
+    // The assignment MUST be quoted (`"$NODE_OPTIONS"`) so multi-token
+    // values like `NODE_OPTIONS='--require /tmp/x.js'` survive the
+    // rescope verbatim. Without quoting, bash re-splits on whitespace
+    // and only `--require` is captured; everything after is evaluated
+    // as an extra command in the script's environment.
     const { readFileSync } = require('node:fs') as typeof import('node:fs');
     const script = readFileSync(WRAPPER, 'utf8');
-    expect(script).toContain('export OK_NODE_OPTIONS=$NODE_OPTIONS');
+    expect(script).toContain('export OK_NODE_OPTIONS="$NODE_OPTIONS"');
     expect(script).toContain('unset NODE_OPTIONS');
     // Re-export must come before unset so OK_NODE_OPTIONS captures
     // the user's value rather than the empty post-unset value.
-    const rescopeIdx = script.indexOf('export OK_NODE_OPTIONS=$NODE_OPTIONS');
+    const rescopeIdx = script.indexOf('export OK_NODE_OPTIONS="$NODE_OPTIONS"');
     const unsetIdx = script.indexOf('unset NODE_OPTIONS');
     expect(rescopeIdx).toBeGreaterThan(0);
     expect(unsetIdx).toBeGreaterThan(rescopeIdx);
+    // Regression guard — the unquoted variant must NOT appear. If a
+    // future change reverts to `$NODE_OPTIONS` without quotes, this
+    // assertion fires before the fleet ships.
+    expect(script).not.toContain('export OK_NODE_OPTIONS=$NODE_OPTIONS\n');
   });
 });

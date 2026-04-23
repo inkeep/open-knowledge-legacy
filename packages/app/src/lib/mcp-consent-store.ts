@@ -83,15 +83,27 @@ export function createMcpConsentStore(): McpConsentStore {
       };
     },
 
+    // Partial-failure recovery contract (Pass 0 Major #2):
+    //   - ok: true  → clearCurrent() unmounts the dialog; user is done.
+    //   - ok: false → DO NOT unmount. The main handler resets its `handled`
+    //                 flag on failure (see mcp-wiring.ts:confirmHandler) so
+    //                 the user can adjust selections and click Add again
+    //                 from the SAME open dialog. Without this, partial
+    //                 failures (e.g. 1 of 3 editors' config dir unwritable)
+    //                 dismiss the dialog; the only signal is a 4s sonner
+    //                 toast, and a same-boot retry is impossible until the
+    //                 next app launch re-fires the dialog.
+    //   - catch     → thrown errors (IPC channel dead, bridge detached)
+    //                 keep the dialog mounted too; they're not "user decided"
+    //                 outcomes. clearCurrent() only on true success.
     async confirm(editorIds): Promise<OkMcpWiringResult> {
       const b = bridge;
       if (!b) return { ok: false, error: 'Not attached to desktop bridge' };
       try {
         const result = await b.mcpWiring.confirm(editorIds);
-        clearCurrent();
+        if (result.ok) clearCurrent();
         return result;
       } catch (err) {
-        clearCurrent();
         return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
       }
     },
@@ -101,10 +113,9 @@ export function createMcpConsentStore(): McpConsentStore {
       if (!b) return { ok: false, error: 'Not attached to desktop bridge' };
       try {
         const result = await b.mcpWiring.skip();
-        clearCurrent();
+        if (result.ok) clearCurrent();
         return result;
       } catch (err) {
-        clearCurrent();
         return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
       }
     },
