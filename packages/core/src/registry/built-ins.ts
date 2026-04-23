@@ -3,7 +3,7 @@
  * slotted here, Accordion in US-009).
  *
  * Scope contract for this file after US-003 (`specs/2026-04-23-cb-v2-md-foundation/`):
- * four registered descriptors after US-007 (+ wildcard `'*'` injected by the
+ * four registered descriptors after US-008 (+ wildcard `'*'` injected by the
  * registry factory); Accordion in US-009 brings the count to 5 + wildcard.
  * Cut in US-003: Banner, Card, Cards, Step, Steps, Tab, Tabs, Accordion
  * (fumadocs shape), Accordions, File, Files, Folder, TypeTable, InlineTOC —
@@ -20,8 +20,12 @@
  * Callout to 7 props (GFM 5-type enum + title/icon/color/collapsible/
  * defaultOpen). US-007 adds Video with the FR-3 9-prop HTML5 `<video>` shape
  * (pure HTML5 wrapper per D-MF12 — no URL sniffing, no iframe emission, no
- * `start` prop). Audio stays at the pre-US-006 shape here; US-008 widens it
- * to 7 props (src/title/autoplay/loop/muted/preload + children).
+ * `start` prop). US-008 widens Audio from the pre-narrow 2-prop shape
+ * (src/title) to the FR-4 7-prop shape (src/title/autoplay/loop/muted/preload
+ * + children for `<source>`/`<track>` passthrough) and flips `hasChildren:
+ * false → true` (drops `isSelfClosing`) — the pre-US-008 state was a bug: the
+ * inline renderer in `componentMap` passed children but the descriptor
+ * declared none.
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
@@ -258,7 +262,26 @@ const videoProps: PropDef[] = [
   },
 ];
 
-// ── Audio ────────────────────────────────────────────────────────────────────
+// ── Audio (US-008) ───────────────────────────────────────────────────────────
+//
+// FR-4 (SPEC 2026-04-23-cb-v2-md-foundation): HTML5 `<audio>` wrapper with
+// native controls always on (NG7 "no confidently-broken chrome"). 7-prop
+// surface: `src` + `title` + `autoplay` + `loop` + `muted` + `preload` (enum)
+// + children (reactnode, for `<source>` / `<track>` passthrough).
+//
+// No `controls` prop — per FR-4, controls are always on. Authors who want a
+// chrome-less audio (background loop) would need to write a raw `<audio>`
+// element in MDX; descriptor-dispatched Audio always renders controls.
+//
+// `children` is declared (`hasChildren: true`) so authored `<source>` /
+// `<track>` tags round-trip as PM children and stay editable — same QA-009
+// best-effort semantics as Video (runtime browser tolerance of the
+// NodeViewContent wrapper; fidelity-first, not runtime-media-first).
+//
+// Pre-US-008 state was a bug: the inline Audio renderer passed `children` but
+// the descriptor declared `hasChildren: false` + `isSelfClosing: true`. US-008
+// flips both flags to match the rendered behavior (Q-MF4 DELEGATED: grep
+// confirmed no downstream consumer keyed off `hasChildren: false`).
 
 const audioProps: PropDef[] = [
   {
@@ -271,7 +294,32 @@ const audioProps: PropDef[] = [
     name: 'title',
     type: 'string',
     required: false,
-    description: 'Audio title',
+    description: 'Tooltip text (rendered as the native HTML title attribute)',
+  },
+  {
+    name: 'autoplay',
+    type: 'boolean',
+    required: false,
+    description: 'Begin playback as soon as possible (usually requires muted)',
+  },
+  {
+    name: 'loop',
+    type: 'boolean',
+    required: false,
+    description: 'Restart from the beginning when playback ends',
+  },
+  {
+    name: 'muted',
+    type: 'boolean',
+    required: false,
+    description: 'Mute audio on load',
+  },
+  {
+    name: 'preload',
+    type: 'enum',
+    enumValues: ['none', 'metadata', 'auto'],
+    required: false,
+    description: 'Hint for how much of the audio to preload',
   },
 ];
 
@@ -315,13 +363,12 @@ export const builtInComponents: JsxComponentMeta[] = [
   },
   {
     name: 'Audio',
-    hasChildren: false,
-    isSelfClosing: true,
+    hasChildren: true,
     props: audioProps,
     icon: 'Volume2',
     category: 'media',
     displayName: 'Audio',
-    description: 'Audio player',
-    searchTerms: ['audio', 'sound', 'music', 'mp3'],
+    description: 'HTML5 audio player with native controls (source/track passthrough via children)',
+    searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
   },
 ];

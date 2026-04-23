@@ -267,6 +267,48 @@ describe('builtInComponents manifest', () => {
     expect(start).toBeUndefined();
   });
 
+  test('Audio exposes the 7-prop FR-4 surface', () => {
+    // US-008 widens Audio from the pre-narrow 2-prop shape (src/title) to
+    // the FR-4 7-prop shape (src/title/autoplay/loop/muted/preload +
+    // children). Order-insensitive — a future PropPanel reshuffle should
+    // not break this guard.
+    const audio = builtInComponents.find((m) => m.name === 'Audio');
+    expect(audio).toBeDefined();
+    if (!audio) return;
+    const propNames = audio.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['src', 'title', 'autoplay', 'loop', 'muted', 'preload'].sort());
+  });
+
+  test('Audio has `preload` as a 3-value enum (none|metadata|auto)', () => {
+    const audio = builtInComponents.find((m) => m.name === 'Audio');
+    const preload = audio?.props.find((p) => p.name === 'preload');
+    expect(preload).toBeDefined();
+    if (preload?.type === 'enum') {
+      expect([...preload.enumValues].sort()).toEqual(['auto', 'metadata', 'none'].sort());
+    } else {
+      throw new Error('Audio.preload must be an enum');
+    }
+  });
+
+  test('Audio has `hasChildren: true` for <source>/<track> passthrough (FR-4)', () => {
+    // Per FR-4: `children` is a reactnode for <source> / <track> passthrough.
+    // Pre-US-008 state was a bug — the inline renderer passed children but
+    // the descriptor declared `hasChildren: false` + `isSelfClosing: true`.
+    // US-008 flips both flags to match the rendered behavior.
+    const audio = builtInComponents.find((m) => m.name === 'Audio');
+    expect(audio?.hasChildren).toBe(true);
+    expect(audio?.isSelfClosing).toBeUndefined();
+  });
+
+  test('Audio has no `controls` prop (FR-4 — controls always on, NG7)', () => {
+    // Per FR-4: controls are ALWAYS on (NG7 "no confidently-broken chrome").
+    // Authors who want a chrome-less audio write raw <audio> in MDX; the
+    // descriptor-dispatched Audio is always a visible player.
+    const audio = builtInComponents.find((m) => m.name === 'Audio');
+    const controls = audio?.props.find((p) => p.name === 'controls');
+    expect(controls).toBeUndefined();
+  });
+
   test('each name is unique', () => {
     const names = builtInComponents.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
