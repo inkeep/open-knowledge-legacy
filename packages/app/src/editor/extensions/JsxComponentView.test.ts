@@ -15,8 +15,19 @@
  * `<InlineTOC items={[...]}>` → fumadocs InlineTOC does `items.map(...)`
  * → `TypeError: Cannot read properties of undefined (reading 'map')`
  * because the `items` attr was silently dropped.
+ *
+ * Also includes the kind-discriminator drift-guard (post-Pass 1 review
+ * Minor 1 follow-up). Asserts every `setNodeMarkup` call in
+ * `JsxComponentView.tsx` is preceded by a `kind === 'element'` (or
+ * `kind !== 'element'`) guard within 30 lines so a future write site that
+ * targets jsxComponent without consulting the discriminator can't slip in
+ * silently.
  */
+
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
 
 /** Test helper: build a `ReadonlySet<string>` of reactnode-typed prop names.
@@ -178,5 +189,65 @@ describe('stableHash', () => {
     expect(stableHash({})).toBe('{}');
     expect(stableHash([])).toBe('[]');
     expect(stableHash(undefined)).toBe(JSON.stringify(undefined));
+  });
+});
+
+// ── kind-discriminator drift-guard (Pass 1 review Minor 1 follow-up) ───────
+//
+// `jsxComponent.addAttributes()` declares `kind: 'element' | 'expression'`
+// as a discriminator (see `packages/core/src/extensions/jsx-component.ts`).
+// `kind === 'expression'` nodes carry only `sourceRaw` semantically; an
+// element-shaped attr spread onto an expression node would pass through
+// `setNodeMarkup` cleanly but the serializer at `markdown/index.ts:1048`
+// would silently emit `sourceRaw` verbatim, dropping every prop edit.
+//
+// Today exactly one production caller writes element-shaped attrs to
+// jsxComponent: the PropPanel `onChange` at `JsxComponentView.tsx`'s
+// setNodeMarkup dispatch. That site has the boundary guard
+// (`if (curNode.attrs.kind !== 'element') return;`) immediately above the
+// dispatch. This test prevents the next setNodeMarkup site from skipping
+// the guard — catches the exact drift class the Pass 1 review flagged.
+//
+// If a legitimate setNodeMarkup site lands that doesn't need the guard
+// (e.g. clearing the entire node for a different reason), document the
+// exemption with a comment containing the literal phrase
+// `setNodeMarkup-no-kind-guard` within 30 lines above the call. The test
+// scans the file as text — comment-based exemption is the escape hatch.
+
+const VIEW_FILE = join(dirname(fileURLToPath(import.meta.url)), 'JsxComponentView.tsx');
+const KIND_GUARD_RE = /attrs\.kind\s*(?:!==|===)\s*['"]element['"]/;
+const EXEMPTION_PHRASE = 'setNodeMarkup-no-kind-guard';
+
+describe('JsxComponentView kind-discriminator drift-guard (Pass 1 Minor 1)', () => {
+  // 40-line window: covers the existing site (guard at L856 + intermediate
+  // attr-prep at L857-887 + dispatch at L888) with margin for future
+  // refactors that add prep steps. A larger window risks letting the guard
+  // drift far from the call; a smaller window forces structural noise.
+  const GUARD_WINDOW = 40;
+
+  test(`every setNodeMarkup call has a 'kind === element' guard within ${GUARD_WINDOW} lines above`, () => {
+    const src = readFileSync(VIEW_FILE, 'utf8');
+    const lines = src.split('\n');
+    const offenders: Array<{ line: number; snippet: string }> = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? '';
+      // Skip comments — the comment-prose phrase `setNodeMarkup(pos, ...)`
+      // appears in docblocks above the actual call (e.g. line 839).
+      if (line.trim().startsWith('//')) continue;
+      if (line.trim().startsWith('*')) continue;
+      if (!line.includes('setNodeMarkup(')) continue;
+      const window = lines.slice(Math.max(0, i - GUARD_WINDOW), i).join('\n');
+      const hasGuard = KIND_GUARD_RE.test(window);
+      const hasExemption = window.includes(EXEMPTION_PHRASE);
+      if (!hasGuard && !hasExemption) {
+        offenders.push({ line: i + 1, snippet: line.trim().slice(0, 100) });
+      }
+    }
+    expect(
+      offenders,
+      `setNodeMarkup call site(s) without a 'kind === element' guard within ${GUARD_WINDOW} lines: ` +
+        `${JSON.stringify(offenders)}. Either add the guard or document the exemption ` +
+        `with a comment containing the literal phrase '${EXEMPTION_PHRASE}'.`,
+    ).toEqual([]);
   });
 });
