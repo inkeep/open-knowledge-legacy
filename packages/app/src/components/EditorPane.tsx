@@ -2,7 +2,8 @@ import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/raw-mdx-nav-event';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
+import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
@@ -75,14 +76,19 @@ export function EditorPane() {
   }
 
   // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
-  // SourceEditor separately listens for the same event to scroll to the offset.
+  // The pending navigation store preserves the target offset until the source
+  // chunk finishes loading for the active doc.
   useEffect(() => {
-    function onRawMdxNav() {
+    function onRawMdxNav(e: Event) {
+      const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
+      if (detail && activeDocName) {
+        rememberPendingSourceNavigation(activeDocName, { kind: 'raw-mdx', detail });
+      }
       setEditorMode('source');
     }
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-  }, []);
+  }, [activeDocName]);
 
   useEffect(() => {
     if (activeTarget?.kind !== 'folder') return;

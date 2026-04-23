@@ -22,7 +22,7 @@
  *      (regression — PR #168 merge collision: TiptapEditor direct
  *      assignment clashed with main PR #212's getter-only defineProperty
  *      and threw TypeError on any doc open in DEV)
- *   9. `:has()` in selection-halo CSS rules (precedent #30 — innermost-wins
+ *   9. `:has()` in selection-halo CSS rules (precedent #34 — innermost-wins
  *      via plugin state, not `:has()` cascade; Firefox compat + large-doc
  *      perf + SSR parity)
  *  10. Selection halo transition uses bare `ease-out` instead of
@@ -471,7 +471,7 @@ describe('E2E STOP rule — zero allowlist', () => {
 
     if (violations.length > 0) {
       throw new Error(
-        `Selection-halo CSS rules must not use \`:has()\` — precedent #30 requires innermost-wins via plugin-state propagation (\`data-has-child-selected\`). Move the cascade logic into SelectionStatePlugin's apply function and let JsxComponentView emit the attribute:\n${violations.join('\n')}`,
+        `Selection-halo CSS rules must not use \`:has()\` — precedent #34 requires innermost-wins via plugin-state propagation (\`data-has-child-selected\`). Move the cascade logic into SelectionStatePlugin's apply function and let JsxComponentView emit the attribute:\n${violations.join('\n')}`,
       );
     }
   });

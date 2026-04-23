@@ -25,6 +25,7 @@ function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> 
 }
 
 function MermaidContent({ chart }: { chart: string }) {
+  'use no memo';
   const id = useId();
   const { resolvedTheme } = useTheme();
   const { default: mermaid } = use(cachePromise('mermaid', () => import('mermaid')));

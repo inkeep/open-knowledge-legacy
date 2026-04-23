@@ -13,6 +13,7 @@ export { simulateCopyAndRead, simulateCutAndRead } from './clipboard.ts';
 export { selectAllAndWaitForSelection, waitForPmSelectionInNode } from './editor-state.ts';
 export { filterCriticalErrors, type LogEntry } from './error-filters.ts';
 export {
+  type AgentIdentity,
   type ApiHelpers,
   expect,
   test,

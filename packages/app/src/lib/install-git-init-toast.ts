@@ -15,7 +15,7 @@
 import { toast } from 'sonner';
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
-export interface InstallGitInitToastOptions {
+interface InstallGitInitToastOptions {
   /** Bridge resolved from `window.okDesktop`. Absent in web/CLI. */
   bridge: OkDesktopBridge | undefined;
   /** Override for `toast.info` in tests. */

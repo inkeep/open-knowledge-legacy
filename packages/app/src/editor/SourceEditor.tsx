@@ -14,19 +14,79 @@ import {
   darkTheme,
   lightTheme,
 } from '@/editor/extensions/nested-cm-extensions';
-import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
+import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { createSourceClipboardExtension } from './clipboard/index.ts';
 import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
 import { markUserTyping } from './observers';
+import {
+  clearPendingSourceNavigation,
+  consumePendingSourceNavigation,
+} from './source-editor-navigation';
 import { createSourcePolishExtension } from './source-polish';
 
 interface SourceEditorProps {
+  docName: string;
   ytext: Y.Text;
   provider: HocuspocusProvider;
   placeholder?: string;
+  isSourceModeActive: boolean;
 }
 
-export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps) {
+function applyOutlineNavigation(view: EditorView, detail: OutlineNavDetail): void {
+  const doc = view.state.doc;
+  let startLine = 1;
+  if (doc.lines >= 1 && doc.line(1).text === '---') {
+    for (let i = 2; i <= doc.lines; i++) {
+      if (doc.line(i).text === '---') {
+        startLine = i + 1;
+        break;
+      }
+    }
+  }
+
+  // Skip `#` comments inside fenced code blocks — they render as code, not
+  // headings, so they must stay out of the heading count that maps 1:1 onto
+  // the outline index.
+  const isInCodeFence = createCodeFenceTracker();
+  let seen = 0;
+  for (let i = startLine; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    if (isInCodeFence(line.text)) continue;
+    if (/^#{1,6}\s/.test(line.text)) {
+      if (seen === detail.index) {
+        view.dispatch({
+          selection: EditorSelection.cursor(line.from),
+          effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
+        });
+        view.focus();
+        return;
+      }
+      seen++;
+    }
+  }
+}
+
+function applyRawMdxNavigation(view: EditorView, detail: RawMdxNavDetail): void {
+  requestAnimationFrame(() => {
+    const doc = view.state.doc;
+    // Clamp offset to doc length (offset may exceed doc length if content
+    // differs between Y.Text and originalSpan).
+    const pos = Math.min(detail.offset, doc.length);
+    view.dispatch({
+      selection: EditorSelection.cursor(pos),
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    });
+    view.focus();
+  });
+}
+
+export function SourceEditor({
+  docName,
+  ytext,
+  provider,
+  placeholder,
+  isSourceModeActive,
+}: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Per-instance Compartments. `createNestedCMExtensions`'s header requires
@@ -41,20 +101,20 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
-  // Update awareness mode to 'source' when SourceEditor mounts
+  // Keep awareness aligned with the currently visible editor for this doc.
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    awareness.setLocalStateField('mode', 'source');
+    awareness.setLocalStateField('mode', isSourceModeActive ? 'source' : 'wysiwyg');
     return () => {
       awareness.setLocalStateField('mode', 'wysiwyg');
     };
-  }, [provider]);
+  }, [provider, isSourceModeActive]);
 
   // V2 EDITOR CACHE WIRING (US-008)
   //
   // Replaces the inline `new EditorView({ parent })` + `view.destroy()` on
-  // unmount with mountCmEditor + parkCmEditor (precedent #25(a) — H1 12/12
+  // unmount with mountCmEditor + parkCmEditor (precedent #27(a) — H1 12/12
   // probe). The view's DOM is reparented across Activity flips instead of
   // being destroyed, which preserves selection / undo / yCollab binding /
   // Y.Text identity / scroll position (cm6-reparent-contract.md §7).
@@ -79,7 +139,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
     const container = containerRef.current;
     if (!container) return;
 
-    const docName = provider.configuration.name ?? '';
+    const resolvedDocName = provider.configuration.name ?? '';
 
     let entry: CmCacheEntry | null = null;
     const mark = () => markUserTyping();
@@ -92,7 +152,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
       const bytes = ytext.length;
       const sizeStats = { viewCount: 0, bytes };
       entry = mountCmEditor({
-        docName,
+        docName: resolvedDocName,
         container,
         sizeStats,
         factory: (el) => {
@@ -202,66 +262,34 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   useEffect(() => {
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
-      if (!detail || detail.mode !== 'source') return;
+      if (!detail || detail.mode !== 'source' || !isSourceModeActive) return;
       const view = viewRef.current;
       if (!view) return;
-      const doc = view.state.doc;
-      let startLine = 1;
-      if (doc.lines >= 1 && doc.line(1).text === '---') {
-        for (let i = 2; i <= doc.lines; i++) {
-          if (doc.line(i).text === '---') {
-            startLine = i + 1;
-            break;
-          }
-        }
-      }
-      // Skip `#` comments inside fenced code blocks — they render as code, not headings,
-      // so they must stay out of the heading count that maps 1:1 onto the outline index.
-      const isInCodeFence = createCodeFenceTracker();
-      let seen = 0;
-      for (let i = startLine; i <= doc.lines; i++) {
-        const line = doc.line(i);
-        if (isInCodeFence(line.text)) continue;
-        if (/^#{1,6}\s/.test(line.text)) {
-          if (seen === detail.index) {
-            view.dispatch({
-              selection: EditorSelection.cursor(line.from),
-              effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
-            });
-            view.focus();
-            return;
-          }
-          seen++;
-        }
-      }
+      applyOutlineNavigation(view, detail);
+      clearPendingSourceNavigation(docName);
     }
     window.addEventListener(OUTLINE_NAV_EVENT, onNav);
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
-  }, []);
+  }, [docName, isSourceModeActive]);
 
-  // R7: rawMdxFallback click → scroll CodeMirror to the broken region's offset.
-  // EditorPane handles the mode switch; this hook scrolls once the view is active.
+  // Replays the most recent source-navigation intent once the editor chunk is
+  // mounted and visible for this doc. This preserves first-open raw-MDX and
+  // outline jumps even when SourceEditor was lazy-loaded off the initial path.
   useEffect(() => {
-    function onRawMdxNav(e: Event) {
-      const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
-      if (!detail) return;
-      // Delay to allow the source view to mount/become visible after mode switch
-      requestAnimationFrame(() => {
-        const view = viewRef.current;
-        if (!view) return;
-        const doc = view.state.doc;
-        // Clamp offset to doc length (offset may exceed doc length if content differs between Y.Text and originalSpan)
-        const pos = Math.min(detail.offset, doc.length);
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
-        });
-        view.focus();
-      });
+    if (!isSourceModeActive) return;
+    const view = viewRef.current;
+    if (!view) return;
+
+    const pendingNavigation = consumePendingSourceNavigation(docName);
+    if (!pendingNavigation) return;
+
+    if (pendingNavigation.kind === 'outline') {
+      applyOutlineNavigation(view, pendingNavigation.detail);
+      return;
     }
-    window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-    return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-  }, []);
+
+    applyRawMdxNavigation(view, pendingNavigation.detail);
+  }, [docName, isSourceModeActive]);
 
   return <div ref={containerRef} className="source-editor h-full py-3" />;
 }

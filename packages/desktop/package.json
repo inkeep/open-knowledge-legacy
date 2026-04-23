@@ -12,13 +12,15 @@
     "build:mac:unsigned": "bun run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac -c.mac.identity=null",
     "postinstall": "node scripts/postinstall.mjs",
     "rebuild:native": "electron-builder install-app-deps",
+    "smoke:mock-update": "OK_UPDATER_FORCE_DEV=1 node scripts/smoke-mock-update.mjs",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
-    "@napi-rs/keyring": "^1.2.0"
+    "@napi-rs/keyring": "^1.2.0",
+    "electron-updater": "6.8.4"
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",

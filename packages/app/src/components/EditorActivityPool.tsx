@@ -13,9 +13,11 @@
  * for TipTap + CodeMirror) without preventing the pool from holding warm
  * providers (≈5-10MB each) for fast Suspense-gated remount on revisit.
  *
- * The dual-editor mount pattern (both `SourceEditor` and `TiptapEditor` rendered
- * concurrently with `display:none` toggle) is preserved per spec §9 + audit A2 —
- * mode swap stays CSS-only so neither editor's effect lifecycle re-runs.
+ * `TiptapEditor` stays on the initial path; `SourceEditor` is lazy-loaded the
+ * first time a doc actually enters source mode. Large docs additionally defer
+ * the non-active editor until that mode is first visited. After the initial
+ * visits, the doc keeps both editors mounted behind hidden-mode wrappers so
+ * subsequent mode swaps stay CSS-only for that Activity.
  *
  * ERROR + SUSPENSE SCOPING (per-Activity, not global).
  *   Each `<Activity>` wraps its own `<DocumentErrorBoundary>` + `<Suspense>`.
@@ -38,6 +40,7 @@
 
 import {
   Activity,
+  lazy,
   type ReactNode,
   Suspense,
   useEffect,
@@ -48,7 +51,6 @@ import {
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { setActivityMountList } from '@/editor/editor-cache';
 import { isSystemDoc } from '@/editor/is-system-doc';
-import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { DocumentBoundary } from './DocumentBoundary';
@@ -173,6 +175,15 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  * Activity-mount hygiene pattern (precedent #18(c) / precedent #24).
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
+
+export function loadSourceEditorModule() {
+  return import('@/editor/SourceEditor');
+}
+
+const LazySourceEditor = lazy(async () => {
+  const mod = await loadSourceEditorModule();
+  return { default: mod.SourceEditor };
+});
 
 interface EditorActivityPoolProps {
   activeDocName: string;
@@ -423,6 +434,42 @@ function ScrollPreservingContainer({
   );
 }
 
+function SourceEditorSlot({
+  entry,
+  isActive,
+  isSourceMode,
+  editorPlaceholder,
+}: {
+  entry: PoolEntrySnapshot;
+  isActive: boolean;
+  isSourceMode: boolean;
+  editorPlaceholder?: string;
+}) {
+  const sourceModeRequested = isActive && isSourceMode;
+  const [hasLoadedSourceEditor, setHasLoadedSourceEditor] = useState(sourceModeRequested);
+
+  useEffect(() => {
+    if (sourceModeRequested) {
+      setHasLoadedSourceEditor(true);
+    }
+  }, [sourceModeRequested]);
+
+  if (!hasLoadedSourceEditor && !sourceModeRequested) {
+    return null;
+  }
+
+  return (
+    <Suspense fallback={<EditorSkeleton />}>
+      <LazySourceEditor
+        docName={entry.docName}
+        ytext={entry.provider.document.getText('source')}
+        provider={entry.provider}
+        placeholder={editorPlaceholder}
+        isSourceModeActive={sourceModeRequested}
+      />
+    </Suspense>
+  );
+}
 function ActivityEntry({
   entry,
   isActive,
@@ -542,9 +589,11 @@ function ActivityEntry({
             <DocumentBoundary docName={entry.docName} provider={entry.provider}>
               {/* Dual-editor mount with size-gated defer for large docs. Small
                   docs render both (pre-mount-both default — mode swap stays
-                  CSS-only). Large docs (>LARGE_DOC_CHAR_THRESHOLD) defer the
-                  non-active editor until its mode is visited at least once —
-                  see computeEditorMountGate + evidence/s1-diagnosis.md.
+                  CSS-only after first source visit). SourceEditor itself is
+                  lazy-loaded the first time this doc is shown in source mode.
+                  Large docs (>LARGE_DOC_CHAR_THRESHOLD) also defer the non-
+                  active editor until its mode is visited at least once — see
+                  computeEditorMountGate + evidence/s1-diagnosis.md.
 
                   Stacking: the wrapper is position:relative + h-full. The
                   non-active child carries `.ok-mode-hidden`, which sets
@@ -559,10 +608,11 @@ function ActivityEntry({
               <div className="relative h-full">
                 {gate.renderSource ? (
                   <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
-                    <SourceEditor
-                      ytext={entry.provider.document.getText('source')}
-                      provider={entry.provider}
-                      placeholder={editorPlaceholder}
+                    <SourceEditorSlot
+                      entry={entry}
+                      isActive={isActive}
+                      isSourceMode={isSourceMode}
+                      editorPlaceholder={editorPlaceholder}
                     />
                   </div>
                 ) : null}

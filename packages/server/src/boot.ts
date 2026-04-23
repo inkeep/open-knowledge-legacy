@@ -21,6 +21,7 @@
  * injected callbacks + post-return orchestration.
  */
 import type { Server as HttpServer } from 'node:http';
+import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
@@ -102,6 +103,11 @@ export interface BootServerOptions
   idleShutdownHandler?: (destroyServer: () => Promise<void>) => () => Promise<void>;
   /** Injectable logger. Defaults to `getLogger('boot')`. */
   log?: PinoLogger;
+  /**
+   * Grace period (ms) before keepalive-close triggers session cleanup. Default 30 000.
+   * Integration tests pass a small value (e.g. 100) for fast teardown.
+   */
+  keepaliveGraceMs?: number;
 }
 
 export interface BootedServer {
@@ -186,7 +192,14 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     onAgentWrite: opts.onAgentWrite,
   });
 
-  const { hocuspocus, destroy: destroyHocuspocus, ready, degraded, lockDir } = serverInstance;
+  const {
+    hocuspocus,
+    destroy: destroyHocuspocus,
+    ready,
+    degraded,
+    lockDir,
+    agentPresenceBroadcaster,
+  } = serverInstance;
 
   // HTTP server — /api/* routed through Hocuspocus onRequest extensions;
   // everything else 404s (static React assets are served separately by
@@ -228,6 +241,17 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     log.error({ err }, 'WebSocketServer error');
   });
 
+  // Grace period before keepalive-close triggers session cleanup (D28).
+  const KEEPALIVE_GRACE_MS = opts.keepaliveGraceMs ?? 10_000;
+  // connectionId → pending grace timer handle
+  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // In-flight grace-timer callbacks so destroy() can await them rather than
+  // racing against the sessionManager / agentFocusBroadcaster teardown.
+  const keepaliveGraceInflight = new Set<Promise<void>>();
+  // Set when destroy() runs so any callback that fired just before the timer
+  // was cleared can short-circuit instead of touching disposed resources.
+  let shuttingDown = false;
+
   httpServer.on('upgrade', (req, socket, head) => {
     // D-034 — MCP keep-alive channel (see CLI start.ts for full rationale).
     if (req.url?.startsWith('/collab/keepalive')) {
@@ -236,6 +260,26 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         log.error({ err }, 'MCP keepalive socket error');
       });
       wss.handleUpgrade(req, socket, head, (ws) => {
+        // D27/D28: parse connectionId from URL query params. This id is used
+        // for both (a) identity-attribution session cleanup (`closeAllForAgent`
+        // + `clearFocus`) and (b) multi-agent-presence cleanup
+        // (`clearPresence`). Legacy MCP clients that don't send `connectionId`
+        // fall through to TTL-only cleanup (5s filter on the client, §FR-5).
+        // Malformed URLs → null → no-op. Never throws. The parser also
+        // enforces `AGENT_ID_RE` so CR/LF bytes or other attacker-controlled
+        // chars never reach structured log fields or broadcaster keys.
+        const connectionId = parseKeepaliveConnectionId(req.url);
+
+        // D28: if reconnecting within grace period, cancel the timer.
+        if (connectionId) {
+          const existing = keepaliveGraceTimers.get(connectionId);
+          if (existing !== undefined) {
+            clearTimeout(existing);
+            keepaliveGraceTimers.delete(connectionId);
+            log.info({ connectionId }, '[keepalive] reconnect during grace — timer cancelled');
+          }
+        }
+
         const pingTimer = setInterval(() => {
           try {
             ws.ping();
@@ -244,7 +288,75 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
           }
         }, 30_000);
         pingTimer.unref?.();
-        ws.on('close', () => clearInterval(pingTimer));
+
+        // Presence-ts refresh timer — tied to this WS's lifetime. The
+        // client-side TTL filter hides entries with `now - ts >= 5s`.
+        // Write-path calls (setPresence/touchMode) only fire on MCP edits,
+        // so agents between tool calls (LLM thinking for 10-30s) would
+        // otherwise have their badge disappear mid-session even though
+        // the keepalive WS is still open. A 3s bump cadence consistently
+        // beats the 5s filter. No-op if connectionId is null (legacy MCP
+        // client that doesn't pass connectionId — TTL-only path still works
+        // the same way).
+        //
+        // `toBroadcasterKey(connectionId)` translates the raw URL-carried id
+        // to the `agent-<id>` map key used by the HTTP write handlers (via
+        // `extractAgentIdentity`). Without this translation bumpPresenceTs
+        // would no-op because no entry exists under the raw key — see the
+        // STOP rule in AGENTS.md "the `agent-` prefix convention".
+        const tsRefreshTimer = connectionId
+          ? setInterval(() => {
+              agentPresenceBroadcaster?.bumpPresenceTs(toBroadcasterKey(connectionId));
+            }, 3_000)
+          : null;
+        tsRefreshTimer?.unref?.();
+
+        ws.on('close', () => {
+          clearInterval(pingTimer);
+          if (tsRefreshTimer !== null) clearInterval(tsRefreshTimer);
+          if (!connectionId) return;
+          // D28: start grace timer. Reconnect within the window cancels above.
+          const timer = setTimeout(() => {
+            keepaliveGraceTimers.delete(connectionId);
+            // If destroy() already ran, skip — the sessionManager,
+            // agentFocusBroadcaster, and agentPresenceBroadcaster may be
+            // mid-teardown and calling into them would race (TOCTOU: timer
+            // fires between destroy's clearTimeout loop and the Hocuspocus
+            // teardown awaiting completion).
+            if (shuttingDown) return;
+            const work = (async () => {
+              log.info({ connectionId }, '[keepalive] grace expired — cleaning up sessions');
+              try {
+                await serverInstance.sessionManager.closeAllForAgent(connectionId);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] closeAllForAgent failed');
+              }
+              try {
+                serverInstance.agentFocusBroadcaster?.clearFocus(connectionId);
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] clearFocus failed');
+              }
+              try {
+                // `toBroadcasterKey(connectionId)` matches the `agent-<id>`
+                // map key written by HTTP handlers via `extractAgentIdentity`
+                // — without this translation clearPresence no-ops because
+                // the raw URL id never matches the stored entry. See the
+                // STOP rule in AGENTS.md "the `agent-` prefix convention".
+                agentPresenceBroadcaster?.clearPresence(toBroadcasterKey(connectionId));
+              } catch (err) {
+                log.error({ err, connectionId }, '[keepalive] clearPresence failed');
+              }
+            })();
+            keepaliveGraceInflight.add(work);
+            work.finally(() => keepaliveGraceInflight.delete(work));
+          }, KEEPALIVE_GRACE_MS);
+          timer.unref?.();
+          keepaliveGraceTimers.set(connectionId, timer);
+          log.info(
+            { connectionId, graceMs: KEEPALIVE_GRACE_MS },
+            '[keepalive] disconnected — grace timer started',
+          );
+        });
         ws.on('error', (err: NodeJS.ErrnoException) => {
           if (!handleCollabSocketError(err)) {
             log.error({ err }, 'MCP keepalive WS error');
@@ -334,7 +446,20 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
+    shuttingDown = true;
     idleHandle?.detach();
+    // Cancel any pending keepalive-grace timers so they don't fire against a
+    // disposed sessionManager / agentFocusBroadcaster after destroy returns.
+    for (const timer of keepaliveGraceTimers.values()) {
+      clearTimeout(timer);
+    }
+    keepaliveGraceTimers.clear();
+    // A grace-timer callback may have fired between our clearTimeout loop and
+    // now — the async work is already in keepaliveGraceInflight. Await it so
+    // Hocuspocus teardown doesn't race with an in-flight closeAllForAgent.
+    if (keepaliveGraceInflight.size > 0) {
+      await Promise.allSettled([...keepaliveGraceInflight]);
+    }
     await new Promise<void>((resolveClose) => {
       httpServer.close(() => resolveClose());
     });
@@ -353,4 +478,37 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     didGitInit,
     serverInstance,
   };
+}
+
+/**
+ * Extract + validate the `connectionId` query param from a `/collab/keepalive`
+ * upgrade URL. Tolerant of: missing URL (`undefined`), unparseable URL,
+ * missing/empty `connectionId`. Values that do not match `AGENT_ID_RE`
+ * (`[a-zA-Z0-9_-]+`) return `null` — the close handler then falls through
+ * to TTL-only cleanup rather than firing `clearPresence` /
+ * `closeAllForAgent` / `clearFocus` with attacker-controlled bytes.
+ *
+ * The validation is intentionally identical to the HTTP write path
+ * (`extractAgentIdentity` in `api-extension.ts`) so the write surface and
+ * the cleanup surface share one contract. Without it, a caller who can
+ * reach the keepalive WS (e.g. an unauthenticated peer when the user has
+ * bound to `0.0.0.0`) could force-evict another agent's presence entry
+ * by passing a crafted `connectionId=<victim>` on WS close. The shared
+ * regex also prevents CR/LF bytes in query-string values from reaching
+ * the structured `[keepalive] disconnected` log line (log-injection
+ * defense-in-depth — pino escapes these but some transports strip the
+ * escaping after egress).
+ *
+ * Exported for unit testing. Never throws.
+ */
+export function parseKeepaliveConnectionId(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    // The second arg is a dummy base so `new URL` accepts path-only inputs.
+    const parsed = new URL(url, 'http://localhost');
+    const connectionId = parsed.searchParams.get('connectionId');
+    return validateAgentId(connectionId);
+  } catch {
+    return null;
+  }
 }

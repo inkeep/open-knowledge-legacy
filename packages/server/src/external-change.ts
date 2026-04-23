@@ -8,11 +8,14 @@
 
 import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { recordContributor } from './contributor-tracker.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import { FILE_SYSTEM_WRITER } from './shadow-repo.ts';
 
 /**
  * Transaction origin for file-watcher disk→CRDT bridge operations.
@@ -76,6 +79,18 @@ export function applyExternalChange(
       applyFastDiff(ytext, currentText, content);
     }
   }, FILE_WATCHER_ORIGIN);
+
+  // Attribute this disk-originated write to the file-system classified writer (D41).
+  // FILE_WATCHER_ORIGIN has skipStoreHooks:true so persistence.ts:onStoreDocument
+  // will not auto-record this origin. The explicit call here ensures the next L2
+  // drain produces a commit on refs/wip/<branch>/file-system (D7, D8, FR-6).
+  recordContributor(
+    docName,
+    FILE_SYSTEM_WRITER.id,
+    FILE_SYSTEM_WRITER.name,
+    FILE_SYSTEM_WRITER.id,
+    formatReconcileSubject(docName),
+  );
 
   // Set the reconciled base so persistence does not re-serialize and re-write
   // the same content on next flush (EC3 blocker resolution — FR-6).

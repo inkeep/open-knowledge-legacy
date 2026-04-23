@@ -12,7 +12,7 @@
 //   1. `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object identities
 //      (consumed by the bridge-invariant watcher's enforcing set).
 //   2. `markUserTyping` / `getLastUserKeystroke` — a global wall-clock
-//      timestamp consumed by `SystemDocSubscriber`'s agent-focus guard.
+//      timestamp consumed by `SystemDocSubscriber`'s agent-presence guard.
 //   3. Diagnostic parse validation in Observer B — transient MDX SyntaxError
 //      during mid-edit swallowed at debug log; non-transient failures fire
 //      `onSyncError`. No cross-CRDT write.
@@ -311,7 +311,7 @@ describe('Agent write origin and activity map', () => {
   test('activity map entries coexist with content writes in same transaction', async () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
-    const activityMap = doc.getMap('activity');
+    const activityMap = doc.getMap('agent-flash');
 
     // Track that both changes arrive in a single transaction
     let transactionCount = 0;

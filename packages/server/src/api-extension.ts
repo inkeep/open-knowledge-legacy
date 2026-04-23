@@ -25,26 +25,43 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  colorFromSeed,
   createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  type Principal,
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
+import {
+  formatCheckpointSubject,
+  formatRenameSubject,
+  formatRollbackSubject,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
+import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
-  AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
+  applyAgentUndo,
+  iconFromClientName,
 } from './agent-sessions.ts';
-import { recordContributor } from './contributor-tracker.ts';
+import { recordContributor, swapContributors } from './contributor-tracker.ts';
+import {
+  createInstalledAgentsProbe,
+  createOsProbe,
+  handleInstalledAgents,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
@@ -57,6 +74,7 @@ import { readUiLock } from './ui-lock.ts';
 export { extractPageTitle } from './page-identity.ts';
 
 import simpleGit from 'simple-git';
+import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -73,6 +91,7 @@ import {
 } from './file-watcher.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
+import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -102,6 +121,7 @@ import {
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
+  SERVICE_WRITER,
   type ShadowRef,
   safetyCheckpoint,
   saveVersion,
@@ -421,6 +441,43 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   return fullPath;
 }
 
+function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
+  const resolvedProjectDir = resolve(projectDir);
+  const resolvedPath = resolve(absolutePath);
+  if (
+    resolvedPath !== resolvedProjectDir &&
+    !resolvedPath.startsWith(`${resolvedProjectDir}${sep}`)
+  ) {
+    return null;
+  }
+  return relative(resolvedProjectDir, resolvedPath).split(sep).join('/');
+}
+
+async function renameTrackedPathInGit(
+  projectDir: string | undefined,
+  sourcePath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  if (!projectDir) return false;
+  const sourceRel = toGitRelativePath(projectDir, sourcePath);
+  const destinationRel = toGitRelativePath(projectDir, destinationPath);
+  if (!sourceRel || !destinationRel) return false;
+
+  return await withParentLock(async () => {
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    if (!tracked) return false;
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    try {
+      await pg.raw('mv', '--', sourceRel, destinationRel);
+      return true;
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git mv failed, falling back to fs rename:', err);
+      return false;
+    }
+  });
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
@@ -447,11 +504,20 @@ export interface ApiExtensionOptions {
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   /**
-   * Optional. When present, agent write handlers publish the active doc on
-   * `__system__` awareness so clients can push-navigate to follow the agent.
-   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   * Optional. When present, agent write handlers publish per-write attribution
+   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
+   * currentDoc — the signal that drives browser push-navigation to the doc the
+   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
+   * publishes sustained session state.
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. When present, agent write handlers publish presence entries on
+   * `__system__` awareness (`agentPresence` map) so clients can render the
+   * multi-agent presence bar and follow the active agent. Omit to disable
+   * presence broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   /**
    * Optional. Called after every successful agent write (write_document /
    * edit_document). The handler is expected to be cheap and idempotent —
@@ -481,6 +547,20 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * Getter for the server's principal record (D50, US-024).
+   * Called at request time so deferred async init propagates.
+   * Returns null if principal has not yet been loaded or loading failed.
+   */
+  getPrincipal?: () => Principal | null;
+  /**
+   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
+   * parity for the Electron `ok:shell:detect-protocol` IPC — see
+   * `handoff-api.ts`). When omitted, the platform's default probe is used
+   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
+   * fake so the endpoint doesn't shell out.
+   */
+  installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -546,6 +626,32 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
+/**
+ * Returns true when an Origin header value is permitted to reach /api/* endpoints.
+ *
+ * Allowed:
+ * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
+ * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
+ * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
+ * - http(s)://[::1][:port] — IPv6 loopback
+ *
+ * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
+ */
+function isAllowedApiOrigin(origin: string): boolean {
+  if (origin === 'null') return true; // file:// / packaged Electron renderer
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname === 'localhost' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -561,14 +667,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     onAgentWrite,
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
     projectDir,
+    getPrincipal,
+    installedAgentsProbe,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
+
+  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
+  // Factory is called once per createApiExtension() so the cache lives for
+  // the lifetime of the server (cleared on server restart).
+  const installedAgentsCache = createInstalledAgentsProbe({
+    probe: installedAgentsProbe ?? createOsProbe(process.platform),
+  });
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -972,8 +1088,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           destinationDocName,
         );
 
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
         setReconciledBase(destinationDocName, renamedSource.markdown);
 
@@ -1013,29 +1136,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
-  /** Extract agent identity fields shared across the three write endpoints. */
+  /**
+   * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
+   * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
+   * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
     agentId: string;
     agentName: string;
     colorSeed: string;
     clientName: string | undefined;
+    clientVersion: string | undefined;
+    label: string | undefined;
   } {
     let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
       rawAgentId = undefined;
     }
-    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
     const agentName =
-      typeof body.agentName === 'string'
-        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
-        : 'Claude';
+      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
     if (clientName !== undefined) {
-      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+      clientName = sanitizeGitIdentity(clientName);
+    }
+    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
+    if (clientVersion !== undefined) {
+      clientVersion = sanitizeGitIdentity(clientVersion);
+    }
+    let label = typeof body.label === 'string' ? body.label : undefined;
+    if (label !== undefined) {
+      label = sanitizeGitIdentity(label);
     }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
@@ -1043,7 +1177,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       typeof body.colorSeed === 'string' && body.colorSeed.length > 0
         ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName };
+    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
+  }
+
+  /**
+   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
+   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
+   */
+  function resolveAgentType(clientName: string | undefined): string {
+    if (!clientName) return 'bot';
+    const lower = clientName.toLowerCase();
+    if (lower.includes('claude')) return 'claude';
+    if (lower.includes('cursor')) return 'cursor';
+    if (lower.includes('codex')) return 'codex';
+    if (lower.includes('cline')) return 'cline';
+    if (lower.includes('windsurf')) return 'windsurf';
+    return 'bot';
+  }
+
+  /**
+   * Build actor-tuple metadata (FR-8) for threading through recordContributor →
+   * ContributorEntry → OkActorEntry. Populates:
+   *   - principalId from getPrincipal() (stable UUID per local install)
+   *   - agentType derived from clientName
+   *   - clientName / clientVersion / label passed through from request body
+   */
+  function buildAgentActor(args: {
+    clientName: string | undefined;
+    clientVersion?: string;
+    label?: string;
+  }): {
+    principalId?: string;
+    agentType?: string;
+    clientName?: string;
+    clientVersion?: string;
+    label?: string;
+  } {
+    const principalId = getPrincipal?.()?.id;
+    return {
+      principalId,
+      agentType: resolveAgentType(args.clientName),
+      clientName: args.clientName,
+      clientVersion: args.clientVersion,
+      label: args.label,
+    };
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1080,8 +1257,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1090,25 +1268,49 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        recordContributor(docName, agentId, agentName, colorSeed);
+        }, session.origin);
+        recordContributor(
+          docName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+        );
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
+      onAgentWrite?.();
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1165,39 +1367,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
-      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
+      const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, markdown, position);
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, markdown, position);
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
+        }, session.origin);
+        recordContributor(
+          resolvedDocName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+        );
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus on __system__ awareness so browser clients can
-      // push-navigate to the doc just written. Uses per-write agentId from
-      // attribution (PR #134).
+      // Focus (attribution) on __system__ awareness. Focus drives browser
+      // push-navigation to the doc the agent just wrote (writeKind); presence
+      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -1243,9 +1467,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
-      const content = dc.document.getText('source').toString();
-      json(res, 200, { ok: true, docName, content });
+      // Read via a transient DirectConnection rather than sessionManager.getSession —
+      // this endpoint has no agent identity, and creating a cached session would
+      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+      const dc = await hocuspocus.openDirectConnection(docName);
+      try {
+        const document = dc.document;
+        if (!document) {
+          json(res, 500, { ok: false, error: 'Document not available' });
+          return;
+        }
+        const content = document.getText('source').toString();
+        json(res, 200, { ok: true, docName, content });
+      } finally {
+        await dc.disconnect();
+      }
     } catch (e) {
       console.error('[document-read]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1657,10 +1893,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1669,9 +1904,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
           // Read current authoritative state. Search the FULL markdown
           // (frontmatter + body) so agents can patch frontmatter fields
           // (e.g. `title:`, `cluster:`) the same way they patch body text.
@@ -1679,8 +1930,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // frontmatter lives in Y.Map('metadata') and must be composed
           // in for the search surface to reflect the document as the
           // agent sees it on disk.
-          const xmlFragment = dc.document.getXmlFragment('default');
-          const metaMap = dc.document.getMap('metadata');
+          const xmlFragment = session.dc.document.getXmlFragment('default');
+          const metaMap = session.dc.document.getMap('metadata');
           const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
           const currentBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
@@ -1713,19 +1964,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (newFm !== currentFm) {
             metaMap.set('frontmatter', newFm);
           }
-          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
+        }, session.origin);
+        if (!notFound && !staleTarget)
+          recordContributor(
+            docName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+          );
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (staleTarget) {
@@ -1742,6 +2001,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
+      // Focus (attribution) on __system__ awareness. Presence is separately
+      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -1755,6 +2016,135 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
+   *
+   * Body: { docName?: string, connectionId: string, scope?: 'last' | 'session' }
+   *   connectionId — the session's agentId (matches sessionManager key)
+   *   scope — 'last' undoes the top UM stack item; 'session' undoes all items.
+   *
+   * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
+   * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
+   */
+  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
+      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
+      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
+      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
+      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
+
+      const rawDocName =
+        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+
+      const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined;
+      if (!connectionId) {
+        json(res, 400, { ok: false, error: 'connectionId required' });
+        return;
+      }
+
+      const rawScope = body.scope;
+      const scope: 'last' | 'session' = rawScope === 'session' ? 'session' : 'last';
+
+      if (!sessionManager.hasSession(docName, connectionId)) {
+        json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
+        return;
+      }
+
+      const session = await sessionManager.getSession(docName, connectionId);
+
+      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+      // instead of the per-doc awareness — the per-doc awareness has ONE
+      // shared clientID across N concurrent agents and would stomp. The
+      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
+      // so the keepalive-WS close handler's cleanup path finds the entry.
+      //
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and the undo
+      // transact flips the badge back to idle rather than wedging it on 'writing'.
+      let undone = false;
+      try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
+        // applyAgentUndo wraps um.undo() + composition in one transact under
+        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
+        undone = applyAgentUndo(session, scope);
+        // FR-5 / D42: record attribution for the undo write so the shadow-repo
+        // L2 drain fans it out under this session's writer-id. Skip when the
+        // UM stack was empty — a no-op undo has no mutation to attribute.
+        if (undone) {
+          recordContributor(
+            docName,
+            connectionId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+          );
+        }
+      } finally {
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+      }
+
+      if (undone) {
+        flushDocToGit(docName, 'agent-undo');
+      }
+
+      agentFocusBroadcaster?.setFocus(connectionId, {
+        agentName: connectionId,
+        currentDoc: docName,
+        writeKind: 'undo',
+        ts: Date.now(),
+      });
+
+      json(res, 200, { ok: true, docName, scope, undone });
+    } catch (e) {
+      log.error({ err: e }, '[agent-undo] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1885,10 +2275,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers + message from body
+      // Parse optional writers + message + principal from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       let userMessage: string | undefined;
+      let saveVersionBody: Record<string, unknown> = {};
+      let principalName: string | undefined;
+      let principalEmail: string | undefined;
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1897,6 +2290,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           json(res, 400, { ok: false, error: 'Invalid JSON' });
           return;
         }
+        saveVersionBody = body;
         if (typeof body.message === 'string' && body.message.trim()) {
           userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
@@ -1913,41 +2307,125 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             };
           });
         }
+        // Optional principal identity: { name: string, email: string } (US-020, D12)
+        const p = body.principal;
+        if (p && typeof p === 'object' && !Array.isArray(p)) {
+          const pr = p as Record<string, unknown>;
+          if (typeof pr.name === 'string' && pr.name.trim()) {
+            principalName = sanitizeGitIdentity(pr.name.trim());
+          }
+          if (typeof pr.email === 'string' && pr.email.trim()) {
+            principalEmail = sanitizeGitIdentity(pr.email.trim());
+          }
+        }
       }
 
-      // Default writer if none provided
+      // Thread agent identity — extends writers[] with calling agent (D42).
+      const {
+        rawAgentId: svRawAgentId,
+        agentId: svAgentId,
+        agentName: svAgentName,
+        clientName: svClientName,
+      } = extractAgentIdentity(saveVersionBody);
       if (writers.length === 0) {
-        writers = [
-          { id: 'server', name: 'openknowledge-server', email: 'noreply@openknowledge.local' },
-        ];
+        if (svRawAgentId !== undefined) {
+          const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
+          writers = [
+            { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
+          ];
+        } else {
+          writers = [SERVICE_WRITER];
+        }
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
       const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
-      console.log(`[shadow] checkpoint ${result.checkpointRef}`);
+      console.log(`[history] checkpoint ${result.checkpointRef}`);
+
+      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
+      // swapContributors() atomically captures all agent writes since the last checkpoint.
+      const contributorSnapshot = swapContributors();
 
       // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
       if (projectDir) {
+        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
+        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
+        let parentGitAvailable = false;
         try {
-          versionTag = await withParentLock(async () => {
-            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-            // Count existing ok/v* tags to derive N
-            const existing = await pg.tags(['--list', 'ok/v*']);
-            const n = existing.all.length + 1;
-            const tag = `ok/v${n}`;
-            const autoMsg = userMessage ?? `Checkpoint v${n}`;
-            // Stage content changes and create commit (allow-empty so a tag always lands)
-            const gitPathspec = resolvedContentRoot || '.';
-            await pg.add(gitPathspec);
-            await pg.commit(autoMsg, { '--allow-empty': null });
-            await pg.addTag(tag);
-            console.log(`[checkpoint] parent-git commit + tag ${tag}`);
-            return tag;
-          });
+          const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+          await checkPg.revparse(['--git-dir']);
+          parentGitAvailable = true;
         } catch (e) {
-          console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+          console.warn(
+            `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        if (parentGitAvailable) {
+          try {
+            versionTag = await withParentLock(async () => {
+              const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+              // Count existing ok/v* tags to derive N
+              const existing = await pg.tags(['--list', 'ok/v*']);
+              const n = existing.all.length + 1;
+              const tag = `ok/v${n}`;
+
+              // Author identity: principal from body > git config > openknowledge fallback
+              let authorName = 'openknowledge';
+              let authorEmail = 'noreply@openknowledge.local';
+              if (principalName && principalEmail) {
+                authorName = principalName;
+                authorEmail = principalEmail;
+              } else {
+                try {
+                  const gitId = await resolveGitIdentity(projectDir);
+                  if (gitId) {
+                    authorName = gitId.name;
+                    authorEmail = gitId.email;
+                  }
+                } catch {
+                  // no-op — use defaults
+                }
+              }
+
+              // Co-Authored-By trailers for agent/principal session contributors (US-020)
+              const coAuthorLines: string[] = [];
+              for (const entry of contributorSnapshot.values()) {
+                if (
+                  entry.writerId.startsWith('agent-') ||
+                  entry.writerId.startsWith('principal-')
+                ) {
+                  const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                  coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+                }
+              }
+
+              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+              const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+              const commitMsg =
+                coAuthorLines.length > 0
+                  ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                  : subjectLine;
+
+              // Stage content changes and create commit (allow-empty so a tag always lands)
+              const gitPathspec = resolvedContentRoot || '.';
+              await pg.add(gitPathspec);
+              await pg
+                .env({
+                  GIT_AUTHOR_NAME: authorName,
+                  GIT_AUTHOR_EMAIL: authorEmail,
+                  GIT_COMMITTER_NAME: authorName,
+                  GIT_COMMITTER_EMAIL: authorEmail,
+                })
+                .commit(commitMsg, ['--allow-empty']);
+              await pg.addTag(tag);
+              console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+              return tag;
+            });
+          } catch (e) {
+            console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+          }
         }
       }
 
@@ -2021,7 +2499,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, ...result });
     } catch (e) {
-      console.error('[history]', e);
+      console.error('[shadow]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -2080,7 +2558,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, sha, content, timestamp, author });
     } catch (e) {
-      console.error('[history-version]', e);
+      console.error('[shadow-version]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -2214,6 +2692,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const {
+      agentId: rollbackAgentId,
+      agentName: rollbackAgentName,
+      colorSeed: rollbackColorSeed,
+      clientName: rollbackClientName,
+      clientVersion: rollbackClientVersion,
+      label: rollbackLabel,
+    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+
+    const {
       docName: rawDocName,
       commitSha: rawSha,
       versionTag: rawVersionTag,
@@ -2291,6 +2778,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
+      recordContributor(
+        docName,
+        rollbackAgentId,
+        rollbackAgentName,
+        rollbackColorSeed,
+        formatRollbackSubject(docName, commitSha),
+        buildAgentActor({
+          clientName: rollbackClientName,
+          clientVersion: rollbackClientVersion,
+          label: rollbackLabel,
+        }),
+      );
       setReconciledBase(docName, markdown);
 
       // Force-flush L2 git commit so the restored version appears in the
@@ -2322,6 +2821,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
+      agentFocusBroadcaster?.setFocus(rollbackAgentId, {
+        agentName: rollbackAgentName,
+        currentDoc: docName,
+        writeKind: 'rollback-apply',
+        ts: Date.now(),
+      });
+
       json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
     } catch (e) {
       console.error('[rollback]', e);
@@ -2352,6 +2858,66 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, getParseHealth());
+  }
+
+  async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const principal = getPrincipal?.() ?? null;
+    if (!principal) {
+      json(res, 404, { error: 'Principal not available' });
+      return;
+    }
+    json(res, 200, principal);
+  }
+
+  async function handleMetricsAgentPresence(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + Host-header gate — matches /api/workspace. The presence map
+    // exposes per-agent identity (`displayName` — operator-configured AGENT
+    // label) and the workspace-relative path each agent is currently writing
+    // to (`currentDoc`). Those are local-editing-only signals; if a user
+    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
+    // LAN peers MUST NOT be able to read the map. Authorization runs before
+    // method dispatch so a bad Host never leaks "verb the endpoint expects"
+    // via 405 (same pattern + rationale as handleWorkspace — see its
+    // comment block for the ASVS / DNS-rebinding background).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // Pre-filter stale entries using the same threshold the broadcaster
+    // uses for opportunistic eviction (runs inside setPresence). Eviction
+    // is write-triggered — if the last agent disconnects without the
+    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+    // agent writes after, the raw map keeps the zombie entry. Clients
+    // already filter with their own 5s TTL so this is invisible to the
+    // bar, but `/api/metrics/agent-presence` would otherwise lie to
+    // operators. Filtering here matches what a "live" read returns
+    // without paying for a sparse timer.
+    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    const now = Date.now();
+    const presence: typeof rawPresence = {};
+    for (const [agentId, entry] of Object.entries(rawPresence)) {
+      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+        presence[agentId] = entry;
+      }
+    }
+    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -2608,6 +3174,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
+      const {
+        agentId: createPageAgentId,
+        agentName: createPageAgentName,
+        colorSeed: createPageColorSeed,
+        clientName: createPageClientName,
+        clientVersion: createPageClientVersion,
+        label: createPageLabel,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -2649,6 +3223,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
+      recordContributor(
+        docName,
+        createPageAgentId,
+        createPageAgentName,
+        createPageColorSeed,
+        undefined,
+        buildAgentActor({
+          clientName: createPageClientName,
+          clientVersion: createPageClientVersion,
+          label: createPageLabel,
+        }),
+      );
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -2734,6 +3320,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      const {
+        agentId: renameAgentId,
+        agentName: renameAgentName,
+        colorSeed: renameColorSeed,
+        clientName: renameClientName,
+        clientVersion: renameClientVersion,
+        label: renameLabel,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { docName, newDocName } = body as Record<string, unknown>;
       if (typeof docName !== 'string' || typeof newDocName !== 'string') {
         json(res, 400, { ok: false, error: 'docName and newDocName are required' });
@@ -2768,6 +3362,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
+      recordContributor(
+        docName as string,
+        renameAgentId,
+        renameAgentName,
+        renameColorSeed,
+        formatRenameSubject(docName as string, newDocName as string),
+        buildAgentActor({
+          clientName: renameClientName,
+          clientVersion: renameClientVersion,
+          label: renameLabel,
+        }),
+      );
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);
@@ -2803,6 +3409,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, fromPath, toPath } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -2855,9 +3462,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renamed.map(({ fromDocName }) => fromDocName),
       );
 
-      const applyRename = (): void => {
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+      const applyRename = async (): Promise<void> => {
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, liveContents);
       };
 
@@ -2872,7 +3486,46 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
       } else {
-        applyRename();
+        await applyRename();
+
+        const fileIndex = getFileIndex();
+        for (const { fromDocName, toDocName } of renamed) {
+          updateFileIndex(
+            {
+              kind: 'rename',
+              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
+              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
+              oldDocName: fromDocName,
+              newDocName: toDocName,
+              content:
+                liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
+
+        if (backlinkIndex) {
+          for (const { fromDocName, toDocName } of renamed) {
+            backlinkIndex.renameDocument(
+              fromDocName,
+              toDocName,
+              liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            );
+          }
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+
+        signalChannel?.('files');
       }
 
       json(res, 200, { ok: true, renamed });
@@ -2910,6 +3563,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, path } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -3040,6 +3694,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const { filename, buffer, parentDocName } = uploadResult;
+    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
 
     if (!parentDocName) {
       json(res, 400, { ok: false, error: 'parentDocName is required' });
@@ -4079,9 +4737,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const body = await readBody(req);
       if (body.length > 0) {
-        const parsed = JSON.parse(body.toString()) as { op?: string };
+        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
         if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
-          op = parsed.op;
+          op = parsed.op as 'push' | 'pull' | 'sync';
         }
       }
     } catch {
@@ -4106,7 +4764,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     let enabled: boolean;
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { enabled?: unknown };
+      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
       if (typeof parsed.enabled !== 'boolean') {
         json(res, 400, { ok: false, error: 'enabled must be a boolean' });
         return;
@@ -4145,15 +4803,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 503, { ok: false, error: 'Sync engine not active' });
       return;
     }
-    let body: { file?: string; strategy?: string; content?: string };
+    let body: Record<string, unknown>;
     try {
       const raw = await readBody(req);
-      body = JSON.parse(raw.toString()) as { file?: string; strategy?: string; content?: string };
+      body = JSON.parse(raw.toString()) as Record<string, unknown>;
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
     }
-    const { file, strategy, content } = body;
+    const { file, strategy, content } = body as {
+      file?: string;
+      strategy?: string;
+      content?: string;
+    };
     if (!file || typeof file !== 'string') {
       json(res, 400, { ok: false, error: 'Missing required field: file' });
       return;
@@ -4217,6 +4879,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleInstalledAgentsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+  }
+
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -4258,12 +4936,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
+    '/api/agent-undo': handleAgentUndo,
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/metrics/agent-presence': handleMetricsAgentPresence,
+    '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
@@ -4282,6 +4963,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
+    '/api/installed-agents': handleInstalledAgentsRoute,
   };
 
   if (enableTestRoutes) {
@@ -4295,21 +4977,36 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
-      // Permissive CORS for /api/*. The server binds to 127.0.0.1 only (per
-      // createServer default), so `*` can't be reached from a remote origin
-      // and the blast radius is limited to other localhost processes. This is
-      // what makes the Electron renderer (served from electron-vite's dev
-      // server OR a `file://` / `resource://` in packaged builds) able to
-      // fetch `http://localhost:<utility-port>/api/*` without CORS errors.
+      // Origin-allowlist CORS for /api/*. Only loopback origins are accepted:
+      // - No Origin header (same-origin browser tab, curl, CLI): passes through.
+      // - Origin "null" (Electron packaged renderer, file:// per Fetch spec §4.3): allowed.
+      // - http(s)://localhost[:port] / 127.x.x.x[:port] / [::1][:port]: allowed.
+      // - Any other Origin: 403 — closes the CSRF door on unauthenticated mutating
+      //   routes (/api/agent-write-md, /api/rollback, /api/manage/delete, etc.)
+      //   without breaking the Electron renderer or local Vite dev servers.
       //
-      // Setting via `setHeader` (not `writeHead`) so handler responses that
-      // call `writeHead(status, { 'Content-Type': ... })` inherit these. The
-      // typeof guard handles unit tests that pass a bare-mock ServerResponse
-      // (several `api-*.test.ts` files stub only `writeHead` + `end`); a
-      // production `http.ServerResponse` always has `setHeader`.
+      // When an allowed Origin is present, it is reflected verbatim in ACAO (not
+      // `*`) so the browser's preflight check passes while non-loopback origins are
+      // still refused by the gate above. `Vary: Origin` prevents cache poisoning.
+      //
+      // Setting via `setHeader` (not `writeHead`) so handler responses that call
+      // `writeHead(status, { ... })` inherit these headers. The typeof guard handles
+      // unit tests that stub only `writeHead` + `end`.
       if (url.startsWith('/api/')) {
+        const origin = request.headers.origin;
+        if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+          if (typeof response.setHeader === 'function') {
+            response.setHeader('Content-Type', 'application/json');
+          }
+          response.writeHead(403);
+          response.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+          return;
+        }
         if (typeof response.setHeader === 'function') {
-          response.setHeader('Access-Control-Allow-Origin', '*');
+          if (origin !== undefined) {
+            response.setHeader('Access-Control-Allow-Origin', origin);
+            response.setHeader('Vary', 'Origin');
+          }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
           response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
         }

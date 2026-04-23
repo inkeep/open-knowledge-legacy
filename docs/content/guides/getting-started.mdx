@@ -4,7 +4,7 @@ description: Initialize Open Knowledge on an existing project or clone a GitHub 
 ---
 ## Prerequisites
 
-- **Bun >= 1.3.11** or **Node.js >= 22**
+- **Bun >= 1.3.13** or **Node.js >= 22**
 - **Git** installed and on your PATH
 
 ## Choose your starting point
@@ -127,6 +127,7 @@ The file sidebar offers several ways to create a new markdown file or folder:
 - **Right-click a folder row** -- "New file here" / "New folder here" targets that folder.
 - `Cmd+Alt+N`\*\* (macOS) / `Ctrl+Alt+N` (Linux/Windows)\*\* -- opens the new-file dialog with the active-directory default. The shortcut is ignored while focus is inside a text input, textarea, or content-editable element.
 - **Empty workspace** -- a "Create your first file" button appears when no files exist yet.
+- **Drag and drop** -- drag a file or folder row onto another folder (or onto the **library root** strip that appears while dragging) to move it. Invalid targets (for example, moving a folder into itself) are highlighted in red. Moves use the same server rename pipeline as other file operations.
 
 New folders are always created with an initial file (default `index.md`) so they appear in the tree immediately. Filenames without a `.md` extension get one appended on submit.
 

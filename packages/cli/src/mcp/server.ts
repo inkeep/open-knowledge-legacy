@@ -289,7 +289,7 @@ ${Object.entries(TOOL_DESCRIPTIONS)
 async function detectHocuspocus(serverUrl: string, log: McpLogger): Promise<boolean> {
   try {
     const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-    const res = await fetch(`${httpUrl}/api/agent-undo-status`, {
+    const res = await fetch(`${httpUrl}/api/document`, {
       signal: AbortSignal.timeout(2000),
     });
     return res.ok;
@@ -444,6 +444,12 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },
+    // Identity spec D27 + multi-agent-presence SPEC §6.4 FR-4 / D13:
+    // stable per-MCP-process connectionId threaded through the keepalive WS
+    // URL so the server can (a) correlate this WS with agent sessions and
+    // (b) deterministically clear this agent's __system__ presence entry on
+    // WS close.
+    connectionId: `agent-${connectionId}`,
     logger: logger.child('keepalive'),
   });
 

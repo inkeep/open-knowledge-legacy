@@ -19,10 +19,14 @@ export function nextClickLevel(
 
 export interface FireworkParticle {
   id: number;
-  /** Horizontal offset from the blob center in SVG user units */
+  /** Horizontal offset from the particle's starting point — what the CSS translates */
   dx: number;
-  /** Vertical offset from the blob center in SVG user units */
+  /** Vertical offset from the particle's starting point — what the CSS translates */
   dy: number;
+  /** Horizontal offset from the blob center where the particle spawns (on the blob perimeter) */
+  originDx: number;
+  /** Vertical offset from the blob center where the particle spawns (on the blob perimeter) */
+  originDy: number;
   /** Particle radius in SVG user units */
   size: number;
   /** CSS color string (either `var(--…)` or a literal color) */
@@ -35,6 +39,9 @@ export interface FireworkParticle {
 
 interface FireworkLevelConfig {
   count: number;
+  /** Radius at which particles spawn — matched to the blob's silhouette so the burst emerges from the body, not the forehead */
+  startRadius: number;
+  /** Additional outward travel from the spawn point (the CSS animation distance) */
   baseDistance: number;
   distanceVariance: number;
   sizeMin: number;
@@ -47,6 +54,7 @@ interface FireworkLevelConfig {
 export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
   0: {
     count: 0,
+    startRadius: 0,
     baseDistance: 0,
     distanceVariance: 0,
     sizeMin: 0,
@@ -60,6 +68,7 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
   // every click.
   1: {
     count: 0,
+    startRadius: 0,
     baseDistance: 0,
     distanceVariance: 0,
     sizeMin: 0,
@@ -70,6 +79,7 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
   },
   2: {
     count: 0,
+    startRadius: 0,
     baseDistance: 0,
     distanceVariance: 0,
     sizeMin: 0,
@@ -80,8 +90,9 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
   },
   3: {
     count: 16,
-    baseDistance: 14,
-    distanceVariance: 5.5,
+    startRadius: 11,
+    baseDistance: 7,
+    distanceVariance: 3,
     sizeMin: 0.45,
     sizeMax: 1.2,
     maxDelay: 130,
@@ -93,9 +104,10 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
 export const FIREWORK_COLORS: readonly string[] = [
   'var(--color-azure-blue)',
   'var(--color-sky-blue)',
-  'var(--color-agent)',
+  'var(--color-violet-300)',
   'var(--color-orange-light)',
   'var(--color-crystal-blue)',
+  'var(--color-white-cream)',
 ];
 
 /**
@@ -126,10 +138,14 @@ export function generateFireworkParticles(
     const delay = rng() * config.maxDelay;
     const duration = config.durationMin + rng() * (config.durationMax - config.durationMin);
     const colorIndex = Math.floor(rng() * colors.length);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
     particles.push({
       id: i,
-      dx: Math.cos(angle) * distance,
-      dy: Math.sin(angle) * distance,
+      dx: cos * distance,
+      dy: sin * distance,
+      originDx: cos * config.startRadius,
+      originDy: sin * config.startRadius,
       size,
       color: colors[colorIndex] ?? 'currentColor',
       delay,
