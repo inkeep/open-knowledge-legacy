@@ -168,6 +168,13 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     maxDebounce: options.maxDebounce ?? 1000,
     gitEnabled: withShadow,
     shadowRepo: shadow,
+    // Harness layout is projectDir === contentDir — so the relative path from
+    // one to the other is ''. Persistence's default fallback at that
+    // configuration is `'content'` (it's tuned for the production layout where
+    // projectDir wraps a `content/` subdir). Override to `'.'` so buildWipTree
+    // does `git add .` instead of `git add content`, matching the shape every
+    // harness-opt-in test exercises.
+    contentRoot: withShadow ? '.' : undefined,
     enableTestRoutes: true,
   });
 
