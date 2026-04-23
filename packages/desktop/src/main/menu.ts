@@ -73,6 +73,15 @@ export interface MenuDeps {
    * in the CLI-install layer (translocation warning, admin-cancel fallback).
    */
   toggleCliInstall?(): Promise<void> | void;
+  /**
+   * Pass 2 Major #5: re-trigger M6b consent from the File menu. Invoked
+   * by "Configure AI Tool Integrations…" — a user who Skip'd first-launch
+   * (or added a new editor afterwards) can re-open the dialog without
+   * hand-deleting `~/.open-knowledge/mcp-status.json`. Gated on darwin
+   * + `app.isPackaged`; `index.ts` short-circuits in dev + non-darwin so
+   * the menu item is hidden there.
+   */
+  reconfigureMcpWiring?(): Promise<void> | void;
 }
 
 /**
@@ -172,6 +181,21 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
                     : 'Install Command-Line Tools…',
                 click: () => {
                   void deps.toggleCliInstall?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
+        // Pass 2 Major #5 — re-trigger M6b consent. The dep is optional
+        // so non-macOS / non-packaged contexts (where MCP wiring no-ops
+        // anyway) hide the row. Gating matches cliStatus above — `deps`
+        // plumbs `undefined` when the runtime has nothing to offer.
+        ...(deps.reconfigureMcpWiring
+          ? ([
+              {
+                label: 'Configure AI Tool Integrations…',
+                click: () => {
+                  void deps.reconfigureMcpWiring?.();
                 },
               },
               { type: 'separator' as const },

@@ -448,6 +448,29 @@ function refreshApplicationMenu() {
       }
       refreshApplicationMenu();
     },
+    // Pass 2 Major #5 — File → "Configure AI Tool Integrations…" re-trigger
+    // for M6b consent. Only plumb the dep on darwin + packaged builds;
+    // non-macOS has no MCP wiring, and dev-mode explicitly contaminates
+    // the developer's real configs (D-M6-R7) — both should hide the row.
+    // The handler tears down any prior mcpWiringHandle then arms a fresh
+    // one with `forceShow: true` so the marker-present gate is bypassed.
+    reconfigureMcpWiring:
+      process.platform === 'darwin' && app.isPackaged
+        ? async () => {
+            mcpWiringHandle?.destroy();
+            mcpWiringHandle = null;
+            try {
+              mcpWiringHandle = armMcpWiring({ forceShow: true });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('[main] reconfigureMcpWiring failed', { err: message });
+              dialog.showErrorBox(
+                'Configure AI Tool Integrations failed',
+                `Open Knowledge couldn't re-arm the MCP consent dialog:\n\n${message}`,
+              );
+            }
+          }
+        : undefined,
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
@@ -471,6 +494,36 @@ function refreshApplicationMenu() {
  * Repair branch would install dev-path symlinks into the user's system
  * (STOP_IF (e) analogue for M6a).
  */
+/**
+ * Arm M6b first-launch MCP consent. Extracted as a helper so both the
+ * `app.whenReady()` path (once-per-boot marker-respecting) AND the
+ * "Configure AI Tool Integrations…" File menu path (forceShow, ignores
+ * prior marker) share one wiring definition. The cli surface is
+ * imported via the published-package name `@inkeep/open-knowledge` so
+ * turbo's `^build` topology correctly invalidates desktop's cache when
+ * CLI internals change.
+ */
+function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
+  const mcpWiringCli: McpWiringCliSurface = {
+    detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
+    writeUserMcpConfigs: (writeOpts) => writeUserMcpConfigs(writeOpts),
+    readExistingMcpEntry: (editorId, home) =>
+      readExistingMcpEntry(EDITOR_TARGETS[editorId], '', home),
+    allEditorIds: ALL_EDITOR_IDS,
+    editorTargets: EDITOR_TARGETS,
+  };
+  return runMcpWiringOnFirstLaunch({
+    isPackaged: app.isPackaged,
+    executablePath: app.getPath('exe'),
+    home: osHomedir(),
+    platform: process.platform,
+    ipcMain,
+    cli: mcpWiringCli,
+    forceEnv: process.env.OK_M6B_FORCE ?? null,
+    forceShow: opts.forceShow ?? false,
+  });
+}
+
 function maybeOfferBrokenSymlinkRepair(): Promise<void> {
   const handler = createBrokenSymlinkRepairHandler({
     executablePath: app.getPath('exe'),
@@ -479,6 +532,17 @@ function maybeOfferBrokenSymlinkRepair(): Promise<void> {
     dialog,
     install: installCli,
     refreshMenu: refreshApplicationMenu,
+    // Per-bundle dismissal token (Pass 2 Major #3). `app.getVersion()`
+    // advances on auto-update; `app.getPath('exe')` shifts on app-move;
+    // either case rebuilds the token so the modal re-fires exactly once
+    // against the new bundle. The in-memory `appState` is the authoritative
+    // read + write surface; `saveAppState` persists atomically.
+    appVersion: app.getVersion(),
+    getDismissedToken: () => appState.dismissedRepairForBundle,
+    setDismissedToken: (token) => {
+      appState = { ...appState, dismissedRepairForBundle: token };
+      saveAppState(appState);
+    },
   });
   return handler();
 }
@@ -817,23 +881,7 @@ function bootPrimaryInstance(): void {
     // turbo's `^build` topology correctly invalidates desktop's cache when CLI
     // internals change (Pass 0 Major #2). Rollup tree-shakes unused CLI code
     // at electron-vite build time, keeping the DMG bundle size bounded.
-    const mcpWiringCli: McpWiringCliSurface = {
-      detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
-      writeUserMcpConfigs: (opts) => writeUserMcpConfigs(opts),
-      readExistingMcpEntry: (editorId, home) =>
-        readExistingMcpEntry(EDITOR_TARGETS[editorId], '', home),
-      allEditorIds: ALL_EDITOR_IDS,
-      editorTargets: EDITOR_TARGETS,
-    };
-    mcpWiringHandle = runMcpWiringOnFirstLaunch({
-      isPackaged: app.isPackaged,
-      executablePath: app.getPath('exe'),
-      home: osHomedir(),
-      platform: process.platform,
-      ipcMain,
-      cli: mcpWiringCli,
-      forceEnv: process.env.OK_M6B_FORCE ?? null,
-    });
+    mcpWiringHandle = armMcpWiring();
 
     // D3 revised: every project open spawns a NEW editor window. App boot
     // restores the last-opened project (if any) into a fresh editor window OR

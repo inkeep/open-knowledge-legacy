@@ -449,9 +449,7 @@ export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<
   };
   // `cwd` is empty — every user-scoped target ignores it (each editor's
   // `configPath` + `serverName` resolves from `home` or a constant).
-  return targets.map((target) =>
-    writeEditorMcpConfig(target, '', installOptions, opts.home),
-  );
+  return targets.map((target) => writeEditorMcpConfig(target, '', installOptions, opts.home));
 }
 
 /**

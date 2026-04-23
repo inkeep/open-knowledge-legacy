@@ -448,20 +448,19 @@ export interface McpWiringCliSurface {
   /** Mirrors `writeUserMcpConfigs(opts)` from init.ts. */
   writeUserMcpConfigs(opts: {
     editors: McpWiringEditorId[];
-    force?: boolean | Set<McpWiringEditorId>;
     cliPath?: string;
     home?: string;
   }): Promise<
     Array<{
       editorId: McpWiringEditorId;
       label: string;
-      action:
-        | 'written'
-        | 'skipped-existing'
-        | 'skipped-conflict'
-        | 'overwritten'
-        | 'skipped-flag'
-        | 'failed';
+      // Main PR #282 reconciliation (2026-04-23): the CLI now always-overwrites,
+      // so `skipped-existing` / `skipped-conflict` are gone. `skipped-missing`
+      // is new; `skipAvailabilityCheck: true` in `writeUserMcpConfigs` means
+      // M6b shouldn't actually produce it in practice (user explicitly toggled
+      // the checkbox). Listed here anyway so the type matches `EditorMcpResult`
+      // byte-for-byte — see `packages/cli/src/commands/init.ts`.
+      action: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
       configPath: string;
       serverName: string;
       error?: string;
@@ -509,6 +508,19 @@ interface RunMcpWiringOpts {
   cli: McpWiringCliSurface;
   /** Value of `process.env.OK_M6B_FORCE` — `'1'` bypasses the packaged gate for dev smokes. */
   forceEnv?: string | null | undefined;
+  /**
+   * Pass 2 Major #5: ignore a pre-existing marker and re-arm the dialog.
+   * Wired to the File menu's "Configure AI Tool Integrations…" item so a
+   * user who previously Skip'd (or wants to add an editor that wasn't
+   * installed at consent time) can re-trigger from the GUI instead of
+   * hand-deleting `~/.open-knowledge/mcp-status.json`.
+   *
+   * The other guards stay active even under forceShow: non-darwin still
+   * no-ops (NG4), dev-mode still no-ops without OK_M6B_FORCE (D-M6-R7
+   * contamination guard), bad executablePath shape still aborts (STOP_IF
+   * (c)). Only the marker-present gate is bypassed.
+   */
+  forceShow?: boolean;
   fs?: McpWiringFsOps;
   now?: () => Date;
   logger?: McpWiringLogger;
@@ -531,6 +543,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     ipcMain,
     cli,
     forceEnv,
+    forceShow = false,
     fs,
     now,
     logger = DEFAULT_LOGGER,
@@ -564,11 +577,18 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     return inertHandle;
   }
 
-  // Idempotent — marker present means prior decision recorded; never re-fire.
+  // Idempotent — marker present means prior decision recorded; never
+  // re-fire UNLESS the caller asked for forceShow (Pass 2 Major #5 —
+  // the "Configure AI Tool Integrations…" File-menu path). On forceShow
+  // we log-and-continue; on first-launch-only (default) the prior
+  // decision is respected as a one-way gate.
   const marker = readMcpStatusMarker(home, fs);
-  if (marker !== null) {
+  if (marker !== null && !forceShow) {
     logger.info('skip — marker present', { configured: marker.configured });
     return inertHandle;
+  }
+  if (marker !== null && forceShow) {
+    logger.info('forceShow — ignoring prior marker', { configured: marker.configured });
   }
 
   // Detection + payload construction under try/catch (Pass 0 Major #5). A
@@ -665,18 +685,29 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
 
     const cliPath = resolveCliPath(executablePath, fs);
 
-    // Per-editor force classification (D-M6-R4 refined). Foreign shapes are
-    // preserved; managed shapes (canonical npx, -y variant, prior cliPath) are
-    // overwritten via `force: Set<EditorId>`.
-    const forceSet = new Set<McpWiringEditorId>();
+    // Per-editor customized-entry classification (D-M6-R4 refined). After
+    // main PR #282 + the post-rebase reconciliation, `writeUserMcpConfigs`
+    // no longer takes a `force` parameter — it always overwrites every
+    // editor it receives. So we FILTER here: editors with a foreign
+    // (non-OK-managed) existing entry are excluded from the write call,
+    // preserving their customization. Editors with no existing entry OR
+    // with an OK-managed shape (canonical npx, -y variant, prior cliPath)
+    // are passed through for overwrite.
+    const editorsToWrite: McpWiringEditorId[] = [];
     for (const editor of selectedEditors) {
       const target = cli.editorTargets[editor];
       if (!target) continue;
       const existing = cli.readExistingMcpEntry(editor, home);
-      if (existing === null) continue; // absent entry → plain write, no force needed
+      if (existing === null) {
+        // No prior entry → plain write.
+        editorsToWrite.push(editor);
+        continue;
+      }
       if (computeForce(existing, target)) {
-        forceSet.add(editor);
+        // OK-managed shape → overwrite.
+        editorsToWrite.push(editor);
       } else {
+        // Foreign customization → preserve, skip the write.
         logger.event({
           event: 'mcp-wiring-skip-customized',
           editor,
@@ -687,8 +718,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     let results: Awaited<ReturnType<McpWiringCliSurface['writeUserMcpConfigs']>>;
     try {
       results = await cli.writeUserMcpConfigs({
-        editors: selectedEditors,
-        force: forceSet,
+        editors: editorsToWrite,
         cliPath,
         home,
       });

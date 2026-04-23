@@ -632,19 +632,45 @@ export interface BrokenSymlinkRepairDeps {
    *  install resolves). */
   refreshMenu: () => void;
   getStatus?: (executablePath: string) => CliInstallStatus;
+  /**
+   * Per-bundle dismissal token (Pass 1 Major #3). A value of
+   * `<appVersion>:<executablePath>` means the user dismissed the repair
+   * modal on THIS bundle — skip silently. An auto-update or app-move
+   * shifts the computed token, invalidating any prior dismissal so the
+   * modal fires once against the new bundle. Null means no prior dismiss.
+   * Tests pass a matching / non-matching token to exercise both branches.
+   */
+  getDismissedToken?: () => string | null;
+  /**
+   * Persist the dismissal token when the user clicks Skip on the modal.
+   * The value passed is the same `<appVersion>:<executablePath>` shape
+   * that `getDismissedToken` returns — constructed in `index.ts`'s
+   * runtime wrapper so tests don't need to know the format.
+   */
+  setDismissedToken?: (token: string) => void;
+  /**
+   * Version string forming the first half of the dismissal token
+   * (`app.getVersion()` in production). Injected so tests can assert
+   * post-update re-prompt without stubbing Electron's `app`.
+   */
+  appVersion?: string;
 }
 
 /**
  * Factory that returns an async handler fit for `app.whenReady().then(...)`.
  * Called once per boot; the internal guards (`platform`, `isPackaged`,
- * `status === 'broken'`) short-circuit to a no-op on every path except the
- * one it was designed for — drag-to-Trash-then-reinstall recovery on a
- * packaged macOS build.
+ * `status === 'broken'`, dismissal-token match) short-circuit to a no-op
+ * on every path except the one it was designed for — drag-to-Trash-then-
+ * reinstall recovery on a packaged macOS build the user hasn't opted out
+ * of for THIS bundle.
  *
- * Per spec AC1.6 the dialog fires "per session" (per-boot). No dismissal
- * token persists across boots — a user who keeps seeing it either repairs
- * or moves the `.app` back into place. Pass 1 Major #3 flipped `defaultId`
- * to 0 (Skip) so cancel-via-Enter is the safe action.
+ * Pass 2 Major #3: per-bundle dismissal token — users who don't care
+ * about CLI tools can Skip once and stay un-nagged for the life of that
+ * bundle. Auto-update shifts `appVersion`; app-move shifts
+ * `executablePath`; either rebuilds the token, so the prompt fires once
+ * on the new bundle. Rationale in `BrokenSymlinkRepairDeps`.
+ *
+ * Pass 1 Major #3 flipped `defaultId` to 0 (Skip) so Enter-reflex is safe.
  */
 export function createBrokenSymlinkRepairHandler(
   deps: BrokenSymlinkRepairDeps,
@@ -655,6 +681,19 @@ export function createBrokenSymlinkRepairHandler(
     if (!deps.isPackaged) return;
     const status = getStatus(deps.executablePath);
     if (status !== 'broken') return;
+
+    // Per-bundle dismissal gate (Pass 2 Major #3). The token shape
+    // `<appVersion>:<executablePath>` means auto-update (version shift)
+    // OR app-move (exe path shift) invalidates a prior dismissal — the
+    // modal fires once on the new bundle, respects Skip for the rest
+    // of that bundle's life. Optional dep so the simpler callers +
+    // existing tests don't need to plumb it.
+    const currentToken =
+      deps.appVersion !== undefined ? `${deps.appVersion}:${deps.executablePath}` : null;
+    if (currentToken !== null && deps.getDismissedToken?.() === currentToken) {
+      return;
+    }
+
     const { response } = await deps.dialog.showMessageBox({
       type: 'question',
       message: 'Command-Line Tools are broken — repair?',
@@ -668,9 +707,15 @@ export function createBrokenSymlinkRepairHandler(
       // on a root-write they didn't intend.
       defaultId: 0,
     });
-    if (response === 1) {
-      await deps.install({ executablePath: deps.executablePath, dialog: deps.dialog });
-      deps.refreshMenu();
+    if (response === 0) {
+      // Skip — persist the per-bundle dismissal token if the caller
+      // plumbed it in. Without setDismissedToken the skip is per-boot
+      // only (prior behavior).
+      if (currentToken !== null) deps.setDismissedToken?.(currentToken);
+      return;
     }
+    // response === 1 → Repair.
+    await deps.install({ executablePath: deps.executablePath, dialog: deps.dialog });
+    deps.refreshMenu();
   };
 }

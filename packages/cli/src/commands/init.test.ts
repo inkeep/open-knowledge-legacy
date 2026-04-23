@@ -1405,7 +1405,12 @@ describe('writeUserMcpConfigs', () => {
     });
   });
 
-  it('returns skipped-existing when the entry already matches cliPath shape (idempotent)', async () => {
+  it('reports "overwritten" even when the entry already matches cliPath shape (main PR #282 always-overwrite)', async () => {
+    // Post-rebase semantic (2026-04-23): `writeEditorMcpConfig` always
+    // overwrites existing entries — "skipped-existing" and "skipped-conflict"
+    // are gone. Re-running with the same cliPath is safe (byte-identical
+    // result), but the action value reflects "there was an existing entry
+    // that got re-written" not "the entry was idempotent."
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
     writeFileSync(
@@ -1423,7 +1428,10 @@ describe('writeUserMcpConfigs', () => {
       home: fakeHome,
     });
 
-    expect(results[0].action).toBe('skipped-existing');
+    expect(results[0].action).toBe('overwritten');
+    // Idempotency check: the written entry is byte-identical to the prior.
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({ command: CLI_PATH, args: ['mcp'] });
   });
 
   it('reports action:failed for unsupported editors without throwing', async () => {
@@ -1477,11 +1485,16 @@ describe('writeEditorMcpConfig (exported for Electron main)', () => {
   });
 
   it('is callable as a standalone export with a single target', () => {
+    // Post-rebase signature (2026-04-23): `writeEditorMcpConfig(target, cwd,
+    // installOptions, home?)` — the `force` 3rd arg was dropped when main
+    // refactored to always-overwrite semantics. The M6b call-site
+    // (writeUserMcpConfigs) passes `skipAvailabilityCheck: true` so the
+    // user-toggled editor isn't silently rejected by the new
+    // `isEditorTargetAvailable` guard.
     const result: EditorMcpResult = writeEditorMcpConfig(
       EDITOR_TARGETS.cursor,
       '',
-      false,
-      { cliPath: CLI_PATH },
+      { cliPath: CLI_PATH, skipAvailabilityCheck: true },
       fakeHome,
     );
     expect(result.action).toBe('written');

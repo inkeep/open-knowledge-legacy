@@ -1076,7 +1076,13 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with existing canonical npx entry → force set includes that editor', async () => {
+  test('confirm with existing canonical npx entry → editor is included in the write call (main PR #282 reconciliation: always-overwrite semantic)', async () => {
+    // Post-rebase (2026-04-23): the `force: Set<EditorId>` parameter is
+    // gone from writeUserMcpConfigs — main's refactored writeEditorMcpConfig
+    // always overwrites. The mcp-wiring.ts confirmHandler now FILTERS at the
+    // caller level: editors whose existing entry is OK-managed (npx shape,
+    // -y variant, prior cliPath) stay in the editors[] array; foreign ones
+    // are excluded. This test asserts the "managed shape → included" branch.
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({
@@ -1100,16 +1106,22 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude', 'cursor'] });
       const call = writeCalls[0];
       if (!call) throw new Error('no write call recorded');
-      expect(call.force).toBeInstanceOf(Set);
-      const forceSet = call.force as Set<string>;
-      expect(forceSet.has('claude')).toBe(true);
-      expect(forceSet.has('cursor')).toBe(false); // no existing entry → no force needed
+      // Both editors flow through: claude has an OK-managed npx entry
+      // (overwrite), cursor has no entry (plain write).
+      expect(call.editors).toContain('claude');
+      expect(call.editors).toContain('cursor');
     } finally {
       handle.destroy();
     }
   });
 
-  test('confirm with foreign customization → force=false, emits mcp-wiring-skip-customized event', async () => {
+  test('confirm with foreign customization → editor is excluded from the write call + emits mcp-wiring-skip-customized event', async () => {
+    // Post-rebase (2026-04-23): preservation of foreign customizations is
+    // now enforced at the caller-side filter in mcp-wiring.ts confirmHandler,
+    // not at writeEditorMcpConfig (which always overwrites). This test
+    // asserts foreign-shape entries are EXCLUDED from editors[] before
+    // writeUserMcpConfigs is called — so main's always-overwrite semantic
+    // can't stomp them even if they somehow flowed through.
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({
@@ -1131,13 +1143,17 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     try {
       await ipcMain.bindSender();
       await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
-      const call = writeCalls[0];
-      if (!call) throw new Error('no write call recorded');
-      const forceSet = call.force as Set<string>;
-      expect(forceSet.has('cursor')).toBe(false);
+      // The foreign-shape filter excludes cursor entirely → no write call,
+      // OR a write call with editors=[] (empty). Both shapes satisfy the
+      // preservation contract; assert the foreign entry was classified as
+      // customized and the event was emitted.
       expect(
         events.some((e) => e.event === 'mcp-wiring-skip-customized' && e.editor === 'cursor'),
       ).toBe(true);
+      // If a write call happened, cursor must NOT be in it.
+      for (const call of writeCalls) {
+        expect(call.editors).not.toContain('cursor');
+      }
     } finally {
       handle.destroy();
     }
