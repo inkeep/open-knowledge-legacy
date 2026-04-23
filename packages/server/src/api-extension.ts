@@ -502,6 +502,24 @@ export interface ApiExtensionOptions {
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
+  /**
+   * Awaited before any handler reads `shadowRef.current`. Closes the race where
+   * a fire-and-forget shadow init (the dev plugin's `runDevShadowInit`) hasn't
+   * completed before an agent-write / save-version / rollback request arrives —
+   * without this gate, `commitToWipRef` short-circuits silently because
+   * `shadowRef.current` is undefined, and the L2 commit is permanently lost.
+   *
+   * The promise NEVER rejects (the dev plugin's `handleDevShadowInitError`
+   * dispatches errors internally — fail-fast branches call `process.exit(1)`,
+   * the degraded branch warns + returns). A resolve signals "init attempt
+   * completed"; `shadowRef.current` may still be undefined under degraded
+   * mode, which the existing `if (!shadow)` guards in handler bodies handle.
+   *
+   * Optional — callers that init shadow synchronously before constructing the
+   * api-extension (Tier 1 `createTestServer`, CLI `createServer` via
+   * `bootServer`) can omit it and behavior is unchanged.
+   */
+  shadowReadyPromise?: Promise<void>;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
   /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
@@ -667,6 +685,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
+    shadowReadyPromise,
     flushGitCommit,
     getCurrentBranch,
     contentRoot,
@@ -816,13 +835,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * best-effort background work.
    */
   function flushDocToGit(docName: string, label: string): void {
-    const debounceId = `onStoreDocument-${docName}`;
-    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
-      ? hocuspocus.debouncer.executeNow(debounceId)
-      : Promise.resolve();
-    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
-      log.warn({ err }, `[${label}] post-write flush failed`);
-    });
+    // Gate the entire L1 → L2 chain on shadow-init readiness. When the dev
+    // plugin's `runDevShadowInit` is still in flight at request time, the L2
+    // commit would otherwise silently no-op (commitToWipRef short-circuits on
+    // shadowRef.current === undefined). The promise resolves once init has
+    // settled — degraded mode passes through; existing `if (!shadow)` guards
+    // in commitToWipRef still handle the genuine "shadow disabled" case.
+    // Callers that init shadow synchronously (Tier 1 createTestServer, CLI
+    // bootServer) don't pass shadowReadyPromise; Promise.resolve(undefined)
+    // is a no-op microtask, so behavior is unchanged for them.
+    Promise.resolve(shadowReadyPromise)
+      .then(() => {
+        const debounceId = `onStoreDocument-${docName}`;
+        const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+          ? hocuspocus.debouncer.executeNow(debounceId)
+          : Promise.resolve();
+        return l1.then(() => flushGitCommit?.());
+      })
+      .catch((err: unknown) => {
+        log.warn({ err }, `[${label}] post-write flush failed`);
+      });
   }
 
   function collectAdmittedDocNames(): Set<string> {
@@ -2380,6 +2412,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // Gate on shadow-init readiness — see ApiExtensionOptions.shadowReadyPromise.
+    if (shadowReadyPromise) await shadowReadyPromise;
+
     const shadow = shadowRef?.current;
     if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
@@ -2783,6 +2818,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
+
+    // Gate on shadow-init readiness — see ApiExtensionOptions.shadowReadyPromise.
+    if (shadowReadyPromise) await shadowReadyPromise;
 
     const shadow = shadowRef?.current;
     if (!shadow) {

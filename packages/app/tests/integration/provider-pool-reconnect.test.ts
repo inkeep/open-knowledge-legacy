@@ -71,6 +71,11 @@ async function startServer(contentDir: string, port: number): Promise<Restartabl
   const persistence = createPersistenceExtension({
     contentDir,
     projectDir: contentDir,
+    // This test exercises the legacy project-repo commit path when shadowRef is
+    // unset — without gitEnabled: false, the default `true` triggers that path
+    // against an un-init'd tmpdir `.git/` and emits ERROR/CRITICAL logs during
+    // the shutdown drain. Explicit off keeps the test's output clean and
+    // avoids spurious `incrementGitAutoSaveFailure` metric ticks.
     gitEnabled: false,
   });
   const hocuspocus = new Hocuspocus({

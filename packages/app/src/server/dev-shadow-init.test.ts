@@ -94,6 +94,50 @@ describe('handleDevShadowInitError', () => {
     ]);
     expect(exits).toEqual([]);
   });
+
+  test('plain Error under isTestIsolated — fail-fast warn + exit(1) per D13', () => {
+    const { io, warns, exits } = makeIo();
+    const err = new Error('disk full');
+    expect(() => handleDevShadowInitError(err, io, { isTestIsolated: true })).toThrow(
+      'exit(1) called',
+    );
+    expect(warns).toEqual([
+      { msg: '[dev] Shadow repo init failed under test isolation (fail-fast per D13):', err },
+    ]);
+    expect(exits).toEqual([1]);
+  });
+
+  test('non-Error thrown value under isTestIsolated — fail-fast warn + exit(1) per D13', () => {
+    const { io, warns, exits } = makeIo();
+    expect(() => handleDevShadowInitError('string error', io, { isTestIsolated: true })).toThrow(
+      'exit(1) called',
+    );
+    expect(warns).toEqual([
+      {
+        msg: '[dev] Shadow repo init failed under test isolation (fail-fast per D13):',
+        err: 'string error',
+      },
+    ]);
+    expect(exits).toEqual([1]);
+  });
+
+  test('ProjectGitInitError + isTestIsolated — ProjectGitInitError branch wins (structural mutual exclusion)', () => {
+    // Locks in the if/else if/else ordering: the ProjectGitInitError branch
+    // must fire (emitting the ensureProjectGit-specific warn) and the
+    // isTestIsolated branch must NOT fire a second warn. Regression guard
+    // for a future contributor flattening the branches back to bare ifs or
+    // introducing a non-throwing test stub for io.exit.
+    const { io, warns, exits } = makeIo();
+    const err = new ProjectGitInitError('git: command not found', 'spawn ENOENT');
+    expect(() => handleDevShadowInitError(err, io, { isTestIsolated: true })).toThrow(
+      'exit(1) called',
+    );
+    expect(warns).toEqual([
+      { msg: '[dev] ensureProjectGit failed: git: command not found', err: undefined },
+      { msg: '[dev] git stderr: spawn ENOENT', err: undefined },
+    ]);
+    expect(exits).toEqual([1]);
+  });
 });
 
 // ─── runDevShadowInit ────────────────────────────────────────────────────────
@@ -113,7 +157,7 @@ describe('runDevShadowInit', () => {
       },
     };
     const captured: ShadowHandle[] = [];
-    await runDevShadowInit('/project', (shadow) => captured.push(shadow), io, deps);
+    await runDevShadowInit('/project', (shadow) => captured.push(shadow), { io, deps });
     expect(calls).toEqual(['ensureProjectGit(/project)', 'initShadowRepo(/project)']);
     expect(captured).toEqual([FAKE_SHADOW]);
     expect(infos).toEqual([`[dev] Shadow repo initialized at ${FAKE_SHADOW.gitDir}`]);
@@ -138,7 +182,7 @@ describe('runDevShadowInit', () => {
     // `io.exit` throws `ExitCalled` in tests — in production it'd be `process.exit`
     // which never returns. The thrown exit propagates out of `runDevShadowInit`.
     await expect(
-      runDevShadowInit('/project', (s) => onReadyCalls.push(s), io, deps),
+      runDevShadowInit('/project', (s) => onReadyCalls.push(s), { io, deps }),
     ).rejects.toThrow('exit(1) called');
     // initShadowRepo MUST NOT be called — that's the fail-fast guarantee.
     expect(calls).toEqual(['ensureProjectGit']);
@@ -151,7 +195,7 @@ describe('runDevShadowInit', () => {
     expect(exits).toEqual([1]);
   });
 
-  test('initShadowRepo rejects with non-ProjectGitInitError — degraded warn, no exit', async () => {
+  test('initShadowRepo rejects with non-ProjectGitInitError — degraded warn, no exit (production path)', async () => {
     const { io, infos, warns, exits } = makeIo();
     const shadowErr = new Error('lock acquisition failed');
     const deps = {
@@ -161,12 +205,40 @@ describe('runDevShadowInit', () => {
       },
     };
     const onReadyCalls: ShadowHandle[] = [];
-    await runDevShadowInit('/project', (s) => onReadyCalls.push(s), io, deps);
+    await runDevShadowInit('/project', (s) => onReadyCalls.push(s), { io, deps });
     expect(onReadyCalls).toEqual([]);
     expect(infos).toEqual([]);
     expect(warns).toEqual([
       { msg: '[dev] Shadow repo init failed (timeline features unavailable):', err: shadowErr },
     ]);
     expect(exits).toEqual([]);
+  });
+
+  test('initShadowRepo rejects with non-ProjectGitInitError under isTestIsolated — fail-fast exit(1) per D13', async () => {
+    const { io, infos, warns, exits } = makeIo();
+    const shadowErr = new Error('lock acquisition failed');
+    const deps = {
+      ensureProjectGit: async () => ({ didInit: false }),
+      initShadowRepo: async () => {
+        throw shadowErr;
+      },
+    };
+    const onReadyCalls: ShadowHandle[] = [];
+    await expect(
+      runDevShadowInit('/project', (s) => onReadyCalls.push(s), {
+        io,
+        deps,
+        isTestIsolated: true,
+      }),
+    ).rejects.toThrow('exit(1) called');
+    expect(onReadyCalls).toEqual([]);
+    expect(infos).toEqual([]);
+    expect(warns).toEqual([
+      {
+        msg: '[dev] Shadow repo init failed under test isolation (fail-fast per D13):',
+        err: shadowErr,
+      },
+    ]);
+    expect(exits).toEqual([1]);
   });
 });

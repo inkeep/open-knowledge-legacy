@@ -42,10 +42,12 @@ export {
   createContentFilter,
 } from './content-filter.ts';
 export {
+  type ContributorEntry,
   clearContributors,
   contributorCount,
   formatContributors,
   recordContributor,
+  swapContributors,
 } from './contributor-tracker.ts';
 export {
   applyExternalChange,
@@ -160,6 +162,7 @@ export {
   commitWip,
   commitWipFromTree,
   DEFAULT_CHECKPOINT_RETENTION,
+  destroyShadowRepo,
   FILE_SYSTEM_WRITER,
   GIT_UPSTREAM_WRITER,
   gcCheckpointRefs,

@@ -41,8 +41,16 @@ beforeAll(async () => {
     quiet: true,
     debounce: 200,
     maxDebounce: 1000,
-    gitEnabled: false,
     enableTestRoutes: true,
+    // Shadow/git is orthogonal to symlink alias assertions. With gitEnabled:
+    // true (the createServer default), the L2 commit path would try `git add
+    // content` in a tmpdir lacking that subdir (persistence's default
+    // `contentRoot` fallback is `'content'` when `projectDir === contentDir`)
+    // — fatal pathspec error + ERROR log during the shutdown drain. Explicit
+    // off short-circuits `scheduleGitCommit` at persistence.ts:461 so no
+    // commit attempt is made. Note: `createServer` still auto-inits a bare
+    // shadow at <contentDir>/.git/open-knowledge/ regardless (unchanged).
+    gitEnabled: false,
   });
   await srv.ready;
 

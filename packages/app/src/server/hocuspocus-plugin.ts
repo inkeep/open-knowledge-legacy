@@ -105,7 +105,22 @@ const contentConfig = resolveContentConfig();
 const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
   ? realpathSync(process.env.OK_TEST_CONTENT_DIR)
   : contentConfig.dir;
-const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
+
+// When test isolation is active (OK_TEST_CONTENT_DIR set), persistence and
+// the shadow repo operate against the per-worker tmpdir rather than the
+// developer's checkout. See dev-shadow-init.ts for init-error handling.
+const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
+
+// Single binding for every `PROJECT_ROOT`-derived call site in this module
+// (D12 in specs/2026-04-22-per-worker-shadow-repo-test-harness/). Under
+// isolation, points at the tmpdir so shadow repo, backlink cache, branch
+// reads, server-lock metadata, and save-version all land in the per-worker
+// sandbox — never in the developer's actual checkout. Adding a new
+// PROJECT_ROOT consumer elsewhere is an obviously wrong pattern; thread
+// through `projectRoot` instead.
+const projectRoot = isTestIsolated ? CONTENT_DIR : PROJECT_ROOT;
+
+const CONTENT_ROOT = relative(projectRoot, CONTENT_DIR);
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
@@ -118,7 +133,7 @@ mkdirSync(CONTENT_DIR, { recursive: true });
 // HMR restarts in the same process are idempotent (same pid).
 const LOCK_DIR = resolve(CONTENT_DIR, '.open-knowledge');
 try {
-  acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
+  acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: projectRoot });
 } catch (err) {
   console.error(`\n[hocuspocus] ${err instanceof Error ? err.message : String(err)}\n`);
   throw err;
@@ -144,23 +159,33 @@ process.once('exit', viteShutdownHandler);
 
 console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
-// When test isolation is active, persistence's git integration is a liability —
-// it tries to `git add <contentRoot>` in the worktree's .git, but contentRoot is
-// an external tmpdir path starting with `../../..` which git refuses. Tests don't
-// need git tracking of their throwaway content, so disable it outright.
-const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
-
 // Shadow repo — initialized lazily. Deferred ref pattern matches standalone.ts.
 // SPEC 2026-04-21-shadow-repo-single-mode R2 / D12: ensureProjectGit runs BEFORE
 // initShadowRepo so a missing `git` binary fails the dev server fast instead of
 // leaving the shadow in a degraded state. Core pipeline + error dispatch live in
 // `./dev-shadow-init.ts` so the fail-fast / degraded branches are unit-tested.
+//
+// Shadow init runs UNCONDITIONALLY now (per specs/2026-04-22-per-worker-shadow-
+// repo-test-harness D2 Playwright default-on) — every worker's tmpdir gets a
+// real shadow at `<tmpdir>/.git/open-knowledge/`. Under isolation, all
+// shadow-init errors (not just ProjectGitInitError) fail-fast via D13 so
+// silent shadow gaps never hide coverage regressions.
 const shadowRef: ShadowRef = { current: undefined };
-if (!isTestIsolated) {
-  void runDevShadowInit(PROJECT_ROOT, (shadow) => {
+// Capture the init promise so the api-extension can `await` it before any
+// handler reads `shadowRef.current`. Closes a race where agent-write /
+// save-version / rollback requests that arrive within the ~100-200 ms
+// shadow-init window would silently no-op (commitToWipRef short-circuits
+// when shadowRef.current is undefined). The promise never rejects —
+// handleDevShadowInitError dispatches errors internally — so awaiters see
+// resolve regardless and existing `if (!shadow)` guards still handle the
+// degraded "shadow disabled" case after the await.
+const shadowReadyPromise = runDevShadowInit(
+  projectRoot,
+  (shadow) => {
     shadowRef.current = shadow;
-  });
-}
+  },
+  { isTestIsolated },
+);
 
 // All throwable module-scope init runs inside this try. If anything fails we
 // release the lock synchronously before re-throwing, so a subsequent `bun run
@@ -187,25 +212,25 @@ function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
 
 try {
   contentFilter = createContentFilter({
-    projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
+    projectDir: projectRoot,
     contentDir: CONTENT_DIR,
     includePatterns: contentConfig.include,
     excludePatterns: contentConfig.exclude,
   });
   backlinkIndex = new BacklinkIndex({
-    projectDir: PROJECT_ROOT,
+    projectDir: projectRoot,
     contentDir: CONTENT_DIR,
     contentFilter,
   });
 
   persistence = createPersistenceExtension({
     contentDir: CONTENT_DIR,
-    projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
-    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-    gitEnabled: !isTestIsolated,
+    projectDir: projectRoot,
+    contentRoot: CONTENT_ROOT,
+    gitEnabled: true,
     shadowRef,
     backlinkIndex,
-    getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
     getPrincipal: () => loadedPrincipal,
   });
 
@@ -239,15 +264,16 @@ try {
       getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
       enableTestRoutes: true,
-      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      contentRoot: CONTENT_ROOT,
       shadowRef,
+      shadowReadyPromise,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
-      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+      getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
       agentPresenceBroadcaster,
-      projectDir: PROJECT_ROOT,
+      projectDir: projectRoot,
       getPrincipal: () => loadedPrincipal,
     }),
   );
@@ -271,8 +297,8 @@ try {
       mdManager: pluginMdManager,
       schema: pluginSchema,
       shadowRef,
-      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+      contentRoot: CONTENT_ROOT,
+      getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
     }),
   );
 } catch (err) {
