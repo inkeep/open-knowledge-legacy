@@ -846,6 +846,13 @@ Each worktree has its own content directory. The test harness creates a fresh `t
 
 **Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
 
+**`bun run knip` false-positives in fresh worktrees:** Running the pre-push hook (`bun run check` → `bash scripts/check-knip-clean.sh` → `bun run knip`) from a worktree where `bun install` has not yet run produces spurious "Unused files / Unused dependencies / Unlisted binaries" reports and exits 1, even though the same command passes from the main repo root. Two conjoined causes, both resolved by `bun install` in the worktree:
+
+1. `docs/.source/` is a `fumadocs-mdx` postinstall artifact (gitignored via `docs/.gitignore`) that regenerates `docs/source.config.mjs` + `browser.ts` / `dynamic.ts` / `server.ts`. These files are how knip connects `docs/content/**/*.mdx` back to `zod`, `fumadocs-typescript`, `remark-mdx-snippets`, and the MDX content files. Without them, knip flags the 16 MDX files under `docs/content/**` as unused and three docs deps as unused — the exact report pattern that triggers exit 1.
+2. The `[dev] Shadow repo init failed … ENOTDIR … /.git/open-knowledge` warning is cosmetic-only. Knip's vite-config evaluator imports `packages/app/vite.config.ts` → `./src/server/hocuspocus-plugin.ts`, which has module-top-level side effects including `runDevShadowInit`. In a worktree the `.git` is a pointer file (not a directory), so `mkdirSync('.git/open-knowledge')` throws `ENOTDIR`. The error is classified as non-`ProjectGitInitError` in `handleDevShadowInitError` (`packages/app/src/server/dev-shadow-init.ts`) — warn-only, continues. It does **not** change knip's exit code; the exit 1 is exclusively from cause #1.
+
+Workflow: after `EnterWorktree` (or `git worktree add`), run `bun install` in the worktree before invoking `bun run check` / `git push`. The same `bun install` also fixes the ProseMirror-model dedup case above.
+
 ### Multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
