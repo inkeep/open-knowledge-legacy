@@ -176,3 +176,172 @@ describe('clearContributors', () => {
     expect(formatContributors()).toBe('');
   });
 });
+
+describe('recordContributor (summary) — D23 flat array', () => {
+  test('undefined summary → no summaries field in output (byte-identical to legacy)', () => {
+    recordContributor('doc.md', 'agent-claude-1', 'Claude');
+    const output = formatContributors();
+    expect(output).not.toContain('summaries');
+  });
+
+  test('empty-string summary → no summaries field in output', () => {
+    recordContributor('doc.md', 'agent-claude-1', 'Claude', undefined, undefined, undefined, '');
+    const output = formatContributors();
+    expect(output).not.toContain('summaries');
+  });
+
+  test('single summary is appended and emitted', () => {
+    recordContributor(
+      'doc.md',
+      'agent-claude-1',
+      'Claude',
+      undefined,
+      undefined,
+      undefined,
+      'Fixed typo',
+    );
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["Fixed typo"]');
+  });
+
+  test('multiple summaries append in insertion order (oldest first)', () => {
+    recordContributor(
+      'doc.md',
+      'agent-claude-1',
+      'Claude',
+      undefined,
+      undefined,
+      undefined,
+      'First',
+    );
+    recordContributor(
+      'doc.md',
+      'agent-claude-1',
+      'Claude',
+      undefined,
+      undefined,
+      undefined,
+      'Second',
+    );
+    recordContributor(
+      'doc.md',
+      'agent-claude-1',
+      'Claude',
+      undefined,
+      undefined,
+      undefined,
+      'Third',
+    );
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["First","Second","Third"]');
+  });
+
+  test('mixed contributors: one with summaries emits the field, the other omits it', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'Cleaned up',
+    );
+    recordContributor('b.md', 'agent-bob', 'Bob');
+    const output = formatContributors();
+    const lines = output.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    expect(lines).toHaveLength(2);
+    const aliceLine = lines.find((l) => l.includes('agent-alice'));
+    const bobLine = lines.find((l) => l.includes('agent-bob'));
+    expect(aliceLine).toContain('"summaries":["Cleaned up"]');
+    expect(bobLine).not.toContain('summaries');
+  });
+
+  test('summaries round-trip through parseContributors (verifies US-001 contract)', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      'seed',
+      undefined,
+      undefined,
+      'Added example',
+    );
+    recordContributor('a.md', 'agent-alice', 'Alice', 'seed', undefined, undefined, 'Fixed typo');
+    const body = `WIP auto-save 2026-01-01T00:00:00.000Z${formatContributors()}`;
+    const parsed = parseContributors(body);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.summaries).toEqual(['Added example', 'Fixed typo']);
+  });
+
+  test('legacy-shape (no summaries) round-trips with summaries undefined', () => {
+    recordContributor('a.md', 'agent-alice', 'Alice');
+    const body = formatContributors();
+    const parsed = parseContributors(body);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.summaries).toBeUndefined();
+  });
+});
+
+describe('restoreContributors preserves summaries (D16 failure recovery)', () => {
+  test('restored entry keeps its summaries when no live arrival during failure window', () => {
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'First');
+    const snapshot = swapContributors();
+    restoreContributors(snapshot);
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["First"]');
+  });
+
+  test('snapshot summaries merge BEFORE live summaries (chronological order preserved)', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'Snapshot-1',
+    );
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      undefined,
+      undefined,
+      undefined,
+      'Snapshot-2',
+    );
+    const snapshot = swapContributors();
+    // Simulate summaries arriving while the commit was failing
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'Live-1');
+    restoreContributors(snapshot);
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["Snapshot-1","Snapshot-2","Live-1"]');
+  });
+
+  test('restore does not dedup — same summary twice legitimately preserved', () => {
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'Same');
+    const snapshot = swapContributors();
+    recordContributor('a.md', 'agent-alice', 'Alice', undefined, undefined, undefined, 'Same');
+    restoreContributors(snapshot);
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["Same","Same"]');
+  });
+
+  test('restore rebuilds new live entry with summaries when snapshot-only', () => {
+    recordContributor(
+      'a.md',
+      'agent-alice',
+      'Alice',
+      'seed',
+      undefined,
+      undefined,
+      'Only in snapshot',
+    );
+    const snapshot = swapContributors();
+    expect(contributorCount()).toBe(0);
+    restoreContributors(snapshot);
+    expect(contributorCount()).toBe(1);
+    const output = formatContributors();
+    expect(output).toContain('"summaries":["Only in snapshot"]');
+  });
+});

@@ -13,6 +13,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
+  composeCommitSubject,
   formatOkActor,
   formatWipSubject,
   type OkActorEntry,
@@ -269,6 +270,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         // No attributed contributors — fall back to single SERVICE_WRITER commit (D32)
         const serviceActorEntry: OkActorEntry = {
           v: 1,
+          writer_id: SERVICE_WRITER.id,
           principal: null,
           agent_session: null,
           agent_type: null,
@@ -331,12 +333,20 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           email: `${writerId}@openknowledge.local`,
         };
         const docs = [...entry.docs];
+        // Consolidated write path: emit ONLY `ok-actor:` (retires the legacy
+        // `ok-contributors:` body line). `writer_id` is now carried as a
+        // first-class field so the commit body is self-describing without a
+        // ref-name join. Reader side (`readContributors` in shadow-repo-layout)
+        // prefers ok-actor and falls back to parseContributors for legacy
+        // on-disk commits — both surfaces keep rendering without migration.
+        const a = entry.actor;
         // FR-8 / §8.7 — populate full actor tuple from ContributorEntry.actor when present.
         // Classified writers (file-system, git-upstream, openknowledge-service) leave these
         // null because they have no principal/agent attribution at record time.
-        const a = entry.actor;
+        const summaries = [...entry.summaries];
         const actorEntry: OkActorEntry = {
           v: 1,
+          writer_id: writerId,
           principal: a?.principalId ?? null,
           agent_session: writerId.startsWith('agent-') ? writerId.slice(6) : null,
           agent_type: a?.agentType ?? null,
@@ -346,16 +356,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           display_name: entry.displayName,
           color_seed: entry.colorSeed,
           docs,
+          ...(summaries.length > 0 ? { summaries } : {}),
         };
-        const contributorLine = `ok-contributors: ${JSON.stringify({
-          v: 1,
-          id: writerId,
-          name: entry.displayName,
-          colorSeed: entry.colorSeed,
-          docs,
-        })}`;
-        const subject = entry.subjectOverride ?? formatWipSubject(docs);
-        const writerMessage = `${subject}\n\n${contributorLine}\n${formatOkActor(actorEntry)}`;
+        const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
+        // FR14 — project summaries onto the subject line too. Single-summary
+        // writes embed the summary inline (`wip: notes.md — added auth`);
+        // multi-summary drains get `(N edits)` + the bullets in the body.
+        // Zero summaries → baseSubject unchanged (pre-spec byte-identity).
+        const subject = composeCommitSubject(baseSubject, summaries);
+        const writerMessage = `${subject}\n\n${formatOkActor(actorEntry)}`;
         try {
           const sha = await commitWipFromTree(shadow, writer, treeSha, writerMessage, branch);
           anySuccess = true;
