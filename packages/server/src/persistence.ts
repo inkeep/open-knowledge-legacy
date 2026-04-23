@@ -11,7 +11,12 @@ import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'n
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  normalizeBridge,
+  type Principal,
+  prependFrontmatter,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import {
   composeCommitSubject,
   formatOkActor,
@@ -598,12 +603,50 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       if (isSystemDoc(documentName)) return;
       if (isBatchInProgress()) return;
 
+      const xmlFragment = document.getXmlFragment('default');
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
+
+      const body = mdManager.serialize(json);
+      const metaMap = document.getMap('metadata');
+      const fmFromDoc = metaMap.get('frontmatter');
+      const frontmatter =
+        typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
+      const markdown = prependFrontmatter(frontmatter, body);
+
+      // Skip the write when the serialized output matches the load-time
+      // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
+      // including the first-pass observer sync that populates Y.Text from the
+      // freshly-loaded XmlFragment — that mutation is semantically a no-op
+      // but would otherwise rewrite the file in normalized form (padded
+      // tables, added backslash-escapes, etc.), polluting the user's git
+      // working tree on mere file open.
+      //
+      // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
+      // an empty <paragraph> to Y.XmlFragment on every editor mount. That
+      // serializes to extra trailing newlines — byte-unequal to currentBase
+      // but semantically identical. Reusing normalizeBridge (the canonical
+      // bridge-invariant normalization — trim per-line whitespace, collapse
+      // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
+      // consistent with server-observers.ts + the test-harness. Catching this
+      // class as a no-op skips both the disk write AND the principal
+      // safety-net below, preventing phantom commits attributed to the
+      // browser's principal when a later agent write triggers the L2 fan-out.
+      const currentBase = getReconciledBase(documentName);
+      const markdownSemanticallyUnchanged =
+        currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
+      if (markdownSemanticallyUnchanged) {
+        if (contributorCount() > 0) scheduleGitCommit();
+        return;
+      }
+
       // Thread origin → contributor tracker (D31, D32, FR-16).
       // This is a safety-net for writes that bypass api-extension.ts handlers.
       // Agent write handlers already call recordContributor explicitly; this
       // handles human-browser connection writes (US-024) and any other origin
-      // that doesn't go through a handler. The call is idempotent: if the
-      // handler already recorded the session, only the docs Set is updated.
+      // that doesn't go through a handler. Gated on `markdown !== currentBase`
+      // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
+      // not record the principal, so the L2 fan-out no longer attributes
+      // phantom commits to the browser alongside a legitimate agent write.
       const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
       if (writer && writer.id !== SERVICE_WRITER.id) {
         // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
@@ -622,34 +665,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         // else: entry exists with rich handler-path identity; keep it untouched.
         // The docs Set is still correct because the handler path recorded this
         // docName already when it fired recordContributor for this write.
-      }
-
-      const xmlFragment = document.getXmlFragment('default');
-      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-
-      const body = mdManager.serialize(json);
-      const metaMap = document.getMap('metadata');
-      const fmFromDoc = metaMap.get('frontmatter');
-      const frontmatter =
-        typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
-      const markdown = prependFrontmatter(frontmatter, body);
-
-      // Skip the write when the serialized output matches the load-time
-      // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
-      // including the first-pass observer sync that populates Y.Text from the
-      // freshly-loaded XmlFragment — that mutation is semantically a no-op
-      // but would otherwise rewrite the file in normalized form (padded
-      // tables, added backslash-escapes, etc.), polluting the user's git
-      // working tree on mere file open.
-      const currentBase = getReconciledBase(documentName);
-      if (currentBase !== undefined && markdown === currentBase) {
-        // Content unchanged since last reconcile — skip the disk write. But
-        // applyExternalChange uses skipStoreHooks:true so onStoreDocument never
-        // fires for file-watcher transactions; the contributor is recorded
-        // directly yet scheduleGitCommit() is never called. Schedule it here
-        // so the L2 drain fires at graceful shutdown (D41, US-016, FR-6).
-        if (contributorCount() > 0) scheduleGitCommit();
-        return;
       }
 
       // Debug: detect duplication before writing
