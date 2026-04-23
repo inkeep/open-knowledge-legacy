@@ -107,14 +107,18 @@ All 5 returned evidence within ~3 minutes. Orchestrator synthesized into evidenc
 
 **S6 — Standard Notes allowlist (UNCERTAIN → CONFIRMED):** Standard Notes DOES validate. Strict deny-by-default `shouldOpenUrl = (url) => url.startsWith('http') || url.startsWith('mailto')` at `Window.ts:83`. Both `setWindowOpenHandler` (returns `{action: 'deny'}` baseline) and `will-navigate` (unconditional `preventDefault`) gate every `shell.openExternal` call through this predicate. `file:`, `javascript:`, `smb:`, custom schemes all silently dropped. **D5 entry had outdated line numbers** — corrected from 91/93/99/105 to 83/127/142.
 
-**S7 — Obsidian `shell.openPath` limits (new D10):** Rich closed-source-accessible findings:
-- **No hard extension blocklist.** Warn-only on executables as of **Obsidian 1.12.2 (2026-02-18 early access, 2026-02-27 public — extremely recent).** Pre-1.12.2 was silent delegation; `.py`/`.c`/zip auto-unzip on macOS all silent.
-- **Per-click confirmation dialog** new in 1.12.2. Every click, not first-click-per-extension.
-- **No realpath-inside-vault check.** Vault containment is behavioral (indexer + UI-reachability), not explicit security primitive.
+**S7 — Obsidian `shell.openPath` limits (new D10):** Findings, with honest confidence labels:
+- **No published extension blocklist** (CONFIRMED via Obsidian 1.12.2 changelog + 1.12.2 is Early Access 2026-02-18 — extremely recent).
+- **A confirmation dialog for external-app opens was added in 1.12.2** (CONFIRMED existence, verbatim: "Opening files in an external application now shows a confirmation dialog for added safety"). **The gating model — per-click, per-file, per-extension, configurable, with-or-without checkbox — is NOT documented in the public changelog and was not confirmed via forum reports. UNVERIFIED.**
+- **A separate warning for executable files** (CONFIRMED existence, verbatim: "Added a warning when attempting to open an executable file"). Reasonably INFERRED warn-not-block from wording; not behaviorally verified.
+- Pre-1.12.2 was silent delegation (CONFIRMED via forum #83532: `.py`/`.c`/zip auto-unzip on macOS all silent).
+- **No realpath-inside-vault check** documented (UNCERTAIN on absolute-path escape).
 - **No CVE** targets `shell.openPath` directly. 2024 forum report of executable-silent-exec sat unfixed for ~20 months.
-- **Plugins bypass the 1.12.2 safeguards.** Third-party plugins get raw Electron `shell`.
+- **Plugins bypass the 1.12.2 safeguards** (CONFIRMED via community plugin source like `phibr0/obsidian-open-with`).
 
 Corrects an error in `editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md` which originally claimed Obsidian shows a "blank/degraded preview pane" for opaque types. D9 updated in-place with the correction pointer.
+
+**Calibration note (added after initial Path C write):** initial S7 output asserted "Every click, not Joplin-style first-click-only" — the orchestrator accepted this without verification. The user caught this during review. The claim is NOT supported by the changelog text (which says only "now shows a confirmation dialog"). D10 evidence file and REPORT.md D10 section were patched to replace the "every click" inference with honest UNVERIFIED labels. Lesson: "no forum report of a checkbox" is negative evidence, not proof of absence — should not be used to assert a positive claim about gating.
 
 **S8 — Gesture forwarding across IPC (new D11):** Confirmed negative on Electron's side + confirmed negative on OSS adoption.
 - Electron does NOT forward user activation across IPC. `IpcMainInvokeEvent` carries no `isTrusted` / `userActivation` / `hasTransientActivation` field.

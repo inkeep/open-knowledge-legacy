@@ -9,13 +9,14 @@
 
 ## Summary
 
-- **No hard extension block.** Warn-only on executables, landed in 1.12.2 (2026-02-18 early access, 2026-02-27 public) — extremely recent.
-- **Per-click confirmation dialog** on external-app open, landed in 1.12.2. Every click, not Joplin-style first-click-only.
+- **A confirmation dialog for external-app opens landed in 1.12.2** (Early Access 2026-02-18). **Exact gating mechanism (per-click / per-file / per-extension / configurable / with-or-without checkbox) is NOT documented in the public changelog** and was not verified via forum reports in this research. UNVERIFIED how the dialog actually gates in practice.
+- **A separate executable-file warning** was added in 1.12.2. Reasonably inferred to be warn-only (not hard-block) from the wording "added a warning," but not confirmed by behavioral testing.
+- **No published extension blocklist.**
 - **No realpath-inside-vault check** documented. UNCERTAIN on absolute-path escape — no forum reports of it working, but no published guard either.
-- **No published CVE targeting `shell.openPath` specifically.**
-- **Plugins get the raw Electron `shell` object** — the 1.12.2 warnings apply only to the core "Open in default app" command; third-party plugins bypass both.
+- **No published CVE** targeting `shell.openPath` specifically.
+- **Plugins get the raw Electron `shell` object** — 1.12.2's safeguards apply only to the core "Open in default app" command; third-party plugins bypass.
 
-**Posture:** warn-not-block, post-1.12.2. Pre-1.12.2 Obsidian was fully silent delegation — same as raw `shell.openPath`.
+**Pre-1.12.2 posture was fully silent delegation** (forum #83532 confirms). **Post-1.12.2 adds at least one UX gate**, but the gate's exact shape is a knowledge gap.
 
 ---
 
@@ -32,14 +33,32 @@ Obsidian does not publish the executable-extension list. Based on the changelog 
 
 **Implication:** pre-1.12.2 Obsidian was the baseline "trust the OS" posture; post-1.12.2 adds a soft UX gate for exec-class but nothing for `.html` (stored-XSS class) or arbitrary `file:` targets.
 
-### Finding: Per-click confirmation dialog is new in 1.12.2
+### Finding: A confirmation dialog for external-app opens was added in 1.12.2 (gating mechanism undocumented)
 
-**Confidence:** CONFIRMED
-**Evidence:** [1.12.2 changelog](https://obsidian.md/changelog/2026-02-18-desktop-v1.12.2/) — "Opening files in an external application now shows a confirmation dialog for added safety."
+**Confidence:** CONFIRMED (existence); UNVERIFIED (gating specifics)
+**Evidence:** [1.12.2 changelog](https://obsidian.md/changelog/2026-02-18-desktop-v1.12.2/), "Improvements → Other" section, verbatim:
 
-**Every click** prompts, not first-click-only (no "don't ask again" checkbox reported in the changelog or forums). Separate from the executable-specific warning.
+> "Opening files in an external application now shows a confirmation dialog for added safety"
 
-**Comparison to Joplin:** Joplin's confirmation is *first-time-per-extension* with "Always open .X files" checkbox (`bridge.ts:406-428`). Obsidian's is per-click. Obsidian's UX is more annoying but more conservative; Joplin's trades off consent theater for UX continuity.
+That's the entire public documentation of this feature. The changelog does NOT specify:
+
+- Whether the dialog fires **per-click, per-file, per-file-type, or per-session**
+- Whether there's a "don't ask again" / "always allow" checkbox
+- Whether it's configurable in settings
+- Which file types trigger it (all external-app opens? only opaque? only exec-class?)
+
+A WebFetch of the full 1.12.2 changelog (dated 2026-02-18) confirms these are the ONLY two external-app-related lines:
+
+1. "Opening files in an external application now shows a confirmation dialog for added safety"
+2. "Added a warning when attempting to open an executable file"
+
+Forum search across obsidian.md/forum and related threads did NOT surface user reports describing the dialog's gating mechanics (e.g. "I clicked the same PDF twice and got prompted both times" or "the dialog has a 'don't ask again' checkbox").
+
+**Evidence-safe statement:** A confirmation dialog exists for external-app opens in Obsidian 1.12.2+. The gating model (per-click / per-file / per-extension / configurable) is a knowledge gap in this research.
+
+**Comparison to Joplin — HEDGED:** Joplin's confirmation is code-confirmed as *first-time-per-extension* with "Always open .X files" checkbox at `bridge.ts:406-428`. Obsidian's dialog mechanics are undocumented — could be identical, stricter (every click), or looser (only for certain extensions). Direct comparison is not supportable from the available evidence.
+
+**How to verify:** install Obsidian 1.12.2+ locally, drop a PDF + a zip + a docx into a vault, click each twice, document behavior. Not done in this research.
 
 ### Finding: Vault containment is implicit via indexer, not explicit realpath check
 
@@ -88,11 +107,11 @@ The 2024 "no warnings on .py/.c" forum report was treated as a UX/safety gap, no
 
 ## Corrected narrative — what Obsidian actually does (vs what the initial research claimed)
 
-Earlier D9 research in `editor-asset-embed-patterns-across-universe/` claimed Obsidian "opens a blank/degraded preview pane" for opaque types on left-click. **That claim is wrong.** Corrected via forum evidence:
+Earlier D9 research in `editor-asset-embed-patterns-across-universe/` claimed Obsidian "opens a blank/degraded preview pane" for opaque types on left-click. **That claim is wrong.** Evidence-safe corrected view:
 
-- **Pre-1.12.2 (before Feb 2026):** left-click on unsupported type → silent `shell.openPath` to OS default. No warning, no confirmation. Zip auto-unzips on macOS. `.py`/`.c` execute silently.
-- **Post-1.12.2 (Feb 2026+):** left-click → confirmation dialog ("Opening this file in external app"). If the extension is in the exec-class allowlist, an additional executable warning fires. User can still proceed.
-- **Either era:** the in-app PDF viewer and image/video/audio inline render are separate from the `openPath` path — those are renderable types that never reach the OS delegation layer.
+- **Pre-1.12.2 (before Feb 2026):** left-click on unsupported type → silent `shell.openPath` to OS default. No warning, no confirmation. CONFIRMED via forum #83532 including zip auto-unzip on macOS and `.py`/`.c` silent execution.
+- **Post-1.12.2 (Feb 2026+):** a confirmation dialog appears for external-app opens and a separate warning appears for executables. **The exact gating mechanism of the dialog (per-click vs per-file-type vs configurable) is undocumented and unverified in this research.** Reasonably inferred (not confirmed) that the dialog is per-click-at-minimum since there's no mention of a one-time acknowledgment in the changelog; but this could be wrong.
+- **Either era:** the in-app PDF viewer and image/video/audio inline render are separate from the `openPath` path — those are renderable types that never reach the OS delegation layer. This is INFERRED from the architecture (Obsidian inline-renders these) rather than explicitly documented.
 
 The correction in `editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md` is the authoritative statement for editor-report readers; this evidence file owns the closer Obsidian-limits investigation.
 

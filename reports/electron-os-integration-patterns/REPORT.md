@@ -160,21 +160,29 @@ Electron's `shell.*` surface gives desktop apps five OS-integration capabilities
 ### D10 — Obsidian's `shell.openPath` limits (Path C addition, 2026-04-23)
 
 **Finding:** Obsidian (closed-source) delegates **opaque-type left-clicks to OS default app via `shell.openPath` automatically**. Limits are minimal and recent:
-- **No published extension blocklist.** Warn-only on executables starting 1.12.2 (2026-02-18 early access, 2026-02-27 public — *very recent*).
-- **Per-click confirmation dialog** added in 1.12.2. Every click, not Joplin's first-click-per-extension.
+- **No published extension blocklist.** A warning for executables landed in 1.12.2 (Early Access 2026-02-18 — *very recent*). Wording in the changelog is "added a warning," which reasonably implies warn-only rather than hard-block, but behavioral verification is outside this research.
+- **A confirmation dialog for external-app opens was added in 1.12.2.** The gating mechanism (per-click, per-file, per-extension, configurable, with-or-without checkbox) is **NOT documented in the public changelog** and was not verified via forum reports. UNVERIFIED whether it prompts every click, first-click-only, or something else.
 - **No documented realpath-inside-vault check** — vault containment is behavioral (indexer-driven) rather than enforced.
 - **No CVE targets `shell.openPath`** specifically. Obsidian's published CVEs (CVE-2023-2110, CVE-2023-27035, etc.) are about URL schemes and embedded-webpage privilege escalation, not shell misuse.
 - **Plugins bypass both 1.12.2 safeguards.** Third-party plugins get raw Electron `shell` and add no validation.
 
 **Evidence:** [evidence/d10-obsidian-limits.md](evidence/d10-obsidian-limits.md)
 
+**Exact changelog language (CONFIRMED via WebFetch of [obsidian.md/changelog/2026-02-18-desktop-v1.12.2/](https://obsidian.md/changelog/2026-02-18-desktop-v1.12.2/), "Improvements → Other" section):**
+
+> "Opening files in an external application now shows a confirmation dialog for added safety"
+>
+> "Added a warning when attempting to open an executable file"
+
+That is the entire public documentation of 1.12.2's external-app handling. Any additional specificity about gating, checkboxes, or extension coverage is inference rather than evidence.
+
 **Implications:**
-- **Pre-1.12.2 Obsidian was fully silent delegation** — same "trust the OS" posture as raw `shell.openPath`. Users got zip auto-unzip, `.py`/`.c` silent execution.
-- **Post-1.12.2 is warn-not-block:** confirmation dialog + executable warning. Still no path containment.
-- **Corrects an earlier research error** in [editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md](../editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md) — that report originally claimed Obsidian shows a "blank/degraded preview pane" for opaque types. Wrong; it delegates (with new-in-Feb-2026 confirmation gate).
+- **Pre-1.12.2 Obsidian was fully silent delegation** — same "trust the OS" posture as raw `shell.openPath`. CONFIRMED via forum #83532 (zip auto-unzip, `.py`/`.c` silent execution).
+- **Post-1.12.2 adds at least one UX gate, shape unverified.** Reasonable inference is warn-not-block + some form of confirmation prompt, but the exact user flow hasn't been behaviorally tested here.
+- **Corrects an earlier research error** in [editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md](../editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md) — that report originally claimed Obsidian shows a "blank/degraded preview pane" for opaque types. Wrong; it delegates to the OS default app (with some new-in-Feb-2026 UX gating whose exact shape is unknown).
 
 **Decision triggers:**
-- If aspiring to Obsidian-parity for Electron click-on-asset UX, post-1.12.2 Obsidian is the reference point (confirmation dialog + exec warning). Joplin's pattern is still richer (extension allowlist + per-ext consent).
+- If aspiring to Obsidian-parity for Electron click-on-asset UX, post-1.12.2 Obsidian *may* be the reference point — but its specific dialog mechanics would need behavioral verification before being used as a pattern to match. Joplin's pattern (extension allowlist + per-extension consent with "always allow" checkbox) is code-confirmed and richer; it remains the clearest gold standard.
 
 ### D11 — User-activation forwarding across IPC (Path C addition, 2026-04-23)
 
