@@ -467,7 +467,7 @@ function handleGraphPointerTapTarget({
 export function GraphView({
   activeDocName,
   selectedNodeId = null,
-  isFullscreen = false,
+  isExpanded = false,
   showUrlNodes = true,
   className = '',
   docClickBehavior = 'navigate',
@@ -478,7 +478,7 @@ export function GraphView({
 }: {
   activeDocName: string;
   selectedNodeId?: string | null;
-  isFullscreen?: boolean;
+  isExpanded?: boolean;
   showUrlNodes?: boolean;
   className?: string;
   docClickBehavior?: GraphDocClickBehavior;
@@ -490,10 +490,6 @@ export function GraphView({
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
-  const [filteredDisplayData, setFilteredDisplayData] = useState<GraphData>({
-    nodes: [],
-    links: [],
-  });
   // Signatures of the last-applied API response, stored separately from rendered graph data because
   // force-graph mutates link objects in-place (replacing string IDs with node object refs).
   const lastSigRef = useRef({ nodes: '', links: '' });
@@ -521,7 +517,7 @@ export function GraphView({
     async function load() {
       try {
         const params = new URLSearchParams();
-        if (!isFullscreen && activeDocName) {
+        if (!isExpanded && activeDocName) {
           params.set('docName', activeDocName);
           params.set('degrees', '2');
         }
@@ -583,7 +579,7 @@ export function GraphView({
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, [activeDocName, isFullscreen]);
+  }, [activeDocName, isExpanded]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -616,28 +612,27 @@ export function GraphView({
   const activeSelectedNodeRingColor = isDark ? 'rgba(192,132,252,0.5)' : 'rgba(124,58,237,0.35)';
   const labelChipColor = isDark ? 'rgba(3,7,18,0.92)' : 'rgba(255,255,255,0.94)';
   const labelChipBorderColor = isDark ? 'rgba(243,244,246,0.08)' : 'rgba(17,24,39,0.08)';
-  const focusZoom = isFullscreen ? 1.6 : 2.35;
-  const maxLabelWidthPx = isFullscreen ? 220 : 150;
+  const focusZoom = isExpanded ? 1.6 : 2.35;
+  const maxLabelWidthPx = isExpanded ? 220 : 150;
   // Fullscreen shows the whole project graph, so it intentionally uses a tighter
   // label budget than the docked 2-hop neighborhood view to avoid flooding.
-  const maxVisibleLabels = isFullscreen ? 10 : 18;
+  const maxVisibleLabels = isExpanded ? 10 : 18;
 
-  useEffect(() => {
-    if (showUrlNodes) return;
-    const externalNodeIds = new Set(
-      graphData.nodes.filter((node) => node.kind === 'external').map((node) => node.id),
-    );
-    setFilteredDisplayData({
-      nodes: graphData.nodes.filter((node) => node.kind !== 'external'),
-      links: graphData.links.filter((link) => {
-        const srcId = getGraphLinkEndpointId(link.source);
-        const tgtId = getGraphLinkEndpointId(link.target);
-        return !externalNodeIds.has(srcId) && !externalNodeIds.has(tgtId);
-      }),
-    });
-  }, [graphData, showUrlNodes]);
-
-  const displayData = showUrlNodes ? graphData : filteredDisplayData;
+  const displayData: GraphData = showUrlNodes
+    ? graphData
+    : (() => {
+        const externalNodeIds = new Set(
+          graphData.nodes.filter((n) => n.kind === 'external').map((n) => n.id),
+        );
+        return {
+          nodes: graphData.nodes.filter((n) => n.kind !== 'external'),
+          links: graphData.links.filter((link) => {
+            const srcId = getGraphLinkEndpointId(link.source);
+            const tgtId = getGraphLinkEndpointId(link.target);
+            return !externalNodeIds.has(srcId) && !externalNodeIds.has(tgtId);
+          }),
+        };
+      })();
 
   const layoutNodes = displayData.nodes as GraphLabelLayoutNode[];
   const layoutLinks = displayData.links as GraphLabelLayoutLink[];

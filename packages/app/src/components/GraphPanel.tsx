@@ -461,7 +461,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           <GraphView
             activeDocName={activeDocName}
             selectedNodeId={isExpanded ? (selectedNode?.id ?? null) : null}
-            isFullscreen={isExpanded}
+            isExpanded={isExpanded}
             showUrlNodes={showUrlNodes}
             className="h-full min-h-0"
             docClickBehavior={isExpanded ? 'select' : 'navigate'}

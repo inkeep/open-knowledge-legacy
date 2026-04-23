@@ -476,6 +476,67 @@ describe('reconcileGraphData', () => {
     expect(beta.y).toBeUndefined();
     expect(link.__indexColor).toBe('#abcdef');
   });
+
+  test('does not carry physics state forward for nodes absent from next', () => {
+    const previous = {
+      nodes: [
+        {
+          kind: 'doc' as const,
+          id: 'notes/alpha',
+          label: 'Alpha',
+          docName: 'notes/alpha',
+          anchor: null,
+          x: 10,
+          y: 20,
+        },
+        {
+          kind: 'doc' as const,
+          id: 'notes/removed',
+          label: 'Removed',
+          docName: 'notes/removed',
+          anchor: null,
+          x: 99,
+          y: 99,
+        },
+      ],
+      links: [],
+    };
+
+    const next = {
+      nodes: [
+        {
+          kind: 'doc' as const,
+          id: 'notes/alpha',
+          label: 'Alpha',
+          docName: 'notes/alpha',
+          anchor: null,
+        },
+        {
+          kind: 'doc' as const,
+          id: 'notes/new',
+          label: 'New',
+          docName: 'notes/new',
+          anchor: null,
+        },
+      ],
+      links: [],
+    };
+
+    const reconciled = reconcileGraphData(
+      previous as unknown as Parameters<typeof reconcileGraphData>[0],
+      next,
+    );
+
+    expect(reconciled.nodes).toHaveLength(2);
+    const ids = reconciled.nodes.map((n) => n.id);
+    expect(ids).not.toContain('notes/removed');
+    const alpha = reconciled.nodes.find((n) => n.id === 'notes/alpha') as GraphNodeFixture;
+    expect(alpha.x).toBe(10);
+    expect(alpha.y).toBe(20);
+    const newNode = reconciled.nodes.find((n) => n.id === 'notes/new') as GraphNodeFixture;
+    expect(newNode.x).toBeUndefined();
+    expect(newNode.y).toBeUndefined();
+  });
 });
 
 describe('buildGraphLinkSignature', () => {
