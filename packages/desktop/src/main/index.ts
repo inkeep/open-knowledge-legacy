@@ -48,6 +48,7 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
@@ -518,6 +519,22 @@ function registerIpcHandlers() {
 
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
+  });
+
+  // `ok seed` — project-level scaffolder. Pure plan/apply handlers scoped to
+  // the invoking window's ProjectContext (same pattern as `ok:shell:spawn-cursor`).
+  // See packages/desktop/src/main/ipc/seed.ts + SPEC 2026-04-23-ok-seed-scaffold.
+  const resolveSeedProjectRoot = (event: Electron.IpcMainInvokeEvent): string | undefined => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    return callerWin && wm
+      ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+      : undefined;
+  };
+  handle('ok:seed:plan', async (event) => {
+    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) });
+  });
+  handle('ok:seed:apply', async (event, plan) => {
+    return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
   });
 }
 

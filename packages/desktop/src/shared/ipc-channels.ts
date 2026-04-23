@@ -13,6 +13,8 @@
  * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently ~8 channels.
  */
 
+import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { OkDesktopConfig } from './bridge-contract.ts';
 
@@ -141,4 +143,17 @@ export interface RequestChannels {
    * surface is populated only when the same gate allows (D-M5-8).
    */
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
+  /**
+   * Compute a scaffold plan for the current window's project — read-only.
+   * See `packages/desktop/src/main/ipc/seed.ts` and SPEC
+   * 2026-04-23-ok-seed-scaffold. Renderer branches on `result.ok` then
+   * renders the plan (unseeded) or "already seeded" (empty plan).
+   */
+  'ok:seed:plan': { args: []; result: SeedPlanResult };
+  /**
+   * Apply a previously-computed ScaffoldPlan to disk. Writes folders, the
+   * optional log.md, and `config.yml` `folders:` entries. Returns an
+   * ApplyResult on success.
+   */
+  'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };
 }

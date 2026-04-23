@@ -19,9 +19,26 @@
  * issue while preserving a single logical contract.
  */
 
+import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 
 export type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
+
+/** Renderer-facing result of `okDesktop.seed.plan()`. Mirrors `SeedPlanResult` in main. */
+export type OkSeedPlanResult =
+  | { ok: true; plan: ScaffoldPlan }
+  | {
+      ok: false;
+      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+    };
+
+/** Renderer-facing result of `okDesktop.seed.apply(plan)`. Mirrors `SeedApplyResult` in main. */
+export type OkSeedApplyResult =
+  | { ok: true; result: ApplyResult }
+  | {
+      ok: false;
+      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+    };
 
 /** Render mode picked by the main process when creating a BrowserWindow. */
 export type OkDesktopMode = 'editor' | 'navigator';
@@ -158,6 +175,13 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
+  };
+
+  seed: {
+    /** Compute a scaffold plan for the current window's project (read-only). */
+    plan(): Promise<OkSeedPlanResult>;
+    /** Apply a ScaffoldPlan — writes folders, log.md, and config.yml entries. */
+    apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
   };
 
   update: {
