@@ -19,10 +19,25 @@
  * after the bundle is produced. Invoking `createServer()` lazily inside
  * `configureServer` (which only fires for `vite` / `vite dev`, not for
  * `vite build`) fixes this regression while preserving every other spec
- * guarantee. A module-scope singleton gate (`let srv: ServerInstance | null`)
- * handles HMR re-invocation of `configureServer` — same-pid lock acquisition
- * is idempotent (process-lock.ts:138-143) so the gate is belt-and-suspenders.
- * This matches DC-M4's challenger finding from the audit.
+ * guarantee. This matches DC-M4's challenger finding from the audit.
+ *
+ * **Vite-restart safety (2026-04-23, post-local-review):** Vite's
+ * `restartServer()` (vite/dist/node/chunks/node.js:26405) — the documented
+ * response to `vite.config.ts`/`.env` edits — calls `_createServer()` (which
+ * fires `configureServer` hooks on the new ViteDevServer at line 26243)
+ * BEFORE `await server.close()` (line 26425, which fires the previous
+ * httpServer's 'close' event). The earlier "module-scope singleton" gate
+ * meant pass-2 `configureServer` reused the OLD srv reference; pass-1's
+ * close handler then destroyed that srv via the module-scope binding, and
+ * pass-2's wiring (upgrade handler, `/api/*` middleware, close handler) was
+ * left holding dead references — silent loss of persistence + reconciliation
+ * + presence post-restart. The fix: always create a fresh `ServerInstance`
+ * per `configureServer` call; pin the reference in a local closure for the
+ * close handler so each invocation destroys the srv it created. Same-pid
+ * `acquireServerLock` and shadow-lock acquisition are both idempotent
+ * (process-lock.ts:138-143; shadow-lock.ts:42-43), so brief resource
+ * duplication during the restart window is bounded by the previous srv's
+ * destroy phase.
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
@@ -32,7 +47,6 @@ import {
   handleCollabSocketError,
   parseKeepaliveConnectionId,
   releaseServerLock,
-  type ServerInstance,
   toBroadcasterKey,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
@@ -118,13 +132,6 @@ mkdirSync(CONTENT_DIR, { recursive: true });
 // the `degraded` list.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
-// Singleton gate for lazy `createServer()` invocation. Instantiated on first
-// `configureServer` call; reused on subsequent HMR re-invocations. Module-load
-// is deliberately kept side-effect-free (beyond config resolution + mkdir) so
-// `vite build` can load the plugin module without starting a file watcher
-// that would keep the event loop alive past the bundle step.
-let srv: ServerInstance | null = null;
-
 // Keepalive grace-period threshold. Copied verbatim from boot.ts:244-396 per
 // SPEC D5 LOCKED (copy, not extract — NG2 is the extraction vehicle). The
 // const stays module-scope because it's not per-instance state; the mutable
@@ -150,67 +157,74 @@ export function hocuspocusPlugin(): Plugin {
 
       configureServerInvocations += 1;
       if (configureServerInvocations > 1) {
-        // Vite called `configureServer` a second time within the same module
-        // lifetime. Not expected under `bun run dev` — log loud so a stuck-WS
-        // report that correlates with this line points straight at the
-        // re-invocation path. The singleton gate below reuses the existing
-        // `srv` — we don't construct a second one.
+        // Vite restarted (vite.config.ts / .env edit). Vite's restartServer
+        // (vite/dist/node/chunks/node.js:26405) calls `_createServer()`
+        // (firing `configureServer` hooks at line 26243) BEFORE
+        // `await server.close()` (line 26425). Each invocation gets its own
+        // fresh `currentSrv` below; the previous srv is destroyed by its own
+        // pinned close handler when its httpServer emits 'close'.
         console.warn(
-          `[collab] configureServer invoked ${configureServerInvocations}× — previous upgrade listener is orphaned. Filing this means Vite restarted without reloading the plugin module.`,
+          `[collab] configureServer invoked ${configureServerInvocations}× — Vite restarted; spinning up a fresh ServerInstance. The previous srv will be destroyed by its httpServer close handler.`,
         );
       } else {
         console.info(`[collab] configureServer invocation=1 pid=${process.pid}`);
       }
 
-      // SPEC D8 (amended): lazy init on first `configureServer` call. Guards
-      // against (a) `vite build` loading the module and starting an event-loop-
-      // keeping watcher, and (b) any other tool that imports this module for
-      // factory inspection without running a dev server. HMR re-invocation
-      // reuses the existing `srv`.
-      if (!srv) {
-        // SPEC D8 / D12: `ensureProjectGit` runs BEFORE `createServer()` so a
-        // missing `git` binary or broken `.git/` fails `bun run dev` fast.
-        // `createServer()` does NOT call `ensureProjectGit` internally — every
-        // consumer (bootServer, integration test harness) calls it upstream.
-        if (!isTestIsolated) {
-          await ensureProjectGit(PROJECT_ROOT);
+      // SPEC D8 / D12: `ensureProjectGit` runs BEFORE `createServer()` so a
+      // missing `git` binary or broken `.git/` fails `bun run dev` fast.
+      // `createServer()` does NOT call `ensureProjectGit` internally — every
+      // consumer (bootServer, integration test harness) calls it upstream.
+      if (!isTestIsolated) {
+        await ensureProjectGit(PROJECT_ROOT);
+      }
+
+      // SPEC D8 LOCKED (re-amended 2026-04-23): always create a fresh
+      // ServerInstance per `configureServer` call. The earlier
+      // module-scope-singleton variant left pass-2 (Vite restart) wiring
+      // bound to the OLD srv reference — pass-1's close handler then
+      // destroyed that srv, leaving the new HTTP server's upgrade handler,
+      // `/api/*` middleware, and presence broadcasters operating against
+      // dead Hocuspocus + watcher state (silent loss of persistence /
+      // reconciliation / presence post-restart). Same-pid acquireServerLock
+      // is idempotent (process-lock.ts:138-143); same-pid shadow lock is
+      // idempotent (shadow-lock.ts:42-43); brief resource duplication
+      // during the restart window is bounded by the previous srv's
+      // destroy phase. Replaces ~11 primitives worth of hand-rolled
+      // wiring — session manager, focus/presence/CC1 broadcasters,
+      // backlink index, content filter, persistence/API/observer/
+      // live-derived-index extensions, file watcher — plus four
+      // subsystems the old plugin was missing entirely (principal auth,
+      // HEAD watcher, managed-rename recovery, SyncEngine). See SPEC §1
+      // for the full enumeration.
+      const currentSrv = createServer({
+        contentDir: CONTENT_DIR,
+        projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+        contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+        gitEnabled: !isTestIsolated,
+        includePatterns: contentConfig.include,
+        excludePatterns: contentConfig.exclude,
+        enableTestRoutes: true,
+        quiet: true,
+      });
+
+      // SPEC D9 defense-in-depth: release the server lock on process exit
+      // even if graceful `httpServer.close` never fires (crash, SIGKILL).
+      // `currentSrv.destroy()` releases the lock in its Phase 6; this sync
+      // handler covers non-graceful exits. `releaseServerLock` is
+      // ownership-guarded + idempotent so multiple registrations across
+      // configureServer invocations are safe (each holds the same lockDir
+      // for the same pid).
+      const lockDir = currentSrv.lockDir;
+      process.once('exit', () => {
+        try {
+          releaseServerLock(lockDir);
+        } catch {
+          // best-effort — most common cause is lock already released by
+          // currentSrv.destroy()
         }
+      });
 
-        // SPEC D8 LOCKED: factory invoked lazily on first dev-server start
-        // (amended from "module-load" per the D8 amendment in this file's
-        // header). Same-pid lock acquisition is idempotent, so HMR re-entry
-        // of this block would be safe — but the singleton gate above prevents
-        // that anyway. Replaces ~11 primitives worth of hand-rolled wiring —
-        // session manager, focus/presence/CC1 broadcasters, backlink index,
-        // content filter, persistence/API/observer/live-derived-index
-        // extensions, file watcher — plus four subsystems the old plugin was
-        // missing entirely (principal auth, HEAD watcher, managed-rename
-        // recovery, SyncEngine). See SPEC §1 for the full enumeration.
-        srv = createServer({
-          contentDir: CONTENT_DIR,
-          projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
-          contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-          gitEnabled: !isTestIsolated,
-          includePatterns: contentConfig.include,
-          excludePatterns: contentConfig.exclude,
-          enableTestRoutes: true,
-          quiet: true,
-        });
-
-        // SPEC D9 defense-in-depth: release the server lock on process exit
-        // even if graceful `httpServer.close` never fires (crash, SIGKILL).
-        // `srv.destroy()` releases the lock in its Phase 6; this sync handler
-        // covers non-graceful exits. `releaseServerLock` is ownership-guarded.
-        const lockDir = srv.lockDir;
-        process.once('exit', () => {
-          try {
-            releaseServerLock(lockDir);
-          } catch {
-            // best-effort — most common cause is lock already released by
-            // srv.destroy()
-          }
-        });
-
+      if (configureServerInvocations === 1) {
         console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
         console.info(
           '[hocuspocus] using @inkeep/open-knowledge-server createServer() — dev-mode parity active',
@@ -219,15 +233,18 @@ export function hocuspocusPlugin(): Plugin {
 
       // Record the Vite dev-server port in the lock file so MCP discovery
       // can connect. `httpServer.address()` is only valid after bind, so we
-      // wait for the `listening` event.
+      // wait for the `listening` event. Pinned to `currentSrv.lockDir` so
+      // a future restart's listening event updates THIS srv's lock, not a
+      // stale module-scope reference.
       server.httpServer?.once('listening', () => {
         const addr = server.httpServer?.address();
-        if (typeof addr === 'object' && addr !== null && srv) {
-          updateServerLockPort(srv.lockDir, addr.port);
+        if (typeof addr === 'object' && addr !== null) {
+          updateServerLockPort(currentSrv.lockDir, addr.port);
         }
       });
 
-      const { hocuspocus, sessionManager, agentFocusBroadcaster, agentPresenceBroadcaster } = srv;
+      const { hocuspocus, sessionManager, agentFocusBroadcaster, agentPresenceBroadcaster } =
+        currentSrv;
 
       const wss = new WebSocketServer({ noServer: true });
       wss.on('error', (err) => {
@@ -523,11 +540,11 @@ export function hocuspocusPlugin(): Plugin {
         next();
       });
 
-      // Filter-aware asset serving over contentDir. `srv.contentFilter` is
-      // the same filter `createServer()` passes to the file watcher, so the
-      // HTTP asset surface and the CRDT-loaded surface agree on what's
+      // Filter-aware asset serving over contentDir. `currentSrv.contentFilter`
+      // is the same filter `createServer()` passes to the file watcher, so
+      // the HTTP asset surface and the CRDT-loaded surface agree on what's
       // excluded.
-      const contentFilter = srv.contentFilter;
+      const contentFilter = currentSrv.contentFilter;
       const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
       server.middlewares.use((req, res, next) => {
         const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
@@ -540,7 +557,13 @@ export function hocuspocusPlugin(): Plugin {
       // sessions, L1/L2 flush, shadow repo, server lock) when Vite closes
       // its HTTP server. Replaces the old per-subsystem cleanup (watcher
       // unsubscribe + cc1Broadcaster.destroy + systemDocConnection.disconnect)
-      // which left Hocuspocus partially alive. `srv.destroy()` is idempotent.
+      // which left Hocuspocus partially alive. `currentSrv.destroy()` is
+      // idempotent. Pinned to the local `currentSrv` (not a module-scope
+      // binding) so a future Vite restart's `configureServer` can construct
+      // a NEW srv without this handler accidentally destroying it — each
+      // close handler destroys the srv created by ITS OWN configureServer
+      // invocation. See header comment "Vite-restart safety" for the bug
+      // class this prevents.
       server.httpServer?.on('close', async () => {
         shuttingDown = true;
         // Cancel pending keepalive-grace timers so they don't fire against
@@ -553,9 +576,7 @@ export function hocuspocusPlugin(): Plugin {
           await Promise.allSettled([...keepaliveGraceInflight]);
         }
         try {
-          if (srv) {
-            await srv.destroy();
-          }
+          await currentSrv.destroy();
         } catch (err) {
           console.error('[hocuspocus] srv.destroy() failed:', err);
         }
