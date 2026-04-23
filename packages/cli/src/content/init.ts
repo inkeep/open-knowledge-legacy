@@ -93,17 +93,27 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #                              TL;DR above. Use \`foo-*/**\` if you want
 #                              \`foo-X\` plus its descendants.
 #
+# Tip: run \`open-knowledge seed\` to scaffold the Karpathy three-layer starter
+# (external-sources/, research/, articles/) with matching \`folders:\` entries.
+# The commented example below is the exact structure \`ok seed\` writes.
+#
 # Example:
 # folders:
-#   - match: 'specs/**'
+#   - match: 'external-sources/**'
 #     frontmatter:
-#       title: Specifications
-#       description: Feature specifications and design documents
-#       tags: [spec]
-#   - match: 'specs/2026-*/**'
+#       title: External Sources
+#       description: Raw preserved sources (URLs, PDFs, files). Immutable — captured verbatim via \`ingest\`. No analysis in these files; takeaways belong in \`research/\`.
+#       tags: [source, immutable, layer-ingest]
+#   - match: 'research/**'
 #     frontmatter:
-#       title: 2026 Specifications
-#       tags: [2026]
+#       title: Research
+#       description: Provisional analysis synthesizing external sources. Produced by the \`research\` tool. Promote to \`articles/\` via \`consolidate\` when the team decides.
+#       tags: [research, provisional, layer-research]
+#   - match: 'articles/**'
+#     frontmatter:
+#       title: Articles
+#       description: Canonical knowledge committed after a team decision. Produced by the \`consolidate\` tool with a \`supersedes:\` chain tying back to the research that preceded it.
+#       tags: [article, canonical, layer-consolidate]
 `;
 
 function writeIfMissing(filePath: string, content: string): boolean {

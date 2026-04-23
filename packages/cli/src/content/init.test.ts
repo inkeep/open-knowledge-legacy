@@ -88,13 +88,18 @@ describe('initContent', () => {
     expect(activeLines).toEqual([]);
   });
 
-  it('config.yml scaffold includes commented folders: example with picomatch nuance doc (US-006 / QA-009)', () => {
+  it('config.yml scaffold includes Karpathy starter + picomatch nuance doc (US-006 / QA-009)', () => {
     initContent(testDir);
     const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
     // Folders block documented
     expect(configYml).toContain('Folders:');
     expect(configYml).toContain('# folders:');
-    expect(configYml).toContain("#   - match: 'specs/**'");
+    // Karpathy three-layer starter (matches `ok seed` output — US-006 rewrite)
+    expect(configYml).toContain("#   - match: 'external-sources/**'");
+    expect(configYml).toContain("#   - match: 'research/**'");
+    expect(configYml).toContain("#   - match: 'articles/**'");
+    // Points at `ok seed` as the command that writes this structure for real
+    expect(configYml).toContain('open-knowledge seed');
     // Picomatch globstar nuance explicitly flagged
     expect(configYml).toMatch(/foo-\*\*/);
     expect(configYml).toMatch(/foo-\*\/\*\*/);

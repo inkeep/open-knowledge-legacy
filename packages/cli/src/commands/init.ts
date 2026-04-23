@@ -668,10 +668,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push('Next steps:');
     lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
     lines.push('  2. Approve the MCP server when prompted');
-    lines.push('  3. The knowledge base is ready — use the three workflow tools:');
-    lines.push('     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase');
-    lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
-    lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
+    lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
+    lines.push('     - open-knowledge seed  (or: ok seed)');
+    lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
+    lines.push('     - mcp__open-knowledge__ingest      — capture an external source');
+    lines.push('     - mcp__open-knowledge__research    — gather sources and write findings');
+    lines.push('     - mcp__open-knowledge__consolidate — promote research to canonical articles');
   }
 
   return lines.join('\n');
