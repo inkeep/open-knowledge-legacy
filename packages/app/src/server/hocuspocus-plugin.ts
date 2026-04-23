@@ -218,7 +218,7 @@ try {
   persistence = createPersistenceExtension({
     contentDir: CONTENT_DIR,
     projectDir: projectRoot,
-    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+    contentRoot: CONTENT_ROOT,
     gitEnabled: true,
     shadowRef,
     backlinkIndex,
@@ -256,7 +256,7 @@ try {
       getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
       enableTestRoutes: true,
-      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      contentRoot: CONTENT_ROOT,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
@@ -288,7 +288,7 @@ try {
       mdManager: pluginMdManager,
       schema: pluginSchema,
       shadowRef,
-      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      contentRoot: CONTENT_ROOT,
       getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
     }),
   );

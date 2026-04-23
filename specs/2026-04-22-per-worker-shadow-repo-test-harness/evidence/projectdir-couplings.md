@@ -1,32 +1,36 @@
 ---
 name: projectdir-couplings
-description: Seven sites in `hocuspocus-plugin.ts` where PROJECT_ROOT flows through `isTestIsolated`-unaware bindings — cross-contamination under per-worker isolation. Load-bearing for D12 (single-binding approach supersedes D3/D4/D9).
+description: Nine consumer call-sites in `hocuspocus-plugin.ts` where PROJECT_ROOT flows through `isTestIsolated`-unaware bindings — cross-contamination under per-worker isolation. Load-bearing for D12 (single-binding approach supersedes D3/D4/D9).
 type: evidence
 sources:
-  - packages/app/src/server/hocuspocus-plugin.ts:121,160,190,196,208,245,250,275
+  - packages/app/src/server/hocuspocus-plugin.ts:136,175,207,213,220,225,262,267,292 (post-D12 line numbers)
   - packages/server/src/backlink-index.ts:767
 generated: 2026-04-22
-revision: 2026-04-22 — post-audit (F1+CF1): extended from 3 sites to 7 after audit/challenger surfaced missed enumeration.
+revision: 2026-04-23 — post-local-review pass 2: added persistence `projectDir` at L220 (was implicit in original D12 enumeration but not listed). Count raised from 7 consumer sites named in prose to 9.
 ---
 
 # projectDir couplings under test isolation
 
-Seven call sites in `packages/app/src/server/hocuspocus-plugin.ts` consume `PROJECT_ROOT` directly or indirectly. Under per-worker Playwright, these silently cross-contaminate between workers and the developer's OK repo unless routed through a single `isTestIsolated`-aware binding (D12).
+Nine consumer call sites in `packages/app/src/server/hocuspocus-plugin.ts` consume `projectRoot` (post-D12) directly or indirectly. Under per-worker Playwright, any missed site silently cross-contaminates between workers and the developer's OK repo unless routed through a single `isTestIsolated`-aware binding (D12). The single binding is: `const projectRoot = isTestIsolated ? CONTENT_DIR : PROJECT_ROOT`; any new consumer must thread this binding rather than deriving from `PROJECT_ROOT` directly.
 
-**Audit history.** Spec first landed with 3 sites enumerated (D3 BacklinkIndex, D4 persistence `getCurrentBranch`, D9 server-lock `worktreeRoot`). Audit finding F1 + challenger finding CF1 (2026-04-22) surfaced three additional sites (L245, L250, L275) at the api-extension and server-observer wiring points; one of them (L250) would cause `/api/save-version` to write real commits + `ok/v<N>` tags to the developer's OK repo during local Tier 1 / Playwright runs. D12 replaces the per-site decomposition with a single module-scope `projectRoot` binding threaded through all 7 sites.
+**Audit history.** Spec first landed with 3 sites enumerated (D3 BacklinkIndex, D4 persistence `getCurrentBranch`, D9 server-lock `worktreeRoot`). Audit finding F1 + challenger finding CF1 (2026-04-22) surfaced three additional sites (L245→L262, L250→L267, L275→L292 in current line numbers) at the api-extension and server-observer wiring points; one of them (api-extension `projectDir`, the L267 site in current code) would cause `/api/save-version` to write real commits + `ok/v<N>` tags to the developer's OK repo during local Tier 1 / Playwright runs. D12 replaces the per-site decomposition with a single module-scope `projectRoot` binding. Local review pass 2 (2026-04-23) surfaced that persistence's own `projectDir: projectRoot` at L220 was implicitly threaded by D12 but not called out as a distinct consumer in evidence or the `AGENTS.md` STOP rule — it IS a separate consumer from `getCurrentBranch` at L225.
 
-## Full site enumeration (post-D12)
+## Full site enumeration (post-D12, current code)
+
+Line numbers are post-D12 in the current file. The eight consumer sites + the one intermediate derivation follow:
 
 | Line | Binding | Pre-D12 status | Post-D12 |
 |---|---|---|---|
-| L121 | `acquireServerLock.worktreeRoot` | Hardcoded `PROJECT_ROOT` | Uses `projectRoot` (tmpdir under isolation; was D9) |
-| L160 | `runDevShadowInit(projectRoot, …)` | Only ran on `!isTestIsolated` (skipped under test) | Runs always; projectRoot = tmpdir under isolation (D13 broadens error handling) |
-| L190 | `contentFilter.projectDir` | Already gated `process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT` (correct) | Uses `projectRoot` (no behavior change; removes inline ternary) |
-| L196 | `BacklinkIndex.projectDir` | Hardcoded `PROJECT_ROOT` (D3 target) | Uses `projectRoot` |
-| L208 | persistence `getCurrentBranch` | Hardcoded `PROJECT_ROOT/.git` (D4 target) | Uses `projectRoot/.git` |
-| **L245** | **api-extension `getCurrentBranch`** | **Hardcoded `PROJECT_ROOT/.git` — MISSED by pre-audit enumeration** | Uses `projectRoot/.git` |
-| **L250** | **api-extension `projectDir`** | **Hardcoded `PROJECT_ROOT` — MISSED; causes `/api/save-version` to write to dev's OK repo** | Uses `projectRoot` |
-| **L275** | **server-observer extension `getCurrentBranch`** | **Hardcoded `PROJECT_ROOT/.git` — MISSED; causes `saveInMemoryCheckpoint` branch attribution drift** | Uses `projectRoot/.git` |
+| L123 | `CONTENT_ROOT = relative(projectRoot, CONTENT_DIR)` | Derivation (intermediate, not a consumer per se) | Derived from projectRoot so `CONTENT_ROOT === ''` under isolation |
+| L136 | `acquireServerLock.worktreeRoot` | Hardcoded `PROJECT_ROOT` | Uses `projectRoot` (tmpdir under isolation; was D9) |
+| L175 | `runDevShadowInit(projectRoot, …)` | Only ran on `!isTestIsolated` (skipped under test) | Runs always; projectRoot = tmpdir under isolation (D13 broadens error handling) |
+| L207 | `contentFilter.projectDir` | Already gated `process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT` (correct) | Uses `projectRoot` (no behavior change; removes inline ternary) |
+| L213 | `BacklinkIndex.projectDir` | Hardcoded `PROJECT_ROOT` (D3 target) | Uses `projectRoot` |
+| **L220** | **persistence `projectDir`** | **Hardcoded `PROJECT_ROOT` — implicit in D12 threading but not enumerated** | Uses `projectRoot` |
+| L225 | persistence `getCurrentBranch` | Hardcoded `PROJECT_ROOT/.git` (D4 target) | Uses `projectRoot/.git` |
+| **L262** | **api-extension `getCurrentBranch`** | **Hardcoded `PROJECT_ROOT/.git` — surfaced by audit F1** | Uses `projectRoot/.git` |
+| **L267** | **api-extension `projectDir`** | **Hardcoded `PROJECT_ROOT` — surfaced by audit F1; causes `/api/save-version` to write to dev's OK repo** | Uses `projectRoot` |
+| **L292** | **server-observer extension `getCurrentBranch`** | **Hardcoded `PROJECT_ROOT/.git` — surfaced by audit F1; causes `saveInMemoryCheckpoint` branch attribution drift** | Uses `projectRoot/.git` |
 
 ## Why these show up together
 

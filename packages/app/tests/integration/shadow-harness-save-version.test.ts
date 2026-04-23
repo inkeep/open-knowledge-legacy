@@ -1,7 +1,7 @@
 /**
  * FR8 / T2 acceptance test — POST /api/save-version produces a
- * `refs/checkpoints/<n>` ref in the test's shadow repo AND an `ok/v<N>`
- * tag in the TEST'S tmpdir .git/ (not the developer's actual OK repo).
+ * `refs/checkpoints/<branch>/<sha>` ref in the test's shadow repo AND an
+ * `ok/v<N>` tag in the TEST'S tmpdir .git/ (not the developer's actual OK repo).
  *
  * The isolation invariant (ok/v* tags land in the tmpdir, not dev's repo)
  * is load-bearing for FR4 — it verifies the D12 single-binding collapse in

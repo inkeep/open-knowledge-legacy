@@ -42,6 +42,7 @@ export {
   createContentFilter,
 } from './content-filter.ts';
 export {
+  type ContributorEntry,
   clearContributors,
   contributorCount,
   formatContributors,

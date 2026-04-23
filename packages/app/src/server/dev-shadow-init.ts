@@ -1,8 +1,9 @@
 /**
- * Pure helpers for the Vite dev plugin's module-scope shadow-init block at
- * `hocuspocus-plugin.ts:148-162`. Extracted so the fail-fast branch (R6 /
- * `ProjectGitInitError` → `process.exit(1)`) + the degraded branch (other
- * shadow-init failures → warn + continue) can be unit-tested without
+ * Pure helpers for the Vite dev plugin's module-scope shadow-init block —
+ * the `void runDevShadowInit(...)` call site in `hocuspocus-plugin.ts`.
+ * Extracted so the fail-fast branch (R6 / `ProjectGitInitError` →
+ * `process.exit(1)`) + the degraded branch (other shadow-init failures →
+ * warn + continue, production path only) can be unit-tested without
  * evaluating the plugin's module side effects.
  *
  * The Vite plugin remains module-top-level (Vite's plugin contract expects
@@ -14,12 +15,25 @@
  * Both take injectable `log` / `exit` deps so tests can observe behavior
  * without spawning a real subprocess.
  *
- * Parallel path with `bootServer` (`packages/server/src/boot.ts`): both run
- * the ensureProjectGit → createServer composition, but they diverge on
- * fail-fast semantics (bootServer always degrades for non-ProjectGitInitError,
- * dev plugin fail-fasts under isolation via D13). The two call sites are
- * candidates for convergence in a later unification spec (NG3 / D1 in
- * specs/2026-04-22-per-worker-shadow-repo-test-harness/SPEC.md).
+ * Parallel path with `bootServer` (`packages/server/src/boot.ts:141`): both
+ * accept a pre-`createServer` `ensureProjectGitFn` / `ensureProjectGit` hook,
+ * but they diverge on error posture:
+ *
+ *   - `bootServer` rejects its returned `Promise<BootedServer>` on any
+ *     `ensureProjectGitFn` throw (no try/catch — `boot.ts:155` comment
+ *     "No try/catch — errors propagate (D12)"). The caller's `await` sees
+ *     the rejection; there is no degraded-warn branch.
+ *   - `runDevShadowInit` is fire-and-forget at module scope and dispatches
+ *     through `handleDevShadowInitError`:
+ *       * `ProjectGitInitError` → `exit(1)` (production AND isolation).
+ *       * Any other error under `isTestIsolated: true` → `exit(1)` (D13,
+ *         no silent degradation under test isolation).
+ *       * Any other error under `isTestIsolated: false` (production /
+ *         default) → degraded warn + continue (matches the CLI's
+ *         transient-failure resilience).
+ *
+ * The two call sites are candidates for convergence in a later unification
+ * spec (NG3 / D1 in specs/2026-04-22-per-worker-shadow-repo-test-harness/SPEC.md).
  */
 import {
   ensureProjectGit,

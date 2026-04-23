@@ -124,9 +124,13 @@ export interface CreateTestServerOptions {
    * STOP: tests using `withShadow: true` must NOT use `test.concurrent()` in
    * the same file. `contributor-tracker`'s `pendingContributors` Map is
    * module-level state, and the harness's auto-drain is serial-execution
-   * bounded — concurrent tests would mix writers across assertions. A
-   * per-server-instance contributor-tracker is the long-term fix and is
-   * tracked separately; the constraint is enforced by convention until then.
+   * bounded — concurrent tests would mix writers across assertions. Serial
+   * execution per file is the durable design contract for any test that
+   * opts into shadow; do not relax this by adding locking or a flag. If a
+   * future refactor wants concurrent-safe shadow tests, it would need to
+   * move contributor-tracker state to per-server-instance ownership, which
+   * is noted in SPEC §15 Future Work as a convergence seam for PR #270's
+   * dev-plugin / createServer unification.
    */
   withShadow?: boolean;
 }
@@ -145,18 +149,26 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   }
 
-  // Per-test shadow opt-in (D2 / FR2). Default: off — 37/38 Tier 1 tests are
-  // shadow-orthogonal and leaving shadow off preserves their original
-  // boot-time cost. Opt-in tests initialize a real shadow at
-  // `<contentDir>/.git/open-knowledge/` and drain stale contributor-tracker
-  // entries atomically so cross-test bleed is impossible.
+  // Per-test shadow opt-in (D2 / FR2). Default: off for the shadow-orthogonal
+  // majority of Tier 1 tests — but note that `createServer` itself
+  // unconditionally runs `initShadowRepo(projectDir)` at `standalone.ts:986`
+  // regardless of `gitEnabled`, so a bare-repo subtree still gets created at
+  // `<contentDir>/.git/open-knowledge/` for every test. `gitEnabled: false`
+  // only suppresses the debounced commit scheduler (`persistence.ts:461`), not
+  // the bare-repo init itself. What the harness skips under `withShadow: false`
+  // is: (a) the harness's `ensureProjectGit(contentDir)` subprocess spawn
+  // (shadow-orthogonal tests get graceful-null `getCurrentBranch` behavior
+  // via `head-watcher.ts:resolveGitDir` returning null + api-extension default
+  // to 'main'); (b) the contributor-tracker setup/cleanup `swapContributors()`
+  // drain; (c) exposing `server.shadowDir` on the return value. A
+  // `createServer`-level opt-out is §16 EXCLUDE for this spec — see SPEC §15
+  // Future Work for the convergence seam.
   //
-  // ensureProjectGit runs ONLY under withShadow — the shadow subsystem is the
-  // only consumer of a real .git/ in the harness. Shadow-orthogonal tests get
-  // graceful-null `getCurrentBranch` behavior (head-watcher.ts:resolveGitDir
-  // returns null + api-extension defaults to 'main'), so they don't need the
-  // subprocess spawn. Errors wrap to name the harness layer so an afterEach
-  // cleanup crash ("server undefined") doesn't mask the root cause.
+  // Opt-in tests additionally call `initShadowRepo(contentDir)` explicitly so
+  // the handle is available for `gitEnabled: true` + `shadowRepo: handle`
+  // wiring, and drain stale contributor-tracker entries atomically so
+  // cross-test bleed is impossible. Errors wrap to name the harness layer so
+  // an afterEach cleanup crash ("server undefined") doesn't mask the root cause.
   const withShadow = options.withShadow ?? false;
   let shadow: ShadowHandle | undefined;
   if (withShadow) {
@@ -181,12 +193,18 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     gitEnabled: withShadow,
     shadowRepo: shadow,
     // Harness layout is projectDir === contentDir — so the relative path from
-    // one to the other is ''. Persistence's default fallback at that
-    // configuration is `'content'` (it's tuned for the production layout where
-    // projectDir wraps a `content/` subdir). Override to `'.'` so buildWipTree
-    // does `git add .` instead of `git add content`, matching the shape every
-    // harness-opt-in test exercises.
-    contentRoot: withShadow ? '.' : undefined,
+    // one to the other is ''. Persistence's default fallback (when
+    // `options.contentRoot` is undefined) at that configuration resolves to
+    // the literal `'content'` (it's tuned for the production layout where
+    // projectDir wraps a `content/` subdir), which would fail `git add
+    // content` in a tmpdir lacking that subdir. Pass the empty string
+    // explicitly — nullish coalescing preserves `''` so persistence uses it
+    // as-is, and `buildWipTree` normalizes empty to `.` via
+    // `gitPathspec = contentRoot || '.'` at shadow-repo.ts:331. This matches
+    // the dev plugin's under-isolation choice (`contentRoot: ''`) so
+    // downstream paths like `saveInMemoryCheckpoint.treePath` resolve
+    // identically to production.
+    contentRoot: withShadow ? '' : undefined,
     enableTestRoutes: true,
   });
 
@@ -300,8 +318,12 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
       // Each phase runs in its own try/catch so a mid-cleanup throw does NOT
       // leak orphan state: shadow lock file, bound http server, open ws
       // listeners, contributor-tracker residue. Mirrors the production
-      // shutdown pattern in standalone.ts:806-893 (CC8). Errors accumulate
-      // into a single thrown aggregate at the end so signal survives.
+      // per-phase try/catch shutdown pattern in `standalone.ts:destroy()`
+      // (phases 1-5 under the CC8 shutdown ordering — covering watcher
+      // unsubscribe, CC1 teardown, agent session drain, L1/L2 flush, AND
+      // the shadow-repo-release `finally` block at phase 5). Errors
+      // accumulate into a single thrown aggregate at the end so signal
+      // survives.
       const errors: Array<[phase: string, error: unknown]> = [];
       try {
         await srv.destroy();
@@ -344,10 +366,20 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
         }
       }
       if (errors.length > 0) {
-        throw new Error(
-          `[test-harness] cleanup partial failure: ${errors
-            .map(([phase, e]) => `${phase}: ${String(e)}`)
-            .join('; ')}`,
+        // AggregateError preserves each phase's original stack + metadata via
+        // `.cause`, and exposes `.errors` for programmatic traversal. A
+        // single-line `String(e)` concat would drop the stack trace, the
+        // `.cause` chain, and `NodeJS.ErrnoException.code` / `.path` on the
+        // underlying failure — making a CI-only cleanup flake undebuggable.
+        const prefixed = errors.map(
+          ([phase, e]) =>
+            new Error(`[${phase}] ${e instanceof Error ? e.message : String(e)}`, { cause: e }),
+        );
+        throw new AggregateError(
+          prefixed,
+          `[test-harness] cleanup partial failure in ${errors.length} phase(s): ${errors
+            .map(([p]) => p)
+            .join(', ')}`,
         );
       }
     },
