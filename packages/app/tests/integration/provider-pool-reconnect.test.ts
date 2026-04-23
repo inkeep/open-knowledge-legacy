@@ -71,7 +71,6 @@ async function startServer(contentDir: string, port: number): Promise<Restartabl
   const persistence = createPersistenceExtension({
     contentDir,
     projectDir: contentDir,
-    gitEnabled: false,
   });
   const hocuspocus = new Hocuspocus({
     quiet: true,

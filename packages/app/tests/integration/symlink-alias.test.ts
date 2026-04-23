@@ -41,7 +41,6 @@ beforeAll(async () => {
     quiet: true,
     debounce: 200,
     maxDebounce: 1000,
-    gitEnabled: false,
     enableTestRoutes: true,
   });
   await srv.ready;
