@@ -405,6 +405,71 @@
   }
 }
 
+/* Sleeping state — closed eyelids + gentler body motion + floating "z"s.
+   The sleeping class lives on the group, so descendant selectors pause the
+   blink/squish animations without removing them entirely (a very slow rest
+   cycle reads as breathing). */
+.ok-blob-sleeping .ok-blob-body {
+  animation: ok-blob-sleeping-breathe 4.8s ease-in-out infinite;
+}
+.ok-blob-sleeping .ok-blob-eye {
+  animation: none;
+}
+
+.ok-blob-sleeping-eye {
+  stroke: var(--color-azure-blue);
+  opacity: 0.9;
+}
+.dark .ok-blob-sleeping-eye {
+  stroke: var(--color-sky-blue);
+}
+
+@keyframes ok-blob-sleeping-breathe {
+  0%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  50% {
+    transform: scaleY(0.985) scaleX(1.01);
+  }
+}
+
+/* Floating z letters — drift up + fade. Two instances with staggered delay
+   and different travel so the rhythm doesn't look mechanical. */
+.ok-blob-z {
+  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, sans-serif);
+  font-size: 6px;
+  font-style: italic;
+  font-weight: 600;
+  fill: var(--color-azure-blue);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.dark .ok-blob-z {
+  fill: var(--color-sky-blue);
+}
+.ok-blob-z-1 {
+  animation: ok-blob-z-float 2.4s ease-out 0s infinite;
+}
+.ok-blob-z-2 {
+  animation: ok-blob-z-float 2.4s ease-out 1.2s infinite;
+}
+
+@keyframes ok-blob-z-float {
+  0% {
+    transform: translate(0, 0) scale(0.7);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(3px, -6px) scale(1.1);
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ok-blob-eye {
     animation: none;
@@ -419,6 +484,14 @@
   }
   .ok-blob-firework {
     display: none;
+  }
+  .ok-blob-sleeping .ok-blob-body,
+  .ok-blob-z-1,
+  .ok-blob-z-2 {
+    animation: none;
+  }
+  .ok-blob-z {
+    opacity: 0.7;
   }
 }
 
