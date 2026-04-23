@@ -32,11 +32,15 @@ import {
 } from '@inkeep/open-knowledge-core';
 import {
   createServer,
+  destroyShadowRepo,
   ensureProjectGit,
+  initShadowRepo,
   isPairedWriteOrigin,
   OBSERVER_SYNC_ORIGIN,
   type ServerInstance,
   type ServerOptions,
+  type ShadowHandle,
+  swapContributors,
 } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -74,6 +78,13 @@ export interface TestServer {
   contentDir: string;
   /** The underlying ServerInstance — exposes hocuspocus, sessionManager, cc1Broadcaster for direct-access tests. */
   instance: ServerInstance;
+  /**
+   * Shadow repo's bare git dir (e.g. `<contentDir>/.git/open-knowledge/`) when
+   * the server was created with `withShadow: true`; `undefined` otherwise.
+   * Consumers assert on shadow state via `simpleGit(server.shadowDir).log(...)`
+   * or `simpleGit(server.shadowDir).raw('for-each-ref', ...)`.
+   */
+  shadowDir?: string;
   cleanup: () => Promise<void>;
 }
 
@@ -95,6 +106,22 @@ export interface CreateTestServerOptions {
    * Integration tests pass a small value (e.g. 150) for fast teardown.
    */
   keepaliveGraceMs?: number;
+  /**
+   * When true, initialize a per-test shadow repo at `<contentDir>/.git/open-knowledge/`
+   * before the server boots, and expose `shadowDir` on the returned `TestServer`.
+   * Auto-drains module-state contributor-tracker entries via `swapContributors()`
+   * in both setup and cleanup so concurrent tests cannot leak writers into each
+   * other's assertions.
+   *
+   * Opt in when your assertions touch `refs/wip/*`, `refs/checkpoints/*`,
+   * `/api/history`, `/api/save-version`, writer-ID attribution, or the
+   * `ok-actor:` commit body. Otherwise leave off — each opt-in pays
+   * ~50-200 ms of shadow init, which adds up across the Tier 1 suite.
+   *
+   * Default: `false`. See specs/2026-04-22-per-worker-shadow-repo-test-harness/
+   * D2 for the tier-appropriate default rationale.
+   */
+  withShadow?: boolean;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -118,13 +145,29 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   // call is a cheap no-op because .git/ already exists.
   await ensureProjectGit(contentDir);
 
+  // Per-test shadow opt-in (D2 / FR2). Default: off — 37/38 Tier 1 tests are
+  // shadow-orthogonal and leaving shadow off preserves their original
+  // boot-time cost. Opt-in tests initialize a real shadow at
+  // `<contentDir>/.git/open-knowledge/` and drain stale contributor-tracker
+  // entries atomically so cross-test bleed is impossible.
+  const withShadow = options.withShadow ?? false;
+  let shadow: ShadowHandle | undefined;
+  if (withShadow) {
+    shadow = await initShadowRepo(contentDir);
+    // FR7 / D10 — drain any residue from a prior test that didn't opt in
+    // but still happened to call recordContributor. Discard the return
+    // value; the harness owns drain semantics in this scope.
+    swapContributors();
+  }
+
   const port = await getFreePort();
   const srv = createServer({
     contentDir,
     quiet: true,
     debounce: options.debounce ?? 200,
     maxDebounce: options.maxDebounce ?? 1000,
-    gitEnabled: false,
+    gitEnabled: withShadow,
+    shadowRepo: shadow,
     enableTestRoutes: true,
   });
 
@@ -233,10 +276,19 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     port,
     contentDir,
     instance: srv,
+    shadowDir: shadow?.gitDir,
     cleanup: async () => {
       await srv.destroy();
       wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      // Shadow teardown runs BEFORE rmSync so destroyShadowRepo (which
+      // releases the writer lock + syncs the git dir) touches filesystem
+      // state that rmSync is about to delete anyway. Reverse order would
+      // race a partially-torn-down shadow against rm.
+      if (withShadow && shadow) {
+        swapContributors();
+        destroyShadowRepo(shadow);
+      }
       if (!options.keepContentDir) {
         rmSync(contentDir, { recursive: true, force: true });
       }
