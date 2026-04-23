@@ -500,9 +500,9 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               }
               setStats({ nodes, links });
             }}
-            onClustersChange={isFullscreen ? setClusters : undefined}
+            onClustersChange={setClusters}
           />
-          {isFullscreen && <GraphLegend clusters={clusters} />}
+          <GraphLegend clusters={clusters} variant={isFullscreen ? 'fullscreen' : 'docked'} />
           {isFullscreen &&
           activeMode === 'explore' &&
           selectedNode !== null &&
