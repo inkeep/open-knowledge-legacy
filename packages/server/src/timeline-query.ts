@@ -176,17 +176,31 @@ export async function getDocumentHistory(
       const allShas = [...branchCpShas, ...mainCpShas];
       if (allShas.length === 0) return EMPTY;
 
-      // Bulk-resolve commit details without walking ancestry
+      // Bulk-resolve commit details without walking ancestry.
+      // Note: --no-walk ignores pathspecs, so we filter afterwards via cat-file.
       const raw = await sg.raw(
         'log',
         '--no-walk',
         '--author-date-order',
         `--format=${GIT_LOG_FORMAT}`,
         ...allShas,
-        ...(docPath ? ['--', docPath] : []),
       );
 
       let allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
+
+      if (docPath) {
+        const relevant = await Promise.all(
+          allEntries.map(async (e) => {
+            try {
+              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        allEntries = allEntries.filter((_, i) => relevant[i]);
+      }
 
       // Apply branch-takes-over-main cutoff
       if (branch !== 'main' && branchCpShas.length > 0 && mainCpShas.length > 0) {
@@ -292,10 +306,26 @@ export async function getDocumentHistory(
         `--format=${GIT_LOG_FORMAT}`,
         ...allCpShas,
       );
-      const allCpEntries = parseGitLogOutput(cpRaw).map((e) => ({
+      let allCpEntries = parseGitLogOutput(cpRaw).map((e) => ({
         ...e,
         type: 'checkpoint' as const,
       }));
+
+      // --no-walk ignores pathspecs, so filter checkpoints to only those
+      // whose tree actually contains the target document.
+      if (docPath) {
+        const relevant = await Promise.all(
+          allCpEntries.map(async (e) => {
+            try {
+              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        allCpEntries = allCpEntries.filter((_, i) => relevant[i]);
+      }
 
       if (isFeatureBranch && checkpointShas.length > 0 && mainCheckpointShas.length > 0) {
         // Find the earliest branch checkpoint timestamp — main's checkpoints
