@@ -37,7 +37,13 @@ export default {
   ignoreBinaries: ['printf'],
   workspaces: {
     'packages/app': {
-      entry: 'tests/**/*.{test,e2e}.ts',
+      // Include the standalone `bun`-driven perf driver (+ its scenario
+      // library) as entries — otherwise knip marks the `ProfilerPhase` /
+      // `ProfilerRenderEvent` types and related helpers "unused" because
+      // `tests/perf/*.ts` sits outside the default `*.{test,e2e}.ts` scan.
+      // See `tests/perf/profile.ts` header for why this driver is not a
+      // Playwright-runner test.
+      entry: ['tests/**/*.{test,e2e}.ts', 'tests/perf/profile.ts', 'tests/perf/lib/*.ts'],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',

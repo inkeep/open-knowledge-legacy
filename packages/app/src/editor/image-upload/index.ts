@@ -231,12 +231,6 @@ async function ensureUploadConfig(): Promise<UploadConfig> {
   return uploadConfigFetchInFlight;
 }
 
-/** Test hook: seed the cached config so unit tests can exercise emit shapes without a fetch. */
-export function setUploadConfigForTests(cfg: UploadConfig): void {
-  cachedUploadConfig = cfg;
-  uploadConfigFetchInFlight = Promise.resolve(cfg);
-}
-
 interface InsertShape {
   kind: 'wikiembed' | 'image' | 'markdown-link';
   ext: string;

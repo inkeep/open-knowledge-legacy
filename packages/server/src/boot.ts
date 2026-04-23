@@ -21,7 +21,6 @@
  * injected callbacks + post-return orchestration.
  */
 import type { Server as HttpServer } from 'node:http';
-
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
