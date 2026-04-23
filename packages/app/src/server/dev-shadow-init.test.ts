@@ -120,6 +120,24 @@ describe('handleDevShadowInitError', () => {
     ]);
     expect(exits).toEqual([1]);
   });
+
+  test('ProjectGitInitError + isTestIsolated — ProjectGitInitError branch wins (structural mutual exclusion)', () => {
+    // Locks in the if/else if/else ordering: the ProjectGitInitError branch
+    // must fire (emitting the ensureProjectGit-specific warn) and the
+    // isTestIsolated branch must NOT fire a second warn. Regression guard
+    // for a future contributor flattening the branches back to bare ifs or
+    // introducing a non-throwing test stub for io.exit.
+    const { io, warns, exits } = makeIo();
+    const err = new ProjectGitInitError('git: command not found', 'spawn ENOENT');
+    expect(() => handleDevShadowInitError(err, io, { isTestIsolated: true })).toThrow(
+      'exit(1) called',
+    );
+    expect(warns).toEqual([
+      { msg: '[dev] ensureProjectGit failed: git: command not found', err: undefined },
+      { msg: '[dev] git stderr: spawn ENOENT', err: undefined },
+    ]);
+    expect(exits).toEqual([1]);
+  });
 });
 
 // ─── runDevShadowInit ────────────────────────────────────────────────────────

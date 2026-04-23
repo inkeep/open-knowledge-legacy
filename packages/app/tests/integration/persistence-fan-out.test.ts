@@ -16,165 +16,185 @@
  * (packages/server/src/persistence-fan-out.test.ts:35-43) — this integration
  * test exercises the flat harness layout where contentDir === projectDir,
  * which is the shape every history-adjacent app test will use.
+ *
+ * Uses try/finally for server lifecycle per the harness convention
+ * (test-harness.ts:16-17) and matching the FR8 shadow-harness-*.test.ts
+ * acceptance tests — avoids the `let server: TestServer` + afterEach pattern
+ * that would mask a createTestServer throw with a `Cannot read 'cleanup' of
+ * undefined` TypeError in afterEach.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
   applyExternalChange,
   FILE_SYSTEM_WRITER,
   recordContributor,
   shadowGit,
-  swapContributors,
 } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
-import { createTestServer, type TestServer } from './test-harness';
+import { createTestServer, requireShadowDir } from './test-harness';
 
 describe('persistence L2 fan-out integration (US-014, FR-7)', () => {
-  let server: TestServer;
-
-  beforeEach(() => {
-    // Drain any stray contributor-tracker residue from adjacent tests that
-    // may have recorded writers without opting into shadow (belt-and-suspenders
-    // — the harness itself swaps on setup, but a concurrent test that only
-    // recorded without swapping could still leak into this describe block's
-    // first test under test.concurrent). Discard the return value.
-    swapContributors();
-  });
-
-  afterEach(async () => {
-    await server.cleanup();
-  });
-
   test('two contributors → two WIP refs sharing the same tree SHA', async () => {
-    server = await createTestServer({ withShadow: true, debounce: 60_000, maxDebounce: 60_000 });
-
-    // Seed two distinct writers before the L2 drain fires
-    recordContributor('test-doc', 'agent-s1', 'Session 1', 'agent-s1');
-    recordContributor('test-doc', 'agent-s2', 'Session 2', 'agent-s2');
-
-    // Mutate the doc so onStoreDocument has content to flush
-    const conn = await server.instance.hocuspocus.openDirectConnection('test-doc');
-    await conn.transact((doc) => {
-      const xmlFragment = doc.getXmlFragment('default');
-      const paragraph = new Y.XmlElement('paragraph');
-      paragraph.insert(0, [new Y.XmlText('fan-out integration test')]);
-      xmlFragment.insert(0, [paragraph]);
+    const server = await createTestServer({
+      withShadow: true,
+      debounce: 60_000,
+      maxDebounce: 60_000,
     });
+    try {
+      // Seed two distinct writers before the L2 drain fires
+      recordContributor('test-doc', 'agent-s1', 'Session 1', 'agent-s1');
+      recordContributor('test-doc', 'agent-s2', 'Session 2', 'agent-s2');
 
-    const doc = server.instance.hocuspocus.documents.get('test-doc');
-    expect(doc).toBeDefined();
-    doc?.removeDirectConnection();
+      // Mutate the doc so onStoreDocument has content to flush
+      const conn = await server.instance.hocuspocus.openDirectConnection('test-doc');
+      await conn.transact((doc) => {
+        const xmlFragment = doc.getXmlFragment('default');
+        const paragraph = new Y.XmlElement('paragraph');
+        paragraph.insert(0, [new Y.XmlText('fan-out integration test')]);
+        xmlFragment.insert(0, [paragraph]);
+      });
 
-    // server.destroy() (inside cleanup) drains the pending L2 commit. But we
-    // need the refs available to assert BEFORE cleanup runs afterEach, so
-    // destroy explicitly here. Subsequent cleanup() is idempotent.
-    await server.instance.destroy();
+      const doc = server.instance.hocuspocus.documents.get('test-doc');
+      expect(doc).toBeDefined();
+      doc?.removeDirectConnection();
 
-    // Both writers must have WIP refs
-    const sg = shadowGit({ gitDir: server.shadowDir as string, workTree: server.contentDir });
-    const s1Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();
-    const s2Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s2')).trim();
-    expect(s1Sha).toBeTruthy();
-    expect(s2Sha).toBeTruthy();
+      // server.destroy() drains the pending L2 commit. The refs need to be
+      // available to assert BEFORE cleanup runs, so destroy explicitly here.
+      // Subsequent cleanup() is idempotent.
+      await server.instance.destroy();
 
-    // Different commits (different parents / timestamps)
-    expect(s1Sha).not.toBe(s2Sha);
+      // Both writers must have WIP refs
+      const sg = shadowGit({ gitDir: requireShadowDir(server), workTree: server.contentDir });
+      const s1Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();
+      const s2Sha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s2')).trim();
+      expect(s1Sha).toBeTruthy();
+      expect(s2Sha).toBeTruthy();
 
-    // Both commits share the same tree SHA (FR-7: one tree per drain cycle)
-    const s1Tree = (await sg.raw('rev-parse', `${s1Sha}^{tree}`)).trim();
-    const s2Tree = (await sg.raw('rev-parse', `${s2Sha}^{tree}`)).trim();
-    expect(s1Tree).toBe(s2Tree);
+      // Different commits (different parents / timestamps)
+      expect(s1Sha).not.toBe(s2Sha);
+
+      // Both commits share the same tree SHA (FR-7: one tree per drain cycle)
+      const s1Tree = (await sg.raw('rev-parse', `${s1Sha}^{tree}`)).trim();
+      const s2Tree = (await sg.raw('rev-parse', `${s2Sha}^{tree}`)).trim();
+      expect(s1Tree).toBe(s2Tree);
+    } finally {
+      await server.cleanup();
+    }
   });
 
   test('SERVICE_WRITER fallback when snapshot is empty', async () => {
-    server = await createTestServer({ withShadow: true, debounce: 60_000, maxDebounce: 60_000 });
-
-    // No contributors recorded — persistence uses SERVICE_WRITER fallback
-    const conn = await server.instance.hocuspocus.openDirectConnection('test-doc');
-    await conn.transact((doc) => {
-      const xmlFragment = doc.getXmlFragment('default');
-      const paragraph = new Y.XmlElement('paragraph');
-      paragraph.insert(0, [new Y.XmlText('service-writer fallback test')]);
-      xmlFragment.insert(0, [paragraph]);
+    const server = await createTestServer({
+      withShadow: true,
+      debounce: 60_000,
+      maxDebounce: 60_000,
     });
+    try {
+      // No contributors recorded — persistence uses SERVICE_WRITER fallback
+      const conn = await server.instance.hocuspocus.openDirectConnection('test-doc');
+      await conn.transact((doc) => {
+        const xmlFragment = doc.getXmlFragment('default');
+        const paragraph = new Y.XmlElement('paragraph');
+        paragraph.insert(0, [new Y.XmlText('service-writer fallback test')]);
+        xmlFragment.insert(0, [paragraph]);
+      });
 
-    const doc = server.instance.hocuspocus.documents.get('test-doc');
-    doc?.removeDirectConnection();
+      const doc = server.instance.hocuspocus.documents.get('test-doc');
+      doc?.removeDirectConnection();
 
-    await server.instance.destroy();
+      await server.instance.destroy();
 
-    const sg = shadowGit({ gitDir: server.shadowDir as string, workTree: server.contentDir });
-    const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
-    expect(wipRefs).toBeTruthy();
+      const sg = shadowGit({ gitDir: requireShadowDir(server), workTree: server.contentDir });
+      const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
+      expect(wipRefs).toBeTruthy();
+    } finally {
+      await server.cleanup();
+    }
   });
 
   test('applyExternalChange → commit on refs/wip/<branch>/file-system', async () => {
-    server = await createTestServer({ withShadow: true, debounce: 60_000, maxDebounce: 60_000 });
-
-    // Load the doc via a direct connection + mutation
-    const conn = await server.instance.hocuspocus.openDirectConnection('fs-writer-doc');
-    await conn.transact((doc) => {
-      const xmlFragment = doc.getXmlFragment('default');
-      const paragraph = new Y.XmlElement('paragraph');
-      paragraph.insert(0, [new Y.XmlText('initial content')]);
-      xmlFragment.insert(0, [paragraph]);
+    const server = await createTestServer({
+      withShadow: true,
+      debounce: 60_000,
+      maxDebounce: 60_000,
     });
+    try {
+      // Load the doc via a direct connection + mutation
+      const conn = await server.instance.hocuspocus.openDirectConnection('fs-writer-doc');
+      await conn.transact((doc) => {
+        const xmlFragment = doc.getXmlFragment('default');
+        const paragraph = new Y.XmlElement('paragraph');
+        paragraph.insert(0, [new Y.XmlText('initial content')]);
+        xmlFragment.insert(0, [paragraph]);
+      });
 
-    // Simulate a file-watcher external change — registers file-system contributor (D41)
-    applyExternalChange(server.instance.hocuspocus, 'fs-writer-doc', '# Updated from disk\n');
+      // Simulate a file-watcher external change — registers file-system contributor (D41)
+      applyExternalChange(server.instance.hocuspocus, 'fs-writer-doc', '# Updated from disk\n');
 
-    const doc = server.instance.hocuspocus.documents.get('fs-writer-doc');
-    doc?.removeDirectConnection();
+      const doc = server.instance.hocuspocus.documents.get('fs-writer-doc');
+      doc?.removeDirectConnection();
 
-    await server.instance.destroy();
+      await server.instance.destroy();
 
-    const sg = shadowGit({ gitDir: server.shadowDir as string, workTree: server.contentDir });
-    const fsRef = (await sg.raw('rev-parse', 'refs/wip/main/file-system')).trim();
-    expect(fsRef).toBeTruthy();
+      const sg = shadowGit({ gitDir: requireShadowDir(server), workTree: server.contentDir });
+      const fsRef = (await sg.raw('rev-parse', 'refs/wip/main/file-system')).trim();
+      expect(fsRef).toBeTruthy();
 
-    // Commit subject must use reconcile: prefix (D53)
-    const subject = (await sg.raw('log', '-1', '--format=%s', 'refs/wip/main/file-system')).trim();
-    expect(subject).toBe('reconcile: fs-writer-doc');
+      // Commit subject must use reconcile: prefix (D53)
+      const subject = (
+        await sg.raw('log', '-1', '--format=%s', 'refs/wip/main/file-system')
+      ).trim();
+      expect(subject).toBe('reconcile: fs-writer-doc');
+    } finally {
+      await server.cleanup();
+    }
   });
 
   test('concurrent agent + file-watcher → two commits sharing tree SHA', async () => {
-    server = await createTestServer({ withShadow: true, debounce: 60_000, maxDebounce: 60_000 });
-
-    // Load the doc
-    const conn = await server.instance.hocuspocus.openDirectConnection('concurrent-doc');
-    await conn.transact((doc) => {
-      const xmlFragment = doc.getXmlFragment('default');
-      const paragraph = new Y.XmlElement('paragraph');
-      paragraph.insert(0, [new Y.XmlText('concurrent test')]);
-      xmlFragment.insert(0, [paragraph]);
+    const server = await createTestServer({
+      withShadow: true,
+      debounce: 60_000,
+      maxDebounce: 60_000,
     });
+    try {
+      // Load the doc
+      const conn = await server.instance.hocuspocus.openDirectConnection('concurrent-doc');
+      await conn.transact((doc) => {
+        const xmlFragment = doc.getXmlFragment('default');
+        const paragraph = new Y.XmlElement('paragraph');
+        paragraph.insert(0, [new Y.XmlText('concurrent test')]);
+        xmlFragment.insert(0, [paragraph]);
+      });
 
-    // Agent contributor (simulating an agent write)
-    recordContributor('concurrent-doc', 'agent-s1', 'Session 1', 'agent-s1');
+      // Agent contributor (simulating an agent write)
+      recordContributor('concurrent-doc', 'agent-s1', 'Session 1', 'agent-s1');
 
-    // File-watcher contributor (simulating an external disk change)
-    applyExternalChange(server.instance.hocuspocus, 'concurrent-doc', '# Updated concurrently\n');
+      // File-watcher contributor (simulating an external disk change)
+      applyExternalChange(server.instance.hocuspocus, 'concurrent-doc', '# Updated concurrently\n');
 
-    const doc = server.instance.hocuspocus.documents.get('concurrent-doc');
-    doc?.removeDirectConnection();
+      const doc = server.instance.hocuspocus.documents.get('concurrent-doc');
+      doc?.removeDirectConnection();
 
-    await server.instance.destroy();
+      await server.instance.destroy();
 
-    const sg = shadowGit({ gitDir: server.shadowDir as string, workTree: server.contentDir });
+      const sg = shadowGit({ gitDir: requireShadowDir(server), workTree: server.contentDir });
 
-    // Both refs must exist after the drain
-    const agentSha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();
-    const fsSha = (await sg.raw('rev-parse', 'refs/wip/main/file-system')).trim();
-    expect(agentSha).toBeTruthy();
-    expect(fsSha).toBeTruthy();
+      // Both refs must exist after the drain
+      const agentSha = (await sg.raw('rev-parse', 'refs/wip/main/agent-s1')).trim();
+      const fsSha = (await sg.raw('rev-parse', 'refs/wip/main/file-system')).trim();
+      expect(agentSha).toBeTruthy();
+      expect(fsSha).toBeTruthy();
 
-    // Different commits (two writers) but same tree SHA (FR-7: shared tree per drain)
-    expect(agentSha).not.toBe(fsSha);
-    const agentTree = (await sg.raw('rev-parse', `${agentSha}^{tree}`)).trim();
-    const fsTree = (await sg.raw('rev-parse', `${fsSha}^{tree}`)).trim();
-    expect(agentTree).toBe(fsTree);
+      // Different commits (two writers) but same tree SHA (FR-7: shared tree per drain)
+      expect(agentSha).not.toBe(fsSha);
+      const agentTree = (await sg.raw('rev-parse', `${agentSha}^{tree}`)).trim();
+      const fsTree = (await sg.raw('rev-parse', `${fsSha}^{tree}`)).trim();
+      expect(agentTree).toBe(fsTree);
 
-    // FILE_SYSTEM_WRITER.id is 'file-system' (D8, D41)
-    expect(FILE_SYSTEM_WRITER.id).toBe('file-system');
+      // FILE_SYSTEM_WRITER.id is 'file-system' (D8, D41)
+      expect(FILE_SYSTEM_WRITER.id).toBe('file-system');
+    } finally {
+      await server.cleanup();
+    }
   });
 });

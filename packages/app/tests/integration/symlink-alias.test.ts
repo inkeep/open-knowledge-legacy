@@ -42,6 +42,12 @@ beforeAll(async () => {
     debounce: 200,
     maxDebounce: 1000,
     enableTestRoutes: true,
+    // Shadow/git is orthogonal to symlink alias assertions; leaving gitEnabled
+    // on (the post-PR default) would trigger createServer's auto-init of a
+    // shadow at <contentDir>/.git/open-knowledge/ and spam ERROR logs during
+    // the L2 drain (no `content/` subdir for `git add` to stage). Explicit
+    // off keeps this test's output clean.
+    gitEnabled: false,
   });
   await srv.ready;
 

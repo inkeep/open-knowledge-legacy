@@ -12,7 +12,7 @@
 import { describe, expect, test } from 'bun:test';
 import { applyExternalChange, shadowGit } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
-import { createTestServer } from './test-harness';
+import { createTestServer, requireShadowDir } from './test-harness';
 
 describe('shadow harness — external disk write acceptance', () => {
   test('applyExternalChange produces refs/wip/<branch>/file-system with reconcile: subject', async () => {
@@ -48,7 +48,7 @@ describe('shadow harness — external disk write acceptance', () => {
       await server.instance.destroy();
 
       const sg = shadowGit({
-        gitDir: server.shadowDir as string,
+        gitDir: requireShadowDir(server),
         workTree: server.contentDir,
       });
       const ref = 'refs/wip/main/file-system';

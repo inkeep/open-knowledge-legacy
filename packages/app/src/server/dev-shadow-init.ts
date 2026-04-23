@@ -13,6 +13,13 @@
  *
  * Both take injectable `log` / `exit` deps so tests can observe behavior
  * without spawning a real subprocess.
+ *
+ * Parallel path with `bootServer` (`packages/server/src/boot.ts`): both run
+ * the ensureProjectGit → createServer composition, but they diverge on
+ * fail-fast semantics (bootServer always degrades for non-ProjectGitInitError,
+ * dev plugin fail-fasts under isolation via D13). The two call sites are
+ * candidates for convergence in a later unification spec (NG3 / D1 in
+ * specs/2026-04-22-per-worker-shadow-repo-test-harness/SPEC.md).
  */
 import {
   ensureProjectGit,
@@ -53,16 +60,19 @@ export function handleDevShadowInitError(
   io: DevShadowInitIo,
   opts: { isTestIsolated?: boolean } = {},
 ): void {
+  // if/else if/else (not three bare ifs) so mutual exclusion is structural,
+  // not dependent on io.exit being `never`. A future non-throwing test stub
+  // must not fall through from one branch into the next.
   if (err instanceof ProjectGitInitError) {
     io.logWarn(`[dev] ensureProjectGit failed: ${err.message}`);
     if (err.stderr) io.logWarn(`[dev] git stderr: ${err.stderr.trim()}`);
     io.exit(1);
-  }
-  if (opts.isTestIsolated) {
+  } else if (opts.isTestIsolated) {
     io.logWarn('[dev] Shadow repo init failed under test isolation (fail-fast per D13):', err);
     io.exit(1);
+  } else {
+    io.logWarn('[dev] Shadow repo init failed (timeline features unavailable):', err);
   }
-  io.logWarn('[dev] Shadow repo init failed (timeline features unavailable):', err);
 }
 
 /**
@@ -73,8 +83,10 @@ export function handleDevShadowInitError(
  * Errors flow through `handleDevShadowInitError`. Returns the Promise so
  * callers can await it in tests; production code calls it fire-and-forget.
  *
- * Injectable `deps` let tests stub the two @inkeep/open-knowledge-server
- * primitives; production passes the real ones.
+ * Tests pass stubs via `options.deps` (stubbing the two
+ * @inkeep/open-knowledge-server primitives) and/or `options.io` (capturing
+ * `console.*` + `process.exit` calls). `options.isTestIsolated: true`
+ * broadens fail-fast to every shadow-init throw per D13.
  */
 interface DevShadowInitDeps {
   ensureProjectGit: typeof ensureProjectGit;

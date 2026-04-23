@@ -14,7 +14,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { shadowGit } from '@inkeep/open-knowledge-server';
-import { agentWriteMd, createTestServer } from './test-harness';
+import { agentWriteMd, createTestServer, pollUntil, requireShadowDir } from './test-harness';
 
 describe('shadow harness — history read round-trip acceptance', () => {
   test('agent-write then GET /api/history returns an entry with the expected commit SHA', async () => {
@@ -36,16 +36,24 @@ describe('shadow harness — history read round-trip acceptance', () => {
 
       // Drain L1 + L2 so the WIP ref exists in the shadow BEFORE
       // /api/history queries it. Hocuspocus's public flushPendingStores
-      // fires onStoreDocument which writes disk + schedules L2; we wait
-      // briefly for the scheduled L2 to fire its timer and commit.
+      // fires onStoreDocument which writes disk + schedules L2; we poll
+      // for the ref rather than sleeping so a slow runner (CI parallelism,
+      // parcel-watcher inotify pressure) can't flake the regression guard.
       server.instance.hocuspocus.flushPendingStores();
-      await new Promise((r) => setTimeout(r, 300));
-
       const sg = shadowGit({
-        gitDir: server.shadowDir as string,
+        gitDir: requireShadowDir(server),
         workTree: server.contentDir,
       });
-      const writtenSha = (await sg.raw('rev-parse', `refs/wip/main/agent-${agentId}`)).trim();
+      const ref = `refs/wip/main/agent-${agentId}`;
+      await pollUntil(async () => {
+        try {
+          await sg.raw('rev-parse', ref);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 5_000);
+      const writtenSha = (await sg.raw('rev-parse', ref)).trim();
       expect(writtenSha).toMatch(/^[0-9a-f]{40}$/);
 
       // Now read via /api/history and assert the commit appears. This is

@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { shadowGit } from '@inkeep/open-knowledge-server';
-import { agentWriteMd, createTestServer } from './test-harness';
+import { agentWriteMd, createTestServer, requireShadowDir } from './test-harness';
 
 describe('shadow harness — agent write acceptance', () => {
   test('POST /api/agent-write-md produces refs/wip/<branch>/agent-<connId> with wip: subject', async () => {
@@ -37,7 +37,7 @@ describe('shadow harness — agent write acceptance', () => {
       await server.instance.destroy();
 
       const sg = shadowGit({
-        gitDir: server.shadowDir as string,
+        gitDir: requireShadowDir(server),
         workTree: server.contentDir,
       });
       const ref = `refs/wip/main/agent-${agentId}`;
@@ -49,7 +49,10 @@ describe('shadow harness — agent write acceptance', () => {
       // Subject should reference the doc that was written (D53).
       expect(subject).toContain('shadow-harness-t1');
 
-      // Body must carry an ok-actor: JSON line (FR-8 / §8.7).
+      // Body must carry an ok-actor: JSON line (schema defined in
+      // specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md
+      // FR-8 / §8.7 — cross-spec dependency; the harness spec reuses it
+      // rather than redefining the schema).
       const body = await sg.raw('log', '-1', '--format=%B', ref);
       expect(body).toContain('ok-actor:');
       expect(body).toContain(`agent-${agentId}`);

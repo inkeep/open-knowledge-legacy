@@ -13,7 +13,7 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { shadowGit } from '@inkeep/open-knowledge-server';
-import { agentWriteMd, createTestServer } from './test-harness';
+import { agentWriteMd, createTestServer, pollUntil, requireShadowDir } from './test-harness';
 
 // Minimal parent-git reader — avoids pulling simple-git into the app's
 // dep graph (it's a server-only dep) and keeps the T2 assertions scoped
@@ -48,11 +48,23 @@ describe('shadow harness — save version acceptance', () => {
 
       // Drain L1 before POSTing save-version — saveVersion builds its tree
       // from disk via buildWipTree, so the L1 debounce must fire first. No
-      // ServerInstance.persistence export today, so force the store cycle
-      // via Hocuspocus's public API. The small wait below lets the async
-      // onStoreDocument promise settle.
+      // ServerInstance.persistence export today (out of spec scope — §16
+      // EXCLUDE packages/server/src/standalone.ts); poll for the agent's
+      // WIP ref existence in the shadow as a deterministic proxy for L2
+      // commit landing.
       server.instance.hocuspocus.flushPendingStores();
-      await new Promise((r) => setTimeout(r, 200));
+      const drainSg = shadowGit({
+        gitDir: requireShadowDir(server),
+        workTree: server.contentDir,
+      });
+      await pollUntil(async () => {
+        try {
+          await drainSg.raw('rev-parse', 'refs/wip/main/agent-test-agent-t2');
+          return true;
+        } catch {
+          return false;
+        }
+      }, 5_000);
 
       const saveRes = await fetch(`http://localhost:${server.port}/api/save-version`, {
         method: 'POST',
@@ -79,7 +91,7 @@ describe('shadow harness — save version acceptance', () => {
 
       // Checkpoint ref resolves in the shadow repo.
       const sg = shadowGit({
-        gitDir: server.shadowDir as string,
+        gitDir: requireShadowDir(server),
         workTree: server.contentDir,
       });
       const checkpointSha = (await sg.raw('rev-parse', saveBody.checkpointRef)).trim();
