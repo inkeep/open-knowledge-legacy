@@ -73,19 +73,21 @@ ccp ok                              # just cd
 ccp-list                            # inspect registry
 ```
 
-## Adding your repos
+## Adding your repos — portability-friendly
 
-Open `~/.zshrc`, find the `_OK_PROJECTS` block, add entries:
+Edit `~/.ok-projects.sh` — the single source of truth shared by shell functions AND PATH scripts. Bootstrap creates this on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge` (no `~/Documents/code/` assumption).
 
 ```bash
-_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"       # installed by default
-_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"   # installed by default
-_OK_PROJECTS[site]="$HOME/Documents/code/your-site"          # your additions
-_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
-_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+# ~/.ok-projects.sh
+_OK_PROJECTS[ok]="<auto-detected>"                       # set by bootstrap
+_OK_PROJECTS[agents]="$HOME/src/agents-private"          # your own layout
+_OK_PROJECTS[site]="$HOME/code/my-site"
+_OK_PROJECTS[ml]="$HOME/workspace/ml-experiments"
 ```
 
-`source ~/.zshrc` → `ccs -p ml` works immediately. No bootstrap re-run needed.
+Save the file → `ccs -p ml` works immediately. No bootstrap re-run needed — the file is sourced on every invocation.
+
+**If you move the open-knowledge repo**, re-run `./sandbox-recipes/bootstrap.sh` from the new location. It'll warn you about the mismatch (non-destructive; bootstrap never silently overwrites a user-managed entry).
 
 ## Error cases (deliberate — they're guardrails)
 

@@ -23,10 +23,9 @@ if [[ "$SANDBOX_RECIPES" != /* ]]; then
 fi
 
 # ── Project registry ─────────────────────────────────────────────────────
+# Single source of truth: ~/.ok-projects.sh (created by bootstrap.sh).
+# Shared with the zshrc shell functions so they both see the same keys.
 typeset -gA _OK_PROJECTS
-_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"
-_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"
-# User additions / overrides live in ~/.ok-projects.sh — sourced if present.
 if [[ -f "$HOME/.ok-projects.sh" ]]; then
   source "$HOME/.ok-projects.sh"
 fi
@@ -149,11 +148,18 @@ while (( $# > 0 )); do
 done
 
 if [[ -n "$proj" ]]; then
-  dir="$(_resolve_project "$proj")" || {
+  if ! dir="$(_resolve_project "$proj")"; then
     echo "error: unknown project shortcut: '$proj'" >&2
-    echo "       known: ${(k)_OK_PROJECTS}" >&2
+    if (( ${#_OK_PROJECTS[@]} == 0 )); then
+      echo "       project registry is empty." >&2
+      echo "       edit ~/.ok-projects.sh to add entries, or re-run bootstrap:" >&2
+      echo "         $SANDBOX_RECIPES/bootstrap.sh --install-path" >&2
+    else
+      echo "       known: ${(k)_OK_PROJECTS}" >&2
+      echo "       edit ~/.ok-projects.sh to add more." >&2
+    fi
     exit 1
-  }
+  fi
   cd "$dir" || exit 1
 fi
 

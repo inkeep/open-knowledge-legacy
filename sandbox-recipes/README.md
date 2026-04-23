@@ -67,18 +67,21 @@ Full threat-model mapping and tradeoffs: [the report](../reports/claude-code-loc
 
 ---
 
-## Adding your repos
+## Adding your repos (portability-friendly)
 
-Edit the `_OK_PROJECTS` block in `~/.zshrc`:
+Edit `~/.ok-projects.sh` — **a single source of truth shared by both the shell functions and the PATH scripts**. Bootstrap creates it on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge`. Common layouts across devs vary (`~/Documents/code/`, `~/src/`, `~/code/`, `~/workspace/`, `~/dev/`) — nothing is assumed.
 
 ```bash
-_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"       # installed
-_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"   # installed
-_OK_PROJECTS[site]="$HOME/Documents/code/your-site"          # add your own
-_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+# ~/.ok-projects.sh
+_OK_PROJECTS[ok]="<auto-detected by bootstrap>"
+_OK_PROJECTS[agents]="$HOME/src/agents-private"      # your own — any layout
+_OK_PROJECTS[site]="$HOME/code/my-site"
+_OK_PROJECTS[ml]="$HOME/workspace/ml-experiments"
 ```
 
-`source ~/.zshrc` and `ccs site` / `ccb ml` etc. work immediately. No bootstrap re-run needed.
+Both `ccs -p <key>` and `ccp <key>` work immediately after saving (no bootstrap re-run needed — the file is sourced on every invocation).
+
+**If you move the open-knowledge repo**, re-run `./sandbox-recipes/bootstrap.sh` from the new location. It'll detect the path mismatch and print a warning telling you to update `~/.ok-projects.sh` manually (non-destructive — bootstrap never silently overwrites a user-managed entry).
 
 ---
 

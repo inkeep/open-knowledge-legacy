@@ -101,11 +101,10 @@ print_aliases() {
 # Helpers: ccp <shortcut> (cd only), ccp-list (print registry).
 export _OK_RECIPES="$STABLE_DIR"
 
-# ── Project shortcuts: defaults + user registry ──────────────────────────
-# Edit ~/.ok-projects.sh to add repos (shared with PATH scripts).
+# ── Project registry ─────────────────────────────────────────────────────
+# Single source of truth: ~/.ok-projects.sh (created/updated by bootstrap).
+# Edit that file to add repos; shared with ~/.local/bin launcher scripts.
 typeset -gA _OK_PROJECTS 2>/dev/null || declare -A _OK_PROJECTS
-_OK_PROJECTS[ok]="\$HOME/Documents/code/open-knowledge"
-_OK_PROJECTS[agents]="\$HOME/Documents/code/agents-private"
 [[ -f "\$HOME/.ok-projects.sh" ]] && source "\$HOME/.ok-projects.sh"
 
 # ── Internal: resolve a project shortcut to an absolute path ──────────────
@@ -218,7 +217,13 @@ _ok_extract_project() {
   if [[ -n "\$proj" ]]; then
     if ! dir="\$(_ok_resolve_project "\$proj")"; then
       echo "error: unknown project shortcut: '\$proj'" >&2
-      echo "       use 'ccp-list' to see registered shortcuts" >&2
+      if (( \${#_OK_PROJECTS[@]} == 0 )); then
+        echo "       project registry is empty." >&2
+        echo "       edit ~/.ok-projects.sh to add entries, or re-run bootstrap:" >&2
+        echo "         \$_OK_RECIPES/bootstrap.sh --install-path" >&2
+      else
+        echo "       use 'ccp-list' to see registered shortcuts" >&2
+      fi
       return 1
     fi
     cd "\$dir" || return 1
@@ -322,22 +327,54 @@ detect_bin_dir() {
 
 ensure_ok_projects_file() {
   local target="$HOME/.ok-projects.sh"
-  if [[ -f "$target" ]]; then
-    log "~/.ok-projects.sh already exists — leaving as-is (add entries there)."
-    return
-  fi
-  cat > "$target" <<'EOF'
-# ~/.ok-projects.sh
-# Sourced by both the zshrc alias block and the ~/.local/bin launcher scripts.
-# Add project shortcuts here. Keys are arbitrary; values are absolute paths.
-#
-# _OK_PROJECTS is already declared by the time this file runs.
+  # The open-knowledge repo root is the parent of sandbox-recipes/
+  local ok_path
+  ok_path="$(dirname "$STABLE_DIR")"
 
-# _OK_PROJECTS[site]="$HOME/Documents/code/your-site"
-# _OK_PROJECTS[api]="$HOME/Documents/code/your-api"
-# _OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+  if [[ ! -f "$target" ]]; then
+    cat > "$target" <<EOF
+# ~/.ok-projects.sh
+# Sourced by sandbox-recipes shell functions + PATH launchers.
+# Keys are arbitrary shortcuts; values are absolute paths.
+# Safe to edit. Safe to delete (re-run bootstrap.sh to regenerate).
+
+# Auto-detected open-knowledge location (from your bootstrap run):
+_OK_PROJECTS[ok]="$ok_path"
+
+# Add your own repos. Common layouts vary per-developer:
+#   \$HOME/Documents/code/<name>
+#   \$HOME/src/<name>
+#   \$HOME/code/<name>
+#   \$HOME/workspace/<name>
+#   \$HOME/dev/<name>
+#
+# Examples (uncomment + adjust to match your layout):
+# _OK_PROJECTS[agents]="\$HOME/Documents/code/agents-private"
+# _OK_PROJECTS[site]="\$HOME/src/my-site"
+# _OK_PROJECTS[api]="\$HOME/code/my-api"
 EOF
-  log "Created ~/.ok-projects.sh (add your own repos there)."
+    log "Created ~/.ok-projects.sh with detected 'ok' = $ok_path"
+  else
+    # File exists — non-destructively add the auto-detected 'ok' if absent.
+    if ! grep -qE '^_OK_PROJECTS\[ok\]=' "$target"; then
+      printf '\n# Auto-added by bootstrap on %s:\n_OK_PROJECTS[ok]="%s"\n' \
+        "$(date +%Y-%m-%d)" "$ok_path" >> "$target"
+      log "Appended 'ok' shortcut to existing ~/.ok-projects.sh (= $ok_path)"
+    else
+      # Entry exists; check if it still matches what bootstrap just detected.
+      local existing
+      existing=$(grep -E '^_OK_PROJECTS\[ok\]=' "$target" | head -1 | sed -E 's/.*="([^"]*)".*/\1/')
+      if [[ "$existing" != "$ok_path" ]]; then
+        warn "~/.ok-projects.sh has a different 'ok' path than bootstrap detected:"
+        warn "  existing: $existing"
+        warn "  detected: $ok_path"
+        warn "Edit ~/.ok-projects.sh manually if you want to update, or delete it"
+        warn "and re-run bootstrap to regenerate."
+      else
+        log "~/.ok-projects.sh 'ok' entry matches detection — no change."
+      fi
+    fi
+  fi
 }
 
 install_launcher_to_path() {
