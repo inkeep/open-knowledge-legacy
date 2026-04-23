@@ -93,9 +93,10 @@ describe('registerAllTools', () => {
     });
 
     expect(toolNames).toContain('get_dead_links');
+    // init-content is deliberately absent (removed per SPEC 2026-04-23-ok-seed-scaffold).
+    expect(toolNames).not.toContain('init-content');
     const routedTools = [
       'exec',
-      'init-content',
       'ingest',
       'research',
       'consolidate',

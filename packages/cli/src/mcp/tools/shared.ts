@@ -74,25 +74,29 @@ export function textPlusStructured<T>(text: string, structured: T, isError?: boo
 export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
-// ─── Karpathy three-layer wiki frame (shared by the four workflow tools) ─────
+// ─── Karpathy three-layer wiki frame (shared by the three workflow tools) ───
 //
-// The four workflow tools — `ingest`, `research`, `consolidate`, `init-content`
-// — accrete a persistent knowledge base over time, following the pattern
-// described in Karpathy's "LLM Wiki: Personal Knowledge Bases" gist:
+// The three workflow tools — `ingest`, `research`, `consolidate` — accrete a
+// persistent knowledge base over time, following the pattern described in
+// Karpathy's "LLM Wiki: Personal Knowledge Bases" gist:
 //
 //   https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
 //
+// Project-level scaffolding (schema + starter folders) lives OUTSIDE this
+// MCP surface — users run `ok seed` once from a terminal to populate the
+// `external-sources/`, `research/`, `articles/` layout plus matching
+// `config.yml` `folders:` entries.
+//
 // Each tool body prepends a common "Where this fits" section so the agent
 // orients on the layer + sibling tools + typical flow before diving into
-// step-by-step instructions. One definition, four consumers.
+// step-by-step instructions. One definition, three consumers.
 
-type WorkflowRole = 'ingest' | 'research' | 'consolidate' | 'init-content';
+type WorkflowRole = 'ingest' | 'research' | 'consolidate';
 
 const ROLE_LABEL: Record<WorkflowRole, string> = {
   ingest: 'raw-sources layer (preserve external material, no analysis)',
   research: 'wiki layer, provisional (synthesize findings that can still change)',
   consolidate: 'wiki layer, canonical (promote stabilized research to source-of-truth)',
-  'init-content': 'schema + bootstrap (populate the wiki on day 1)',
 };
 
 const ROLE_BEFORE: Record<WorkflowRole, string> = {
@@ -100,8 +104,6 @@ const ROLE_BEFORE: Record<WorkflowRole, string> = {
   research: '`ingest` has captured the relevant sources (or the user points at one)',
   consolidate:
     '`research` has produced a provisional article AND a decision has actually been made',
-  'init-content':
-    'a fresh or under-populated knowledge base; a new codebase you want agents to understand',
 };
 
 const ROLE_AFTER: Record<WorkflowRole, string> = {
@@ -111,8 +113,6 @@ const ROLE_AFTER: Record<WorkflowRole, string> = {
     'usually stop (research lives as provisional indefinitely) or `consolidate` once a decision lands',
   consolidate:
     'update 2–3 neighbor docs to link the new canonical article; research articles it supersedes gain a `superseded_by` pointer',
-  'init-content':
-    'ongoing `ingest` / `research` / `consolidate` as the project grows; the initial population is just day 1',
 };
 
 /**
@@ -124,12 +124,13 @@ const ROLE_AFTER: Record<WorkflowRole, string> = {
 export function buildWorkflowFrame(role: WorkflowRole): string {
   return `## Where this fits
 
-Open Knowledge accretes a persistent wiki through four workflow tools, mapped to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+Open Knowledge accretes a persistent wiki through three workflow tools, mapped to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
 
 - **Raw sources** (immutable) — \`ingest\`
 - **Wiki, provisional** — \`research\`
 - **Wiki, canonical** — \`consolidate\`
-- **Schema + bootstrap** — \`init-content\` + \`.open-knowledge/config.yml\`
+
+(Project-level folder structure + \`config.yml\` scaffolding is handled by the \`ok seed\` CLI, not by an MCP tool.)
 
 **This tool operates in the ${ROLE_LABEL[role]}.**
 
