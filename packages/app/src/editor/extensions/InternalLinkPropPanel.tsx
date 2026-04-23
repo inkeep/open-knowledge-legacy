@@ -58,7 +58,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { normalizeDocNameInput } from '../../lib/doc-paths';
 import { cn } from '../../lib/utils';
-import { dispatchAssetClick } from '../asset-dispatch/dispatcher';
+import { dispatchAssetClick } from '../asset-dispatch';
 import {
   buildCurrentRelativeMarkdownHref,
   classifyCurrentMarkdownHref,

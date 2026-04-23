@@ -40,7 +40,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { mergeAttributes } from '@tiptap/core';
 import { createElement } from 'react';
-import { dispatchAssetClick } from '../asset-dispatch/dispatcher';
+import { dispatchAssetClick } from '../asset-dispatch';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
 import { createAssetContextMenuPlugin } from '../plugins/asset-context-menu';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
