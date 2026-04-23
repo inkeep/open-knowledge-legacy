@@ -254,9 +254,14 @@ test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async (
     api,
     '<Callout type="note">\n<Accordion title="Inner">\n\nbody\n\n</Accordion>\n</Callout>\n',
   );
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
+  // M4: wait for the innermost descriptor to mount (the fixture nests
+  // Accordion inside Callout — pre-fix this waited for `image`, which never
+  // appeared and timed out under any non-CI runner that picked up the file).
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
 
-  await selectFirstJsxComponent(page, 'Image');
+  // Select the innermost (Accordion) — the breadcrumb should show its
+  // ancestor chain and clicking the outer Callout button flips selection.
+  await selectFirstJsxComponent(page, 'Accordion');
 
   // Use CSS locator (`.jsx-component-breadcrumb`): when no block is
   // selected, the nav is `aria-hidden="true"` and hidden from Playwright's
@@ -300,14 +305,15 @@ test('S8: aria-live textContent announces the selected block', async ({ page, ap
     api,
     '<Callout type="note">\n<Accordion title="Inner">\n\nbody\n\n</Accordion>\n</Callout>\n',
   );
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
+  // M4: same fix as S7 — wait for a selector that matches the seeded fixture.
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
 
-  await selectFirstJsxComponent(page, 'Image');
+  await selectFirstJsxComponent(page, 'Accordion');
 
   // 200ms debounce + margin. aria-atomic="true" ensures AT reads the full
   // announcement on every mutation.
   const liveRegion = page.locator('[role="status"][aria-live="polite"]');
-  await expect(liveRegion).toContainText('Selected: Image', { timeout: 2_000 });
+  await expect(liveRegion).toContainText('Selected: Accordion', { timeout: 2_000 });
 });
 
 // ── S9: Three-axis composition (SC-4) ────────────────────────────────────
@@ -388,7 +394,7 @@ test('S10: clicking "Document" breadcrumb anchor clears selection via programmat
   expect(selectionKind).toBe('empty');
 });
 
-// ── S11: Per-type halo inset values (SC-P-17 / Precedent #29) ────────────
+// ── S11: Per-type halo inset values (SC-P-17 / Precedent #31) ────────────
 //
 // Parameterized across [cards, steps] (-6px), [imagezoom] (-2px),
 // default (-4px). Tests CSS-variable resolution at runtime — only a real
@@ -439,7 +445,7 @@ for (const { fixture, componentType, expectedInset } of INSET_CASES) {
 
 // ── S12: Halo z-index: -1 + content visible behind (SC-INV-3) ────────────
 //
-// Precedent #26 (all user content visible + editable) + SPEC §2 line 108:
+// Precedent #30 (all user content visible + editable) + SPEC §2 line 108:
 // the halo must NOT occlude block content. `z-index: -1` on the ::after
 // pseudo-element places the halo behind the wrapper's own content.
 
@@ -485,7 +491,7 @@ test('S12: halo z-index is -1 and .component-children is fully visible when sele
   expect(contentState.height).toBeGreaterThan(0);
 });
 
-// ── S13: Callout type-color inheritance (Precedent #29) ──────────────────
+// ── S13: Callout type-color inheritance (Precedent #31) ──────────────────
 //
 // `[data-component-type="callout"] { --selection-halo-color: var(--callout-
 // type-color, var(--ring)) }` means the halo inherits the callout's own
@@ -734,8 +740,12 @@ test('S17: Tab from editor reaches every non-innermost breadcrumb button in orde
     api,
     '<Callout type="note">\n<Accordion title="Deep">\n\nbody\n\n</Accordion>\n</Callout>\n',
   );
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
-  await selectFirstJsxComponent(page, 'Image');
+  // M4: same fix as S7 / S8 — wait for the innermost descriptor in the
+  // seeded fixture (Accordion); selecting it surfaces the breadcrumb with
+  // Document + Callout as the tab-reachable ancestors and Accordion as the
+  // innermost (aria-current span, NOT a button).
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
+  await selectFirstJsxComponent(page, 'Accordion');
 
   // Focus the editor first so Tab starts from a known position.
   await page.locator('.ProseMirror').focus();

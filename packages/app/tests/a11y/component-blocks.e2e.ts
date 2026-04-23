@@ -96,21 +96,35 @@ test('A11Y02: NodeSelection announces component via aria-live region', async ({ 
     timeout: 5000,
   });
 
-  // Click inside the component children.
-  const proseMirror = page.locator('.ProseMirror');
-  await proseMirror.click();
-
-  // The SelectionAnnouncer wires an aria-live="polite" region into the DOM
+  // The SelectionAnnouncer wires a `role="status" aria-live="polite"` region
   // (see `packages/app/src/components/editor/SelectionAnnouncer.tsx` +
-  // precedent #34). Assert it's present and wired so WCAG 4.1.3 Status
-  // Messages is a real contract — a refactor that removes the announcer
-  // must fail this test, not keep it green with an unconditional count >= 0.
-  const liveRegion = page.locator('[aria-live]').first();
-  await expect(liveRegion).toBeAttached({ timeout: 2000 });
-  const ariaLiveValue = await liveRegion.getAttribute('aria-live');
-  expect(ariaLiveValue, 'aria-live region must declare a polite/assertive priority').toMatch(
-    /^(polite|assertive|off)$/,
-  );
+  // precedent #36). M5 review fix: previously the test allowed `aria-live`
+  // values of `off` (which defeats announcements entirely — the very
+  // invariant WCAG 4.1.3 Status Messages requires this test to defend) and
+  // never triggered a selection change to verify the announcer actually
+  // updates its text content. Tighten both: assert the canonical
+  // role+polite shape, drive a real selection, and assert the textContent
+  // surfaces the descriptor name (mirrors S8 in selection-indicator.e2e.ts).
+  await page.waitForFunction(() => Boolean(window.__activeEditor), null, { timeout: 5000 });
+  await page.evaluate(() => {
+    const editor = window.__activeEditor;
+    if (!editor) return;
+    let foundPos = -1;
+    editor.state.doc.descendants((node: { type: { name: string } }, pos: number) => {
+      if (foundPos !== -1) return false;
+      if (node.type.name === 'jsxComponent') {
+        foundPos = pos;
+        return false;
+      }
+      return true;
+    });
+    if (foundPos !== -1) editor.chain().focus().setNodeSelection(foundPos).run();
+  });
+
+  const liveRegion = page.locator('[role="status"][aria-live="polite"]').first();
+  await expect(liveRegion).toBeAttached({ timeout: 2_000 });
+  // 200ms debounce in SelectionAnnouncer + margin for selection propagation.
+  await expect(liveRegion).toContainText('Selected: Callout', { timeout: 2_000 });
 });
 
 // ── A11Y03: PropPanel Esc closes and returns focus ─────────────
@@ -212,7 +226,7 @@ test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) 
   });
 
   // Unregistered-component content MUST render through the wildcard
-  // descriptor per Precedent #26 (all user content always visible) —
+  // descriptor per Precedent #30 (all user content always visible) —
   // otherwise the component name + content silently disappears. Assert
   // the badge surfaces instead of short-circuiting on absence.
   const wildcardBadge = page
@@ -291,47 +305,19 @@ test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contra
   // Run axe-core against the editor surface. Runner chrome (sidebar, header)
   // is shared with other surfaces and not this suite's responsibility.
   // `disableRules(['color-contrast'])` is explained in the test header.
+  // axe-core's keyboard / aria / form-label / landmark / link-purpose rules
+  // already enforce tabindex correctness and accessible names on every
+  // rendered element — the previously-here structural for-loops were
+  // explicitly redundant and silently vacuous under fixtures with zero
+  // interactive elements (Co8 review fix). axe-core's `violations: []`
+  // expectation is the load-bearing assertion; keeping the loops added
+  // failure-shape redundancy without coverage gain.
   const axeResults = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .include('.ProseMirror')
     .disableRules(['color-contrast'])
     .analyze();
   expect(axeResults.violations).toEqual([]);
-
-  // Structural assertions (redundant with axe but cheap — kept as a
-  // specification of the editor's minimum a11y contract so regressions
-  // show up even if an axe rule is later disabled):
-  // 1. All interactive elements should be keyboard-reachable
-  const interactiveElements = page.locator(
-    '.ProseMirror button, .ProseMirror [role="button"], .ProseMirror input, .ProseMirror select',
-  );
-  const count = await interactiveElements.count();
-
-  for (let i = 0; i < count; i++) {
-    const el = interactiveElements.nth(i);
-    const tabIndex = await el.getAttribute('tabindex');
-    // Elements should not have tabindex="-1" (which removes from tab order)
-    // unless they are explicitly managed by a focus-management system
-    if (tabIndex !== null) {
-      expect(Number.parseInt(tabIndex, 10)).toBeGreaterThanOrEqual(-1);
-    }
-  }
-
-  // 2. Buttons should have accessible text
-  const buttons = page.locator('.ProseMirror button');
-  const buttonCount = await buttons.count();
-  for (let i = 0; i < buttonCount; i++) {
-    const btn = buttons.nth(i);
-    const text = await btn.textContent();
-    const ariaLabel = await btn.getAttribute('aria-label');
-    const ariaLabelledBy = await btn.getAttribute('aria-labelledby');
-    // Button should have SOME form of accessible name
-    const hasAccessibleName =
-      (text && text.trim().length > 0) ||
-      (ariaLabel && ariaLabel.trim().length > 0) ||
-      ariaLabelledBy !== null;
-    expect(hasAccessibleName).toBeTruthy();
-  }
 });
 
 // ── A11Y11: URL props with javascript: scheme render inert (XSS mitigation) ──

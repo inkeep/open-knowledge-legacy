@@ -147,6 +147,38 @@ describe('I20 — scope boundary (D-MF17)', () => {
     const gfmForm = '> [!success]+\n> Body\n';
     expect(mdRoundTrip(gfmForm)).toBe(gfmForm);
   });
+
+  test('unknown-type foldable marker honored under "fallback to note" path (M1 fix)', () => {
+    // `MYSTERY` is NOT in the alias map, so type resolution falls back to
+    // `note` (a GFM type). Pre-M1 the foldable-marker capture was gated on
+    // pre-resolution `type` and dropped the marker for any unknown token —
+    // even though the resolved type was always a GFM-5 member. Post-M1 the
+    // capture gates on `resolvedType`, so unknown-type + foldable combos
+    // emit the foldable attrs the author intended.
+    const minus = '> [!MYSTERY]-\n> Body\n';
+    const minusJson = mdManager.parse(minus);
+    const minusCallout = findFirstNode(minusJson, 'jsxComponent');
+    const minusProps = (minusCallout?.attrs?.props ?? {}) as Record<string, unknown>;
+    expect(minusProps.type).toBe('note');
+    expect(minusProps.collapsible).toBe(true);
+    expect(minusProps.defaultOpen).toBe(false);
+
+    const plus = '> [!DISCOVERY]+\n> Body\n';
+    const plusJson = mdManager.parse(plus);
+    const plusCallout = findFirstNode(plusJson, 'jsxComponent');
+    const plusProps = (plusCallout?.attrs?.props ?? {}) as Record<string, unknown>;
+    expect(plusProps.type).toBe('note');
+    expect(plusProps.collapsible).toBe(true);
+    expect(plusProps.defaultOpen).toBe(true);
+  });
+
+  test('unknown-type foldable round-trips pristine (γ sourceRaw)', () => {
+    // γ pristine path preserves the authored bytes verbatim regardless of
+    // type resolution. Both the alias coercion AND the M1 foldable
+    // honoring stay invisible on disk until the user edits.
+    const gfmForm = '> [!MYSTERY]-\n> Body\n';
+    expect(mdRoundTrip(gfmForm)).toBe(gfmForm);
+  });
 });
 
 describe('I20 — PBT: every GFM type × marker round-trips', () => {

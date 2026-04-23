@@ -85,6 +85,27 @@ export interface ParseHealthMetrics {
    * signal for targeted XSS probes against the editor surface.
    */
   jsxPropDropped: Record<string, number>;
+  /**
+   * Move-up / Move-down click failures on the JSX chrome bar (Mi4 review
+   * fix). Keyed by direction (`'up'` or `'down'`). Elevates the structured
+   * `jsx-component-move-failed` event from a one-off log line to an
+   * aggregable counter so ops can compute a click-failure rate against
+   * total move clicks (denominator: client-side click telemetry, not in
+   * scope here). Cardinality bounded to {up, down}.
+   */
+  jsxMoveFailed: Record<string, number>;
+  /**
+   * Stuck-state recovery affordance failures (Mi4 review fix). Keyed by
+   * registered descriptor name or `'wildcard'` — same low-cardinality
+   * shape as `jsxRenderFailure`. Elevates the structured
+   * `jsx-component-stuck-copy-failed` and `jsx-component-stuck-delete-failed`
+   * events from one-off log lines to aggregable counters. The denominator
+   * (number of stuck-state placeholders shown) is the existing
+   * `jsxAutoConvertFailed` counter — together they let ops compute the
+   * recovery success rate from the highest-friction UX moment.
+   */
+  jsxStuckCopyFailed: Record<string, number>;
+  jsxStuckDeleteFailed: Record<string, number>;
 }
 
 const metrics: {
@@ -93,12 +114,18 @@ const metrics: {
   jsxAutoConvertFailed: Record<string, number>;
   jsxAutoConvertSucceeded: Record<string, number>;
   jsxPropDropped: Record<string, number>;
+  jsxMoveFailed: Record<string, number>;
+  jsxStuckCopyFailed: Record<string, number>;
+  jsxStuckDeleteFailed: Record<string, number>;
 } = {
   parseFallback: { blockLevel: 0, wholeDoc: 0 },
   jsxRenderFailure: {},
   jsxAutoConvertFailed: {},
   jsxAutoConvertSucceeded: {},
   jsxPropDropped: {},
+  jsxMoveFailed: {},
+  jsxStuckCopyFailed: {},
+  jsxStuckDeleteFailed: {},
 };
 
 export function incrementBlockFallback(): void {
@@ -142,6 +169,30 @@ export function incrementJsxPropDropped(propName: string): void {
 }
 
 /**
+ * Increment the JSX chrome move-failed counter (Mi4 review fix). `direction`
+ * is the bounded set `'up'` or `'down'`; passing arbitrary strings is a
+ * caller bug. Pairs with the structured `jsx-component-move-failed`
+ * `console.warn` event in `JsxComponentView` for human-debug visibility.
+ */
+export function incrementJsxMoveFailed(direction: 'up' | 'down'): void {
+  metrics.jsxMoveFailed[direction] = (metrics.jsxMoveFailed[direction] ?? 0) + 1;
+}
+
+/**
+ * Increment the stuck-state Copy-source failure counter (Mi4 review fix).
+ * Same low-cardinality contract as {@link incrementJsxRenderFailure} —
+ * `component` is a registered descriptor name or the literal `'wildcard'`.
+ */
+export function incrementJsxStuckCopyFailed(component: string): void {
+  metrics.jsxStuckCopyFailed[component] = (metrics.jsxStuckCopyFailed[component] ?? 0) + 1;
+}
+
+/** See {@link incrementJsxStuckCopyFailed} — same low-cardinality contract. */
+export function incrementJsxStuckDeleteFailed(component: string): void {
+  metrics.jsxStuckDeleteFailed[component] = (metrics.jsxStuckDeleteFailed[component] ?? 0) + 1;
+}
+
+/**
  * Increment ypsMismatch.block counter.
  *
  * Reads through globalThis so test code and the y-prosemirror CJS patch share
@@ -166,6 +217,9 @@ export function getParseHealth(): ParseHealthMetrics {
     jsxAutoConvertFailed: { ...metrics.jsxAutoConvertFailed },
     jsxAutoConvertSucceeded: { ...metrics.jsxAutoConvertSucceeded },
     jsxPropDropped: { ...metrics.jsxPropDropped },
+    jsxMoveFailed: { ...metrics.jsxMoveFailed },
+    jsxStuckCopyFailed: { ...metrics.jsxStuckCopyFailed },
+    jsxStuckDeleteFailed: { ...metrics.jsxStuckDeleteFailed },
   };
 }
 
@@ -177,6 +231,9 @@ export function resetParseHealth(): void {
   for (const k of Object.keys(metrics.jsxAutoConvertSucceeded))
     delete metrics.jsxAutoConvertSucceeded[k];
   for (const k of Object.keys(metrics.jsxPropDropped)) delete metrics.jsxPropDropped[k];
+  for (const k of Object.keys(metrics.jsxMoveFailed)) delete metrics.jsxMoveFailed[k];
+  for (const k of Object.keys(metrics.jsxStuckCopyFailed)) delete metrics.jsxStuckCopyFailed[k];
+  for (const k of Object.keys(metrics.jsxStuckDeleteFailed)) delete metrics.jsxStuckDeleteFailed[k];
   const yps = ypsCounters();
   yps.block = 0;
   yps.inline = 0;

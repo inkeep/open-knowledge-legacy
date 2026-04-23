@@ -272,6 +272,32 @@ describe('sanitizeComponentProps — nested URL traversal', () => {
     expect(output.meta.label).toBe('x');
   });
 
+  test('drops dangerous prop names inside nested object (Mi3 review fix)', () => {
+    // Mi3: top-level filter dropped `dangerouslySetInnerHTML` / `on*`; the
+    // nested traversal previously passed them through. A future descriptor
+    // that spreads nested attrs onto a React element would have smuggled
+    // them past sanitization. The Mi3 fix mirrors the top-level filter at
+    // depth.
+    const input = {
+      items: [
+        {
+          label: 'safe',
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately exercising the dangerous-name path
+          onClick: 'alert(1)' as any,
+          dangerouslySetInnerHTML: { __html: '<script>x</script>' },
+        },
+      ],
+    };
+    const output = sanitizeComponentProps(input) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(output.items[0]).toBeDefined();
+    expect(Object.hasOwn(output.items[0], 'label')).toBe(true);
+    expect(output.items[0].label).toBe('safe');
+    expect(Object.hasOwn(output.items[0], 'onClick')).toBe(false);
+    expect(Object.hasOwn(output.items[0], 'dangerouslySetInnerHTML')).toBe(false);
+  });
+
   test('sanitizes URL at depth 6 (no recursion cap)', () => {
     // Earlier revisions capped recursion at depth 4 and fail-opened nested
     // URLs past that depth — letting `{a:{b:{c:{d:{e:{url:'javascript:…'}}}}}}`

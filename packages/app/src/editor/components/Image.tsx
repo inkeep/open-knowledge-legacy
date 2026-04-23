@@ -46,7 +46,7 @@
  * `react-medium-image-zoom` (the library the upstream docs lib wraps
  * internally; now our direct dep per US-001 / FR-16).
  *
- * Precedent #26 (all user content visible): there is no children slot — the
+ * Precedent #30 (all user content visible): there is no children slot — the
  * descriptor is `isSelfClosing: true`. The caption round-trips as a typed
  * string prop, not a reactnode, so γ preserves it byte-identical through
  * PropPanel edits.

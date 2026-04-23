@@ -21,7 +21,7 @@
  * defaultOpen). US-007 adds Video with the FR-3 9-prop HTML5 `<video>` shape
  * (pure HTML5 wrapper per D-MF12 — no URL sniffing, no iframe emission, no
  * `start` prop). US-008 widens Audio from the pre-narrow 2-prop shape
- * (src/title) to the FR-4 7-prop shape (src/title/autoplay/loop/muted/preload
+ * (src/title) to the FR-4 7-prop shape (src/title/autoPlay/loop/muted/preload
  * + children for `<source>`/`<track>` passthrough) and flips `hasChildren:
  * false → true` (drops `isSelfClosing`) — the pre-US-008 state was a bug: the
  * inline renderer in `componentMap` passed children but the descriptor
@@ -271,7 +271,7 @@ const videoProps: PropDef[] = [
 //
 // FR-4 (SPEC 2026-04-23-cb-v2-md-foundation): HTML5 `<audio>` wrapper with
 // native controls always on (NG7 "no confidently-broken chrome"). 7-prop
-// surface: `src` + `title` + `autoplay` + `loop` + `muted` + `preload` (enum)
+// surface: `src` + `title` + `autoPlay` + `loop` + `muted` + `preload` (enum)
 // + children (reactnode, for `<source>` / `<track>` passthrough).
 //
 // No `controls` prop — per FR-4, controls are always on. Authors who want a
@@ -307,6 +307,10 @@ const audioProps: PropDef[] = [
   // media descriptors across two casings for no authoring benefit. Per D-MF7
   // greenfield (no migration) we standardize on camelCase here; the renderer
   // passes `autoPlay={props.autoPlay}` straight through.
+  // WYH2 review fix: declare in the same `autoPlay → muted → loop` order
+  // as the Video descriptor (built-ins.ts L232-251) so the auto-generated
+  // PropPanel column order is consistent across the two media primitives.
+  // No runtime semantic change — purely a presentation alignment.
   {
     name: 'autoPlay',
     type: 'boolean',
@@ -314,16 +318,16 @@ const audioProps: PropDef[] = [
     description: 'Begin playback as soon as possible (usually requires muted)',
   },
   {
-    name: 'loop',
-    type: 'boolean',
-    required: false,
-    description: 'Restart from the beginning when playback ends',
-  },
-  {
     name: 'muted',
     type: 'boolean',
     required: false,
     description: 'Mute audio on load',
+  },
+  {
+    name: 'loop',
+    type: 'boolean',
+    required: false,
+    description: 'Restart from the beginning when playback ends',
   },
   {
     name: 'preload',

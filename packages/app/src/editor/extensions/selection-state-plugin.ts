@@ -1,5 +1,5 @@
 /**
- * SelectionStatePlugin — the canonical block-selection state store (Precedent #29).
+ * SelectionStatePlugin — the canonical block-selection state store (Precedent #31).
  *
  * Derives a typed {selectedBlockId, ancestorChain, selectionOrigin, isDragging}
  * state from the current PM selection + event-classified origin. One source of
@@ -436,7 +436,7 @@ export function isBlockNavigationKey(key: string): boolean {
  * Note: this is the ONE intentional case where the plugin dispatches a tx.
  * The plugin remains read-only with respect to the PM doc (SC-INV-1
  * preserved); the dispatch is a meta-only signal carrier, not a doc
- * mutation. The CLAUDE.md Precedent #29 docstring acknowledges this.
+ * mutation. The PRECEDENTS.md Precedent #31 docstring acknowledges this.
  */
 function scheduleRefresh(editor: Editor): void {
   // The dragstart/dragend may fire during PM's internal event processing.

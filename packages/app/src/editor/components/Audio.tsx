@@ -3,13 +3,13 @@
  * FR-4 + FR-6).
  *
  * Pure HTML5 `<audio>` wrapper. Renders the descriptor's 7-prop surface:
- * `src`, `title`, `autoplay`, `loop`, `muted`, `preload` (+ `children` for
+ * `src`, `title`, `autoPlay`, `loop`, `muted`, `preload` (+ `children` for
  * `<source>` / `<track>` passthrough).
  *
  * ── Why `controls` is not a prop ─────────────────────────────────────────────
  *
  * Per FR-4 + NG7 "no confidently-broken chrome" — controls are ALWAYS on.
- * Authors who want a chrome-less audio (rare — autoplay background loop)
+ * Authors who want a chrome-less audio (rare — `autoPlay` background loop)
  * write a raw `<audio>` element in MDX rather than using this descriptor.
  * The descriptor-dispatched Audio is always a user-visible player.
  *

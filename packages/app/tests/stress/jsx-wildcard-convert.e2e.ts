@@ -5,7 +5,7 @@
  * Bug class this guards against:
  *   `JsxComponentView` registers an effect that schedules a
  *   `requestAnimationFrame` to replace an unregistered `jsxComponent` with
- *   a `rawMdxFallback` (Precedent #26 — "all user content visible and
+ *   a `rawMdxFallback` (Precedent #30 — "all user content visible and
  *   editable; if a component render fails, the NodeView swaps to a nested
  *   CM"). The effect uses a `convertedRef` one-shot guard. Flipping that
  *   ref BEFORE the rAF fires is StrictMode-unsafe: the intentional

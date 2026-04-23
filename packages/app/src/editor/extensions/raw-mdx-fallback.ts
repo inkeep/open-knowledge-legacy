@@ -6,13 +6,13 @@
  *
  * FR-30..FR-35: NodeView embeds a CodeMirror 6 editor for inline editing
  * of raw MDX source, replacing the previous plain-text badge view.
- * Direct PM dispatch pattern (Precedent #24), NOT y-codemirror.next.
+ * Direct PM dispatch pattern (Precedent #28), NOT y-codemirror.next.
  *
  * Outer arrow-into handler (canonical PM+CM pattern per
  * <https://prosemirror.net/examples/codemirror/>): when the outer PM cursor
  * is at a textblock boundary and the user presses an arrow key whose
  * natural target is this fallback block, nudge PM to land selection inside
- * the node. The RawMdxFallbackView's selectionUpdate effect (Precedent #27)
+ * the node. The RawMdxFallbackView's selectionUpdate effect (Precedent #31)
  * then forwards focus + caret into the nested CM.
  */
 import { RawMdxFallback as BaseRawMdxFallback } from '@inkeep/open-knowledge-core';

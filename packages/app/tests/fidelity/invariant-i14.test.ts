@@ -100,25 +100,31 @@ describe('I14 — rawMdxFallback byte-identity (crash-taxonomy corpus)', () => {
 });
 
 describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures)', () => {
-  // 10 fresh malformed-MDX fixtures covering the shape space outside the
-  // crash-taxonomy corpus. Each is a canonical "user typed broken MDX"
-  // scenario that should cleanly degrade to rawMdxFallback with byte-exact
-  // sourceRaw preservation.
-  const fixtures: Array<{ id: string; name: string; input: string }> = [
-    {
-      id: 'M01',
-      name: 'unclosed-paired-tag',
-      input: '# Doc\n\n<Widget>\n\nContent that never closes.\n\n# Later\n',
-    },
+  // Two-tier corpus per pre-QA review M6:
+  //
+  //   ALWAYS_FALLBACK — fixtures whose shape MUST emit at least one
+  //     rawMdxFallback under any conformant parser. Per-fixture pin
+  //     `expect(fallbacks.length).toBeGreaterThanOrEqual(1)` ensures the
+  //     byte-identity invariant is deterministically exercised on these.
+  //     A parser change that lets one of these parse clean is a regression
+  //     — accept the failure, then promote intentionally if appropriate.
+  //
+  //   MAY_FALLBACK — fixtures whose shape is ambiguous under the agnostic
+  //     MDX mode (R23-tolerant). Some emit fallbacks today, some don't,
+  //     and the boundary is sensitive to the parser's tolerance heuristics.
+  //     We don't pin per-fixture (would couple I14 to incidental tolerance
+  //     behavior); the suite-level floor is the canary across the whole
+  //     bucket.
+  //
+  // Pre-fix the loop over `fallbacks` short-circuited to a no-op when a
+  // fixture parsed clean, so byte-identity was exercised on a non-
+  // deterministic subset. Splitting the corpus restores deterministic
+  // exercise on the load-bearing shapes.
+  const ALWAYS_FALLBACK: Array<{ id: string; name: string; input: string }> = [
     {
       id: 'M02',
       name: 'tag-mismatch-open-close',
       input: '# Doc\n\n<Widget>Content</Callout>\n\n# Later\n',
-    },
-    {
-      id: 'M03',
-      name: 'nested-unclosed-inner',
-      input: '# Doc\n\n<Outer>\n\n<Inner>\n\nForgot to close\n\n</Outer>\n',
     },
     {
       id: 'M04',
@@ -131,14 +137,27 @@ describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures
       input: '# Doc\n\n<Comp title="never closed>\n\nContent\n\n</Comp>\n',
     },
     {
-      id: 'M06',
-      name: 'unclosed-self-closing-slash',
-      input: '# Doc\n\n<Icon name="check" /\n\n# Later\n',
-    },
-    {
       id: 'M07',
       name: 'double-open-same-tag',
       input: '# Doc\n\n<Widget><Widget>nested open\n\n</Widget>\n',
+    },
+  ];
+
+  const MAY_FALLBACK: Array<{ id: string; name: string; input: string }> = [
+    {
+      id: 'M01',
+      name: 'unclosed-paired-tag',
+      input: '# Doc\n\n<Widget>\n\nContent that never closes.\n\n# Later\n',
+    },
+    {
+      id: 'M03',
+      name: 'nested-unclosed-inner',
+      input: '# Doc\n\n<Outer>\n\n<Inner>\n\nForgot to close\n\n</Outer>\n',
+    },
+    {
+      id: 'M06',
+      name: 'unclosed-self-closing-slash',
+      input: '# Doc\n\n<Icon name="check" /\n\n# Later\n',
     },
     {
       id: 'M08',
@@ -157,37 +176,38 @@ describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures
     },
   ];
 
-  // Per-fixture: byte-identity guarantee. If the parse produces a fallback,
-  // every fallback's sourceRaw must be a verbatim substring of the input.
-  // Some fixtures parse cleanly under agnostic MDX mode — that's not a
-  // failure (the parser accepted authored input without needing to degrade)
-  // — but the byte-identity exercise of any fallback emission is still
-  // asserted below.
-  for (const fixture of fixtures) {
-    test(`${fixture.id} — ${fixture.name}`, () => {
+  // ALWAYS_FALLBACK: per-fixture pin of `>= 1` fallbacks AND byte-identity.
+  for (const fixture of ALWAYS_FALLBACK) {
+    test(`${fixture.id} — ${fixture.name} (always emits ≥ 1 fallback + byte-identity)`, () => {
+      const fallbackCount = assertRawMdxFallbackByteIdentity(fixture.input, fixture.id);
+      expect(
+        fallbackCount,
+        `${fixture.id} must emit at least one rawMdxFallback. ` +
+          'If this fails, the parser silently became more lenient on a shape ' +
+          'that should always degrade — review whether the change is intentional.',
+      ).toBeGreaterThanOrEqual(1);
+    });
+  }
+
+  // MAY_FALLBACK: still asserts byte-identity if any fallback fires;
+  // tolerates 0 fallbacks (parser accepted the input under agnostic mode).
+  for (const fixture of MAY_FALLBACK) {
+    test(`${fixture.id} — ${fixture.name} (byte-identity if any fallback fires)`, () => {
       assertRawMdxFallbackByteIdentity(fixture.input, fixture.id);
     });
   }
 
-  // Suite-level floor (M12 ratchet): the hand-authored corpus as a whole
-  // MUST produce at least `CORPUS_FALLBACK_FLOOR` rawMdxFallback emissions.
-  // This closes the silent-degradation failure mode the review flagged:
-  // previously the per-fixture test accepted "0 or 1+ fallbacks" — a future
-  // parser change that silently accepted every corpus fixture would have
-  // left the byte-identity invariant un-exercised. With the floor, a parser
-  // change that accepts more MDX MUST explicitly lower this constant (and
-  // the accompanying review comment) — the ratchet makes it auditable.
-  //
-  // CORPUS_FALLBACK_FLOOR is calibrated to current-state production across
-  // the 10-fixture corpus (2026-04-23): the parser currently emits ~4
-  // fallbacks. Pinning at 3 leaves room for one fixture to drift cleaner
-  // without triggering the ratchet (drift beyond that is a signal worth
-  // investigating — either a fixture regressed or the parser became more
-  // lenient in a way that collapses the byte-identity exercise).
-  const CORPUS_FALLBACK_FLOOR = 3;
+  // Suite-level floor (M12 ratchet, refined post-M6 review): the
+  // ALWAYS_FALLBACK bucket guarantees ≥ 4 fallbacks (one per fixture).
+  // The MAY_FALLBACK bucket adds opportunistic coverage. Total floor of 4
+  // is the deterministic minimum the per-fixture pins enforce; if a future
+  // change reduces ALWAYS_FALLBACK (e.g. promotes one to MAY_FALLBACK),
+  // adjust the floor in lockstep with the pin removal so the ratchet
+  // stays auditable.
+  const CORPUS_FALLBACK_FLOOR = 4;
 
   test(`hand-authored corpus produces ≥ ${CORPUS_FALLBACK_FLOOR} fallbacks total (M12 ratchet)`, () => {
-    const totalFallbacks = fixtures.reduce((sum, fixture) => {
+    const totalFallbacks = [...ALWAYS_FALLBACK, ...MAY_FALLBACK].reduce((sum, fixture) => {
       const parsed = mdManager.parseWithFallback(fixture.input);
       return sum + collectRawMdxFallbacks(parsed).length;
     }, 0);

@@ -95,7 +95,7 @@ function loadSnapshot(): SchemaSnapshot | null {
  */
 interface AllowedNarrowing {
   nodeType: string;
-  kind: 'content' | 'attr-removed' | 'atom-widening';
+  kind: 'content' | 'attr-removed';
   /** Attr name for `attr-removed`; undefined otherwise. */
   attrName?: string;
   specRef: string;
@@ -214,11 +214,18 @@ describe('R10: schema add-only invariant', () => {
       // ANY change as suspect: when the expression changes, the delta
       // must be explicitly registered in ALLOWED_NARROWINGS (with
       // `kind: 'content'`) AND the schema-snapshot.json must be
-      // regenerated. This closes the silent-narrowing hazard flagged in
-      // the CB-v2-MD review M10 — previously a content narrowing slipped
-      // through as long as `bun run generate-schema-snapshot` was re-run
-      // in the same commit, because this test just compared against the
-      // new snapshot.
+      // regenerated.
+      //
+      // Mi2 review fix: this is a registry with social enforcement, not a
+      // mechanical close on the same-commit escape hatch. A developer who
+      // narrows the schema AND regenerates the snapshot in one commit
+      // produces `expected === actual` here and the test silently passes.
+      // Both the snapshot diff and the ALLOWED_NARROWINGS update are
+      // required to land for the change to be auditable; PR review reads
+      // the registry diff as the load-bearing gate. A truly mechanical
+      // close requires a separate baseline file + a regen script that
+      // refuses to run unless the registry has a matching entry; that
+      // hardening is tracked but not in scope for the foundation.
       if (expected.content === actual.content) continue; // unchanged — OK
       if (expected.content !== '' && isAllowedNarrowing(nodeType, 'content')) {
         // Explicit registration consulted — delta is authorized.

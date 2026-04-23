@@ -22,8 +22,15 @@ byte-identically on pristine save.
 | `Callout` | Content | `> [!NOTE]\nText` (GFM alerts; `+`/`-` suffix for foldable) | `<Callout type="note" title="…" icon="lucide:…" color="#…" collapsible defaultOpen>…</Callout>` |
 | `Image` | Media | `![alt](src)` (standard CommonMark) | `<Image src="…" alt="…" width={…} height={…} caption="…" title="…" loading="lazy" zoom />` |
 | `Video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<Video src="…" poster="…" autoPlay muted loop playsInline controls preload="…">…</Video>` |
-| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoplay loop muted preload="…">…</Audio>` |
+| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoPlay loop muted preload="…">…</Audio>` |
 | `Accordion` | Content | `<details open><summary>X</summary>Y</details>` | `<Accordion title="X" defaultOpen icon="lucide:…" description="…" id="…" name="…">Y</Accordion>` |
+
+> **Prop counts in this section** include `children` for components
+> that accept it (every component except `Image`). The `Props (N)` count
+> matches the number of typed entries in the component's prop panel +
+> the children slot, so you can read it as "everything that lands in
+> the editor surface." `Image` has no children slot (it's
+> self-closing), so its count reflects only typed props.
 
 ### Callout
 
@@ -67,19 +74,19 @@ trigger foldable rendering unless the type is one of the GFM five.
 **Parser alias map.** Common Obsidian / Mintlify types fold on disk to
 their GFM-family closest (`success` → `tip`, `danger` → `caution`,
 `idea` → `tip`, `info` → `note`, etc.). The fold is lossy-on-edit: the
-authored form survives byte-identical on pristine save via γ
-`sourceRaw`, but an edit through the WYSIWYG / prop panel canonicalizes
-to the folded GFM type. A broader alias-preserving enum is tracked as
-a future extension (see `SPEC.md` NG26) — it would extend the `type`
-prop without a schema narrow per precedent #9.
+authored form survives byte-identical on pristine save (the editor
+keeps your original bytes as long as you haven't touched the block),
+but an edit through the WYSIWYG / prop panel canonicalizes to the
+folded GFM type. A broader alias-preserving type set is on the roadmap
+and lands additively when it does — your existing content keeps
+working.
 
 **Unknown `type` values fall back to `note` in both authoring forms.**
 Whether authored as `<Callout type="custom">` MDX JSX or `> [!custom]`
 GFM-alert, unrecognized type tokens render with `note` styling. The
-authored token survives byte-identical on disk via γ `sourceRaw`, and
-the alias-coerced path (e.g. `success` → `tip`) additionally preserves
-the original token through a `data-authored-as` attribute — so when a
-future release extends the `type` enum (SPEC.md NG26), content
+authored token survives byte-identical on disk, and the alias-coerced
+path (e.g. `success` → `tip`) additionally remembers the original
+token — so when a future release extends the `type` set, content
 authored today under the narrow surface automatically upgrades to
 richer rendering without an edit pass.
 
@@ -117,15 +124,17 @@ with a native `<dialog>` modal; the library honors
 `prefers-reduced-motion` internally. Opt out of zoom with
 `zoom={false}`.
 
-**Authoring forms.** CommonMark `![alt](src)` renders via the native
-browser `<img>` (no zoom, no `<figure>` wrapper). The `<Image>` MDX
-form renders through the descriptor (zoom, caption, explicit
-dimensions, prop-panel-editable). Both forms round-trip byte-identical
-on pristine save; use `<Image>` when you want the richer UX, the
-CommonMark form when you want bare HTML semantics. Unifying the two
-parse paths to land on the same descriptor is tracked as future work
-alongside the Obsidian `![[file.ext]]` wiki-embed surface (see
-`SPEC.md` NG24).
+**Authoring forms.** Both CommonMark `![alt](src)` and the `<Image>`
+MDX form render through the same descriptor — click-to-zoom is on by
+default in both cases. The difference is the prop surface: CommonMark
+carries `src`, `alt`, and `title` (via `![alt](src "title")`); the MDX
+form additionally exposes `width`, `height`, `caption`, `loading`, and
+`zoom`. Use the MDX form when you want a caption (the `<figure>` +
+`<figcaption>` wrapper only appears when `caption` is set), explicit
+dimensions, or to opt out of zoom with `zoom={false}`. Both forms
+round-trip byte-identical on pristine save. Obsidian `![[file.ext]]`
+wiki-embed is a separate parse path with its own renderer (out of
+scope for this guide).
 
 ### Video
 
@@ -134,10 +143,10 @@ explicit-iframe pattern for embedded services: **no YouTube / Vimeo URL
 auto-promotion**, no iframe emission. Authors embedding service videos
 write a raw `<iframe>` in MDX directly.
 
-**Props** (9): `src` (required), `title` (tooltip), `controls` (default
-`true`), `autoPlay`, `muted`, `loop`, `playsInline`, `poster`, `preload`
-(`'none'` \| `'metadata'` \| `'auto'`). `<track>` / `<source>` tags
-round-trip as children.
+**Props** (10): `src` (required), `title` (tooltip), `controls`
+(default `true`), `autoPlay`, `muted`, `loop`, `playsInline`, `poster`,
+`preload` (`'none'` \| `'metadata'` \| `'auto'`), and `children` —
+`<track>` / `<source>` tags round-trip via the children slot.
 
 ```mdx title="Video with poster + autoplay"
 <Video src="/clip.mp4" poster="/p.jpg" autoPlay muted loop />
@@ -148,9 +157,9 @@ round-trip as children.
 HTML5 `<audio>` wrapper with native controls always on (no way to hide
 the chrome — per the "no confidently-broken UI" rule).
 
-**Props** (6): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
-`preload` (`'none'` \| `'metadata'` \| `'auto'`). `<source>` / `<track>`
-tags round-trip as children.
+**Props** (7): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
+`preload` (`'none'` \| `'metadata'` \| `'auto'`), and `children` —
+`<source>` / `<track>` tags round-trip via the children slot.
 
 ```mdx title="Audio with preload hint"
 <Audio src="/clip.mp3" autoPlay loop preload="metadata" />
@@ -166,9 +175,9 @@ Standalone expand/collapse built on native HTML5 `<details>` /
 grouping via HTML5 `<details name="…">` (Chrome 120+, Safari 17.2+,
 Firefox 130+).
 
-**Props** (6): `title` (required), `defaultOpen`, `icon` (namespaced
+**Props** (7): `title` (required), `defaultOpen`, `icon` (namespaced
 lucide), `description`, `id` (for deep-linking), `name` (exclusive-group
-identifier).
+identifier), and `children` (the body content).
 
 ```mdx title="Standalone accordion"
 <Accordion title="Advanced options" defaultOpen id="advanced">
@@ -209,9 +218,11 @@ automatically so you can fill in required fields before you move on.
 ## Editing props
 
 When a component is selected, a hover chrome bar appears at the
-top-right with three icons:
+top-right with three groups of actions (rendered as up to four icon
+buttons depending on the block's position within its parent):
 
-1. **Move up / Move down** — reorder the component within its parent.
+1. **Move up / Move down** — reorder the component within its parent
+   (one button per direction; only shown when the move is meaningful).
 2. **Delete** — remove the component and its children.
 3. **Settings (gear)** — open the floating **settings panel**.
 
@@ -266,7 +277,8 @@ opt-in code.
 
 Components round-trip **byte-identical** on pristine save — content you
 haven't edited since parse serializes back to whatever form you wrote
-on disk. Hybrid γ serialization preserves the authoring shape:
+on disk. The editor's hybrid serialization preserves the authoring
+shape:
 
 - `> [!NOTE]` stays `> [!NOTE]`.
 - `> [!WARNING]-` stays `> [!WARNING]-` with the `+`/`-` marker intact.
@@ -308,6 +320,10 @@ Two situations trigger the fallback:
    The error message is shown in the chrome bar so you can diagnose
    what needs fixing.
 
+If the auto-convert itself can't land after a few retries (rare, but
+possible under unusual conditions), the block surfaces a stuck-state
+banner with **Copy source** and **Delete** buttons. Use Copy source to
+move the MDX into a fresh location, then Delete the failed block.
 Either way: your MDX bytes are preserved exactly as you authored them.
 The raw source never disappears.
 

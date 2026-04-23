@@ -1,7 +1,7 @@
 /**
  * Invariant I17 — Content-visibility invariant (static STOP rule).
  *
- * AGENTS.md Precedent #28 requires: "All user content visible and editable
+ * AGENTS.md Precedent #30 requires: "All user content visible and editable
  * (no hidden content). No `display: none` on `NodeViewContent`, no
  * read-only chrome covering user content, no `data-*` attribute hiding."
  *
@@ -36,7 +36,7 @@
  *
  * Every NodeView file must not contain source patterns that hide
  * `NodeViewContent` or the wrapping container. Documented exemptions are
- * permitted only when the comment block cites Precedent #28 by number
+ * permitted only when the comment block cites Precedent #30 by number
  * (enforcement: the exemption-strip regex requires the literal phrase).
  *
  * SPEC §7.1 I17.
@@ -50,29 +50,29 @@ import { fileURLToPath } from 'node:url';
 const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * NodeView source files governed by Precedent #28 — every file that renders
+ * NodeView source files governed by Precedent #30 — every file that renders
  * user content through the `<NodeViewContent>` JSX element.
  *
  * RawMdxFallbackCMView.tsx is the other NodeView in the codebase: it uses
  * NodeViewWrapper + imperative CodeMirror mount, exposing the content hole
  * via the nested CM's contentDOM rather than NodeViewContent JSX.
- * Precedent #24 governs that path.
+ * Precedent #28 (direct PM dispatch for nested editors) governs that path.
  *
  * compound-wrappers.tsx (and its `data-[state=inactive]:hidden` exemption)
  * was deleted 2026-04-23 per `specs/2026-04-23-cb-v2-md-foundation/` US-002 —
- * Precedent #27 (Context Bridge Registry) retracted on this branch.
+ * Precedent #29 (Context Bridge Registry) retracted on this branch.
  */
 const NODE_VIEW_SOURCES = ['src/editor/extensions/JsxComponentView.tsx'];
 
 /**
- * Strip blocks of code preceded by a comment citing Precedent #28 as a
+ * Strip blocks of code preceded by a comment citing Precedent #30 as a
  * documented exemption. The exemption must name the precedent by number —
  * a bare "this is fine" comment does not pass. The exemption window covers
  * ~20 lines of following code (enough for a typical render body).
  */
 function stripDocumentedExemptions(src: string): string {
   return src.replace(
-    /documented exemption from Precedent #28[\s\S]{1,2000}?\n(?:\n|$)/g,
+    /documented exemption from Precedent #30[\s\S]{1,2000}?\n(?:\n|$)/g,
     '\n/* EXEMPT */\n',
   );
 }
@@ -109,7 +109,7 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; re: RegExp }> = [
   },
 ];
 
-describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #28)', () => {
+describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #30)', () => {
   for (const rel of NODE_VIEW_SOURCES) {
     test(`${rel}: no NodeViewContent hiding`, () => {
       const full = join(APP_ROOT, rel);
@@ -118,7 +118,7 @@ describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #28)', () =>
       for (const { name, re } of FORBIDDEN_PATTERNS) {
         expect(
           re.test(scanned),
-          `${rel}: forbidden pattern "${name}" — hides user content. See AGENTS.md Precedent #28.`,
+          `${rel}: forbidden pattern "${name}" — hides user content. See AGENTS.md Precedent #30.`,
         ).toBe(false);
       }
     });

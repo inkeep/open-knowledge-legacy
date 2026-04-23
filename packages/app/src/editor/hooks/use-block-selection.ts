@@ -1,6 +1,6 @@
 /**
  * useBlockSelection — React hook that exposes `SelectionStatePlugin` state
- * (Precedent #27) to the React tree.
+ * (Precedent #31) to the React tree.
  *
  * Implementation: subscribes to TipTap's `transaction` + `selectionUpdate`
  * events — the canonical TipTap integration pattern (same path used by

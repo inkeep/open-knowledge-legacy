@@ -26,7 +26,7 @@
  * optional description as non-editable chrome (contentEditable=false). Body
  * renders inside `.accordion-body` unconditionally — browsers display:none
  * the content when `[open]` is unset, but PM's DOM is retained so children
- * stay live per Precedent #26 (all user content visible / editable).
+ * stay live per Precedent #30 (all user content visible / editable).
  *
  * Zero upstream-docs-lib React imports (D-MF2 / FR-6) — all styling flows
  * through the `[data-component-type="accordion"]` selector in globals.css

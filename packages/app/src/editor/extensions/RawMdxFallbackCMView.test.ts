@@ -5,7 +5,7 @@
  * for PM→CM and CM→PM synchronization, the `shouldEscapeNestedCM` boundary
  * predicate that drives arrow-key escape from nested CM to outer PM, and
  * `computeCMSelectionForwarding` — the PM→CM selection mirror decision
- * (ef49b53a, Precedent #27 "Selection state as typed PM PluginState").
+ * (ef49b53a, Precedent #31 "Selection state as typed PM PluginState").
  */
 
 import { describe, expect, test } from 'bun:test';

@@ -16,8 +16,9 @@
  * Three render branches:
  *   Branch 1 (Wildcard `'*'`): does NOT render a persistent chip — the
  *     NodeView immediately schedules a rAF-auto-convert into an editable
- *     `rawMdxFallback` (nested CodeMirror source editor, Precedent #28 /
- *     #26). A transient "Unknown component: X — source editable below"
+ *     `rawMdxFallback` (nested CodeMirror source editor, Precedent #28
+ *     direct PM dispatch + #30 all user content visible). A transient
+ *     "Unknown component: X — source editable below"
  *     placeholder flashes for at most one frame while the conversion
  *     dispatch lands.
  *   Branch 2 (Registered healthy): live React component + hover chrome
@@ -29,13 +30,16 @@
  *     (Precedent #28: parse failures AND render failures surface the same
  *     embedded source editor).
  *
- * Per Precedent #28: NodeViewContent is ALWAYS rendered, never display:none.
+ * Per Precedent #30: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
 import {
   incrementJsxAutoConvertFailed,
   incrementJsxAutoConvertSucceeded,
+  incrementJsxMoveFailed,
   incrementJsxRenderFailure,
+  incrementJsxStuckCopyFailed,
+  incrementJsxStuckDeleteFailed,
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
@@ -73,7 +77,7 @@ import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 //
 // Fallback: renders the original children wrapped in
 // `.jsx-component-error-fallback` (preserves the "surface the source so
-// users can edit out of error state" UX from Precedent #26). When
+// users can edit out of error state" UX from Precedent #30). When
 // `resetKey` flips (prop change, node-name change, auto-convert reset —
 // see the orchestrating effect at `resetKey` computation), the library
 // auto-remounts the subtree.
@@ -101,7 +105,7 @@ interface ComponentErrorBoundaryProps {
 
 function ComponentErrorFallback({ children }: FallbackProps & { children?: ReactNode }) {
   // react-error-boundary's FallbackProps (error, resetErrorBoundary) are
-  // intentionally ignored here — Precedent #26 says errored blocks render
+  // intentionally ignored here — Precedent #30 says errored blocks render
   // their children (source text) in place, not an error card. The CSS
   // class + the resetKeys-driven remount handle the visual recovery
   // story; the children passed through are the original subtree, which
@@ -241,7 +245,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const canMoveUp = isChildOfComponent && siblingIndex > 0;
   const canMoveDown = isChildOfComponent && siblingIndex < siblingCount - 1;
 
-  // Selection layer (Precedent #29): read canonical block-selection state
+  // Selection layer (Precedent #31): read canonical block-selection state
   // from SelectionStatePlugin and derive this wrapper's role.
   //
   //  - isInnermostSelected: THIS wrapper is the selected block. Paints halo.
@@ -445,10 +449,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // source bytes are available via Copy source even when the auto-convert
   // can't land.
   if (stuck) {
+    // M9 review fix: use action-oriented copy instead of internal jargon
+    // ("could not open source editor"). The stuck state is the highest-
+    // friction UX moment in the feature — the label should explain the
+    // recovery bridge (copy → close → paste elsewhere), not name an
+    // internal subsystem the user has never encountered.
     const label =
       descriptor.name === '*'
-        ? `Unknown component: ${node.attrs.componentName as string} — could not open source editor`
-        : `${descriptor.displayName ?? descriptor.name} — could not open source editor`;
+        ? `<${node.attrs.componentName as string}> isn't a known component. Copy the source to use it elsewhere, or delete the block.`
+        : `<${descriptor.displayName ?? descriptor.name}> failed to render (likely a bad prop). Copy the source to see what went wrong, or delete the block.`;
     const copySource = () => {
       try {
         const src = reconstructSource(node);
@@ -460,6 +469,10 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         // affordance still works, and the source bytes are safe in the
         // underlying node regardless of clipboard access — log at debug for
         // operator visibility so the stuck-state UX leaves a support trail.
+        // Mi4: paired with the structured-warn so ops can compute a
+        // recovery-success rate against the existing jsxAutoConvertFailed
+        // denominator.
+        incrementJsxStuckCopyFailed(descriptor.name);
         console.warn(
           JSON.stringify({
             event: 'jsx-component-stuck-copy-failed',
@@ -480,7 +493,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         // shift) are the expected failure shape — classify + log so the
         // stuck-state last-line-of-defense leaves a correlatable trail. Match
         // the Move Up/Down handler telemetry (same file, L645-656).
+        // Mi4: paired with the structured-warn so ops can aggregate.
         if (!(err instanceof RangeError)) throw err;
+        incrementJsxStuckDeleteFailed(descriptor.name);
         console.warn(
           JSON.stringify({
             event: 'jsx-component-stuck-delete-failed',
@@ -682,6 +697,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 editor.view.dispatch(tr.scrollIntoView());
               } catch (err) {
                 if (!(err instanceof RangeError)) throw err;
+                incrementJsxMoveFailed('up');
                 console.warn(
                   JSON.stringify({
                     event: 'jsx-component-move-failed',
@@ -720,6 +736,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 editor.view.dispatch(tr.scrollIntoView());
               } catch (err) {
                 if (!(err instanceof RangeError)) throw err;
+                incrementJsxMoveFailed('down');
                 console.warn(
                   JSON.stringify({
                     event: 'jsx-component-move-failed',
@@ -826,6 +843,17 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                   if (typeof p !== 'number') return;
                   const curNode = editor.state.doc.nodeAt(p);
                   if (!curNode) return;
+                  // Defense at the write boundary: PropPanel writes only target
+                  // `kind: 'element'` nodes. Today PropPanel never opens for
+                  // `kind: 'expression'` nodes (their componentName is empty,
+                  // which falls through to the wildcard descriptor with empty
+                  // `props`, so `hasEditableProps` is false). If a future refactor
+                  // changes that gate (e.g., custom PropPanel for expression
+                  // blocks), this spread would otherwise stamp element-shaped
+                  // attrs onto an expression node and the serializer at
+                  // `markdown/index.ts:jsxComponent` would silently emit
+                  // `sourceRaw` verbatim, dropping every PropPanel edit.
+                  if (curNode.attrs.kind !== 'element') return;
                   const currentProps = (curNode.attrs.props as Record<string, unknown>) ?? {};
                   // `undefined` means "clear this prop" — we DELETE the key
                   // rather than storing `{[propName]: undefined}`. If we kept

@@ -104,6 +104,26 @@ describe('builtInComponents manifest', () => {
     }
   });
 
+  test('every enum PropDef defaultValue is in enumValues (Mi1 manifest-drift guard)', () => {
+    // Mi1 review fix: PropDefEnum.defaultValue is typed loose (`string`),
+    // not as `enumValues[number]`, so a typo'd default would compile but
+    // ship as a runtime-invalid manifest entry. A type-generic refactor
+    // would propagate through every PropDef-array authoring site; this
+    // test-time guard catches the same drift class with no source-shape
+    // change. Add new descriptors with `defaultValue` that exists in
+    // their `enumValues` — anything else is a manifest defect.
+    for (const meta of builtInComponents) {
+      for (const prop of meta.props) {
+        if (prop.type !== 'enum') continue;
+        if (prop.defaultValue === undefined) continue;
+        expect(
+          prop.enumValues,
+          `${meta.name}.${prop.name} defaultValue '${prop.defaultValue}' must appear in enumValues ${JSON.stringify(prop.enumValues)}`,
+        ).toContain(prop.defaultValue);
+      }
+    }
+  });
+
   test('no registered descriptor has emptyChildName (5-pack is standalone-first — no compound parents)', () => {
     // US-002/US-003 retired the compound-components bridge (precedent #29
     // retracted on this branch). The surviving 5-pack descriptors ship without

@@ -279,6 +279,20 @@ function sanitizeNested(value: unknown): unknown {
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
+    // Mi3 review fix: dangerous prop names (`dangerouslySetInnerHTML`,
+    // `on*`, React internals) are dropped outright at the TOP level by
+    // `sanitizeComponentProps`. Mirror that policy at depth so a future
+    // descriptor that spreads a nested attr — e.g. `<InlineTOC items={[
+    // {label, href, onClick: 'alert(1)'}]} />` — cannot smuggle an event
+    // handler past the top-level filter. Today the 5-pack doesn't spread
+    // nested attrs onto React elements, but the surrounding sanitize-url
+    // tests anticipate that consumer shape (see L249-270). Adding the
+    // filter here closes the matching gap before the first consumer lands.
+    if (isDangerousPropName(k)) {
+      emitPropDroppedEvent('dangerous-prop-name-nested', k);
+      changed = true;
+      continue;
+    }
     if (isUrlPropName(k) && typeof v === 'string') {
       const safe = sanitizeUrlValue(v);
       if (safe !== v) changed = true;

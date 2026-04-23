@@ -29,7 +29,7 @@
  * selection-halo; when the user authors a `color` prop, the inline style
  * overrides the per-type default.
  *
- * Precedent #26 (all user content visible): children slot is ALWAYS rendered,
+ * Precedent #30 (all user content visible): children slot is ALWAYS rendered,
  * never `display: none` via React. Native `<details>` does its own
  * display-toggle inside the browser — that is orthogonal to the precedent.
  */

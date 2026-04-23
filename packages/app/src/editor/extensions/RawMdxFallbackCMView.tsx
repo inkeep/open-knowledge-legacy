@@ -4,7 +4,7 @@
  * Implements the canonical ProseMirror + CodeMirror pattern
  * (prosemirror.net/examples/codemirror/) adapted for TipTap's React NodeView.
  *
- * Architecture (Precedent #26 — direct PM dispatch, NOT y-codemirror.next):
+ * Architecture (Precedent #28 — direct PM dispatch, NOT y-codemirror.next):
  *   CM keystroke → forwardUpdate → PM transaction → y-prosemirror → CRDT
  *   PM change → NodeView.update(node) → computeChange → CM transaction
  *   Single `updating` boolean prevents feedback loops.
@@ -367,7 +367,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     //   1. Doc changes → forward text into PM (existing behavior).
     //   2. Focus changes → set PM NodeSelection on this block when CM gains
     //      focus (e.g. user clicks inside CM). Without this, SelectionStatePlugin
-    //      (Precedent #29) sees stale `state.selection` whenever CM has focus,
+    //      (Precedent #31) sees stale `state.selection` whenever CM has focus,
     //      so halo/breadcrumb/aria-live report the wrong block. The guard in
     //      the canonical PM+CM example uses `updatingRef` to prevent PM→CM→PM
     //      loops; we reuse the same flag.
@@ -478,7 +478,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     });
   }, [resolvedTheme]);
 
-  // PM→CM selection sync (Precedent #29 + canonical PM+CM pattern): when
+  // PM→CM selection sync (Precedent #31 + canonical PM+CM pattern): when
   // PM selection lands on or inside this node — via outer arrow navigation,
   // slash-insert-with-focus, programmatic commands — mirror it into CM so
   // the nested editor reflects the intended caret. Two cases:

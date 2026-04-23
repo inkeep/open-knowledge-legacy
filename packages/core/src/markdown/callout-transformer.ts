@@ -285,26 +285,23 @@ export function calloutTransformerPlugin() {
       // plugin's tagged type is e.g. `ok-alert-success`, alias → `tip`.
       let type = normalizeType(taggedType);
 
-      // Re-inspect the original source for (a) foldable marker, (b) explicit
-      // title, (c) authoritative raw-type token when alias lookup on the
-      // plugin-tagged type didn't resolve. Source re-inspection is truth.
+      // Re-inspect the original source for (a) explicit title, (b)
+      // authoritative raw-type token when alias lookup on the plugin-tagged
+      // type didn't resolve. Foldable-marker capture is deferred until after
+      // the GFM-resolution fallback below — see the `resolvedType`-gated
+      // capture immediately following so unknown-type + foldable combos
+      // (e.g. `> [!MYSTERY]+\nBody`) still honor the marker (M1 review fix:
+      // pre-fix the capture gated on pre-resolution `type` and dropped the
+      // marker whenever alias lookup returned `null`).
       let title: string | null = null;
-      let foldableMarker: '+' | '-' | null = null;
+      let opener: ReturnType<typeof inspectOpenerLine> | null = null;
       if (node.position?.start?.offset !== undefined) {
-        const opener = inspectOpenerLine(source, node.position.start.offset);
+        opener = inspectOpenerLine(source, node.position.start.offset);
         if (opener) {
           title = opener.title;
           // Fall-back type normalization from source — covers cases where
           // plugin-tagged type diverged (shouldn't happen, but defensive).
           if (!type) type = normalizeType(opener.rawType);
-          // D-MF17: foldable recognition scoped to GFM 5 types only. If
-          // alias mapped `success` → `tip`, we DO honor the foldable marker
-          // because the normalized type IS in GFM_TYPES. This is consistent
-          // with the rest of the narrow: the alias map is about token
-          // normalization, foldable scope follows the normalized type.
-          if (type && GFM_TYPES.has(type)) {
-            foldableMarker = opener.foldableMarker;
-          }
         }
       }
 
@@ -321,6 +318,16 @@ export function calloutTransformerPlugin() {
       // non-default `markers:` list (e.g. extended types beyond the GFM 5);
       // default `remark-github-alerts` config guarantees `type` resolves.
       const resolvedType: CalloutType = type ?? 'note';
+
+      // D-MF17: foldable recognition scoped to GFM 5 types only. We gate on
+      // `resolvedType` (post-fallback) so unknown-type opener + foldable
+      // marker combos still honor the marker — `> [!MYSTERY]+\nBody`
+      // resolves to `note` (GFM) and the `+` marker emits `collapsible`
+      // attrs. Pre-M1 the gate was on pre-resolution `type`, which silently
+      // dropped foldable for any token outside the alias map even though
+      // the resolved type was always a GFM-5 member.
+      const foldableMarker: '+' | '-' | null =
+        opener && GFM_TYPES.has(resolvedType) ? opener.foldableMarker : null;
 
       // M8 (review finding): preserve the authored token when the alias map
       // normalized it to a different GFM type (e.g. Obsidian `> [!success]`
@@ -398,13 +405,18 @@ const PLACEHOLDER_SVG =
  * map would need an entry for every possible token, which is unbounded.
  * The Proxy gives a constant-time catch-all that satisfies the plugin's
  * contract without eager enumeration.
+ *
+ * Co3 review fix: dropped the speculative `has: () => true` trap. The
+ * upstream plugin source (verified via `~/.claude/oss-repos/` and a fresh
+ * `bun pm pkg ls`) does not consult `Reflect.has` / the `in` operator on
+ * the icon map; only `get` is read. Adding traps for unverified consumers
+ * is the kind of defensive scaffolding that gets quietly load-bearing
+ * later in subtle ways. If a future upstream version starts checking
+ * `has`, the failure surfaces as an `encodeSvg` throw on first use of
+ * the affected marker — re-add the trap then.
  */
 const PLUGIN_ICON_MAP: Readonly<Record<string, string>> = new Proxy({} as Record<string, string>, {
   get: () => PLACEHOLDER_SVG,
-  // `has` also intercepted so `Reflect.has` / `in` checks inside the plugin
-  // (if any) resolve truthy for every key — defense-in-depth, not observed
-  // to be read by the current upstream version but cheap to include.
-  has: () => true,
 });
 
 /**
