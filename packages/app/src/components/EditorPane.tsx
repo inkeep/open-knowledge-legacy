@@ -228,7 +228,12 @@ export function EditorPane() {
             Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
           </span>
           {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
-          <Button variant="ghost" size="xs" onClick={handleExitPreview}>
+          <Button
+            variant="ghost"
+            className="font-mono uppercase"
+            size="xs"
+            onClick={handleExitPreview}
+          >
             Close
           </Button>
           <AlertDialog>
