@@ -1,6 +1,7 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
+import { readNumericOverride } from '../lib/perf/env-override';
 import { mark } from '../lib/perf/mark';
 import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -76,7 +77,7 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
  * Changing either constant is an ASK_FIRST boundary (spec §16 / CLAUDE.md
  * scope). If one moves, audit the other for sympathetic impact.
  */
-export const MAX_POOL = 10;
+export const MAX_POOL = readNumericOverride('MAX_POOL', 10);
 
 /**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.

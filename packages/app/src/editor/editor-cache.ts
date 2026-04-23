@@ -51,6 +51,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
 
 /**
  * Emergency kill switch. When `false`:
@@ -68,8 +69,11 @@ export const CACHE_ENABLED = true;
  * enforced via LRU eviction. Coupled to ACTIVITY_MOUNT_LIMIT=3
  * (EditorActivityPool) + MAX_POOL=10 (ProviderPool). Changing this is an
  * ASK_FIRST per V2 SPEC §16.
+ *
+ * Test-time override via `window.__okPerfOverrides.MAX_CACHE` or
+ * `VITE_OK_PERF_MAX_CACHE` env var (DEV only; see `env-override.ts`).
  */
-export const MAX_CACHE = 10;
+export const MAX_CACHE = readNumericOverride('MAX_CACHE', 10);
 
 /**
  * FR3 primary gate: view-count threshold above which a doc refuses to cache.
@@ -78,16 +82,22 @@ export const MAX_CACHE = 10;
  * within the "Acceptable" band. Keeps V2 savings targeted at docs where
  * the editor can actually be cached cheaply; multi-hundred-view docs
  * fall through to pre-V2 destroy-on-unmount behavior (no cache bloat).
+ *
+ * Test-time override: `VITE_OK_PERF_VIEW_COUNT_CACHE_THRESHOLD` /
+ * `window.__okPerfOverrides.VIEW_COUNT_CACHE_THRESHOLD`.
  */
-export const VIEW_COUNT_CACHE_THRESHOLD = 50;
+export const VIEW_COUNT_CACHE_THRESHOLD = readNumericOverride('VIEW_COUNT_CACHE_THRESHOLD', 50);
 
 /**
  * FR3 secondary gate: byte-count threshold for multi-MB prose-only docs
  * whose view counts are low but whose raw size would still inflate the
  * cache's memory footprint. Matches the existing LARGE_DOC_CHAR_THRESHOLD
  * in `EditorActivityPool`.
+ *
+ * Test-time override: `VITE_OK_PERF_BYTES_CACHE_THRESHOLD` /
+ * `window.__okPerfOverrides.BYTES_CACHE_THRESHOLD`.
  */
-export const BYTES_CACHE_THRESHOLD = 500_000;
+export const BYTES_CACHE_THRESHOLD = readNumericOverride('BYTES_CACHE_THRESHOLD', 500_000);
 
 /** Per-doc size stats captured at mount time to decide whether to cache. */
 interface SizeStats {

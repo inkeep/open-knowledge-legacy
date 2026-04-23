@@ -53,6 +53,7 @@ import { setActivityMountList } from '@/editor/editor-cache';
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
+import { readNumericOverride } from '@/lib/perf/env-override';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorSkeleton } from './EditorSkeleton';
@@ -88,7 +89,7 @@ import { usePageList } from './PageListContext';
  * deferred mode. See `ACTIVITY_MOUNT_LIMIT` below — both constants are parts
  * of the same Activity-mount hygiene pattern.
  */
-export const LARGE_DOC_CHAR_THRESHOLD = 500_000;
+export const LARGE_DOC_CHAR_THRESHOLD = readNumericOverride('LARGE_DOC_CHAR_THRESHOLD', 500_000);
 
 /**
  * Pure helper — given the doc size and the current mode-visit history,
@@ -174,7 +175,7 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
  * See `LARGE_DOC_CHAR_THRESHOLD` above — both constants are parts of the same
  * Activity-mount hygiene pattern (precedent #18(c) / precedent #24).
  */
-export const ACTIVITY_MOUNT_LIMIT = 3;
+export const ACTIVITY_MOUNT_LIMIT = readNumericOverride('ACTIVITY_MOUNT_LIMIT', 3);
 
 export function loadSourceEditorModule() {
   return import('@/editor/SourceEditor');
