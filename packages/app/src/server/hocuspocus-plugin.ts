@@ -171,7 +171,15 @@ console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 // shadow-init errors (not just ProjectGitInitError) fail-fast via D13 so
 // silent shadow gaps never hide coverage regressions.
 const shadowRef: ShadowRef = { current: undefined };
-void runDevShadowInit(
+// Capture the init promise so the api-extension can `await` it before any
+// handler reads `shadowRef.current`. Closes a race where agent-write /
+// save-version / rollback requests that arrive within the ~100-200 ms
+// shadow-init window would silently no-op (commitToWipRef short-circuits
+// when shadowRef.current is undefined). The promise never rejects —
+// handleDevShadowInitError dispatches errors internally — so awaiters see
+// resolve regardless and existing `if (!shadow)` guards still handle the
+// degraded "shadow disabled" case after the await.
+const shadowReadyPromise = runDevShadowInit(
   projectRoot,
   (shadow) => {
     shadowRef.current = shadow;
@@ -258,6 +266,7 @@ try {
       enableTestRoutes: true,
       contentRoot: CONTENT_ROOT,
       shadowRef,
+      shadowReadyPromise,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),
       backlinkIndex,
