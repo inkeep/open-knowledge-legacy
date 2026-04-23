@@ -85,5 +85,6 @@ Foam and Dendron ship as VSCode extensions with no standalone Electron or web bu
 
 ## Gaps / follow-ups
 
-- Logseq's exact call site for "open with default app" was not located in the main/frontend tree. A deeper read could confirm whether it uses `shell.openPath` or spawns a child process. Not load-bearing for the recommendation.
+- Logseq's exact call site for "open with default app" was not located in the main/frontend tree. A deeper read could confirm whether it uses `shell.openPath` or spawns a child process. Not load-bearing for the recommendation. **Path C 2026-04-23:** deeper dive in the `electron-os-integration-patterns/` companion report — see its changelog entry for the resolution.
 - Mobile behavior (Obsidian Mobile, Logseq Mobile) out of scope here. OK does not ship mobile.
+- **Post-ship correction (2026-04-23):** original claim that Obsidian "opens a blank/degraded preview pane for opaque types on left-click" was wrong. Corrected via forum evidence to "Obsidian delegates opaque types to OS default app via `shell.openPath` automatically." See `reports/electron-os-integration-patterns/` D10 (Path C update) for the scoped investigation.

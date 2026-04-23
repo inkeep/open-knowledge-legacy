@@ -3,6 +3,9 @@ title: "Electron OS-Integration Patterns: shell.*, click-interception, path cont
 description: "What OS-integration capabilities Electron offers beyond the web, how 7 OSS Electron apps use shell.openPath / shell.openExternal / showItemInFolder / trashItem in practice, click-interception patterns (will-navigate, setWindowOpenHandler, opener service), path-containment security sketch, CVE shortlist, and IPC shape recommendations. macOS-focused with Win/Linux deltas noted. Informs \"click on a non-inline-viewable asset\" decisions for collaborative markdown editors."
 createdAt: 2026-04-23
 updatedAt: 2026-04-23
+revisions:
+  - 2026-04-23: initial pass (D1-D6, 7 OSS apps, macOS-primary)
+  - 2026-04-23: Path C update — closed Logseq UNCERTAIN (`shell.openPath`: NONE; uses `open` npm package + confirmation dialog) + Standard Notes UNCERTAIN (strict allowlist confirmed); added D10 (Obsidian `shell.openPath` limits — warn-only as of 1.12.2 Feb 2026, plugins bypass), D11 (gesture forwarding: not supported anywhere, containment IS the defense), D12 (Linux XDG portals: NOT-NOW for OK)
 subjects:
   - Electron
   - VSCode
@@ -136,23 +139,76 @@ Electron's `shell.*` surface gives desktop apps five OS-integration capabilities
 
 **Evidence:** [evidence/d5-oss-case-studies.md](evidence/d5-oss-case-studies.md) — per-app tables with file:line citations.
 
-**Cross-app summary:**
+**Cross-app summary (updated Path C 2026-04-23):**
 
 | App | `openPath` on click? | Validation posture |
 |---|---|---|
 | VSCode | Never | `file://` → editor; `openExternal` scheme-gated |
 | GitHub Desktop | Yes (1, `UNSAFE_` prefixed) | Naming-as-validation |
 | Joplin | Yes (2 sites) | 6-step gate + user consent |
-| Logseq | UNCERTAIN (not found in tree; forum reports suggest delegation) | — |
+| **Logseq** | **NONE (confirmed)** | **Uses `open` npm package (not `shell.openPath`) + modal confirmation dialog before shelling out** |
 | AFFiNE | Never | Download-only desktop |
 | Zettlr | Yes (2 sites) | Trusted-source (Citeproc/BBT) |
-| Standard Notes | Never | Two-handler intercept only |
+| **Standard Notes** | Never | **Two-handler intercept + strict `startsWith('http') \|\| startsWith('mailto')` deny-by-default allowlist at `Window.ts:83`** |
 
 **Implications:**
 - The VSCode pattern ("never `openPath` on click") is viable for markdown-heavy apps that have a renderer capable of displaying everything the user would want — VSCode's editor handles every `file://` target.
 - The AFFiNE pattern ("download-only desktop, reuse web path") is viable for web-first apps with an Electron wrapper.
 - The Joplin pattern ("extension allowlist + consent dialog") is the right fit when the app intentionally wants OS-delegation but needs security discipline.
 - The Zettlr pattern is viable only with a trusted-source model the user cannot inject into (citation management).
+
+### D10 — Obsidian's `shell.openPath` limits (Path C addition, 2026-04-23)
+
+**Finding:** Obsidian (closed-source) delegates **opaque-type left-clicks to OS default app via `shell.openPath` automatically**. Limits are minimal and recent:
+- **No published extension blocklist.** Warn-only on executables starting 1.12.2 (2026-02-18 early access, 2026-02-27 public — *very recent*).
+- **Per-click confirmation dialog** added in 1.12.2. Every click, not Joplin's first-click-per-extension.
+- **No documented realpath-inside-vault check** — vault containment is behavioral (indexer-driven) rather than enforced.
+- **No CVE targets `shell.openPath`** specifically. Obsidian's published CVEs (CVE-2023-2110, CVE-2023-27035, etc.) are about URL schemes and embedded-webpage privilege escalation, not shell misuse.
+- **Plugins bypass both 1.12.2 safeguards.** Third-party plugins get raw Electron `shell` and add no validation.
+
+**Evidence:** [evidence/d10-obsidian-limits.md](evidence/d10-obsidian-limits.md)
+
+**Implications:**
+- **Pre-1.12.2 Obsidian was fully silent delegation** — same "trust the OS" posture as raw `shell.openPath`. Users got zip auto-unzip, `.py`/`.c` silent execution.
+- **Post-1.12.2 is warn-not-block:** confirmation dialog + executable warning. Still no path containment.
+- **Corrects an earlier research error** in [editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md](../editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md) — that report originally claimed Obsidian shows a "blank/degraded preview pane" for opaque types. Wrong; it delegates (with new-in-Feb-2026 confirmation gate).
+
+**Decision triggers:**
+- If aspiring to Obsidian-parity for Electron click-on-asset UX, post-1.12.2 Obsidian is the reference point (confirmation dialog + exec warning). Joplin's pattern is still richer (extension allowlist + per-ext consent).
+
+### D11 — User-activation forwarding across IPC (Path C addition, 2026-04-23)
+
+**Finding:** **Electron does NOT forward user activation across IPC.** `IpcMainInvokeEvent` carries `sender`, `senderFrame`, `frameId` — no `isTrusted`, no `userActivation`, no `hasTransientActivation`. Chromium's User Activation v2 bit is renderer-local and does not cross the process boundary. No OSS Electron app surveyed (VSCode, AFFiNE, Zettlr, Logseq) implements token-based gesture forwarding — VSCode's `userGesture: boolean` IPC argument is a UX signal (accessibility sound cueing), trust-the-renderer, not a security token.
+
+**Evidence:** [evidence/d11-gesture-forwarding.md](evidence/d11-gesture-forwarding.md)
+
+**Implications:**
+- **Accepted threat model across the ecosystem: "all IPC is renderer-initiated."** The defense is containment (path/extension/protocol allowlist), not gesture provenance.
+- **App-level token schemes don't work against XSS** — XSS in renderer runs in the same JS context as the click handler; it can call `requestToken()` then immediately use the token. Degenerates to rate-limiting, not attestation.
+- **Real attestation requires** main-process-direct click observation: native `Menu.buildFromTemplate` (main sees the click directly), `BrowserView` overlay, or an unshipped Electron primitive exposing `senderFrame.hasTransientActivation()` on IPC events (not filed as RFC at time of research).
+- **CVE history confirms the failure mode:** DeepChat `openExternal` RCE via XSS (2023-2024), CVE-2026-39846 (SiYuan), CVE-2020-16608 — all follow the "XSS fires IPC synthetically, containment bug lets it through" pattern.
+
+**Decision triggers:**
+- **For right-click OS-integration (Reveal in Finder / Open in default app):** use native `Menu.buildFromTemplate` — main observes the click directly. Strongest pattern.
+- **For renderer-button actions:** rely on containment (path + extension + protocol allowlist). Accept the threat model.
+- **Never rely on "only fires on click" as a security property.** The click bit doesn't survive IPC.
+
+### D12 — Linux XDG Desktop Portal APIs (Path C addition, 2026-04-23)
+
+**Finding:** Linux XDG Desktop Portal interfaces (`org.freedesktop.portal.OpenURI`, `FileChooser`, `Trash`, `Notification`, `Screenshot`, `ScreenCast`, `Settings`, `GlobalShortcuts`, `Inhibit`, `Background`, etc.) cover most Electron `shell.*` / `dialog.*` equivalents. Electron's `shell.showItemInFolder` already uses `org.freedesktop.FileManager1` D-Bus with xdg-open fallback (PR #25087) — **works out of the box**. File dialogs use Chromium's xdg-portal integration when available. `shell.openPath` / `openExternal` work via xdg-open with known Flatpak-sandbox edge cases (bare paths without `file://` prefix, paths in `/var/data`). OSS Flatpak-distributed editors (VSCode, Obsidian) **opt out of portal sandboxing via broad filesystem permissions** (`--filesystem=host` or `--filesystem=home`) rather than integrate portals directly. No dedicated Electron portal-wrapper library.
+
+**Evidence:** [evidence/d12-linux-portals.md](evidence/d12-linux-portals.md)
+
+**Implications:**
+- **`.deb` / `.rpm` / AppImage:** zero portal-related code required. `shell.*` works via xdg-open + `FileManager1` D-Bus.
+- **Flatpak:** adopt VSCode/Obsidian posture — broad filesystem permissions + `--talk-name=org.freedesktop.Notifications` + `--talk-name=org.freedesktop.FileManager1` + `--no-sandbox` flag (standard for Electron apps in bubblewrap). Skip portal-mediated file access.
+- **Snap:** electron-builder defaults sufficient for `shell.openPath` + `showItemInFolder`.
+
+**Decision triggers:**
+- **For OK's M1/M2 roadmap (macOS focus):** portals are NOT-NOW work.
+- **When Linux distribution becomes a target:** choose traditional packaging (`.deb`/`.rpm`/AppImage) first — zero work. Flatpak adds a manifest-level permission decision but no app-side code changes. Portal-based sandbox migration is a hypothetical future if OK adopts a stricter sandbox posture.
+
+---
 
 ### D6 — Best-practice synthesis
 
@@ -208,9 +264,11 @@ Electron's `shell.*` surface gives desktop apps five OS-integration capabilities
 
 ### Dimensions not fully covered
 
-- **Logseq `shell.openPath` call site** — community forums suggest the Electron build delegates on PDF click, but the call site was not located in the main-process tree in this pass. UNCERTAIN.
-- **Standard Notes URL scheme validation** — the two-handler intercept passes `url` through unchanged; whether an upstream scheme allowlist exists was not verified.
-- **Closed-source apps (Obsidian, Notion Desktop, Slack Desktop, Discord, Linear Desktop)** — excluded per scope lock. Obsidian's behavior for non-renderable types is documented in [editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md](../editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md) (they delegate via `shell.openPath` automatically).
+- **~~Logseq `shell.openPath` call site~~ CLOSED Path C 2026-04-23** — resolved. Logseq does NOT call `shell.openPath`; uses `open` npm package + confirmation dialog. See [D5 Logseq entry](evidence/d5-oss-case-studies.md).
+- **~~Standard Notes URL scheme validation~~ CLOSED Path C 2026-04-23** — resolved. Strict allowlist at `Window.ts:83` (`startsWith('http') || startsWith('mailto')`). See [D5 Standard Notes entry](evidence/d5-oss-case-studies.md).
+- **Closed-source apps (Notion Desktop, Slack Desktop, Discord, Linear Desktop)** — excluded per scope lock. Obsidian's behavior NOW COVERED in D10 (Path C).
+- **Exact executable-extension list in Obsidian 1.12.2+** not published. Would require disassembly or behavioral testing. UNCERTAIN.
+- **Active Electron RFC for `senderFrame.hasTransientActivation()` on IPC events** — not filed. Would be the concrete fix for the gesture-forwarding gap.
 
 ### Out of scope (per rubric)
 
@@ -229,7 +287,10 @@ Electron's `shell.*` surface gives desktop apps five OS-integration capabilities
 - [evidence/d2-web-equivalents.md](evidence/d2-web-equivalents.md) — Web platform parity map
 - [evidence/d3-click-interception-patterns.md](evidence/d3-click-interception-patterns.md) — Interception surfaces + cross-app patterns
 - [evidence/d4-security-patterns.md](evidence/d4-security-patterns.md) — Attack classes, CVEs, path-containment sketch, IPC shape
-- [evidence/d5-oss-case-studies.md](evidence/d5-oss-case-studies.md) — 7-app survey with file:line citations
+- [evidence/d5-oss-case-studies.md](evidence/d5-oss-case-studies.md) — 7-app survey with file:line citations (Logseq + Standard Notes updated in Path C)
+- [evidence/d10-obsidian-limits.md](evidence/d10-obsidian-limits.md) — Obsidian `shell.openPath` limits (Path C addition)
+- [evidence/d11-gesture-forwarding.md](evidence/d11-gesture-forwarding.md) — User-activation across IPC (Path C addition)
+- [evidence/d12-linux-portals.md](evidence/d12-linux-portals.md) — Linux XDG Desktop Portal APIs (Path C addition)
 
 ### External Sources
 
