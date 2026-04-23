@@ -3,7 +3,7 @@
  *
  * FR-17 / US-014: Samples the race space across bridge write surfaces using
  * 2-3 clients with random operations drawn from { wysiwyg-type, source-type,
- * agent-write, agent-patch, external-change, sync-pause, sync-resume, wait }.
+ * agent-write, agent-patch, agent-undo, external-change, sync-pause, sync-resume, wait }.
  *
  * Oracles (after all ops drain + convergence loop settles):
  *   (a) bridge invariant holds on every client
@@ -46,11 +46,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chunkedYTextInsert } from '@inkeep/open-knowledge-core';
-import { AGENT_WRITE_ORIGIN, applyExternalChange } from '@inkeep/open-knowledge-server';
+import { applyExternalChange, isPairedWriteOrigin } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
 import {
   agentPatch,
+  agentUndo,
   agentWriteMd,
   assertBridgeInvariant,
   awaitDocQuiescence,
@@ -87,7 +88,7 @@ function createPRNG(seed: number) {
 
 type Rng = ReturnType<typeof createPRNG>;
 
-// ─── Op type union (9 kinds backed by spec-shipped primitives) ───
+// ─── Op type union (10 kinds backed by spec-shipped primitives) ───
 
 type Op =
   | { kind: 'wysiwyg-type'; clientIdx: number; text: string; marker: string }
@@ -99,6 +100,7 @@ type Op =
       marker: string;
     }
   | { kind: 'agent-patch'; find: string; replace: string; marker: string }
+  | { kind: 'agent-undo' }
   | { kind: 'external-change'; newContent: string; marker: string }
   | {
       // FR-21 chunked Source paste. Large payload (>500KB threshold) split
@@ -177,7 +179,13 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
       const find = rng.pick(WORDS);
       const replace = rng.pick(WORDS);
       ops.push({ kind: 'agent-patch', find, replace, marker: `patch-${find}→${replace}` });
-    } else if (roll < 0.71) {
+    } else if (roll < 0.66) {
+      // agent-undo via HTTP (3%). Calls applyAgentUndo on the default claude-1
+      // session. Non-fatal if no session exists or undo stack is empty. Content
+      // oracle treats this as a content-reset (like external-change) — the undo
+      // may remove any prior agent-write content unpredictably.
+      ops.push({ kind: 'agent-undo' });
+    } else if (roll < 0.74) {
       // external-change (8%): file-watcher disk→CRDT bridge.
       // Elevated from 0.5% to exercise file-watcher convergence path.
       const marker = `M${markerIdx++}-${randomShortText(rng)}`;
@@ -185,7 +193,7 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
       const stabilized = mdManager.serialize(mdManager.parse(content));
       ops.push({ kind: 'external-change', newContent: stabilized, marker });
       ops.push({ kind: 'wait', ms: 500 });
-    } else if (roll < 0.74) {
+    } else if (roll < 0.77) {
       // chunked-source-paste (3%): FR-21 large-paste exercise. Payload
       // above threshold (600KB) so chunkedYTextInsert takes the chunked
       // path with rAF yields; subsequent ops interleave peer activity
@@ -304,6 +312,17 @@ async function applyOp(
         await agentPatch(server.port, op.find, op.replace, docName);
       } catch {
         // Non-fatal
+      }
+      break;
+    }
+    case 'agent-undo': {
+      try {
+        // Default session connectionId is 'claude-1' (no agentId override).
+        // Non-fatal if no session exists or undo stack is empty — the endpoint
+        // returns 404 which the catch swallows.
+        await agentUndo(server.port, { docName, connectionId: 'claude-1' });
+      } catch {
+        // Non-fatal — 404 when session absent or undo stack empty
       }
       break;
     }
@@ -451,6 +470,7 @@ const ALL_OP_KINDS = [
   'source-type',
   'agent-write',
   'agent-patch',
+  'agent-undo',
   'external-change',
   'chunked-source-paste',
   'sync-pause',
@@ -462,6 +482,7 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
   'agent-write': ['agent-write'],
   'agent-write-md': ['agent-write'],
   'agent-patch': ['agent-patch'],
+  'agent-undo': ['agent-undo'],
   'observer-a-sync': ['wysiwyg-type'],
   'observer-b-sync': ['source-type'],
   'file-watcher': ['external-change'],
@@ -643,8 +664,29 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
     }
 
+    // Per-session origins (F1) arrive at clients as remote transactions (undefined
+    // origin) — client-side probes cannot capture server-authoritative agent writes.
+    // Create a local paired-write origin matching the F1 shape to verify the probe
+    // infrastructure works correctly with per-session origins (isPairedWriteOrigin=true).
+    // The probe remains vacuous for server-side writes; oracle (c) is enforced by the
+    // bridge-invariant watcher in assertBridgeInvariant above.
+    const localFuzzOrigin = Object.freeze({
+      source: 'local' as const,
+      skipStoreHooks: false,
+      context: Object.freeze({
+        origin: 'agent-write',
+        paired: true as const,
+        session_id: `fuzz-probe-${seed}`,
+      }),
+    });
+    // Structural check: isPairedWriteOrigin must return true for per-session origins (US-028)
+    if (!isPairedWriteOrigin(localFuzzOrigin)) {
+      throw new Error(
+        `fuzz: isPairedWriteOrigin(localFuzzOrigin) failed — per-session origin rejected`,
+      );
+    }
     const agentProbes = clients.map((c) =>
-      createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
+      createItemOriginProbe(c.ytext, { trackedOrigins: [localFuzzOrigin] }),
     );
 
     // ────────────── Oracle (d): prefix-match content preservation ─────
@@ -714,6 +756,12 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           // the provided content (parse-serialize canonicalized).
           expectedBody = op.newContent.replace(/\n+$/, '');
           break;
+        case 'agent-undo':
+          // applyAgentUndo reverses the last tracked agent write — content
+          // oracle conservatively treats this as a full reset (like external-
+          // change) since the undo may remove any prior agent-write content.
+          expectedBody = '';
+          break;
         case 'sync-pause':
         case 'sync-resume':
         case 'wait':
@@ -750,6 +798,11 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         } else if (op.kind === 'external-change') {
           livePrefixes.clear();
           livePrefixes.add(prefixOf(op.marker));
+        } else if (op.kind === 'agent-undo') {
+          // Conservatively clear all tracked prefixes — the undo may have
+          // removed content from any prior agent-write, and we can't know
+          // exactly which without replaying the undo stack.
+          livePrefixes.clear();
         }
 
         // Update full-body expectation (oracle e).
@@ -791,11 +844,11 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
       // Oracle (c): agent-origin Items preserved + no origin laundering (FR-6).
       for (const probe of agentProbes) {
-        // FR-6 rigor: assert every captured origin is AGENT_WRITE_ORIGIN —
-        // no user-origin Items (ORIGIN_TREE_TO_TEXT, undefined) leaked into
-        // the agent UM. Uses the 'stack-item-added' event-based tracking
-        // from createItemOriginProbe (Y.UndoManager StackItem has no public
-        // .origin field; the event is the only public API that exposes it).
+        // Per-session origins (F1): server-side writes arrive at clients as remote
+        // transactions (undefined origin); the probe's UM captures nothing, making
+        // assertOnlyTrackedOrigins() vacuously true. The primary enforcement for
+        // bridge invariants is assertBridgeInvariant above. This probe verifies
+        // that no unexpected LOCAL transacts with non-tracked origins appear.
         probe.assertOnlyTrackedOrigins();
 
         if (probe.undoStackLength() > 0) {
@@ -902,6 +955,10 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           case 'external-change':
             preMarkerLines.clear();
             preMarkerLines.set(prefixOf(op.marker), op.marker);
+            break;
+          case 'agent-undo':
+            // Conservatively clear — undo may remove any prior agent-write.
+            preMarkerLines.clear();
             break;
         }
       }

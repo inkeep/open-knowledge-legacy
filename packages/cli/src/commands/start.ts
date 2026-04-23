@@ -109,6 +109,46 @@ export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
   }
 }
 
+interface AwaitUiSiblingPortInput {
+  /** Read the current ui.lock contents. Returns null when absent/stale. */
+  readUiLock: () => { port: number } | null;
+  /** Virtual clock. Production: `Date.now`. */
+  now: () => number;
+  /** Sleep between polls. Production: `setTimeout`-based promise. */
+  sleep: (ms: number) => Promise<void>;
+  /** Abandon the poll after this wall-clock elapses. */
+  timeoutMs: number;
+  /** Poll interval in ms. */
+  pollIntervalMs: number;
+}
+
+/**
+ * Poll `ui.lock` until the spawned `ok ui` child finishes binding its port
+ * (or the timeout expires). Returns the bound port, or `null` on timeout.
+ *
+ * The child `ok ui` writes an initial lockfile with `port: 0` when it starts
+ * (sentinel for "binding"), then calls `updateUiLockPort` with the real
+ * kernel-assigned port once `listen()` resolves. Port > 0 is the signal that
+ * the sibling is serving requests.
+ *
+ * Precedent #13b (implicit time-coupling is a test smell): all time + IO deps
+ * are injected so `start.test.ts` can drive the loop with a virtual clock
+ * without touching the filesystem.
+ */
+export async function awaitUiSiblingPort(deps: AwaitUiSiblingPortInput): Promise<number | null> {
+  const deadline = deps.now() + deps.timeoutMs;
+  while (deps.now() < deadline) {
+    const lock = deps.readUiLock();
+    if (lock && lock.port > 0) return lock.port;
+    await deps.sleep(deps.pollIntervalMs);
+  }
+  // One final read after the last sleep so a lock that appeared within the
+  // grace window isn't missed solely because we raced the deadline check.
+  const lock = deps.readUiLock();
+  if (lock && lock.port > 0) return lock.port;
+  return null;
+}
+
 interface BuildIdleShutdownHandlerInput {
   readUiLock: () => { pid: number; port: number } | null;
   isAlive: (pid: number) => boolean;
@@ -212,6 +252,14 @@ interface BootStartServerOptions {
   /** Override idle-shutdown threshold; default 30 min. Tests use small values. */
   idleThresholdMs?: number;
   /**
+   * Max wall-clock to wait for the auto-spawned `ok ui` to bind its port
+   * (populated via `updateUiLockPort`). Default 3 000 ms — ample for a
+   * subprocess to bind on kernel-allocated port 0 + single-socket loopback.
+   * On timeout we fall back to the API URL for the banner so the user still
+   * sees something actionable.
+   */
+  uiBindTimeoutMs?: number;
+  /**
    * Logger override — defaults to `getLogger('start')`. PinoLogger is
    * already silent in test mode (`NODE_ENV === 'test'` → level: 'silent'),
    * so tests typically don't need to override; this hook exists for any
@@ -237,8 +285,24 @@ export interface BootedStartServer {
   degraded: readonly string[];
   /** What we decided about the UI sibling at boot — for tests + status output. */
   uiSpawnDecision: UiSpawnDecision;
+  /**
+   * The port `ok ui` is actually serving on, resolved end-to-end:
+   *   - `action: 'skip'` (sibling already alive) → `uiSpawnDecision.port`
+   *   - `action: 'spawn'` and the child bound within `uiBindTimeoutMs` →
+   *     the bound port (read from `ui.lock` after `updateUiLockPort`)
+   *   - `action: 'spawn'` and the child did not bind in time → `null`
+   *   - `skipUiAutoSpawn: true` on the spawn branch → `null`
+   *
+   * The banner in `startCommand` uses this instead of a hardcoded port so
+   * `http://localhost:<port>` always reaches the actually-bound UI. Before
+   * D-033 the default port was 3000 and the banner could hardcode it; now
+   * `ok ui` kernel-allocates and the real port is only knowable after bind.
+   */
+  resolvedUiPort: number | null;
   /** `true` if `runInit` scaffolded `.open-knowledge/` during this boot. */
   didAutoInit: boolean;
+  /** `true` if `ensureProjectGit` ran `git init` during this boot. */
+  didGitInit: boolean;
 }
 
 /**
@@ -259,7 +323,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const { bootServer, getLogger, isProcessAlive, readUiLock } = await import(
+  const { bootServer, ensureProjectGit, getLogger, isProcessAlive, readUiLock } = await import(
     '@inkeep/open-knowledge-server'
   );
   const { resolveContentDir } = await import('../config/paths.ts');
@@ -361,6 +425,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     idleShutdownMs: idleThresholdMs,
     skipAutoInit,
     autoInitFn,
+    // Fail-fast auto-git-init hook (SPEC R2 / D12). Errors propagate out of
+    // bootServer so the Commander action's catch surfaces the R6 message.
+    ensureProjectGitFn: skipAutoInit ? undefined : () => ensureProjectGit(cwd),
     spawnUiSiblingFn,
     idleShutdownHandler: (destroyServer) =>
       buildIdleShutdownHandler({
@@ -382,6 +449,36 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     uiSpawnDecision = { action: 'skip', reason: 'alive', pid: 0, port: 0 };
   }
 
+  // Resolve the port `ok ui` is actually serving on — the banner uses this
+  // instead of a hardcoded default. Pre-D-033 the default was 3000 and the
+  // banner could hardcode it; post-D-033 `ok ui` kernel-allocates, so the
+  // real port is only knowable after the child finishes binding.
+  //
+  // The `const` snapshot is required — `uiSpawnDecision` is a `let` captured
+  // by `spawnUiSiblingFn`'s closure, which defeats TS narrowing across the
+  // await boundary.
+  const decisionAtBoot: UiSpawnDecision = uiSpawnDecision;
+  let resolvedUiPort: number | null = null;
+  if (decisionAtBoot.action === 'skip') {
+    // Sibling was already alive — the lock already had its port.
+    resolvedUiPort = decisionAtBoot.port > 0 ? decisionAtBoot.port : null;
+  } else if (!skipUiAutoSpawn) {
+    const uiBindTimeoutMs = opts.uiBindTimeoutMs ?? 3000;
+    resolvedUiPort = await awaitUiSiblingPort({
+      readUiLock: () => readUiLock(booted.lockDir),
+      now: Date.now,
+      sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
+      timeoutMs: uiBindTimeoutMs,
+      pollIntervalMs: 50,
+    });
+    if (resolvedUiPort === null) {
+      log.warn(
+        { timeoutMs: uiBindTimeoutMs },
+        '[start] ok ui did not bind within timeout — banner falls back to API URL',
+      );
+    }
+  }
+
   return {
     httpServer: booted.httpServer,
     destroy: booted.destroy,
@@ -391,7 +488,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     ready: booted.ready,
     degraded: booted.degraded,
     uiSpawnDecision,
+    resolvedUiPort,
     didAutoInit: booted.didAutoInit,
+    didGitInit: booted.didGitInit,
   };
 }
 
@@ -420,6 +519,20 @@ export function startCommand(getConfig: () => Config): Command {
           skipAutoInit: opts.init === false,
         });
       } catch (err) {
+        // R6: surface a dedicated message when the auto-git-init hook fails
+        // (git missing, permission denied) — never fall back to a degraded mode.
+        const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
+        if (err instanceof ProjectGitInitError) {
+          console.error(
+            error(
+              "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.",
+            ),
+          );
+          if (err.stderr) {
+            console.error(dim(err.stderr.trim()));
+          }
+          process.exit(1);
+        }
         console.error(
           `${error('Failed to start:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         );
@@ -457,13 +570,14 @@ export function startCommand(getConfig: () => Config): Command {
           : undefined;
 
       // Post-lifecycle-split: the user-facing URL is the `ok ui` sibling, not
-      // the collab/API port. Prefer the UI URL in the banner when we know one
-      // — either the sibling is already live (skip-spawn case), or we just
-      // spawned it and the known default is 3000. Fall back to the API URL
-      // when we couldn't find a plausible UI port.
-      const uiDecision = booted.uiSpawnDecision;
-      const uiPort = uiDecision.action === 'skip' ? uiDecision.port : 3000;
-      const localUrl = uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
+      // the collab/API port. Use `resolvedUiPort` — bootStartServer polls
+      // `ui.lock` end-to-end so this reflects the port the child actually
+      // bound (D-033: kernel-allocated, not a hardcoded default). When the
+      // UI sibling did not bind in time (or spawn was skipped) we fall back
+      // to the API URL so the user still has an actionable URL.
+      const uiPort = booted.resolvedUiPort;
+      const localUrl =
+        uiPort !== null && uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
 
       console.log(
         renderBanner({
@@ -499,20 +613,34 @@ export function startCommand(getConfig: () => Config): Command {
             console.log();
           }
 
-          if (booted.didAutoInit) {
-            try {
-              const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
-              const preview = previewContent({
-                projectDir: cwd,
-                contentDir: booted.contentDir,
-                include: config.content.include,
-                exclude: config.content.exclude,
-              });
-              console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
-            } catch (e) {
-              console.warn(
-                `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          // Preview block — renders when EITHER auto-init scaffolded or
+          // ensureProjectGit ran `git init` (closes audit finding 5). The
+          // git-init disclosure is shown regardless of didAutoInit.
+          if (booted.didAutoInit || booted.didGitInit) {
+            if (booted.didGitInit) {
+              console.log(
+                `\n  ${info('✓')} Initialized git repo at ${cwd}/.git/ (default branch: main)`,
               );
+            }
+            if (booted.didAutoInit) {
+              try {
+                const { previewContent, formatPreviewBlock } = await import(
+                  '../content/preview.ts'
+                );
+                const preview = previewContent({
+                  projectDir: cwd,
+                  contentDir: booted.contentDir,
+                  include: config.content.include,
+                  exclude: config.content.exclude,
+                });
+                console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
+              } catch (e) {
+                console.warn(
+                  `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              }
+            } else {
+              console.log();
             }
           }
 

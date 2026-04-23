@@ -46,8 +46,8 @@ async function switchToSource(page: Page) {
 // ── Console error accumulator ────────────────────────────────────────────────
 //
 // Structured entries (url + line) so the shared `filterCriticalErrors` helper
-// can strip known benign dev-server noise (by-design `/api/config` 404, Vite
-// HMR chatter, WebSocket reconnect races). Same pattern as `crdt-stress.e2e.ts`.
+// can strip known benign dev-server noise (Vite HMR chatter, WebSocket
+// reconnect races). Same pattern as `crdt-stress.e2e.ts`.
 
 const errors: LogEntry[] = [];
 

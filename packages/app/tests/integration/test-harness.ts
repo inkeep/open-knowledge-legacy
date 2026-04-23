@@ -31,12 +31,10 @@ import {
   sharedExtensions,
 } from '@inkeep/open-knowledge-core';
 import {
-  AGENT_WRITE_ORIGIN,
   createServer,
-  FILE_WATCHER_ORIGIN,
-  MANAGED_RENAME_ORIGIN,
+  ensureProjectGit,
+  isPairedWriteOrigin,
   OBSERVER_SYNC_ORIGIN,
-  ROLLBACK_ORIGIN,
   type ServerInstance,
   type ServerOptions,
 } from '@inkeep/open-knowledge-server';
@@ -92,6 +90,11 @@ export interface CreateTestServerOptions {
    *  survives for a subsequent test-server instance. Defaults to false
    *  (random-tmpdir behavior preserved). */
   keepContentDir?: boolean;
+  /**
+   * Grace period (ms) before keepalive-close triggers session cleanup. Default 10 000.
+   * Integration tests pass a small value (e.g. 150) for fast teardown.
+   */
+  keepaliveGraceMs?: number;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -107,6 +110,13 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   if (options.contentDir === undefined) {
     writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   }
+
+  // Mirror the production auto-git-init path (SPEC R2 / Q3 resolution): every
+  // fresh tmpDir gets a real .git/ so the single-mode shadow-repo layout in
+  // US-003 can locate the shadow at <contentDir>/.git/open-knowledge/ without
+  // a standalone-mode fallback. On contentDir reuse (restart tests) the second
+  // call is a cheap no-op because .git/ already exists.
+  await ensureProjectGit(contentDir);
 
   const port = await getFreePort();
   const srv = createServer({
@@ -151,7 +161,49 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 10_000;
+  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   httpServer.on('upgrade', (req, socket, head) => {
+    // D-034 keepalive route (mirrors boot.ts logic — configurable grace for tests).
+    if (req.url?.startsWith('/collab/keepalive')) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        let connectionId: string | undefined;
+        try {
+          const sp = new URL(req.url ?? '', 'http://localhost').searchParams;
+          connectionId = sp.get('connectionId') ?? undefined;
+        } catch {
+          // ignore malformed URL
+        }
+        if (connectionId) {
+          const existing = keepaliveGraceTimers.get(connectionId);
+          if (existing !== undefined) {
+            clearTimeout(existing);
+            keepaliveGraceTimers.delete(connectionId);
+          }
+        }
+        ws.on('close', () => {
+          if (!connectionId) return;
+          const timer = setTimeout(async () => {
+            keepaliveGraceTimers.delete(connectionId as string);
+            try {
+              await srv.sessionManager.closeAllForAgent(connectionId as string);
+            } catch {
+              // best-effort
+            }
+            try {
+              srv.agentFocusBroadcaster?.clearFocus(connectionId as string);
+            } catch {
+              // best-effort
+            }
+          }, KEEPALIVE_GRACE_MS);
+          timer.unref?.();
+          keepaliveGraceTimers.set(connectionId, timer);
+        });
+        ws.on('error', () => ws.terminate());
+      });
+      return;
+    }
     if (req.url?.startsWith('/collab')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         const clientConnection = srv.hocuspocus.handleConnection(
@@ -422,11 +474,18 @@ export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
   }
 }
 
-/** POST to agent-write-md endpoint */
+/** POST to agent-write-md endpoint. Identity fields are optional — omit to use server defaults. */
 export async function agentWriteMd(
   port: number,
   markdown: string,
-  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace' },
+  opts?: {
+    docName?: string;
+    position?: 'append' | 'prepend' | 'replace';
+    agentId?: string;
+    agentName?: string;
+    clientName?: string;
+    colorSeed?: string;
+  },
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
@@ -435,6 +494,10 @@ export async function agentWriteMd(
       markdown,
       position: opts?.position ?? 'append',
       docName: opts?.docName,
+      agentId: opts?.agentId,
+      agentName: opts?.agentName,
+      clientName: opts?.clientName,
+      colorSeed: opts?.colorSeed,
     }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
@@ -459,24 +522,21 @@ export async function agentPatch(
   return { ok: true };
 }
 
-/** POST to agent-undo endpoint */
-export async function agentUndo(port: number, docName?: string): Promise<void> {
+/** POST to agent-undo endpoint (V0-14 per-session undo) */
+export async function agentUndo(
+  port: number,
+  opts: { docName?: string; connectionId: string; scope?: 'last' | 'session' },
+): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-undo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName }),
+    body: JSON.stringify({
+      docName: opts.docName,
+      connectionId: opts.connectionId,
+      scope: opts.scope ?? 'last',
+    }),
   });
   if (!res.ok) throw new Error(`agent-undo failed: ${res.status}`);
-}
-
-/** POST to agent-redo endpoint */
-export async function agentRedo(port: number, docName?: string): Promise<void> {
-  const res = await fetch(`http://localhost:${port}/api/agent-redo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName }),
-  });
-  if (!res.ok) throw new Error(`agent-redo failed: ${res.status}`);
 }
 
 /** POST to test-reset endpoint */
@@ -528,7 +588,12 @@ export async function pollUntil(
 export async function awaitFileWatcherIndexed(
   server: TestServer,
   docPath: string,
-  timeoutMs = 30_000,
+  // 45_000 matches the CI-worst-case budget already documented at the call
+  // sites (e.g. `ORPHAN_HINT_TEST_TIMEOUT_MS` in agent-focus-wiring.test.ts).
+  // parcel-watcher on Linux CI occasionally dispatches inotify events for
+  // files in newly-created subdirectories with >30s latency under load.
+  // Per precedent set by PR #220 ("bump integration test timeouts").
+  timeoutMs = 45_000,
 ): Promise<void> {
   const start = Date.now();
   let lastStatus = 0;
@@ -650,7 +715,7 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
   const ytext = document.getText('source');
   const fragment = document.getXmlFragment('default');
   const metaMap = document.getMap('metadata');
-  const activityMap = document.getMap('activity');
+  const activityMap = document.getMap('agent-flash');
   const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
   const md = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
   const fullMd = prependFrontmatter(frontmatter, md);
@@ -671,26 +736,18 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
 // ─── Bridge invariant watcher (FR-11) ───
 
 /**
- * Enforcing origins for the bridge invariant watcher.
- *
- * Every entry is a `LocalTransactionOrigin` OBJECT reference per precedent #1
- * (AGENTS.md): ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE (observers.ts),
- * AGENT_WRITE_ORIGIN (agent-sessions.ts), FILE_WATCHER_ORIGIN (external-change.ts),
- * ROLLBACK_ORIGIN + MANAGED_RENAME_ORIGIN (api-extension.ts), OBSERVER_SYNC_ORIGIN
- * (server-observers.ts). `Set.has()` performs identity matching for objects —
- * a string literal would NEVER match the actual production tx.origin object,
- * silently skipping enforcement.
+ * Non-paired origins that the bridge-invariant watcher enforces via identity
+ * match. Paired origins (context.paired === true — including all per-session
+ * origins created by F1, FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN, etc.) are
+ * covered by the structural `isPairedWriteOrigin(tx.origin)` check in
+ * `attachBridgeInvariantWatcher` — no need to list them here.
  *
  * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
  * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
  */
-const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
+const BRIDGE_ENFORCING_NON_PAIRED_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   ORIGIN_TREE_TO_TEXT,
   ORIGIN_TEXT_TO_TREE,
-  AGENT_WRITE_ORIGIN,
-  FILE_WATCHER_ORIGIN,
-  ROLLBACK_ORIGIN,
-  MANAGED_RENAME_ORIGIN,
   OBSERVER_SYNC_ORIGIN,
 ]);
 
@@ -735,15 +792,28 @@ export function attachBridgeInvariantWatcher(
   doc: Y.Doc,
   opts: {
     onViolation?: (info: InvariantViolation) => void;
+    /** Extra non-paired origins to enforce on in addition to the defaults.
+     *  Paired origins (context.paired === true) are always covered by the
+     *  structural isPairedWriteOrigin check and do not need to be listed. */
     enforcingOrigins?: Set<unknown>;
   } = {},
 ): () => void {
   const fragment = doc.getXmlFragment('default');
   const ytext = doc.getText('source');
-  const enforcing = opts.enforcingOrigins ?? BRIDGE_ENFORCING_ORIGINS;
+  const extraNonPaired = opts.enforcingOrigins;
 
   const afterTx = (tx: Y.Transaction): void => {
-    if (!enforcing.has(tx.origin)) return;
+    // Enforce on: (a) any paired-write origin (covers all per-session origins
+    // from F1 + FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN, MANAGED_RENAME_ORIGIN,
+    // PARK_SNAPSHOT_ORIGIN, etc. — structural check, precedent #1/D18), OR
+    // (b) the well-known non-paired origins (ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE,
+    // OBSERVER_SYNC_ORIGIN) identified by object-identity, OR (c) any extra
+    // non-paired origin passed in opts.enforcingOrigins.
+    const shouldEnforce =
+      isPairedWriteOrigin(tx.origin) ||
+      BRIDGE_ENFORCING_NON_PAIRED_ORIGINS.has(tx.origin as LocalTransactionOrigin) ||
+      extraNonPaired?.has(tx.origin);
+    if (!shouldEnforce) return;
 
     const ytextStr = ytext.toString();
     const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
@@ -788,7 +858,7 @@ export interface ItemOriginProbe {
   /** Assert that every captured origin is in the `trackedOrigins` set
    *  provided at construction. Throws if a stray origin appears — which
    *  would indicate origin-laundering (a non-tracked origin's Items ended
-   *  up in the UM stack, e.g., user content under AGENT_WRITE_ORIGIN).
+   *  up in the UM stack, e.g., user content under a different session's origin).
    *
    *  Safe to call when no items have been captured (silently returns).
    *  Call AFTER convergence, not mid-sequence — the UM may legitimately
@@ -803,10 +873,13 @@ export interface ItemOriginProbe {
  * in test code.
  *
  * `trackedOrigins` must contain `LocalTransactionOrigin` OBJECT references per
- * precedent #1 (AGENTS.md) — e.g., `AGENT_WRITE_ORIGIN`, `ORIGIN_TREE_TO_TEXT`,
+ * precedent #1 (AGENTS.md) — e.g., per-session `session.origin`, `ORIGIN_TREE_TO_TEXT`,
  * `ORIGIN_TEXT_TO_TREE`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`. `Y.UndoManager`'s
  * internal `trackedOrigins.has(tx.origin)` is identity-based for objects — a raw
  * string literal would silently fail to match the production tx.origin object.
+ * Note: in multi-client server-authoritative tests, server-side writes arrive
+ * at clients as remote transactions (undefined origin) — pass `session.origin`
+ * from a server-side `AgentSessionManager.getSession()` call to track local writes.
  */
 export function createItemOriginProbe(
   ytext: Y.Text,

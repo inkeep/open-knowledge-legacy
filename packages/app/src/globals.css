@@ -676,12 +676,97 @@
   @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
 }
 
-/* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
-   so the chip's own color/decoration styling isn't overridden by .ProseMirror a */
-.ProseMirror [data-resolution-state] a {
-  color: inherit;
-  text-decoration: none;
-  @apply dark:text-inherit dark:hover:text-inherit;
+/* -------------------------------------------------------------------------
+ * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #25(h))
+ *
+ * Pre-V2: per-instance React MarkViews rendered styled chrome around each
+ * link mark. V2 moves to plain-DOM `<span data-link>` / `<span data-wiki-link>`
+ * with `data-mark-id` / `data-node-id` for event delegation AND a
+ * `data-resolution-state` decoration attribute ('resolved' | 'folder' |
+ * 'unresolved' | 'loading' | 'external' | 'anchor') written by the
+ * `linkResolutionDecorationPlugin`. The styling below is the user-visible
+ * half of that contract (review Pass-2 Major #8).
+ * --------------------------------------------------------------------- */
+
+.ProseMirror [data-link],
+.ProseMirror [data-wiki-link] {
+  display: inline;
+  cursor: pointer;
+  color: var(--color-azure-blue);
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-underline-offset: 2px;
+  border-radius: 2px;
+  @apply font-medium dark:text-sky-blue;
+}
+
+.ProseMirror [data-link]:hover,
+.ProseMirror [data-wiki-link]:hover {
+  text-decoration-thickness: 2px;
+  @apply dark:text-azure-300;
+}
+
+.ProseMirror [data-link]:focus-visible,
+.ProseMirror [data-wiki-link]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Resolution states — the decoration plugin writes `data-resolution-state`
+   at PM render time. Selectors are specific enough to override the base
+   chip color when present. */
+
+.ProseMirror [data-resolution-state="resolved"] {
+  color: var(--color-azure-blue);
+  @apply dark:text-sky-blue;
+}
+
+/* Folder chip — doc-reference to a directory rather than a page. Italicize
+   to differentiate from a resolved page link. */
+.ProseMirror [data-resolution-state="folder"] {
+  font-style: italic;
+}
+
+/* Unresolved / broken — squiggly underline + muted color to make the
+   broken state visible in WYSIWYG (source mode has its own squiggly via
+   `source-polish`). */
+.ProseMirror [data-resolution-state="unresolved"] {
+  color: var(--color-red-600, #dc2626);
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-red-600, #dc2626);
+}
+
+.dark .ProseMirror [data-resolution-state="unresolved"] {
+  color: #f87171; /* red-400 */
+  text-decoration-color: #f87171;
+}
+
+/* Loading — awaiting page-list-cache population. Dotted underline
+   communicates "indeterminate" without alarming. */
+.ProseMirror [data-resolution-state="loading"] {
+  opacity: 0.7;
+  text-decoration-style: dotted;
+}
+
+/* External — leaves-the-workspace visual (↗ cue via ::after would require
+   layout room on inline; we take a subtler color-differentiation route). */
+.ProseMirror [data-resolution-state="external"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="external"]::after {
+  content: " ↗";
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+/* In-doc anchor — no external navigation. Keep base link color; just drop
+   the ↗ glyph. Selector intentionally LAST so it overrides `external`'s
+   ::after if both flags ever coexist. */
+.ProseMirror [data-resolution-state="anchor"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="anchor"]::after {
+  content: none;
 }
 
 /* Horizontal rule */
@@ -1223,4 +1308,40 @@ button:active:not(:disabled) {
 .cm-table-header {
   padding-inline-start: calc(8px + 2ch);
   text-indent: -2ch;
+}
+
+/* V2 mode-toggle visibility (FR9, V2 SPEC §8b) — replaces Tailwind's
+   `hidden` (`display: none`) on the non-active editor's container during
+   Visual ↔ Source mode flips. `content-visibility: hidden` skips browser
+   style + layout recalc on the 39K-PM-DOM-node tree of large docs:
+   CV:hidden probe AC22 MET at 204 ms first / 115 ms repeat in dev,
+   target G4 < 200 ms prod (cold-mount-profile §S3). `contain-intrinsic-size`
+   reserves layout space so the scrollbar doesn't collapse during the
+   toggle (no jarring scrollbar disappearance). The reserved height (8000px)
+   is generous enough to cover most docs without forcing a layout shift
+   on toggle-back; for ultra-tall docs CV:hidden's auto-resume on visibility
+   handles the diff cheaply.
+
+   Difference vs `display: none`:
+     - `display: none` removes the element from layout entirely. Browser
+       still has the DOM in memory but no layout/paint cost.
+     - `content-visibility: hidden` keeps the element in layout but skips
+       descendant layout/paint. The container reserves intrinsic size.
+       Switching back to visible is faster on large trees (no full reflow).
+
+   Out-of-flow stacking: `position: absolute; inset: 0` takes the hidden
+   editor out of normal flow so its 8000px reserved intrinsic size does
+   not size the wrapper (or any grid row) — earlier grid-based stacking
+   sized rows to MAX intrinsic across children, stretching the visible
+   sibling to 8000px and producing bottom whitespace on short docs. The
+   consuming dual-editor wrapper must be `position: relative` so this
+   absolute positioning resolves against it (see `EditorActivityPool.tsx`).
+   `pointer-events: none` guards against stray hit-tests reaching hidden
+   descendants before content-visibility's own hit-test skip applies. */
+.ok-mode-hidden {
+  content-visibility: hidden;
+  contain-intrinsic-size: 0 8000px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }

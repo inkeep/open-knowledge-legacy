@@ -55,6 +55,14 @@ interface KeepaliveOptions {
    */
   resolveWsUrl: () => Promise<string | undefined>;
   /**
+   * Stable per-MCP-process identity (D27 / multi-agent-presence SPEC §6.4 D13).
+   * Included in the keepalive URL query so the server can (a) correlate this
+   * WS with the agent's DirectConnection sessions and (b) deterministically
+   * clear the agent's presence entry on WS close. Typically a UUID generated
+   * once per MCP subprocess lifetime.
+   */
+  connectionId?: string;
+  /**
    * Structured logger. When provided, lifecycle events emit JSON with
    * url, backoff, and error context. Falls back to `log` callback.
    */
@@ -148,7 +156,10 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
       return;
     }
 
-    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}`;
+    const cidParam = opts.connectionId
+      ? `&connectionId=${encodeURIComponent(opts.connectionId)}`
+      : '';
+    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}${cidParam}`;
     try {
       ws = createWebSocket(url);
     } catch (err) {

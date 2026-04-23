@@ -29,8 +29,13 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
+import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { useWorkspace } from '@/lib/use-workspace';
+import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
+import { useInstalledAgents } from './handoff/useInstalledAgents';
 
 /**
  * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
@@ -51,6 +56,15 @@ interface CommandPaletteProps {
 export function CommandPalette({ bridge }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [recents, setRecents] = useState<RecentProjectEntry[]>([]);
+  const { activeDocName } = useDocumentContext();
+  const workspace = useWorkspace();
+  const { states: installStates, refresh: refreshInstallStates } = useInstalledAgents();
+  const { dispatch: dispatchHandoff } = useHandoffDispatch();
+  // Shared input construction — identical shape across the three surfaces so
+  // AC9's single-dispatch contract holds. `null` when no active doc or when
+  // workspace metadata has not resolved yet (web host only — Electron
+  // resolves synchronously via `window.okDesktop`).
+  const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
   // Lazy-load recents each time the palette opens so the list is always fresh.
   // Cheap (<10ms over IPC), and avoids a stale snapshot if the user opens
@@ -64,10 +78,15 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       const result = await bridge.project.listRecent();
       if (!cancelled) setRecents(result);
     }, 'Failed to load recent projects.');
+    // Fire-and-forget install-state refresh when the palette opens. The probe
+    // coordinator handles the 10s per-scheme throttle, so rapid open/close
+    // cycles collapse into at most one OS probe per window. Matches the
+    // EditorHeader dropdown's refresh-on-open semantics (SQ5 DIRECTED option c).
+    void refreshInstallStates();
     return () => {
       cancelled = true;
     };
-  }, [open, bridge]);
+  }, [open, bridge, refreshInstallStates]);
 
   // Cmd+K / Ctrl+K global opener. Attached once per bridge instance; React
   // Compiler handles the no-stale-closure-on-re-render concern via reactivity.
@@ -138,6 +157,65 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <CommandShortcut>⌘⇧N</CommandShortcut>
           </CommandItem>
         </CommandGroup>
+
+        {activeDocName ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Open in agent">
+              {KNOWN_TARGETS.map((target) => {
+                const installState = installStates[target.id];
+                const enabled = installState.installed === true && handoffInput !== null;
+                // The Command palette has no tooltip affordance on disabled
+                // rows; the dropdown surface (EditorHeader) carries the full
+                // PQ6 tooltip UX with install + claude.ai affordances. Here
+                // we surface a concise right-aligned status hint so the user
+                // sees *why* the row is disabled without hunting for it.
+                const hint =
+                  installState.installed === null
+                    ? 'Detecting…'
+                    : installState.installed === false
+                      ? 'Not installed'
+                      : handoffInput === null
+                        ? 'No active doc'
+                        : null;
+                // Status hint for disabled rows is rendered as a plain <span>
+                // rather than <CommandShortcut>. CommandShortcut is cmdk's
+                // right-aligned affordance semantically reserved for keyboard
+                // shortcuts (⌘O / ⌘⇧N above). Overloading it with status copy
+                // ("Not installed", "Desktop only") conflated the shortcut
+                // affordance with disabled-state messaging; the plain span is
+                // the same visual placement without the semantic overload.
+                // `aria-label` composes the hint into the accessible name so
+                // AT users hear "Open in Codex, Not installed" rather than
+                // the bare "Open in Codex" that matches an enabled row.
+                const accessibleLabel = hint
+                  ? `Open in ${target.displayName}, ${hint}`
+                  : `Open in ${target.displayName}`;
+                return (
+                  <CommandItem
+                    key={target.id}
+                    value={`open-in-agent ${target.id} ${target.displayName}`}
+                    disabled={!enabled}
+                    onSelect={() => {
+                      if (!enabled || !handoffInput) return;
+                      setOpen(false);
+                      void dispatchHandoff(target.id, handoffInput);
+                    }}
+                    data-testid={`command-palette-open-in-${target.id}`}
+                    aria-label={accessibleLabel}
+                  >
+                    <span className="flex-1">Open in {target.displayName}</span>
+                    {hint ? (
+                      <span aria-hidden="true" className="ml-auto text-muted-foreground text-xs">
+                        {hint}
+                      </span>
+                    ) : null}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
+        ) : null}
 
         {switchable.length > 0 ? (
           <>

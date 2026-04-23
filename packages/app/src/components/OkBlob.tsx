@@ -37,9 +37,11 @@ function happyEyeArc(cx: number, level: ActiveClickLevel): string {
   return `M${cx - halfWidth} ${EYE_CY + 0.3} Q${cx} ${EYE_CY - apexLift}, ${cx + halfWidth} ${EYE_CY + 0.3}`;
 }
 
-/** Firework origin in SVG viewBox units — slightly above the blob's geometric center. */
-const FIREWORK_ORIGIN_X = 15;
-const FIREWORK_ORIGIN_Y = 13;
+/** Blob's geometric center in SVG viewBox units — each particle spawns on a ring
+    around this point so the burst emerges from the body's silhouette rather than
+    from a single point on the forehead. */
+const FIREWORK_CENTER_X = 15;
+const FIREWORK_CENTER_Y = 15;
 
 function particleStyle(p: FireworkParticle): CSSProperties {
   return {
@@ -208,8 +210,8 @@ export function OkBlob({ size = 48, className, trackMouse = true }: OkBlobProps)
           {particles.map((p) => (
             <circle
               key={p.id}
-              cx={FIREWORK_ORIGIN_X}
-              cy={FIREWORK_ORIGIN_Y}
+              cx={FIREWORK_CENTER_X + p.originDx}
+              cy={FIREWORK_CENTER_Y + p.originDy}
               r={p.size}
               className="ok-blob-firework"
               style={particleStyle(p)}

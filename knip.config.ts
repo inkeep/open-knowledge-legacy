@@ -4,11 +4,15 @@ export default {
   tags: ['-lintignore'],
   ignoreDependencies: [
     'lint-staged', // not sure if it's false positive
-    'bun-types',
   ],
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
+    // InternalLinkOptions must be exported so tsc can emit the
+    // `sharedExtensions` type without TS4023 "cannot be named" — the type
+    // leaks into sharedExtensions' inferred shape via LinkFidelity.extend<>.
+    // Knip can't see this usage because it's in a type-inference boundary.
+    'packages/app/src/editor/extensions/internal-link.ts': ['exports', 'types'],
     '{tech-probes,reports,specs}/**': ['files'],
     // Canonical shape of the Electron bridge contract. Kept as a documentation
     // anchor per packages/core/src/index.ts — the runtime consumer is a
@@ -21,6 +25,14 @@ export default {
     // the typed IPC wrappers. Knip doesn't follow the full discriminated
     // union back to the string literals on each channel.
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
+    // MDX docs page — rendered by the Fumadocs site's file-system route
+    // discovery. It's referenced from `docs/content/overview.mdx` (card grid)
+    // and `docs/content/guides/meta.json` (sidebar order), but knip can't
+    // follow the MDX cross-refs / meta.json include list for the docs
+    // workspace's default entry discovery. M4 (#266) landed this page;
+    // silencing the warning here is the whole-workspace pattern we already
+    // use for the bridge-contract + ipc-events duplicated-by-design files.
+    'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
@@ -55,7 +67,11 @@ export default {
       // bundled separately by electron-vite (see electron.vite.config.ts).
       // Without these listed, knip walks only the default entry points and
       // mis-flags every exported symbol on the import graph as unused.
-      // Tests are standard Bun unit + integration.
+      // Tests are standard Bun unit + integration — `.test.ts` and `.test.mjs`
+      // (the .mjs form is used for tests that import root-level `.mjs`
+      // scripts, e.g. `tests/unit/verify-keyring-driver.test.mjs` importing
+      // `scripts/verify-keyring-in-packaged-dmg.mjs`; omitting the `.mjs`
+      // entry makes knip mis-flag both the test AND the script it drives).
       entry: [
         'src/main/index.ts',
         'src/preload/index.ts',
@@ -63,6 +79,7 @@ export default {
         'electron.vite.config.ts',
         'scripts/*.mjs',
         'tests/**/*.test.ts',
+        'tests/**/*.test.mjs',
       ],
       project: 'src/**',
     },

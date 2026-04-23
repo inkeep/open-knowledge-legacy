@@ -1,0 +1,174 @@
+{
+  "baselineDate": "2026-04-19-postfix",
+  "purpose": "post-fix",
+  "capturedAt": "2026-04-20T07:27:56.000Z",
+  "metadata": {
+    "commitSha": "a2001f599ea6c8b93821eaa6a674e03efd8a5ccd",
+    "branch": "perf/investigation",
+    "bunVersion": "1.3.11",
+    "nodeVersion": "24.3.0",
+    "platform": "darwin-arm64 (MacBook-Pro-79.local)",
+    "viewport": "1440x900",
+    "headed": false,
+    "hardwareClass": "Apple-silicon laptop (MacBook-Pro-79.local)",
+    "targetUrl": "http://localhost:5174",
+    "devServerWorktree": "playwright-stability",
+    "comparesAgainst": "2026-04-19.json (pre-fix baseline, commit 4721c98904a372b8abff94a8bfce24874fe4bd23)",
+    "note": "Captured against a dev server started on VITE_PORT=5174 from the playwright-stability worktree after all of US-006 (S4 fix), US-007 (S2 diagnosis), US-008 (S1 fix + diagnosis), and US-009 (S3 diagnosis) landed. The commitSha reflects this worktree's head at capture time. All four scenarios use the same dev server, same doc sizes, same hardware, same viewport as the pre-fix capture — the only variable is the code between 4721c989 (pre-fix) and a2001f59 (post-fix)."
+  },
+  "docs": {
+    "README": { "sizeBytes": 5583, "lines": 116 },
+    "CLAUDE": { "sizeBytes": 149623, "lines": 1051, "note": "symlink -> AGENTS.md" },
+    "AGENTS": { "sizeBytes": 149623, "lines": 1051 },
+    "PROJECT": {
+      "sizeBytes": 3252966,
+      "lines": 8364,
+      "note": "Unchanged from the pre-fix baseline — 3.25 MB / 8,364 lines in this worktree. Post-fix measurements are directly comparable to pre-fix."
+    }
+  },
+  "scenarios": {
+    "cold-load-big-doc": {
+      "sourceResult": "results/cold-load-big-doc.2026-04-20T07-25-49-779Z.json",
+      "docName": "PROJECT",
+      "wallClockMs": 22526.02,
+      "coldLoadMs": 13164,
+      "rendered": true,
+      "proseMirrorTextLen": 1494078,
+      "observedLongTaskCount": 5,
+      "observedLongestTaskMs": 8291,
+      "trace": {
+        "eventCount": 1375339,
+        "longTaskCount": 5,
+        "longestTaskMs": 9515.22,
+        "scriptMs": 8845.24,
+        "layoutMs": 1097.4,
+        "styleMs": 479.4
+      },
+      "markCount": 111,
+      "onRenderCount": 98,
+      "comparison": {
+        "preFixColdLoadMs": 11175,
+        "postFixColdLoadMs": 13164,
+        "deltaMs": 1989,
+        "note": "CDP-traced cold-load numbers are noisy — see iteration 8 learnings: CDP tracing adds ~2× overhead on large docs, and variance between runs can exceed the defer-mount fix's ~200-500 ms improvement on this worktree's 3.25 MB PROJECT. The authoritative post-fix measurement for S1 is the raw probe (no CDP) documented in evidence/s1-diagnosis.md: 8,465-8,741 ms post-fix vs 8,923 ms pre-fix. The trace-level numbers are preserved here as the standard scenario output but should not be read as a regression — they reflect CDP overhead variance, not product regression."
+      }
+    },
+    "warm-switch": {
+      "sourceResult": "results/warm-switch.2026-04-20T07-26-30-194Z.json",
+      "smallDoc": "README",
+      "bigDoc": "PROJECT",
+      "warmSwitchMs": 672,
+      "trace": {
+        "eventCount": 1460397,
+        "longTaskCount": 6,
+        "longestTaskMs": 9438.52,
+        "scriptMs": 9616.84,
+        "layoutMs": 1139.3,
+        "styleMs": 518.85
+      },
+      "markCount": 204,
+      "onRenderCount": 182,
+      "comparison": {
+        "preFixWarmSwitchMs": 737,
+        "postFixWarmSwitchMs": 672,
+        "deltaMs": -65,
+        "note": "Within measurement noise. US-007 documented S2 as architecturally-bounded by TipTap's useEditor.createEditor synchronous construction cost (~350 ms fixed overhead for sharedExtensions + Yjs Collaboration + initial sync — independent of doc size). AC21 <100 ms is not achievable within the current @tiptap/react lifecycle; requires a V2 module-level editor cache (see evidence/s2-diagnosis.md)."
+      }
+    },
+    "mode-toggle": {
+      "sourceResult": "results/mode-toggle.2026-04-20T07-26-57-348Z.json",
+      "docName": "PROJECT",
+      "modeToggleMs": 595,
+      "toSourceMs": 223,
+      "modeToggleLayoutMs": 1974.3,
+      "trace": {
+        "eventCount": 1401519,
+        "longTaskCount": 7,
+        "longestTaskMs": 9319.31,
+        "scriptMs": 9361.65,
+        "layoutMs": 1330.52,
+        "styleMs": 643.78
+      },
+      "markCount": 140,
+      "onRenderCount": 126,
+      "comparison": {
+        "preFixModeToggleMs": 609,
+        "postFixModeToggleMs": 595,
+        "deltaMs": -14,
+        "preFixModeToggleLayoutMs": 2037.62,
+        "postFixModeToggleLayoutMs": 1974.3,
+        "note": "Within measurement noise. US-009 documented S3 as architecturally-bounded by browser's deferred style/layout recalc on display:none → visible for the 39,608-node TipTap PM DOM after pre-mount. US-008's defer-mount fix does NOT reduce this cost because both editors are mounted after the first toggle — the Source→Visual AC-targeted leg pays full recalc regardless. AC22 <300 ms not achievable without breaking precedent #18(b) pre-mount-both pattern OR upstream ProseMirror work; three V2 paths cataloged in evidence/s3-diagnosis.md."
+      }
+    },
+    "outline-polling": {
+      "sourceResult": "results/outline-polling.2026-04-20T07-27-25-609Z.json",
+      "docName": "README",
+      "idleMs": 30002,
+      "initialRequestCount": 2,
+      "apiCallCount": 0,
+      "expectedPollIntervalMs": 2000,
+      "trace": {
+        "eventCount": 107979,
+        "longTaskCount": 2,
+        "longestTaskMs": 119.61,
+        "scriptMs": 562.67,
+        "layoutMs": 14.28,
+        "styleMs": 16.69
+      },
+      "markCount": 100,
+      "onRenderCount": 88,
+      "comparison": {
+        "preFixApiCallCount": 13,
+        "postFixApiCallCount": 0,
+        "deltaCount": -13,
+        "note": "CLEAN WIN. US-006's fix removed refetchInterval:2000 from OutlinePanel and replaced it with a 300 ms trailing-edge debounce on the active doc's Y.Doc 'update' event. Over 30 s of idle (no content mutation), zero /api/page-headings requests fire. AC19 ✓."
+      }
+    }
+  },
+  "acceptanceOutcomes": {
+    "AC19": {
+      "story": "US-006",
+      "symptom": "S4 outline polling",
+      "requirement": "apiCallCount === 0 over 30s idle",
+      "actualPostFix": 0,
+      "passed": true,
+      "kind": "fixed"
+    },
+    "AC20": {
+      "story": "US-008",
+      "symptom": "S1 cold load",
+      "requirement": "coldLoadMs < 5000 OR architecturally-bounded with reasoning",
+      "actualPostFix": 13164,
+      "passed": true,
+      "kind": "architecturally-bounded",
+      "reference": "specs/2026-04-19-perf-diagnostic-toolkit/evidence/s1-diagnosis.md §7",
+      "note": "Defer-mount fix lands and improves cold-load by ~200-500 ms on 3.25 MB (proportional to doc size). Architectural floor is ~5.5-7 s on this doc size (Y.Doc sync ~2 s + PM DOM construction ~2-3 s + React commits ~1.5 s + browser work ~1 s). Below AC20's 5000 ms target by a margin that grows with doc size; V2 paths cataloged."
+    },
+    "AC21": {
+      "story": "US-007",
+      "symptom": "S2 warm switch",
+      "requirement": "warmSwitchMs < 100 OR architecturally-bounded with reasoning",
+      "actualPostFix": 672,
+      "passed": true,
+      "kind": "architecturally-bounded",
+      "reference": "specs/2026-04-19-perf-diagnostic-toolkit/evidence/s2-diagnosis.md",
+      "note": "D11 lever (ACTIVITY_MOUNT_LIMIT=1) attempted, measured, reverted. Cost is bound by TipTap's useEditor.createEditor lifecycle — @tiptap/react schedules destroy 1ms after effect cleanup regardless of Activity state. LIMIT=1 broke F1 scroll-preservation (ScrollPreservingContainer's useRef dies on full unmount). V2 module-level editor cache proposed."
+    },
+    "AC22": {
+      "story": "US-009",
+      "symptom": "S3 mode toggle",
+      "requirement": "modeToggleLayoutMs < 300 OR architecturally-bounded with reasoning",
+      "actualPostFix": 1974.3,
+      "passed": true,
+      "kind": "architecturally-bounded",
+      "reference": "specs/2026-04-19-perf-diagnostic-toolkit/evidence/s3-diagnosis.md",
+      "note": "Browser-engine display:none → visible style/layout recalc on 39,608-node PM DOM, proportional to DOM cardinality. Pre-mount-both pattern (precedent #18(b)) commits to this cost for large docs in exchange for instant toggle on the common case (README: 36 ms / 51 ms layout+style — 27× under the 1 s no-regression bar). Three V2 paths cataloged in evidence."
+    }
+  },
+  "summary": {
+    "directFixCount": 1,
+    "architecturallyBoundedCount": 3,
+    "passingAcceptanceCriteria": ["AC19", "AC20", "AC21", "AC22"],
+    "instrumentationImpact": "Zero regressions. bun run check green across 13 turbo tasks, 648 tests. Playwright E2E docs-open.e2e.ts + crdt-stress.e2e.ts + paste-fidelity.e2e.ts all green. All four symptoms now have an in-band repro (scenarios/) + evidence-backed diagnosis (evidence/s*-diagnosis.md) + V2 follow-up proposals."
+  }
+}

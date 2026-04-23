@@ -653,7 +653,7 @@ function InstallVisual() {
           <div>
             Found <span className="text-[var(--slide-text)]">12 markdown files</span> in content/
           </div>
-          <div>Shadow repo initialized at .git/openknowledge/</div>
+          <div>Shadow repo initialized at .git/open-knowledge/</div>
         </div>
         <div className="flex items-center gap-2 pt-1">
           <div className="size-1.5 animate-pulse rounded-full bg-emerald-500" />

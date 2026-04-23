@@ -23,6 +23,7 @@ Active when no live `server.lock` is present and auto-start is **not** opted out
 - Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
 - Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) in the first tool-result error rather than silently dropping to disk-only
 - Once the poll succeeds, subsequent behavior is identical to Connected mode
+- **Transitive auto-git-init:** the spawned `ok start` runs `ensureProjectGit` on the project directory, so if there is no parent `.git/` present it will be created (default branch `main`) before the collab server binds. Running `ok mcp` against a directory without `.git/` therefore creates one transitively — the disclosure line appears in the spawned server's stderr log. To suppress both the auto-spawn and the transitive git-init together, opt out with `OK_MCP_AUTOSTART=0` (env) or `mcp.autoStart: false` (config) to fall into Disk-only mode.
 </Tab>
 <Tab value="Disk-only mode">
 Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.
@@ -79,9 +80,10 @@ Every docName-producing MCP tool emits a `previewUrl` in its `structuredContent`
 
 Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for details):
 
-1. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
-2. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
-3. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+1. `openknowledge://` URL scheme — emitted when the server detects it is running inside the Open Knowledge desktop app (via `OK_ELECTRON_PROTOCOL_HOST=1`, which the desktop main process injects at utility-fork time). The resulting URL is `openknowledge://open?project=<realpath>&doc=<docName>` and routes through the desktop's main-process URL handler to the correct project window. CLI / `bunx` servers never set the flag, so they fall through to the HTTP sources below.
+2. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
+3. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
+4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 

@@ -1,8 +1,7 @@
 import { CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
-import { GraphPanel } from '@/components/GraphPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -15,6 +14,15 @@ const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'forward-links', label: 'Outgoing Links', icon: CornerUpRight },
   { id: 'graph', label: 'Graph', icon: Network },
 ];
+
+export function loadGraphPanelModule() {
+  return import('@/components/GraphPanel');
+}
+
+const LazyGraphPanel = lazy(async () => {
+  const mod = await loadGraphPanelModule();
+  return { default: mod.GraphPanel };
+});
 
 interface DocPanelProps {
   docName: string;
@@ -64,7 +72,17 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
         {activeTab === 'outline' && <OutlinePanel docName={docName} isSourceMode={isSourceMode} />}
         {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
         {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
-        {activeTab === 'graph' && <GraphPanel activeDocName={docName} />}
+        {activeTab === 'graph' && (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading graph…
+              </div>
+            }
+          >
+            <LazyGraphPanel activeDocName={docName} />
+          </Suspense>
+        )}
       </div>
     </>
   );

@@ -219,6 +219,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('rename_document'),
+    identityRef: opts.identityRef,
   });
   registerGetHistory(registrationServer, {
     serverUrl: opts.serverUrl,
@@ -236,6 +237,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('rollback_to_version'),
+    identityRef: opts.identityRef,
   });
   registerListDocuments(registrationServer, {
     serverUrl: opts.serverUrl,

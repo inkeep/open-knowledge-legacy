@@ -5,10 +5,20 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
+  formatCheckpointSubject,
+  formatImportSubject,
+  formatOkActor,
+  formatParkSubject,
+  formatReconcileSubject,
+  formatRenameSubject,
+  formatRollbackSubject,
+  formatWipSubject,
   getShadowRepoPath,
   getWipRefPattern,
+  type OkActorEntry,
   parseCheckpoint,
   parseContributors,
+  parseOkActor,
   parseWriterId,
 } from './shadow-repo-layout.ts';
 
@@ -112,29 +122,54 @@ describe('parseContributors', () => {
   });
 });
 
-describe('parseWriterId', () => {
-  test('agent-<id> → agent classification', () => {
+describe('parseWriterId (D34 taxonomy)', () => {
+  test('agent-<id> → agent classification, isAgent true', () => {
     const p = parseWriterId('agent-claude-code-7x');
     expect(p.classification).toBe('agent');
     expect(p.isAgent).toBe(true);
     expect(p.id).toBe('agent-claude-code-7x');
   });
 
-  test('human-<id> → human classification', () => {
-    const p = parseWriterId('human-tim');
-    expect(p.classification).toBe('human');
+  test('principal-<id> → principal classification, isAgent false', () => {
+    const p = parseWriterId('principal-tim');
+    expect(p.classification).toBe('principal');
     expect(p.isAgent).toBe(false);
   });
 
-  test('"upstream" → upstream classification, isAgent null', () => {
-    const p = parseWriterId('upstream');
-    expect(p.classification).toBe('upstream');
+  test('"file-system" → classified-file-system, isAgent null', () => {
+    const p = parseWriterId('file-system');
+    expect(p.classification).toBe('classified-file-system');
     expect(p.isAgent).toBe(null);
   });
 
-  test('"server" → server classification, isAgent null', () => {
+  test('"git-upstream" → classified-git-upstream, isAgent null', () => {
+    const p = parseWriterId('git-upstream');
+    expect(p.classification).toBe('classified-git-upstream');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('"openknowledge-service" → classified-openknowledge-service, isAgent null', () => {
+    const p = parseWriterId('openknowledge-service');
+    expect(p.classification).toBe('classified-openknowledge-service');
+    expect(p.isAgent).toBe(null);
+  });
+
+  // Legacy ids → unknown (eligible for GC by US-018 allowlist sweep)
+  test('legacy "human-<id>" → unknown (D34: human- prefix dropped)', () => {
+    const p = parseWriterId('human-tim');
+    expect(p.classification).toBe('unknown');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('legacy "upstream" → unknown (D34: replaced by git-upstream)', () => {
+    const p = parseWriterId('upstream');
+    expect(p.classification).toBe('unknown');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('legacy "server" → unknown (D34: replaced by openknowledge-service)', () => {
     const p = parseWriterId('server');
-    expect(p.classification).toBe('server');
+    expect(p.classification).toBe('unknown');
     expect(p.isAgent).toBe(null);
   });
 
@@ -177,40 +212,34 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
   });
 
-  test('prefers integrated mode when project has its own .git/', () => {
+  test('always resolves to <projectRoot>/.git/open-knowledge/', () => {
     const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.git/open-knowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/open-knowledge'));
+  });
+
+  test('never returns legacy .git/openknowledge/ path (single-mode layout)', () => {
+    const project = resolve(tmp, 'project');
+    // Simulate old integrated-mode location — layout helper does NOT see it
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('falls back to standalone mode when no project .git/ exists', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.openknowledge'));
-  });
-
-  test('prefers integrated over standalone when both exist', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('returns null when .git/openknowledge exists but HEAD is missing', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
+    // Legacy path is ignored — getShadowRepoPath reads through resolveShadowDir
+    // which always returns .git/open-knowledge/. The R9 rename shim in
+    // initShadowRepo handles the on-disk migration at server start.
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
-  test('returns null when the shadow dir is a file (not a directory)', () => {
+  test('never returns .openknowledge/ (standalone path deleted)', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(project, { recursive: true });
-    writeFileSync(resolve(project, '.git'), 'not a dir');
-    // Neither integrated nor standalone exists
+    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('returns null when .git/open-knowledge exists but HEAD is missing', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
   });
 });
@@ -304,5 +333,185 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
 
     const checkpoint = parseCheckpoint(body);
     expect(checkpoint?.kind).toBe('bridge-merge-loss');
+  });
+});
+
+// ─── US-015: parseOkActor / formatOkActor / formatWipSubject ─────────────────
+
+describe('formatWipSubject', () => {
+  test('empty docs → wip: auto-save', () => {
+    expect(formatWipSubject([])).toBe('wip: auto-save');
+  });
+
+  test('one doc → wip: <docName>', () => {
+    expect(formatWipSubject(['notes/ideas.md'])).toBe('wip: notes/ideas.md');
+  });
+
+  test('two docs → wip: 2 docs', () => {
+    expect(formatWipSubject(['a.md', 'b.md'])).toBe('wip: 2 docs');
+  });
+
+  test('five docs → wip: 5 docs', () => {
+    const docs = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'];
+    expect(formatWipSubject(docs)).toBe('wip: 5 docs');
+  });
+});
+
+describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
+  const baseEntry: OkActorEntry = {
+    v: 1,
+    principal: null,
+    agent_session: 'conn-abc123',
+    agent_type: 'claude-3-5-sonnet',
+    client_name: 'claude-code',
+    client_version: '1.0.0',
+    label: 'My agent',
+    display_name: 'Claude (abc1)',
+    color_seed: 'conn-abc123',
+    docs: ['notes.md', 'ideas.md'],
+  };
+
+  test('round-trips a full OkActorEntry', () => {
+    const line = formatOkActor(baseEntry);
+    const body = `wip: notes.md\n\n${line}`;
+    const parsed = parseOkActor(body);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.v).toBe(1);
+    expect(parsed?.agent_session).toBe('conn-abc123');
+    expect(parsed?.agent_type).toBe('claude-3-5-sonnet');
+    expect(parsed?.client_name).toBe('claude-code');
+    expect(parsed?.display_name).toBe('Claude (abc1)');
+    expect(parsed?.color_seed).toBe('conn-abc123');
+    expect(parsed?.docs).toEqual(['notes.md', 'ideas.md']);
+    expect(parsed?.principal).toBeNull();
+    expect(parsed?.label).toBe('My agent');
+  });
+
+  test('round-trips an entry with all nullable fields null', () => {
+    const sparse: OkActorEntry = {
+      v: 1,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Open Knowledge (service)',
+      color_seed: 'openknowledge-service',
+      docs: [],
+    };
+    const line = formatOkActor(sparse);
+    const parsed = parseOkActor(`wip: auto-save\n\n${line}`);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.agent_session).toBeNull();
+    expect(parsed?.docs).toEqual([]);
+  });
+
+  test('returns null for empty body', () => {
+    expect(parseOkActor('')).toBeNull();
+  });
+
+  test('returns null when ok-actor: line is absent', () => {
+    expect(parseOkActor('wip: auto-save\n\nok-contributors: {...}')).toBeNull();
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseOkActor('ok-actor: {not json')).toBeNull();
+  });
+
+  test('rejects v:0 (schema version must be 1)', () => {
+    const line = 'ok-actor: {"v":0,"display_name":"X","docs":[]}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('rejects missing display_name', () => {
+    const line = 'ok-actor: {"v":1,"docs":[]}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('rejects missing docs array', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"X"}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('tolerates sibling ok-contributors: and ok-checkpoint-v1: lines (coexistence)', () => {
+    const actorLine = formatOkActor(baseEntry);
+    const body = [
+      'wip: notes.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","docs":["notes.md"]}',
+      actorLine,
+    ].join('\n');
+    const parsed = parseOkActor(body);
+    expect(parsed?.display_name).toBe('Claude (abc1)');
+    // contributor parsing is unaffected
+    const contributors = parseContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-abc');
+  });
+
+  test('color_seed defaults to "unknown" when missing in stored JSON', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"X","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.color_seed).toBe('unknown');
+  });
+});
+
+// ─── US-015: Subject-prefix format helpers (D53, FR-13) ──────────────────────
+
+describe('Subject-prefix format helpers (D53, FR-13)', () => {
+  test('formatReconcileSubject', () => {
+    expect(formatReconcileSubject('notes.md')).toBe('reconcile: notes.md');
+    expect(formatReconcileSubject('docs/guide.md')).toBe('reconcile: docs/guide.md');
+  });
+
+  test('formatRollbackSubject trims sha to 7 chars', () => {
+    expect(formatRollbackSubject('notes.md', 'abcdef1234567890')).toBe(
+      'rollback: notes.md to abcdef1',
+    );
+  });
+
+  test('formatRollbackSubject with short sha (already <= 7)', () => {
+    expect(formatRollbackSubject('plan.md', 'abc1234')).toBe('rollback: plan.md to abc1234');
+  });
+
+  test('formatParkSubject', () => {
+    expect(formatParkSubject('main', 'feat/new-ui')).toBe('park: main -> feat/new-ui');
+    expect(formatParkSubject('feat/old', 'main')).toBe('park: feat/old -> main');
+  });
+
+  test('formatRenameSubject', () => {
+    expect(formatRenameSubject('intro.md', 'getting-started.md')).toBe(
+      'rename: intro.md -> getting-started.md',
+    );
+  });
+
+  test('formatCheckpointSubject', () => {
+    expect(formatCheckpointSubject('Save progress')).toBe('checkpoint: Save progress');
+    expect(formatCheckpointSubject('pre-rollback')).toBe('checkpoint: pre-rollback');
+  });
+
+  test('formatImportSubject with oldHead', () => {
+    expect(formatImportSubject('aabbccddeeff0011', '1122334455667788')).toBe(
+      'import: from aabbccdd..11223344',
+    );
+  });
+
+  test('formatImportSubject without oldHead (initial import)', () => {
+    expect(formatImportSubject(null, '1122334455667788')).toBe('import: initial at 11223344');
+  });
+
+  test('all prefixes are distinct and match their action kind', () => {
+    const subjects = [
+      formatWipSubject(['doc.md']),
+      formatReconcileSubject('doc.md'),
+      formatRollbackSubject('doc.md', 'abc1234abcd'),
+      formatParkSubject('main', 'feat/x'),
+      formatRenameSubject('a.md', 'b.md'),
+      formatCheckpointSubject('save'),
+      formatImportSubject('aabbccdd', 'eeff0011'),
+    ];
+    const prefixes = subjects.map((s) => s.split(':')[0]);
+    expect(new Set(prefixes).size).toBe(subjects.length);
   });
 });
