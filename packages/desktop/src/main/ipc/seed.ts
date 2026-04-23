@@ -16,12 +16,20 @@
  */
 
 import {
-  type ApplyResult,
   applySeed as applySeedImpl,
   planSeed as planSeedImpl,
   type ScaffoldPlan,
   SeedPrerequisiteError,
 } from '@inkeep/open-knowledge-server';
+import type { OkSeedApplyResult, OkSeedPlanResult } from '../../shared/bridge-contract.ts';
+
+// Main/renderer wire format is the `OkSeed*Result` pair defined once in
+// `bridge-contract.ts` (canonical result shape shared by Electron IPC + the
+// web `/api/seed/*` HTTP endpoints). Re-exported under shorter aliases so
+// `ipc-channels.ts` can continue to reference `SeedPlanResult/SeedApplyResult`
+// without importing from the shared package — no second set of types.
+export type SeedPlanResult = OkSeedPlanResult;
+export type SeedApplyResult = OkSeedApplyResult;
 
 /** Injected by `main/index.ts`; `plan` / `apply` delegate to the server module. */
 export interface SeedIpcDeps {
@@ -37,22 +45,6 @@ export interface SeedIpcDeps {
   /** Override for tests. Defaults to `applySeed` from the server package. */
   applySeed?: typeof applySeedImpl;
 }
-
-/**
- * Error payload surfaced to the renderer when the plan/apply can't proceed.
- * Renderer maps `kind` to toast / inline-UI copy.
- */
-export type SeedErrorPayload =
-  | { kind: 'no-project'; message: string }
-  | { kind: 'prerequisite-missing'; message: string }
-  | { kind: 'internal'; message: string };
-
-export type SeedPlanResult =
-  | { ok: true; plan: ScaffoldPlan }
-  | { ok: false; error: SeedErrorPayload };
-export type SeedApplyResult =
-  | { ok: true; result: ApplyResult }
-  | { ok: false; error: SeedErrorPayload };
 
 /**
  * `ok:seed:plan` handler — compute a ScaffoldPlan for the current window's

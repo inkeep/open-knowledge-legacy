@@ -99,7 +99,7 @@ describe('initContent', () => {
     expect(configYml).toContain("#   - match: 'research/**'");
     expect(configYml).toContain("#   - match: 'articles/**'");
     // Points at `ok seed` as the command that writes this structure for real
-    expect(configYml).toContain('open-knowledge seed');
+    expect(configYml).toContain('ok seed');
     // Picomatch globstar nuance explicitly flagged
     expect(configYml).toMatch(/foo-\*\*/);
     expect(configYml).toMatch(/foo-\*\/\*\*/);

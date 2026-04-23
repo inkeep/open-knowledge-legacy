@@ -669,7 +669,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
     lines.push('  2. Approve the MCP server when prompted');
     lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
-    lines.push('     - open-knowledge seed  (or: ok seed)');
+    lines.push('     - ok seed');
     lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
     lines.push('     - mcp__open-knowledge__ingest      — capture an external source');
     lines.push('     - mcp__open-knowledge__research    — gather sources and write findings');

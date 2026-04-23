@@ -1,12 +1,13 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
+import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -178,12 +179,7 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
     if (hashDoc !== null) {
       return <EditorSkeleton />;
     }
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
-        <OkBlob size={80} />
-        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      </div>
-    );
+    return <EmptyEditorState />;
   }
 
   const isDiffMode = editorMode === 'diff';
@@ -352,6 +348,34 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
         </ResizablePanel>
       </ResizablePanelGroup>
+    </div>
+  );
+}
+
+/**
+ * Landing state when no document is selected. Shows the OkBlob plus an
+ * optional CTA to initialize the Karpathy three-layer knowledge-base
+ * structure (`external-sources/`, `research/`, `articles/` + log.md + matching
+ * `config.yml` `folders:` entries). Works in both the Electron desktop app
+ * and the web editor — the SeedDialog internally routes to IPC when
+ * `window.okDesktop` is present, otherwise to the `/api/seed/*` HTTP
+ * endpoints.
+ */
+function EmptyEditorState() {
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <OkBlob size={80} />
+      <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+      <div className="flex flex-col items-center gap-2">
+        <Button variant="outline" onClick={() => setSeedDialogOpen(true)}>
+          <BrainCircuit aria-hidden="true" className="h-4 w-4" />
+          Initialize LLM brain
+        </Button>
+        <span className="text-xs text-muted-foreground">Optional starter structure</span>
+      </div>
+      <SeedDialog open={seedDialogOpen} onOpenChange={setSeedDialogOpen} />
     </div>
   );
 }

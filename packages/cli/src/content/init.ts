@@ -93,7 +93,7 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #                              TL;DR above. Use \`foo-*/**\` if you want
 #                              \`foo-X\` plus its descendants.
 #
-# Tip: run \`open-knowledge seed\` to scaffold the Karpathy three-layer starter
+# Tip: run \`ok seed\` to scaffold the Karpathy three-layer starter
 # (external-sources/, research/, articles/) with matching \`folders:\` entries.
 # The commented example below is the exact structure \`ok seed\` writes.
 #

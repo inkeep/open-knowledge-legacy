@@ -205,7 +205,7 @@ Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now
 
 **Do not chain silently.** After `ingest`, ask the user whether to proceed to `research`. After `research`, let the user decide whether the findings are ready to `consolidate`. Each tool completes on its own terms — the user drives the transitions.
 
-**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `open-knowledge seed` (or `ok seed`) once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and writes matching `config.yml` `folders:` entries so agents see layer descriptions at every `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
+**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `ok seed` once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and writes matching `config.yml` `folders:` entries so agents see layer descriptions at every `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
 
 ## Server lifecycle
 
