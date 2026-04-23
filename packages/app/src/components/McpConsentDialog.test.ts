@@ -16,12 +16,12 @@ import {
 type EditorDetection = OkMcpWiringShowPayload['detectedEditors'][number];
 
 const sampleDetection: readonly EditorDetection[] = [
-  { id: 'claude', label: 'Claude Code', detected: true },
-  { id: 'claude-desktop', label: 'Claude Desktop', detected: false },
-  { id: 'cursor', label: 'Cursor', detected: true },
-  { id: 'vscode', label: 'VS Code', detected: false },
-  { id: 'windsurf', label: 'Windsurf', detected: false },
-  { id: 'codex', label: 'Codex', detected: false },
+  { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
+  { id: 'claude-desktop', label: 'Claude Desktop', detected: false, willReplace: false },
+  { id: 'cursor', label: 'Cursor', detected: true, willReplace: false },
+  { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
+  { id: 'windsurf', label: 'Windsurf', detected: false, willReplace: false },
+  { id: 'codex', label: 'Codex', detected: false, willReplace: false },
 ];
 
 describe('computeInitialSelection', () => {
@@ -43,16 +43,16 @@ describe('computeInitialSelection', () => {
 
   test('all-detected preselects all', () => {
     const sel = computeInitialSelection([
-      { id: 'claude', label: 'Claude Code', detected: true },
-      { id: 'vscode', label: 'VS Code', detected: true },
+      { id: 'claude', label: 'Claude Code', detected: true, willReplace: false },
+      { id: 'vscode', label: 'VS Code', detected: true, willReplace: false },
     ]);
     expect(sel.size).toBe(2);
   });
 
   test('none-detected preselects none', () => {
     const sel = computeInitialSelection([
-      { id: 'claude', label: 'Claude Code', detected: false },
-      { id: 'vscode', label: 'VS Code', detected: false },
+      { id: 'claude', label: 'Claude Code', detected: false, willReplace: false },
+      { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
     ]);
     expect(sel.size).toBe(0);
   });
@@ -98,7 +98,7 @@ describe('selectedIdsOrdered', () => {
   test('selected ids NOT in detection payload are dropped (defensive)', () => {
     const sel = new Set<OkMcpWiringEditorId>(['claude']);
     const truncated: readonly EditorDetection[] = [
-      { id: 'vscode', label: 'VS Code', detected: false },
+      { id: 'vscode', label: 'VS Code', detected: false, willReplace: false },
     ];
     const out = selectedIdsOrdered(sel, truncated);
     expect(out).toEqual([]);
@@ -156,6 +156,23 @@ describe('McpConsentDialog module shape', () => {
     toast.error('hello');
     expect(spy.mock.calls.length).toBe(1);
     expect(spy.mock.calls[0]).toEqual(['hello']);
+  });
+
+  test('Pass 1 Major #8: dialog renders "Will replace existing" label for willReplace=true rows', () => {
+    // Regression guard for the per-editor disclosure added in Pass 1 Major #8.
+    // The dialog previously showed only "Detected on this machine" / "Not
+    // detected"; long-time CLI users who wrote an entry via `ok init` months
+    // ago had no indication their row would be silently overwritten by Add.
+    // Source-level assertion — the repo convention skips @testing-library/
+    // react. A future refactor that drops the willReplace branch fires this.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const source = readFileSync(join(import.meta.dir, 'McpConsentDialog.tsx'), 'utf8');
+    // The label string and the branch that sets it must both appear. Written
+    // as literal-substring checks so a behaviorally-equivalent rewording of
+    // the branch structure (ternary → if/else) still passes.
+    expect(source).toContain('Will replace existing Open Knowledge entry');
+    expect(source).toContain('editor.willReplace');
   });
 
   test('Pass 1 Major #1: onAdd / onSkip must reset `busy` on !result.ok so retry is possible', () => {

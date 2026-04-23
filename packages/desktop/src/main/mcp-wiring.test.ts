@@ -797,7 +797,12 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       expect(captured.length).toBe(1);
       expect(captured[0]?.channel).toBe('ok:mcp-wiring:show');
       const payload = captured[0]?.args[0] as {
-        detectedEditors: Array<{ id: string; label: string; detected: boolean }>;
+        detectedEditors: Array<{
+          id: string;
+          label: string;
+          detected: boolean;
+          willReplace: boolean;
+        }>;
       };
       expect(payload.detectedEditors.length).toBe(ALL_EDITOR_IDS.length);
       const claude = payload.detectedEditors.find((d) => d.id === 'claude');
@@ -806,6 +811,107 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       expect(claude?.detected).toBe(true);
       expect(cursor?.detected).toBe(true);
       expect(vscode?.detected).toBe(false);
+      // Pass 1 Major #8: every row carries a willReplace boolean. No existing
+      // entries in this fixture, so all must be `false`.
+      expect(claude?.willReplace).toBe(false);
+      expect(cursor?.willReplace).toBe(false);
+      expect(vscode?.willReplace).toBe(false);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('Pass 1 Major #8: willReplace=true when existing OK-managed entry is present', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    // Claude has a canonical npx entry from a prior `ok init` — Add would
+    // overwrite. Cursor has a foreign customization — preserved, not
+    // flagged. vscode has no entry — no willReplace.
+    const { cli } = createCliSurface({
+      detected: ['claude', 'cursor'],
+      existingEntries: {
+        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        cursor: { command: 'custom-wrapper', args: ['mcp'] },
+      },
+    });
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const { event, captured } = createShowCapturingEvent();
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', event);
+      const payload = captured[0]?.args[0] as {
+        detectedEditors: Array<{
+          id: string;
+          label: string;
+          detected: boolean;
+          willReplace: boolean;
+        }>;
+      };
+      const claude = payload.detectedEditors.find((d) => d.id === 'claude');
+      const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
+      const vscode = payload.detectedEditors.find((d) => d.id === 'vscode');
+      // Claude's canonical npx shape → computeForce returns true → willReplace.
+      expect(claude?.willReplace).toBe(true);
+      // Cursor's foreign shape → computeForce returns false → NOT replaced,
+      // the existing entry is preserved with a `mcp-wiring-skip-customized`
+      // log at confirm time. Dialog correctly reflects that Add won't stomp.
+      expect(cursor?.willReplace).toBe(false);
+      // vscode has no prior entry at all — willReplace is vacuously false.
+      expect(vscode?.willReplace).toBe(false);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('Pass 1 Major #8: readExistingMcpEntry throw per-editor tolerated, willReplace defaults to false', async () => {
+    // A single editor's config read throwing must not pull the dialog down —
+    // confirm-time classification is authoritative; this arming-time probe
+    // is a disclosure aid, tolerant of failure.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const throwingCli: McpWiringCliSurface = {
+      detectInstalledEditors: () => ['claude'],
+      writeUserMcpConfigs: async () => [],
+      readExistingMcpEntry: (id) => {
+        if (id === 'claude') throw new Error('simulated read failure');
+        return null;
+      },
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli: throwingCli,
+      fs,
+      logger,
+    });
+    try {
+      const { event, captured } = createShowCapturingEvent();
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', event);
+      const payload = captured[0]?.args[0] as {
+        detectedEditors: Array<{ id: string; willReplace: boolean }>;
+      };
+      const claude = payload.detectedEditors.find((d) => d.id === 'claude');
+      // Even though the probe threw, detection still proceeded — claude is
+      // detected + willReplace is the safe default.
+      expect(claude?.willReplace).toBe(false);
+      // Handle is armed — no detect-failed event fired (a per-editor read
+      // throw isn't fatal).
+      expect(handle.armed).toBe(true);
     } finally {
       handle.destroy();
     }
@@ -1467,5 +1573,344 @@ describe('runMcpWiringOnFirstLaunch — destroy', () => {
     handle.destroy();
     handle.destroy();
     expect(handle.armed).toBe(false);
+  });
+});
+
+/**
+ * Pass 1 Major #7 — regression tests for three new behaviors landed in
+ * Pass 1 without explicit coverage:
+ *   (1) sender-binding rejection (Pass 0 Major #1 isPermittedSender),
+ *   (2) `handled` reset on failure so same-boot retry lands (Pass 0 Major #2),
+ *   (3) detection try/catch emitting `mcp-wiring-detect-failed` (Pass 0 Major #5).
+ *
+ * Without these tests, a regression that reverts the sender-binding bypass
+ * or collapses same-boot retry to single-attempt lands silently; these
+ * cases are exactly the product-critical paths the Pass 1 review flagged.
+ */
+
+describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.1: sender binding', () => {
+  test('confirm from an unbound sender is rejected with "Consent must come from..." copy', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger, warns } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      // Do NOT bind a sender. The stub's `invoke` falls back to sender id
+      // 999, which the binding gate rejects because `capturedSenderId` is
+      // still null pre-dispatch. The rejection protects against any
+      // future BrowserWindow with bridge access (M3 update-toast relaunch,
+      // second-instance spawn) from pre-empting the user's choice before
+      // they see the dialog.
+      const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude'],
+      })) as { ok: boolean; error?: string };
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Consent must come from the window');
+      // No write happened — the binding gate fired BEFORE the handler's
+      // writeUserMcpConfigs call.
+      expect(writeCalls).toHaveLength(0);
+      // Operator-grade structured warning fires so the rejection is traceable
+      // in packaged-app console output.
+      expect(warns.some((w) => w.msg.includes('rejecting confirm'))).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('skip from an unbound sender is rejected and does not write the skip marker', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger, warns } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const result = (await ipcMain.invoke('ok:mcp-wiring:skip')) as {
+        ok: boolean;
+        error?: string;
+      };
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Consent must come from the window');
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
+      expect(warns.some((w) => w.msg.includes('rejecting skip'))).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm from a DIFFERENT sender than the one that received show is rejected', async () => {
+    // Bind sender id 1 via renderer-ready, then invoke confirm from sender id 2.
+    // The gate matches on exact id equality — not just null-binding — so a
+    // second renderer with bridge access still can't pre-empt.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger, warns } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.bindSender(1);
+      const differentSenderEvent = { sender: { id: 42 } };
+      const result = (await ipcMain.invokeWithEvent('ok:mcp-wiring:confirm', differentSenderEvent, {
+        editorIds: ['claude'],
+      })) as { ok: boolean; error?: string };
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Consent must come from the window');
+      // The warning log includes both the captured and the got ids for
+      // telemetry — pinned so a future refactor that loses ctx surfaces.
+      const rejectionWarn = warns.find((w) => w.msg.includes('rejecting confirm'));
+      expect(rejectionWarn).toBeDefined();
+      expect(
+        (rejectionWarn?.ctx as { capturedSenderId?: number } | undefined)?.capturedSenderId,
+      ).toBe(1);
+      expect((rejectionWarn?.ctx as { gotSenderId?: number } | undefined)?.gotSenderId).toBe(42);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('after sender-binding succeeds, confirm from the same sender passes the gate', async () => {
+    // Positive control — proves rejection above is tied to the id mismatch,
+    // not a blanket deny.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.bindSender(7);
+      const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude'],
+      })) as { ok: boolean };
+      expect(result.ok).toBe(true);
+      expect(writeCalls).toHaveLength(1);
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.2: handled flag reset enables same-boot retry', () => {
+  test('partial failure → second confirm with all-passing fixtures writes marker (proves handled was reset)', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    // First write fails for cursor; second write (all editors succeed) lands
+    // the marker. The key assertion: the handler processes the second invoke
+    // fully rather than short-circuiting on a stale `handled=true`.
+    let callCount = 0;
+    const cli: McpWiringCliSurface = {
+      detectInstalledEditors: () => [],
+      writeUserMcpConfigs: async (call) => {
+        callCount++;
+        return call.editors.map((editorId) => {
+          if (callCount === 1 && editorId === 'cursor') {
+            return {
+              editorId,
+              label: EDITOR_TARGETS[editorId].label,
+              action: 'failed' as const,
+              configPath: '/fake/cursor/mcp.json',
+              serverName: 'open-knowledge',
+              error: 'EACCES on first attempt',
+            };
+          }
+          return {
+            editorId,
+            label: EDITOR_TARGETS[editorId].label,
+            action: 'written' as const,
+            configPath: `/fake/${editorId}/config.json`,
+            serverName: 'open-knowledge',
+          };
+        });
+      },
+      readExistingMcpEntry: () => null,
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.bindSender();
+      // First attempt — partial failure. Main returns ok:false, marker
+      // absent, handler must reset `handled = false` so retry lands.
+      const first = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude', 'cursor'],
+      })) as { ok: boolean; error?: string };
+      expect(first.ok).toBe(false);
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
+      // Second attempt — all-passing (callCount === 2 skips the injected
+      // failure). Marker MUST be written now. If `handled` weren't reset,
+      // this returns the idempotent `ok:true` without invoking
+      // writeUserMcpConfigs and no marker would land.
+      const second = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude', 'cursor'],
+      })) as { ok: boolean };
+      expect(second.ok).toBe(true);
+      expect(callCount).toBe(2); // both calls actually ran
+      expect(readMcpStatusMarker('/Users/andrew', fs)?.configured).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('skip failure → second skip succeeds (handled reset on skip path too)', async () => {
+    let attempts = 0;
+    const inner = createVirtualFs();
+    const fs: McpWiringFsOps = {
+      ...inner.fs,
+      writeFileSync(path, content) {
+        attempts++;
+        if (attempts === 1) {
+          throw Object.assign(new Error('EACCES first attempt'), { code: 'EACCES' });
+        }
+        inner.fs.writeFileSync(path, content);
+      },
+    };
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.bindSender();
+      const first = (await ipcMain.invoke('ok:mcp-wiring:skip')) as {
+        ok: boolean;
+        error?: string;
+      };
+      expect(first.ok).toBe(false);
+      // Same-boot retry must land because the skip handler reset `handled`.
+      const second = (await ipcMain.invoke('ok:mcp-wiring:skip')) as { ok: boolean };
+      expect(second.ok).toBe(true);
+      expect(attempts).toBe(2);
+      // Verify marker was successfully written on second attempt via the inner fs.
+      expect(readMcpStatusMarker('/Users/andrew', inner.fs)?.configured).toBe(false);
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.3: detection try/catch', () => {
+  test('missing editorTargets entry → returns inert handle + emits mcp-wiring-detect-failed', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    // Build a cli surface whose editorTargets is missing an id that
+    // allEditorIds enumerates. Simulates a CLI-desktop drift (refactor that
+    // adds a new editor id without the matching target) or a future
+    // platform-conditional getter that throws at read time.
+    const brokenCli: McpWiringCliSurface = {
+      detectInstalledEditors: () => [],
+      writeUserMcpConfigs: async () => [],
+      readExistingMcpEntry: () => null,
+      allEditorIds: [...ALL_EDITOR_IDS, 'phantom' as (typeof ALL_EDITOR_IDS)[number]],
+      editorTargets: EDITOR_TARGETS, // lacks the 'phantom' entry
+    };
+    const { logger, errors, events } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli: brokenCli,
+      fs,
+      logger,
+    });
+    // Must NOT crash app boot — the handler returns an inert handle and
+    // leaves the marker absent so next-boot re-fire still recovers.
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+    // Operator-grade error log + structured event both fire so ops teams
+    // can correlate "dialog never appeared" reports to the drift.
+    expect(errors.some((e) => e.msg.includes('detection failed'))).toBe(true);
+    const detectFailed = events.find((e) => e.event === 'mcp-wiring-detect-failed');
+    expect(detectFailed).toBeDefined();
+    expect(detectFailed?.error).toContain('phantom');
+  });
+
+  test('detectInstalledEditors throw → returns inert handle, event fires', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const throwingCli: McpWiringCliSurface = {
+      detectInstalledEditors: () => {
+        throw new Error('detectInstalledEditors exploded');
+      },
+      writeUserMcpConfigs: async () => [],
+      readExistingMcpEntry: () => null,
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    const { logger, events } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli: throwingCli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+    expect(
+      events.some(
+        (e) =>
+          e.event === 'mcp-wiring-detect-failed' &&
+          typeof e.error === 'string' &&
+          e.error.includes('detectInstalledEditors exploded'),
+      ),
+    ).toBe(true);
   });
 });

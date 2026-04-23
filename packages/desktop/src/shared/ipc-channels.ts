@@ -88,11 +88,18 @@ export type McpWiringEditorId =
   | 'codex';
 
 /** Single entry in the consent dialog — one per editor in `ALL_EDITOR_IDS`.
- *  `detected: true` preselects the checkbox (OQ-14 DIRECTED). */
+ *  `detected: true` preselects the checkbox (OQ-14 DIRECTED).
+ *  `willReplace: true` signals that this editor has an existing OK-managed
+ *  entry (canonical npx, historical `-y` variant, or prior cliPath shape)
+ *  that clicking Add would overwrite — surfaced per-row in the dialog so
+ *  long-time CLI users who ran `ok init` months ago aren't surprised to
+ *  find their entry silently stomped by a bundle-absolute cliPath. Pass 1
+ *  Major #8. */
 export interface McpWiringEditorDetection {
   readonly id: McpWiringEditorId;
   readonly label: string;
   readonly detected: boolean;
+  readonly willReplace: boolean;
 }
 
 /** Confirm payload from renderer → main. Editors the user checked when they

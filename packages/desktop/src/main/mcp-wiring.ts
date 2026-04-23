@@ -588,7 +588,29 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       if (!target) {
         throw new Error(`editorTargets missing entry for id=${id}`);
       }
-      return { id, label: target.label, detected: detectedIds.has(id) };
+      // Pass 1 Major #8: compute `willReplace` at arming time using the
+      // same classifier the confirm handler runs at write time — any
+      // OK-managed shape (canonical npx, `-y` variant, prior cliPath)
+      // resolves `computeForce → true`, meaning Add would overwrite.
+      // Surfaced in the dialog so long-time CLI users who wrote their
+      // MCP entry via an earlier `ok init` see which rows will be
+      // stomped BEFORE clicking Add, not as a silent after-the-fact
+      // side effect. `readExistingMcpEntry` returns null when the
+      // config file is absent or has no entry for this editor — those
+      // rows render as "Not yet configured" rather than "Will replace".
+      let willReplace = false;
+      try {
+        const existing = cli.readExistingMcpEntry(id, home);
+        if (existing !== null) {
+          willReplace = computeForce(existing, target);
+        }
+      } catch {
+        // Tolerant on purpose: a read failure in one editor's config
+        // must not pull the whole dialog down. Default to `false` —
+        // the confirm-time classification is the authoritative source;
+        // this arming-time probe is purely a disclosure aid.
+      }
+      return { id, label: target.label, detected: detectedIds.has(id), willReplace };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

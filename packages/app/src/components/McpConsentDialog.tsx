@@ -178,6 +178,21 @@ function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyPro
         <ul className="max-h-72 overflow-y-auto rounded-md border border-border bg-card/50 divide-y divide-border">
           {detectedEditors.map((editor) => {
             const checked = selection.has(editor.id);
+            // Pass 1 Major #8: per-editor disclosure when Add would overwrite
+            // an existing OK-managed entry. Priority over the detected/not-
+            // detected line since the existing-entry state is strictly more
+            // specific — an editor with a prior OK entry is necessarily also
+            // detected, so showing both is redundant. Orange hint color to
+            // signal "this row's behavior is different from the silent-write
+            // case" without reading as error-red.
+            const statusLabel = editor.willReplace
+              ? 'Will replace existing Open Knowledge entry'
+              : editor.detected
+                ? 'Detected on this machine'
+                : 'Not detected';
+            const statusClass = editor.willReplace
+              ? 'text-xs text-amber-600 dark:text-amber-400'
+              : 'text-xs text-muted-foreground';
             return (
               <li key={editor.id}>
                 <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent">
@@ -191,8 +206,8 @@ function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyPro
                   />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="font-medium text-foreground">{editor.label}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {editor.detected ? 'Detected on this machine' : 'Not detected'}
+                    <span className={statusClass} data-testid={`mcp-consent-status-${editor.id}`}>
+                      {statusLabel}
                     </span>
                   </span>
                 </label>

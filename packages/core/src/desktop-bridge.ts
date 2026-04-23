@@ -133,12 +133,16 @@ export type OkMcpWiringEditorId =
  * Payload delivered to `mcpWiring.onShow` subscribers on first-launch MCP
  * consent. Every editor in `ALL_EDITOR_IDS` appears; `detected: true`
  * preselects the checkbox in `<McpConsentDialog>` per D-M6-R4 (OQ-14 DIRECTED).
+ * `willReplace: true` signals that the editor has an existing OK-managed
+ * entry that Add would overwrite — surfaced per-row so long-time CLI users
+ * aren't surprised to find their pre-existing entry stomped (Pass 1 Major #8).
  */
 export interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
     readonly id: OkMcpWiringEditorId;
     readonly label: string;
     readonly detected: boolean;
+    readonly willReplace: boolean;
   }[];
 }
 

@@ -88,12 +88,15 @@ export type OkMcpWiringEditorId =
   | 'windsurf'
   | 'codex';
 
-/** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show. */
+/** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
+ *  `willReplace: true` signals the editor has an existing OK-managed entry
+ *  that Add would overwrite (Pass 1 Major #8 — per-editor disclosure). */
 export interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
     readonly id: OkMcpWiringEditorId;
     readonly label: string;
     readonly detected: boolean;
+    readonly willReplace: boolean;
   }[];
 }
 
