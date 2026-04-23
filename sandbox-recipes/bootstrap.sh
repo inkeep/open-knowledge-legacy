@@ -116,6 +116,74 @@ _ok_resolve_project() {
   printf '%s' "\${_OK_PROJECTS[\$key]}"
 }
 
+# ── Internal: shared help printers (identical to bin/ok-launcher's) ──────
+_ok_print_help() {
+  local name="\$1"
+  local tier_desc=""
+  case "\$name" in
+    ccs)  tier_desc="Tier 0 — Seatbelt sandbox (kernel-level, no container)." ;;
+    ccu)  tier_desc="Tier 0 — Seatbelt + unattended (--dangerously-skip-permissions)." ;;
+    ccb)  tier_desc="Tier 1 — Apple Container microVM (real kernel boundary)." ;;
+    ccbu) tier_desc="Tier 1 — Apple Container microVM + unattended." ;;
+    ccm)  tier_desc="Tier 1 Matryoshka — microVM + bubblewrap + Anthropic proxy." ;;
+    ccmu) tier_desc="Tier 1 Matryoshka + unattended (strongest in this set)." ;;
+  esac
+  cat >&2 <<HELP
+\$name — \$tier_desc
+
+Usage:
+  \$name [-p <project>] [claude args...]
+  \$name -- [args to claude, bypasses launcher flags]
+  \$name --about       # show tier comparison chart
+  \$name --help        # this message
+
+Examples:
+  \$name                       # launch in current directory
+  \$name -p ok                 # cd to project 'ok', then launch
+  \$name -p ok -r abc123       # + pass claude's -r (resume session)
+  \$name -- --help             # show claude's own help (bypasses launcher)
+
+Project registry: ~/.ok-projects.sh   (list via 'ccp-list')
+Claude's -p (print mode) is shadowed by our -p. Use --print instead.
+HELP
+}
+
+_ok_print_about() {
+  cat >&2 <<'ABOUT'
+Open Knowledge sandbox-recipes — tier comparison
+
+  Command     Tier                                Permissions     Use for
+  ─────────   ─────────────────────────────────   ─────────────   ──────────────────────────────
+  cc          (your existing; no sandbox)         bypass prompts  I-know-what-I'm-doing escape
+  ccs         Tier 0 — Seatbelt (kernel)          interactive     daily work on trusted code
+  ccu         Tier 0 — Seatbelt                   unattended      AFK runs on trusted code
+  ccb         Tier 1 — Apple Container microVM    interactive     OSS PR / partner code review
+  ccbu        Tier 1 — Apple Container microVM    unattended      unattended untrusted-code
+  ccm         Tier 1 — Matryoshka (VM+bubblewrap) interactive     strongest; semi-trusted review
+  ccmu        Tier 1 — Matryoshka                 unattended      strongest + AFK
+
+  Shape:      <cmd> [-p <project>] [claude args]
+  Project:    -p <key>    (see ~/.ok-projects.sh or run 'ccp-list')
+  Helpers:    ccp <key>   (cd only)     ccp-list (show registry)     cc-setup (re-run bootstrap)
+
+  Full docs: \$_OK_RECIPES/ALIASES.md
+ABOUT
+}
+
+# ── Internal: scan args for --help/--about; print and return 10 if found ─
+# Callers treat return=10 as "help handled, don't launch".
+_ok_maybe_help() {
+  local name="\$1"; shift
+  local arg
+  for arg in "\$@"; do
+    case "\$arg" in
+      --) return 0 ;;  # stop scanning; pass-through
+      --help|-h) _ok_print_help "\$name"; return 10 ;;
+      --about|--tiers) _ok_print_about; return 10 ;;
+    esac
+  done
+}
+
 # ── Internal: extract -p <proj> anywhere in args; cd to project, leave
 #             remaining args in a global _OK_REMAINING_ARGS. Returns 0 on
 #             success (incl. -p absent), 1 on error (unknown proj, missing val).
@@ -124,6 +192,11 @@ _ok_extract_project() {
   local proj="" dir=""
   while [[ \$# -gt 0 ]]; do
     case "\$1" in
+      --)
+        shift
+        remaining+=("\$@")
+        break
+        ;;
       -p)
         if [[ -z "\${2:-}" ]] || [[ "\${2:-}" == -* ]]; then
           echo "error: -p requires a project shortcut (see 'ccp-list')" >&2
@@ -155,11 +228,13 @@ _ok_extract_project() {
 
 # ── Tier 0: Seatbelt sandbox (kernel-level, no container) ────────────────
 ccs() {
+  _ok_maybe_help ccs "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   command claude --effort max "\${_OK_REMAINING_ARGS[@]}"
 }
 ccu() {
+  _ok_maybe_help ccu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   command claude --dangerously-skip-permissions --effort max "\${_OK_REMAINING_ARGS[@]}"
@@ -167,11 +242,13 @@ ccu() {
 
 # ── Tier 1: Apple Container microVM ──────────────────────────────────────
 ccb() {
+  _ok_maybe_help ccb "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
 }
 ccbu() {
+  _ok_maybe_help ccbu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"
@@ -179,11 +256,13 @@ ccbu() {
 
 # ── Tier 1 Matryoshka: microVM + bubblewrap + Anthropic proxy ────────────
 ccm() {
+  _ok_maybe_help ccm "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
 }
 ccmu() {
+  _ok_maybe_help ccmu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
   _OK_REMAINING_ARGS=()
   _ok_extract_project "\$@" || return
   "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"

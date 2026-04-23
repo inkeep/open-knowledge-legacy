@@ -39,10 +39,92 @@ _resolve_project() {
   printf '%s' "${_OK_PROJECTS[$key]}"
 }
 
+# ── Help output ──────────────────────────────────────────────────────────
+# Launcher intercepts --help/-h and --about. Pass-through to claude via --.
+print_short_help() {
+  local name="${0:t}"
+  local tier_desc=""
+  case "$name" in
+    ccs)  tier_desc="Tier 0 — Seatbelt sandbox (kernel-level, no container)." ;;
+    ccu)  tier_desc="Tier 0 — Seatbelt + unattended (--dangerously-skip-permissions)." ;;
+    ccb)  tier_desc="Tier 1 — Apple Container microVM (real kernel boundary)." ;;
+    ccbu) tier_desc="Tier 1 — Apple Container microVM + unattended." ;;
+    ccm)  tier_desc="Tier 1 Matryoshka — microVM + bubblewrap + Anthropic proxy." ;;
+    ccmu) tier_desc="Tier 1 Matryoshka + unattended (strongest isolation in this set)." ;;
+    *)    tier_desc="sandbox-recipes launcher" ;;
+  esac
+
+  cat >&2 <<EOF
+$name — $tier_desc
+
+Usage:
+  $name [-p <project>] [claude args...]
+  $name -- [args to claude, bypasses launcher flags]
+  $name --about       # show tier comparison chart
+  $name --help        # this message
+
+Examples:
+  $name                       # launch in current directory
+  $name -p ok                 # cd to project 'ok', then launch
+  $name -p ok -r abc123       # + pass claude's -r (resume session)
+  $name -- --help             # show claude's own help (bypasses launcher)
+
+Project registry: ~/.ok-projects.sh   (list via 'ccp-list' in your shell)
+
+Claude's -p (print mode) is shadowed by our -p. Use --print instead.
+EOF
+}
+
+print_about() {
+  cat >&2 <<'EOF'
+Open Knowledge sandbox-recipes — tier comparison
+
+  Command     Tier                                Permissions     Use for
+  ─────────   ─────────────────────────────────   ─────────────   ──────────────────────────────
+  cc          (your existing; no sandbox)         bypass prompts  I-know-what-I'm-doing escape
+  ccs         Tier 0 — Seatbelt (kernel)          interactive     daily work on trusted code
+  ccu         Tier 0 — Seatbelt                   unattended      AFK runs on trusted code
+  ccb         Tier 1 — Apple Container microVM    interactive     OSS PR / partner code review
+  ccbu        Tier 1 — Apple Container microVM    unattended      unattended untrusted-code
+  ccm         Tier 1 — Matryoshka (VM+bubblewrap) interactive     strongest; semi-trusted review
+  ccmu        Tier 1 — Matryoshka                 unattended      strongest + AFK
+
+  Shape:      <cmd> [-p <project>] [claude args]
+  Project:    -p <key>    (see ~/.ok-projects.sh or run 'ccp-list')
+  Helpers:    ccp <key>   (cd only)     ccp-list (show registry)     cc-setup (re-run bootstrap)
+
+  Suffixes:
+    cc + s   → Seatbelt sandbox
+         u   → unattended (Tier 0 shortcut; asymmetric with ccb/ccm below)
+         b   → Boxed (Apple Container microVM)
+         m   → Matryoshka (microVM + bubblewrap + Anthropic proxy)
+         p   → Project helper (cd-only — shell function only, not PATH)
+    + u appended to b/m → unattended variant (ccbu, ccmu)
+
+  Full docs: sandbox-recipes/ALIASES.md (next to this launcher)
+EOF
+}
+
+# Intercept help flags BEFORE -p parsing so they work regardless of args.
+for arg in "$@"; do
+  case "$arg" in
+    --) break ;;   # stop scanning: everything after -- is pass-through
+    --help|-h) print_short_help; exit 0 ;;
+    --about|--tiers) print_about; exit 0 ;;
+  esac
+done
+
+# ── -p <project> extraction ──────────────────────────────────────────────
 typeset -a remaining=()
 proj=""
 while (( $# > 0 )); do
   case "$1" in
+    --)
+      # Everything after -- goes through untouched (including claude's -h/-p)
+      shift
+      remaining+=("$@")
+      break
+      ;;
     -p)
       if [[ -z "${2:-}" ]] || [[ "${2:-}" == -* ]]; then
         echo "error: -p requires a project shortcut (use 'ccp-list' in your shell)" >&2
