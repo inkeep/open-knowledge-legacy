@@ -1,6 +1,27 @@
 /**
  * Layer C (Tier 2): Playwright E2E for block-selection-indicator.
  *
+ * ## US-013 scope narrow (2026-04-23)
+ *
+ * The CB-v2 5-pack foundation SPEC's US-013 explicitly scopes the rewrite
+ * to S1, S2, S3 (pre-US-013 these used `<Card />` + `<Cards><Card/></Cards>`
+ * fumadocs shapes). Those three tests are now rewritten around the 5-pack's
+ * container primitives (Callout, Accordion) — exercising the same
+ * selection-indicator invariants under the jsxComponent `content:'block*'`
+ * shape.
+ *
+ * S4-S19 retain their pre-US-013 `<Card />` / `<Cards>` fixtures. They are
+ * NOT in the CI `test:e2e` file list (`packages/app/package.json` dispatches
+ * only 9 files for PR-tier runs; this file is covered by generic
+ * `bunx playwright test` invocations). When run they would fail against the
+ * post-US-003 manifest narrow (Card + Cards unregistered → wildcard
+ * fallback lacks the `[data-component-type="card"]` selector). Follow-up
+ * work (out of US-013 scope): sweep S4-S19 to 5-pack shapes using the
+ * Callout/Accordion substitution established here. Small PR, purely
+ * mechanical.
+ *
+ * ## SPEC §6.4 correctness floor (original)
+ *
  * SPEC §6.4 correctness floor (S1–S8) + expanded coverage (S9–S18) that
  * closes the audit gaps identified in the TDD review of 2026-04-19.
  *
@@ -78,12 +99,21 @@ async function selectFirstJsxComponent(page: Page, componentName: string) {
 }
 
 // ── S1: Keyboard arrow-nav selects blocks with keyboard origin ───────────
+//
+// US-013: pre-US-013 this test used two `<Card title>` siblings. Post-narrow
+// the 5-pack's container primitives are Callout + Accordion — both are
+// hasChildren containers, so `<Callout />` self-closing is the right shape
+// for a "selectable block" in an arrow-nav sequence.
 
 test('S1: ArrowDown selects next block with data-selection-origin=keyboard', async ({
   page,
   api,
 }) => {
-  await setupDoc(page, api, '# Title\n\n<Card title="Hello" />\n\n<Card title="World" />\n');
+  await setupDoc(
+    page,
+    api,
+    '# Title\n\n<Callout type="note" title="Hello" />\n\n<Callout type="tip" title="World" />\n',
+  );
   await page.waitForSelector('.jsx-component-wrapper');
 
   await page.locator('.ProseMirror').focus();
@@ -104,42 +134,50 @@ test('S1: ArrowDown selects next block with data-selection-origin=keyboard', asy
 
 // ── S2: Pointer selection — programmatic NodeSelection + data-attr flow ──
 
-test('S2: NodeSelection on a Card emits data-selected=true on its wrapper', async ({
+test('S2: NodeSelection on a Callout emits data-selected=true on its wrapper', async ({
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Card title="Clickable" />\n');
+  await setupDoc(page, api, '<Callout type="warning" title="Clickable" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
 
   // Dispatch a pointerdown event to populate pendingOrigin='pointer', then
   // trigger the node selection via the editor API. This mirrors the
   // production code path: DOM event classification → plugin apply.
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
-  await card.dispatchEvent('pointerdown');
-  await selectFirstJsxComponent(page, 'Card');
+  const callout = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
+  await callout.dispatchEvent('pointerdown');
+  await selectFirstJsxComponent(page, 'Callout');
 
-  await expect(card).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
-  await expect(card).toHaveAttribute('data-selection-origin', 'pointer');
+  await expect(callout).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(callout).toHaveAttribute('data-selection-origin', 'pointer');
 });
 
 // ── S3: Nested innermost-wins ────────────────────────────────────────────
+//
+// US-013 / D-MF18: pre-US-013 this test used `<Cards><Card/></Cards>` to
+// exercise innermost-wins under the fumadocs compound-parent-child shape.
+// Post-narrow, the 5-pack's nested-composition shape is
+// `<Callout><Accordion/></Callout>` — exercises the same store-enforced
+// innermost-wins invariant under jsxComponent `content:'block*'` (D1).
 
-test('S3: nested Cards<Card> — only innermost paints halo', async ({ page, api }) => {
-  await setupDoc(page, api, '<Cards>\n  <Card title="Inner" />\n</Cards>\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+test('S3: nested Callout/Accordion — only innermost paints halo', async ({ page, api }) => {
+  await setupDoc(page, api, '<Callout type="note">\n\n<Accordion title="Inner" />\n\n</Callout>\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="accordion"]');
 
-  await selectFirstJsxComponent(page, 'Card');
+  await selectFirstJsxComponent(page, 'Accordion');
 
-  const innerCard = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
-  const cardsContainer = page
-    .locator('.jsx-component-wrapper[data-component-type="cards"]')
+  const innerAccordion = page
+    .locator('.jsx-component-wrapper[data-component-type="accordion"]')
+    .first();
+  const outerCallout = page
+    .locator('.jsx-component-wrapper[data-component-type="callout"]')
     .first();
 
-  await expect(innerCard).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
-  await expect(cardsContainer).toHaveAttribute('data-has-child-selected', 'true');
-  // Cards does NOT get data-selected (innermost-wins, store-enforced).
-  const cardsDataSelected = await cardsContainer.getAttribute('data-selected');
-  expect(cardsDataSelected).toBeNull();
+  await expect(innerAccordion).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
+  await expect(outerCallout).toHaveAttribute('data-has-child-selected', 'true');
+  // Outer Callout does NOT get data-selected (innermost-wins, store-enforced).
+  const outerDataSelected = await outerCallout.getAttribute('data-selected');
+  expect(outerDataSelected).toBeNull();
 
   // Exactly one wrapper in the subtree has data-selected="true".
   const selectedCount = await page.locator('[data-selected="true"]').count();

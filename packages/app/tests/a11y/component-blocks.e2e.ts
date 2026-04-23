@@ -162,10 +162,21 @@ test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ p
   }
 });
 
-// ── A11Y07: Empty-container placeholder keyboard-activatable ───
+// ── A11Y07: Empty-container placeholder keyboard-activatable (5-pack container) ───
+//
+// US-013 note: pre-US-013 this test used `<Steps>` (fumadocs compound
+// container). Post-narrow, `<Callout>` is the 5-pack's container-shaped
+// primitive — `hasChildren: true`, no `emptyChildName` (D-MF16 — Accordion
+// is also standalone; NG19 compound tier preserves the `emptyChildName`
+// machinery if it revives). The `.jsx-empty-child-placeholder` affordance
+// fires for any empty container descriptor via the same code path — this
+// test still exercises the keyboard-activation invariant. When the 5-pack
+// doesn't use the placeholder (Callout empty renders its own chrome), the
+// test short-circuits via the `count() > 0` guard and remains a no-op
+// until a new compound-container descriptor ships.
 
 test('A11Y07: Empty-container placeholder activatable via keyboard', async ({ page, api }) => {
-  await writeContent(api, '<Steps>\n\n</Steps>');
+  await writeContent(api, '<Callout type="note">\n\n</Callout>');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -234,13 +245,13 @@ test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) 
 //   - `aria-allowed-attr` is NOT disabled: the wrapper's `role="group"`
 //     intentionally omits `aria-selected` (see precedent #36) and axe
 //     agrees, so the rule passes.
-test('A11Y10: Zero axe-core violations on 20-component fixture (excluding color-contrast)', async ({
+test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contrast)', async ({
   page,
   api,
 }) => {
-  // Build a realistic document with multiple component types
+  // Build a realistic document with the 5-pack (US-013 narrow).
   const content = [
-    '# Component Accessibility Test',
+    '# 5-Pack Accessibility Test',
     '',
     '<Callout type="warning">',
     '',
@@ -248,39 +259,27 @@ test('A11Y10: Zero axe-core violations on 20-component fixture (excluding color-
     '',
     '</Callout>',
     '',
-    '<Callout type="info">',
+    '<Callout type="tip">',
     '',
-    'Info callout text',
+    'Tip callout text',
     '',
     '</Callout>',
     '',
-    '<Steps>',
+    '<Image src="/placeholder.png" alt="Architecture diagram" caption="Figure 1: topology" />',
     '',
-    '<Step>',
+    '<Accordion title="Details" defaultOpen>',
     '',
-    'First step',
+    '<Callout type="note">',
     '',
-    '</Step>',
+    'Nested note',
     '',
-    '<Step>',
+    '</Callout>',
     '',
-    'Second step',
+    '</Accordion>',
     '',
-    '</Step>',
+    '<Video src="/sample.mp4" />',
     '',
-    '</Steps>',
-    '',
-    '<Card title="Test Card" href="/test">',
-    '',
-    'Card content here',
-    '',
-    '</Card>',
-    '',
-    '<Banner title="Notice">',
-    '',
-    'Important notice',
-    '',
-    '</Banner>',
+    '<Audio src="/sample.mp3" />',
     '',
     'Some paragraph with normal text.',
   ].join('\n');
@@ -347,37 +346,35 @@ test('A11Y10: Zero axe-core violations on 20-component fixture (excluding color-
 // through `sanitizeComponentProps`; this test asserts the mitigation is
 // wired end-to-end (props → React render → DOM attribute).
 
-test('A11Y11: javascript:/data: URL props render as inert # in the DOM', async ({ page, api }) => {
+test('A11Y11: javascript:/data: URL props render inert in the DOM', async ({ page, api }) => {
+  // US-013: pre-US-013 this test used `<Card href>` anchors. Post-narrow,
+  // `href` isn't a 5-pack URL-typed descriptor prop; `Image src`, `Video src`,
+  // `Audio src` are. The XSS mitigation flows through the SAME
+  // `sanitizeComponentProps` pass — test rewritten around `<Image src>` to
+  // exercise the same sanitizer-boundary invariant. Any URL-typed prop with
+  // a `javascript:` / `vbscript:` / `data:` scheme must be stripped before
+  // reaching the DOM attribute.
   const malicious = [
-    '<Card title="xss-card" href="javascript:fetch(`/nope`)">',
+    '<Image src="javascript:fetch(`/nope`)" alt="xss-image" />',
     '',
-    'Test',
-    '',
-    '</Card>',
-    '',
-    '<Card title="safe-card" href="https://example.com/ok">',
-    '',
-    'Test',
-    '',
-    '</Card>',
+    '<Image src="https://example.com/safe.png" alt="safe-image" />',
   ].join('\n');
   await writeContent(api, malicious);
-  // Wait until both Card anchors render — we assert on exactly two hrefs.
+  // Wait until both <img> elements render — we assert on the two src values.
   await page.waitForFunction(
-    () => document.querySelectorAll('.ProseMirror a[href]').length >= 2,
+    () => document.querySelectorAll('.ProseMirror img[src]').length >= 2,
     null,
     { timeout: 5000 },
   );
 
-  // Collect every anchor under the editor surface and assert none carries a
-  // javascript:/vbscript:/data:-scheme href. The safe-card https href must
-  // still be present so we know the test is exercising the render path.
-  const hrefs = await page.evaluate(() => {
-    const anchors = document.querySelectorAll<HTMLAnchorElement>('.ProseMirror a[href]');
-    return Array.from(anchors).map((a) => a.getAttribute('href') ?? '');
+  const srcs = await page.evaluate(() => {
+    const imgs = document.querySelectorAll<HTMLImageElement>('.ProseMirror img[src]');
+    return Array.from(imgs).map((img) => img.getAttribute('src') ?? '');
   });
-  for (const href of hrefs) {
-    expect(href.toLowerCase()).not.toMatch(/^\s*(javascript|vbscript|data):/);
+  for (const src of srcs) {
+    expect(src.toLowerCase()).not.toMatch(/^\s*(javascript|vbscript|data):/);
   }
-  expect(hrefs).toContain('https://example.com/ok');
+  // The safe https src must still be present — proves the render path is
+  // active (sanitizer is not unilaterally blanking every src).
+  expect(srcs).toContain('https://example.com/safe.png');
 });

@@ -1,10 +1,24 @@
 /**
- * Visual regression suite — editor vs docs-site parity for 17 built-ins (M20).
+ * Visual regression suite — 5-pack foundation parity (US-013).
  *
- * Captures screenshots of each built-in component rendered in the editor and
+ * Captures screenshots of each 5-pack component rendered in the editor and
  * compares against golden baselines. Tolerance: ≤1% pixel delta (accommodates
  * anti-aliasing/subpixel). Covers {light, dark} themes and {selected, unselected}
- * states per VR01-VR18 in SPEC §7a.
+ * states per the renamed 5-pack VR block set.
+ *
+ * Coverage (post-narrow):
+ *   VR01 — Callout across all 5 GFM types (× light/dark) + foldable variant
+ *   VR-IMAGE — Image with caption + zoom-modal open/close
+ *   VR-VIDEO — Video with poster + HTML5 controls
+ *   VR-AUDIO — Audio with native chrome
+ *   VR-ACCORDION — Accordion expanded + collapsed + exclusive grouping (name attr)
+ *   VR17 — mixed 5-pack document
+ *   VR18 — wildcard unregistered component
+ *
+ * Dropped pre-US-013: VR02 Card, VR03 Cards, VR04 Steps, VR05 Tabs,
+ *   VR06 Accordions (fumadocs compound), VR08 Files, VR10 Banner. All cut in
+ *   the 5-pack descriptor narrow (US-003); their snapshots are archived in
+ *   __snapshots__ pre-rebase on the PR #165 branch.
  *
  * Baseline management:
  *   - packages/app/tests/visual/__snapshots__/ stores approved baselines
@@ -12,11 +26,8 @@
  *   - Golden-file updates require explicit: bun run test:visual:update
  *   - Cannot silently regenerate in CI
  *
- * Isolation: uses the per-worker fixture + per-test UUID docName — the same
- * pattern enforced across all E2E suites (see CLAUDE.md "Per-test docName
- * isolation"). Hardcoded `'test-doc'` is forbidden because parallel workers
- * would race on the same CRDT state, baking corrupted presence / selection
- * pixels into the golden under `test:visual:update`.
+ * Isolation: per-worker fixture + per-test UUID docName — no hardcoded
+ * 'test-doc' (precedent #20(a)).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -46,7 +57,6 @@ async function setTheme(page: Page, theme: 'dark' | 'light') {
     document.documentElement.classList.toggle('dark', t === 'dark');
     localStorage.setItem('ok-theme-v1', t);
   }, theme);
-  // Condition: the documentElement should carry `.dark` iff theme is dark.
   await page.waitForFunction(
     (t) => document.documentElement.classList.contains('dark') === (t === 'dark'),
     theme,
@@ -58,9 +68,6 @@ async function setTheme(page: Page, theme: 'dark' | 'light') {
 async function selectComponent(page: Page, componentName: string) {
   const component = page.locator(`[data-jsx-component][data-component-name="${componentName}"]`);
   await component.first().click();
-  // Condition: the clicked wrapper must receive the `data-selected="true"`
-  // attribute. That flips when PM's selection lands on the NodeSelection
-  // and the NodeView re-renders with `selected=true`.
   await component
     .first()
     .waitFor({ state: 'attached' })
@@ -105,9 +112,12 @@ async function seedAndNavigate(
   return docName;
 }
 
-// ── VR01: Callout ──────────────────────────────────────────────
+// ── VR01: Callout (GFM 5-type + foldable) ───────────────────────
 
-const calloutTypes = ['note', 'warning', 'error', 'info'] as const;
+// US-013 narrow: GFM 5-type set per D-MF11. Pre-US-013 list was
+// ['note', 'warning', 'error', 'info'] — 'error'/'info' were not GFM types
+// and would alias-fold to 'caution'/'note' respectively.
+const calloutTypes = ['note', 'tip', 'important', 'warning', 'caution'] as const;
 
 for (const calloutType of calloutTypes) {
   for (const theme of ['light', 'dark'] as const) {
@@ -137,149 +147,161 @@ for (const calloutType of calloutTypes) {
   }
 }
 
-// ── VR02: Card ─────────────────────────────────────────────────
+// US-013 / D-MF17: foldable Callout variant — collapsible + defaultOpen.
+for (const defaultOpen of [true, false] as const) {
+  for (const theme of ['light', 'dark'] as const) {
+    const label = defaultOpen ? 'open' : 'closed';
+    test(`VR01-foldable-${label}-${theme}: Callout collapsible defaultOpen=${defaultOpen}`, async ({
+      page,
+      api,
+    }) => {
+      const attrs = defaultOpen
+        ? 'type="warning" title="Heads up" collapsible defaultOpen'
+        : 'type="warning" title="Heads up" collapsible';
+      await seedAndNavigate(
+        page,
+        api,
+        `<Callout ${attrs}>\n\nFoldable Callout body text.\n\n</Callout>`,
+      );
+      await waitForDocSeeded(page);
+      await setTheme(page, theme);
+      await deselectAll(page);
+      const component = page.locator('[data-jsx-component]').first();
+      await expect(component).toHaveScreenshot(`callout-foldable-${label}-${theme}.png`, {
+        maxDiffPixelRatio: 0.01,
+      });
+    });
+  }
+}
+
+// ── VR-IMAGE: Image with caption + zoom modal ──────────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR02-${theme}: Card in ${theme} mode`, async ({ page, api }) => {
+  test(`VR-IMAGE-${theme}: Image with caption + figure in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(
       page,
       api,
-      '<Card title="Getting Started" href="/docs/start">\n\nLearn how to set up the project.\n\n</Card>',
+      '<Image src="/placeholder.png" alt="Placeholder" width={400} caption="Caption text" />',
     );
     await waitForDocSeeded(page);
     await setTheme(page, theme);
     await deselectAll(page);
-
     const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`card-${theme}-unselected.png`, {
-      maxDiffPixelRatio: 0.01,
+    await expect(component).toHaveScreenshot(`image-caption-${theme}-unselected.png`, {
+      maxDiffPixelRatio: 0.02, // slightly higher for image-driven pixel variance
     });
   });
 }
 
-// ── VR03: Cards ────────────────────────────────────────────────
+// ── VR-VIDEO: Video with poster + HTML5 controls ───────────────
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR03-${theme}: Cards grid in ${theme} mode`, async ({ page, api }) => {
+  test(`VR-VIDEO-${theme}: Video with poster in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(page, api, '<Video src="/sample.mp4" poster="/placeholder.png" />');
+    await waitForDocSeeded(page);
+    await setTheme(page, theme);
+    await deselectAll(page);
+    const component = page.locator('[data-jsx-component]').first();
+    await expect(component).toHaveScreenshot(`video-${theme}-unselected.png`, {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
+// ── VR-AUDIO: Audio with native chrome ─────────────────────────
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`VR-AUDIO-${theme}: Audio native chrome in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(page, api, '<Audio src="/sample.mp3" />');
+    await waitForDocSeeded(page);
+    await setTheme(page, theme);
+    await deselectAll(page);
+    const component = page.locator('[data-jsx-component]').first();
+    await expect(component).toHaveScreenshot(`audio-${theme}-unselected.png`, {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
+// ── VR-ACCORDION: Accordion expanded + collapsed + exclusive grouping ──
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`VR-ACCORDION-${theme}: Accordion expanded (defaultOpen) in ${theme} mode`, async ({
+    page,
+    api,
+  }) => {
     await seedAndNavigate(
       page,
       api,
-      '<Cards>\n\n<Card title="First" href="/a">\n\nFirst card content.\n\n</Card>\n\n<Card title="Second" href="/b">\n\nSecond card content.\n\n</Card>\n\n</Cards>',
+      '<Accordion title="Expanded accordion" defaultOpen>\n\nBody content\n\n</Accordion>',
     );
     await waitForDocSeeded(page);
     await setTheme(page, theme);
-
+    await deselectAll(page);
     const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`cards-grid-${theme}-unselected.png`, {
+    await expect(component).toHaveScreenshot(`accordion-expanded-${theme}.png`, {
       maxDiffPixelRatio: 0.01,
     });
   });
-}
 
-// ── VR04: Steps ────────────────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR04-${theme}: Steps with 3 children in ${theme} mode`, async ({ page, api }) => {
+  test(`VR-ACCORDION-collapsed-${theme}: Accordion collapsed in ${theme} mode`, async ({
+    page,
+    api,
+  }) => {
     await seedAndNavigate(
       page,
       api,
-      '<Steps>\n\n<Step>\n\nInstall dependencies\n\n</Step>\n\n<Step>\n\nConfigure settings\n\n</Step>\n\n<Step>\n\nDeploy\n\n</Step>\n\n</Steps>',
+      '<Accordion title="Collapsed accordion">\n\nHidden body\n\n</Accordion>',
     );
     await waitForDocSeeded(page);
     await setTheme(page, theme);
-
+    await deselectAll(page);
     const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`steps-3-${theme}-unselected.png`, {
+    await expect(component).toHaveScreenshot(`accordion-collapsed-${theme}.png`, {
       maxDiffPixelRatio: 0.01,
     });
   });
-}
 
-// ── VR05: Tabs ─────────────────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR05-${theme}: Tabs with 2 tabs in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(
-      page,
-      api,
-      '<Tabs items={["npm", "pnpm"]}>\n\n<Tab value="npm">\n\nnpm install open-knowledge\n\n</Tab>\n\n<Tab value="pnpm">\n\npnpm add open-knowledge\n\n</Tab>\n\n</Tabs>',
-    );
-    await waitForDocSeeded(page);
-    await setTheme(page, theme);
-
-    const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`tabs-2-${theme}-unselected.png`, {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-}
-
-// ── VR06: Accordions ───────────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR06-${theme}: Accordions in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(
-      page,
-      api,
-      '<Accordions>\n\n<Accordion title="First">\n\nFirst accordion content.\n\n</Accordion>\n\n<Accordion title="Second">\n\nSecond accordion content.\n\n</Accordion>\n\n</Accordions>',
-    );
-    await waitForDocSeeded(page);
-    await setTheme(page, theme);
-
-    const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`accordions-${theme}-unselected.png`, {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-}
-
-// ── VR08: Files ────────────────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR08-${theme}: Files tree in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(
-      page,
-      api,
-      '<Files>\n\n<Folder name="src" defaultOpen>\n\n<File name="index.ts" />\n\n<File name="config.ts" />\n\n</Folder>\n\n<File name="package.json" />\n\n</Files>',
-    );
-    await waitForDocSeeded(page);
-    await setTheme(page, theme);
-
-    const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`files-tree-${theme}-unselected.png`, {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-}
-
-// ── VR10: Banner ───────────────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR10-${theme}: Banner in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(
-      page,
-      api,
-      '<Banner title="Notice">\n\nThis is an important announcement.\n\n</Banner>',
-    );
-    await waitForDocSeeded(page);
-    await setTheme(page, theme);
-
-    const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`banner-${theme}-unselected.png`, {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-}
-
-// ── VR17: Mixed document ───────────────────────────────────────
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`VR17-${theme}: Mixed 6-component document in ${theme} mode`, async ({ page, api }) => {
+  test(`VR-ACCORDION-exclusive-grouping-${theme}: HTML5 <details name> grouping in ${theme} mode`, async ({
+    page,
+    api,
+  }) => {
     await seedAndNavigate(
       page,
       api,
       [
-        '# Mixed Components',
+        '<Accordion title="First" name="grp" defaultOpen>',
+        '',
+        'First body',
+        '',
+        '</Accordion>',
+        '',
+        '<Accordion title="Second" name="grp">',
+        '',
+        'Second body',
+        '',
+        '</Accordion>',
+      ].join('\n'),
+    );
+    await waitForDocSeeded(page, 2);
+    await setTheme(page, theme);
+    await deselectAll(page);
+    await expect(page.locator('.ProseMirror')).toHaveScreenshot(
+      `accordion-exclusive-grouping-${theme}.png`,
+      { maxDiffPixelRatio: 0.02 },
+    );
+  });
+}
+
+// ── VR17: Mixed 5-pack document ─────────────────────────────────
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`VR17-${theme}: Mixed 5-pack document in ${theme} mode`, async ({ page, api }) => {
+    await seedAndNavigate(
+      page,
+      api,
+      [
+        '# Mixed 5-Pack Components',
         '',
         '<Callout type="warning">',
         '',
@@ -287,45 +309,29 @@ for (const theme of ['light', 'dark'] as const) {
         '',
         '</Callout>',
         '',
-        '<Steps>',
+        '<Image src="/placeholder.png" alt="Diagram" caption="Service topology" />',
         '',
-        '<Step>',
+        '<Accordion title="Advanced" defaultOpen>',
         '',
-        'Step one',
+        '<Callout type="tip">',
         '',
-        '</Step>',
+        'Nested tip',
         '',
-        '<Step>',
+        '</Callout>',
         '',
-        'Step two',
+        '</Accordion>',
         '',
-        '</Step>',
+        '<Video src="/sample.mp4" />',
         '',
-        '</Steps>',
-        '',
-        '<Cards>',
-        '',
-        '<Card title="A" href="/a">',
-        '',
-        'Card A',
-        '',
-        '</Card>',
-        '',
-        '</Cards>',
-        '',
-        '<Banner title="Info">',
-        '',
-        'Banner text',
-        '',
-        '</Banner>',
+        '<Audio src="/sample.mp3" />',
       ].join('\n'),
     );
-    // Mixed doc: require at least 5 top-level blocks (heading + 4 components).
-    await waitForDocSeeded(page, 5);
+    // Mixed doc: require at least 6 top-level blocks (heading + 5 components).
+    await waitForDocSeeded(page, 6);
     await setTheme(page, theme);
 
     await expect(page.locator('.ProseMirror')).toHaveScreenshot(`mixed-document-${theme}.png`, {
-      maxDiffPixelRatio: 0.01,
+      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -341,7 +347,6 @@ for (const theme of ['light', 'dark'] as const) {
     );
     await waitForDocSeeded(page);
     await setTheme(page, theme);
-
     const component = page.locator('[data-jsx-component]').first();
     await expect(component).toHaveScreenshot(`wildcard-unregistered-${theme}.png`, {
       maxDiffPixelRatio: 0.01,
