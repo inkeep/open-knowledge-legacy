@@ -281,7 +281,7 @@ Parsed by `parseOkActor` in `shadow-repo-layout.ts`; renders back to the Timelin
 
 - **CLI `ok start`** (`packages/cli/src/commands/start.ts`) — thin Commander wrapper. `bootStartServer` is now a delegation layer; CLI-specific concerns (MCP detached-spawn stderr capture, Commander logging, `runInit` auto-init) are layered on top of `bootServer`.
 - **Electron utility** (`packages/desktop/src/utility/server-entry.ts`) — calls `bootServer({ attachUiSibling: false, idleShutdownMs: null })` so no `ok ui` sibling is spawned and the 30-minute idle-shutdown timer is not attached (D36 in the Electron spec).
-- **Vite dev plugin** (`packages/app/src/server/hocuspocus-plugin.ts`) — unchanged. Calls `createServer()` directly because the Vite HTTP server already provides the listener; it does not need `bootServer`'s composition.
+- **Vite dev plugin** (`packages/app/src/server/hocuspocus-plugin.ts`) — calls `createServer()` directly and attaches to Vite's existing HTTP server; it does not need `bootServer`'s HTTP-wrapping layer. Shares the `server.lock` contract so `bun run dev` and `ok start` against the same `contentDir` collide fast.
 
 Opt-out flags on `BootServerOptions`:
 
