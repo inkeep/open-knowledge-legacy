@@ -58,14 +58,14 @@ import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external
 export const OK_DESKTOP_INSTALL_URL = 'https://github.com/inkeep/open-knowledge/releases';
 
 /** A clickable affordance shown inside the disabled-row submenu. */
-export interface RowAffordance {
+interface RowAffordance {
   readonly label: string;
   readonly url: string;
 }
 
 /** Submenu payload for a disabled row. `null` while install state is `null`
  *  (initial probe in flight) — disabled-but-no-submenu per AC8. */
-export interface DisabledTooltip {
+interface DisabledTooltip {
   /** Main message — describes why the row is disabled (used for the short
    *  hint text rendered inline on the trigger row). */
   readonly message: string;
@@ -75,7 +75,7 @@ export interface DisabledTooltip {
   readonly webFallback?: RowAffordance;
 }
 
-export interface RowState {
+interface RowState {
   readonly enabled: boolean;
   /** When non-null, render a submenu with install + (Claude only) web-fallback
    *  affordances instead of a plain disabled item. The `message` field doubles
@@ -185,7 +185,7 @@ export function successToastForWebFallback(displayName: string): string {
   return `Opened ${displayName} in your browser.`;
 }
 
-export interface OpenInAgentMenuItemProps {
+interface OpenInAgentMenuItemProps {
   readonly target: TargetData;
   readonly installState: InstallState;
   readonly isElectronHost: boolean;

@@ -12,7 +12,7 @@
  * since dev serves the collab WebSocket on the same port.
  */
 
-export interface DevApiConfigResponse {
+interface DevApiConfigResponse {
   status: number;
   body: string;
   headers: Record<string, string>;

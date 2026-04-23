@@ -152,7 +152,7 @@ export interface ServerInstance {
  * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
  * concurrent observer somehow fires, it short-circuits symmetrically (D39).
  */
-export const PARK_SNAPSHOT_ORIGIN = (() => {
+const PARK_SNAPSHOT_ORIGIN = (() => {
   const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
   return Object.freeze({
     source: 'local' as const,

@@ -249,7 +249,7 @@ export interface AgentSessionIdentity {
  * `um` tracks [Y.Text, metaMap, flashMap] under `session.origin`; writes under
  * `session.undoOrigin` (V0-14 undo path) are excluded via captureTransaction.
  */
-export interface SessionRecord {
+interface SessionRecord {
   dc: AgentDirectConnection;
   /** Per-session frozen PairedWriteOrigin — unique per session (D2, D23). */
   origin: PairedWriteOrigin;
