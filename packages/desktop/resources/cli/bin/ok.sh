@@ -31,8 +31,15 @@ else
 fi
 
 if [ -z "$APP_PATH" ]; then
-  echo "Unable to determine app path from symlink: ${BASH_SOURCE[0]}" >&2
-  exit 1
+  # Symlink resolution failed — install integrity broken (e.g., the wrapper
+  # was copied outside the .app, or readlink chain runs into a foreign
+  # target). Mirror the bundle-missing branch (Pass 0 Major #10): two-line
+  # stderr (human-readable + machine-readable JSON) and exit 69 so MCP
+  # clients can surface this distinctly from generic failures, and
+  # operators have a structured signal in the diagnostic JSONL.
+  echo "Open Knowledge CLI cannot find its app bundle. Reinstall from the Open Knowledge DMG." >&2
+  echo "{\"error\":\"ok-wrapper-resolution-failed\",\"hint\":\"The ok.sh wrapper could not resolve its enclosing .app bundle. The symlink chain may be broken. Reinstall from the DMG or re-run Install Command-Line Tools… from the File menu.\",\"source\":\"${BASH_SOURCE[0]}\"}" >&2
+  exit 69
 fi
 
 CONTENTS="$APP_PATH/Contents"

@@ -44,6 +44,8 @@ import {
   mkdirSync as fsMkdirSync,
   readFileSync as fsReadFileSync,
   readlinkSync as fsReadlinkSync,
+  renameSync as fsRenameSync,
+  unlinkSync as fsUnlinkSync,
   writeFileSync as fsWriteFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -57,6 +59,7 @@ import type {
 } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import { wrapperPathInBundle as cliWrapperPathInBundle } from './cli-install.ts';
 
 /** Canonical symlink path created by M6a (`Install Command-Line Tools…`). */
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
@@ -93,6 +96,12 @@ export type McpStatusMarker =
  * `readlinkSync` MUST throw an `ErrnoException` with `.code === 'ENOENT'`
  * when the path is absent — this is how `resolveCliPath` distinguishes
  * "no symlink" from "foreign file at that path" (EINVAL) vs other errors.
+ *
+ * `renameSync` + `unlinkSync` are added for the atomic marker write
+ * pattern (Pass 0 Minor #2 — mirrors `state-store.saveAppStateToDir`):
+ * write to a `.tmp-<pid>-<ts>` sibling, then `rename` over the canonical
+ * path so a power-loss between write and fsync can't leave a truncated
+ * marker on disk.
  */
 export interface McpWiringFsOps {
   existsSync(path: string): boolean;
@@ -100,6 +109,8 @@ export interface McpWiringFsOps {
   readFileSync(path: string, encoding: 'utf8'): string;
   writeFileSync(path: string, content: string): void;
   mkdirSync(path: string, options?: { recursive?: boolean }): void;
+  renameSync(oldPath: string, newPath: string): void;
+  unlinkSync(path: string): void;
 }
 
 /** Runtime FsOps — thin wrapper over `node:fs`. */
@@ -112,6 +123,12 @@ const defaultFsOps: McpWiringFsOps = {
   },
   mkdirSync: (path, options) => {
     fsMkdirSync(path, options);
+  },
+  renameSync: (oldPath, newPath) => {
+    fsRenameSync(oldPath, newPath);
+  },
+  unlinkSync: (path) => {
+    fsUnlinkSync(path);
   },
 };
 
@@ -168,10 +185,20 @@ function isValidMarker(value: unknown): value is McpStatusMarker {
 }
 
 /**
- * Write the marker. Creates `<home>/.open-knowledge/` when absent so the
- * first-ever first-launch write succeeds on a machine with no prior OK
- * user-level state. Pretty-printed + trailing newline so `cat` output
- * is readable for a user inspecting their own config.
+ * Write the marker atomically. Creates `<home>/.open-knowledge/` when absent
+ * so the first-ever first-launch write succeeds on a machine with no prior
+ * OK user-level state. Pretty-printed + trailing newline so `cat` output is
+ * readable for a user inspecting their own config.
+ *
+ * Pass 0 Minor #2 — atomic write via tmp+rename. Mirrors
+ * `state-store.saveAppStateToDir`: write to a `<path>.tmp-<pid>-<now>`
+ * sibling, then `rename` over the canonical path. A power-loss between
+ * `writeFileSync` and `rename` leaves the canonical marker untouched
+ * (or absent) and a stray `.tmp-…` sibling — both safer failure modes
+ * than a truncated marker. `readMcpStatusMarker` already tolerates the
+ * truncated-marker case (returns `null`, dialog re-fires) so atomicity
+ * is defense-in-depth, not a correctness requirement; consistency with
+ * the rest of the desktop main process is the primary win.
  */
 export function writeMcpStatusMarker(
   home: string,
@@ -180,18 +207,29 @@ export function writeMcpStatusMarker(
 ): void {
   const path = mcpStatusMarkerPath(home);
   fs.mkdirSync(dirname(path), { recursive: true });
-  fs.writeFileSync(path, `${JSON.stringify(status, null, 2)}\n`);
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(status, null, 2)}\n`);
+  try {
+    fs.renameSync(tmpPath, path);
+  } catch (err) {
+    // Best-effort tmp cleanup — if the rename failed, leave no stray .tmp.
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // tmp file may not exist — the rename may have partially succeeded.
+    }
+    throw err;
+  }
 }
 
 /**
- * Bundle-absolute wrapper path. Same shape computation as
- * `cli-install.wrapperPathInBundle`; kept local so mcp-wiring doesn't
- * take a cross-module dependency for a 2-line path derivation.
+ * Bundle-absolute wrapper path — re-exports `cli-install.wrapperPathInBundle`
+ * so M6a + M6b share one definition (Pass 0 Minor #5). Both modules live in
+ * the same `main/` namespace; the cross-module import is intra-module and
+ * keeps universal-binary subpath migrations (or any future change to the
+ * bundle layout) localized to ONE function.
  */
-function wrapperPathInBundle(executablePath: string): string {
-  const bundleRoot = executablePath.replace(/\/Contents\/MacOS\/.*$/, '');
-  return join(bundleRoot, 'Contents', 'Resources', 'cli', 'bin', 'ok.sh');
-}
+const wrapperPathInBundle = cliWrapperPathInBundle;
 
 /**
  * Hybrid `cliPath` resolution (D-M6-R9). Decides which path M6b writes
@@ -329,6 +367,29 @@ function isPriorCliPathShape(existing: Record<string, unknown>): boolean {
   if (existing.command === 'npx') return false;
   if (!Array.isArray(existing.args)) return false;
   return existing.args.length === 1 && existing.args[0] === 'mcp';
+}
+
+/**
+ * Format the user-facing partial-failure message rendered via sonner toast
+ * (Review Pass 0 Critical #1). Lists each failed editor + its underlying
+ * error reason, then notes the deferred-marker recovery path so the user
+ * knows what to expect on next launch (OQ-19).
+ *
+ * Pure helper — exported for direct unit testing without standing up the
+ * full IPC handler.
+ */
+export function formatPartialFailureMessage(
+  failures: ReadonlyArray<{ editorId: string; error?: string }>,
+  totalCount: number,
+): string {
+  const okCount = totalCount - failures.length;
+  const detail = failures.map((f) => `${f.editorId}${f.error ? `: ${f.error}` : ''}`).join('; ');
+  const summary =
+    failures.length === 1
+      ? `Couldn't add MCP to ${detail}.`
+      : `${failures.length} of ${totalCount} MCP writes failed (${detail}).`;
+  const successHint = okCount > 0 ? ` ${okCount} succeeded.` : '';
+  return `${summary}${successHint} The dialog will reappear on next launch so you can retry.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,22 +613,25 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
     }
 
     // Deferred-marker (OQ-19). If any per-editor write failed, leave the
-    // marker absent so the next app launch re-fires the dialog.
-    let anyFailed = false;
-    for (const r of results) {
-      if (r.action === 'failed') {
-        anyFailed = true;
-        logger.event({
-          event: 'mcp-wiring-write-failed',
-          editor: r.editorId,
-          configPath: r.configPath,
-          error: r.error ?? null,
-        });
-      }
+    // marker absent so the next app launch re-fires the dialog. Return
+    // `ok:false` with a user-readable error so the renderer can fire a
+    // sonner toast — the dialog itself unmounts on result resolution, so a
+    // toast is the only surface for this signal (Review Pass 0 Critical #1).
+    const failedResults = results.filter((r) => r.action === 'failed');
+    for (const r of failedResults) {
+      logger.event({
+        event: 'mcp-wiring-write-failed',
+        editor: r.editorId,
+        configPath: r.configPath,
+        error: r.error ?? null,
+      });
     }
-    if (anyFailed) {
+    if (failedResults.length > 0) {
       logger.info('partial failure — marker not written; dialog will re-fire next boot');
-      return { ok: true };
+      return {
+        ok: false,
+        error: formatPartialFailureMessage(failedResults, results.length),
+      };
     }
 
     try {
@@ -604,11 +668,18 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
         fs,
       );
     } catch (err) {
-      // Skip writes should not fail in practice; log and surface ok:true so
-      // the dialog still closes. Marker absence → dialog re-fires next boot.
+      // Marker write failed (EACCES / EROFS / ENOSPC). Surface `ok:false`
+      // so the renderer can fire a sonner toast — without this signal the
+      // user sees the dialog close and assumes Skip persisted, then the
+      // dialog re-fires next boot with no explanation (Review Pass 0
+      // Major #9). `handled` is already true so this surface stays
+      // once-per-boot regardless of failure.
       const message = err instanceof Error ? err.message : String(err);
       logger.error('skip-marker write failed', { message });
-      return { ok: true };
+      return {
+        ok: false,
+        error: `Could not record your preference (${message}). The consent dialog may reappear on next launch.`,
+      };
     }
     logger.info('skipped');
     return { ok: true };
@@ -617,15 +688,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
   // D-M6-R10 mount-ack handshake. The renderer-ready invoke fires AFTER
   // React has subscribed to `ok:mcp-wiring:show`, so sending show on its
   // receipt avoids the `did-finish-load` race (subscribe-order vs. send).
-  // One-shot: first renderer-ready wins the dialog. Remove-then-dispatch
-  // ordering means a racing second invoke sees no handler and rejects —
-  // the preload swallows that rejection by design.
+  // One-shot: first renderer-ready wins the dialog. Remove ordering: dispatch
+  // FIRST, then `removeHandler` only on success — so if `sendToRenderer`
+  // throws (WebContents destroyed mid-handshake, channel-name drift, etc.)
+  // the handler stays armed and a second renderer's signalReady invoke gets
+  // a fresh attempt. Without this swap, a failed first dispatch would leave
+  // the dialog permanently undeliverable until next boot (Pass 0 Major #6).
   const rendererReadyHandler = (event: IpcMainInvokeEvent): undefined => {
-    try {
-      ipcMain.removeHandler('ok:mcp-wiring:renderer-ready');
-    } catch {
-      // best-effort; continue dispatching even if removeHandler glitches
-    }
     try {
       // Route through `sendToRenderer` (the D19 typed wrapper) so the
       // channel name + payload shape are validated against
@@ -639,7 +708,17 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       logger.info('dispatched show to renderer', { detectedCount: detections.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error('show dispatch failed', { message });
+      logger.error('show dispatch failed — handler remains armed for next renderer', {
+        message,
+      });
+      return undefined;
+    }
+    // Successful dispatch — drop the one-shot now so a second renderer's
+    // signalReady doesn't double-fire the show event.
+    try {
+      ipcMain.removeHandler('ok:mcp-wiring:renderer-ready');
+    } catch {
+      // best-effort; the handler may have been removed by destroy() racing
     }
     return undefined;
   };

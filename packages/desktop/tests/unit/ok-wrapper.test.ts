@@ -53,6 +53,37 @@ describe('ok.sh wrapper', () => {
     expect(result.stderr).toContain('ok-bundle-missing');
   });
 
+  test('Pass 0 Major #10: empty APP_PATH branch emits structured stderr + exit 69', async () => {
+    // The wrapper falls into this branch when `app_realpath` returns empty —
+    // i.e., the script runs from a location whose path doesn't contain `.app`.
+    // Before Pass 0 Major #10 the branch printed plain text + exit 1; MCP
+    // clients parsing stderr JSON got nothing actionable. Now it mirrors the
+    // exit-69 self-diagnosing pattern with a distinct error code.
+    const { mkdtempSync, copyFileSync, chmodSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'ok-wrapper-empty-'));
+    const wrapperCopy = join(dir, 'ok.sh');
+    copyFileSync(WRAPPER, wrapperCopy);
+    chmodSync(wrapperCopy, 0o755);
+
+    const result = spawnSync(wrapperCopy, [], {
+      // Note: APP_BUNDLE_DIR not set, so app_realpath runs against the copy.
+      // Since `dir` contains no `.app`, the realpath helper returns empty.
+      env: { ...process.env, APP_BUNDLE_DIR: '' },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(69);
+    const lines = result.stderr.trimEnd().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe(
+      'Open Knowledge CLI cannot find its app bundle. Reinstall from the Open Knowledge DMG.',
+    );
+    const parsed = JSON.parse(lines[1] ?? '');
+    expect(parsed.error).toBe('ok-wrapper-resolution-failed');
+    expect(parsed.hint).toContain('symlink chain may be broken');
+    expect(parsed.source).toBe(wrapperCopy);
+  });
+
   test('NODE_OPTIONS is rescoped to OK_NODE_OPTIONS before exec', () => {
     // We cannot observe the unset within the final exec since the
     // wrapper short-circuits on missing bundle before exec fires.

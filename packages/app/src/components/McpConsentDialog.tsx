@@ -14,7 +14,8 @@
  * minimum-viable scope.
  */
 
-import { useId, useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
+import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -71,14 +72,28 @@ export function selectedIdsOrdered(
 }
 
 /**
- * Test-injectable store — production consumers use the default export.
- * Exposed as a prop so `bun test` doesn't need to reset module singletons.
+ * Test-injectable store + toast — production consumers use the default
+ * exports. Exposed as props so `bun test` doesn't need to reset module
+ * singletons OR mock the global `sonner` import.
  */
 interface McpConsentDialogProps {
   store?: McpConsentStore;
+  toast?: ToastImpl;
 }
 
-export function McpConsentDialog({ store = mcpConsentStore }: McpConsentDialogProps = {}) {
+/** Minimal `sonner` surface the dialog uses — only `error`. */
+export interface ToastImpl {
+  error(message: string): void;
+}
+
+const defaultToast: ToastImpl = {
+  error: (msg) => sonnerToast.error(msg),
+};
+
+export function McpConsentDialog({
+  store = mcpConsentStore,
+  toast = defaultToast,
+}: McpConsentDialogProps = {}) {
   const request = useSyncExternalStore<OkMcpWiringShowPayload | null>(
     store.subscribe,
     store.getSnapshot,
@@ -86,22 +101,21 @@ export function McpConsentDialog({ store = mcpConsentStore }: McpConsentDialogPr
   );
 
   if (!request) return null;
-  return <McpConsentDialogBody payload={request} store={store} />;
+  return <McpConsentDialogBody payload={request} store={store} toast={toast} />;
 }
 
 interface McpConsentDialogBodyProps {
   payload: OkMcpWiringShowPayload;
   store: McpConsentStore;
+  toast: ToastImpl;
 }
 
-function McpConsentDialogBody({ payload, store }: McpConsentDialogBodyProps) {
+function McpConsentDialogBody({ payload, store, toast }: McpConsentDialogBodyProps) {
   const detectedEditors = payload.detectedEditors;
   const [selection, setSelection] = useState<ReadonlySet<OkMcpWiringEditorId>>(() =>
     computeInitialSelection(detectedEditors),
   );
   const [busy, setBusy] = useState(false);
-  const headingId = useId();
-  const descriptionId = useId();
 
   function onToggle(id: OkMcpWiringEditorId) {
     setSelection((prev) => toggleSelectedId(prev, id));
@@ -110,12 +124,12 @@ function McpConsentDialogBody({ payload, store }: McpConsentDialogBodyProps) {
   async function onAdd() {
     setBusy(true);
     const result = await store.confirm(selectedIdsOrdered(selection, detectedEditors));
-    // Regardless of ok/error, the store clears currentRequest on resolution,
-    // so `useSyncExternalStore` will unmount this subtree. Log failures; the
-    // main-side emits structured `mcp-wiring-write-failed` events as the
-    // operator-grade signal per AC2.14.
+    // The store clears currentRequest on resolution → useSyncExternalStore
+    // unmounts this subtree. Sonner is mounted globally in main.tsx so the
+    // toast survives the unmount and is the only surface for partial-failure
+    // signal (Review Pass 0 Critical #1 — AC2.14 / OQ-19 toast contract).
     if (!result.ok) {
-      console.warn('[McpConsentDialog] confirm failed:', result.error);
+      toast.error(result.error);
     }
   }
 
@@ -123,7 +137,7 @@ function McpConsentDialogBody({ payload, store }: McpConsentDialogBodyProps) {
     setBusy(true);
     const result = await store.skip();
     if (!result.ok) {
-      console.warn('[McpConsentDialog] skip failed:', result.error);
+      toast.error(result.error);
     }
   }
 
@@ -134,14 +148,20 @@ function McpConsentDialogBody({ payload, store }: McpConsentDialogBodyProps) {
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-md"
-        aria-labelledby={headingId}
-        aria-describedby={descriptionId}
-      >
+      {/*
+       * Radix Dialog auto-wires `aria-labelledby` / `aria-describedby` on
+       * `DialogContent` from `DialogTitle` / `DialogDescription` via context
+       * — no manual `useId` plumbing needed (Review Pass 0 Major #11 +
+       * Minor #4). Each editor row's `<label>` provides the implicit
+       * accessible name for its checkbox; no `aria-describedby` on the
+       * input either, since duplicating the label content via that attr
+       * causes screen readers to either announce the label twice or drop
+       * the implicit association.
+       */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle id={headingId}>Add Open Knowledge to your AI tools</DialogTitle>
-          <DialogDescription id={descriptionId}>
+          <DialogTitle>Add Open Knowledge to your AI tools</DialogTitle>
+          <DialogDescription>
             Open Knowledge can register as an MCP server so your AI tools can read and write your
             notes. Detected editors are preselected — you can toggle any row.
           </DialogDescription>
@@ -160,12 +180,8 @@ function McpConsentDialogBody({ payload, store }: McpConsentDialogBodyProps) {
                     onChange={() => onToggle(editor.id)}
                     className="size-4 shrink-0 rounded accent-primary"
                     data-testid={`mcp-consent-checkbox-${editor.id}`}
-                    aria-describedby={`mcp-consent-label-${editor.id}`}
                   />
-                  <span
-                    id={`mcp-consent-label-${editor.id}`}
-                    className="flex min-w-0 flex-1 flex-col gap-0.5"
-                  >
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="font-medium text-foreground">{editor.label}</span>
                     <span className="text-xs text-muted-foreground">
                       {editor.detected ? 'Detected on this machine' : 'Not detected'}

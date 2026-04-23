@@ -217,6 +217,26 @@ export function buildAdminAppleScript(shellCmd: string, promptCopy: string): str
 }
 
 /**
+ * POSIX-safe single-quote shell escape for embedding an arbitrary string
+ * inside `'...'` literals (Pass 0 Major #1).
+ *
+ * macOS users can rename `.app` bundles freely AND user account names can
+ * contain apostrophes (e.g. `/Users/Bob's Mac/Applications/...`). Without
+ * escaping, an apostrophe inside `target` closes the single-quote literal
+ * early — anything after is evaluated as bash. Since the result feeds
+ * `osascript ... do shell script "..." with administrator privileges`
+ * (root execution), this is a real privilege-escalation surface even though
+ * the user must consent at the admin prompt.
+ *
+ * Escape rule per POSIX shell grammar: replace each `'` inside the value
+ * with `'\''` — close the quote, escape one literal apostrophe, reopen the
+ * quote. The wrapper `'...'` literals around the call site stay unchanged.
+ */
+function shellEscapeSingleQuoted(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
+/**
  * Build the shell command `runAsAdmin` executes on install.
  *
  *   mkdir -p /usr/local/bin && \
@@ -228,13 +248,16 @@ export function buildAdminAppleScript(shellCmd: string, promptCopy: string): str
  * case (after collision-dialog confirmation) — works whether the
  * existing entry is a symlink or a plain file.
  *
- * Single-quoted paths are shell-safe for our controlled input (our
- * bundle-internal target path + the fixed `/usr/local/bin/…` targets).
- * Bundle names with embedded single quotes would break this, but our
- * product name is `Open Knowledge.app` — no quote.
+ * Both `target` and the fixed `/usr/local/bin/...` paths are routed through
+ * `shellEscapeSingleQuoted` so an apostrophe in the bundle path can't
+ * close-and-reopen the literal to inject root commands (Pass 0 Major #1).
  */
 export function buildInstallShellCmd(target: string): string {
-  const links = SYMLINK_PATHS.map((p) => `rm -f '${p}' && ln -s '${target}' '${p}'`);
+  const escapedTarget = shellEscapeSingleQuoted(target);
+  const links = SYMLINK_PATHS.map((p) => {
+    const escapedPath = shellEscapeSingleQuoted(p);
+    return `rm -f '${escapedPath}' && ln -s '${escapedTarget}' '${escapedPath}'`;
+  });
   return `mkdir -p /usr/local/bin && ${links.join(' && ')}`;
 }
 
@@ -242,29 +265,90 @@ export function buildInstallShellCmd(target: string): string {
  * Build the shell command `runAsAdmin` executes on uninstall — a plain
  * `rm -f` for each path we own. Callers pre-filter via
  * `classifySymlinkState(…) === 'ours'` so this never attacks a foreign
- * file.
+ * file. Paths are POSIX-escaped symmetric with install (Pass 0 Major #1).
  */
 export function buildUninstallShellCmd(paths: readonly string[]): string {
-  return paths.map((p) => `rm -f '${p}'`).join(' && ');
+  return paths.map((p) => `rm -f '${shellEscapeSingleQuoted(p)}'`).join(' && ');
+}
+
+/**
+ * Reasons `runAsAdmin` can fail. `installCli` / `uninstallCli` branch on
+ * the kind so user-cancel surfaces as the soft "Installation cancelled."
+ * dialog while spawn / shell failures surface as actionable error dialogs
+ * with the underlying message (Pass 0 Major #7 + #8). Without the
+ * distinction the user sees identical "cancelled" copy regardless of
+ * actual cause, including for the worst case (mid-install partial write
+ * leaves /usr/local/bin in a broken state with no signal).
+ */
+export type AdminFailureReason = 'user-cancel' | 'spawn-error' | 'shell-error';
+
+export interface AdminFailureError extends Error {
+  reason: AdminFailureReason;
+  /** stderr from osascript when available — surfaced in error dialogs. */
+  stderr?: string;
+}
+
+/**
+ * Wrap a runAsAdmin error so callers can branch on `reason`. Pure helper —
+ * exported for unit test coverage of the cancel-vs-failure copy paths.
+ */
+export function buildAdminFailureError(
+  reason: AdminFailureReason,
+  message: string,
+  stderr?: string,
+): AdminFailureError {
+  const err = new Error(message) as AdminFailureError;
+  err.reason = reason;
+  if (stderr !== undefined && stderr !== '') err.stderr = stderr;
+  return err;
+}
+
+/**
+ * Classify an osascript exit code. macOS conventions:
+ *   - exit 1 / `-128` → AppleScript "user cancelled" (Touch ID dismiss,
+ *     Cancel on the password prompt, OSA error -128). Treat as user-cancel.
+ *   - other non-zero → shell command inside `do shell script` returned
+ *     non-zero, OR osascript itself failed. Treat as shell-error so the
+ *     stderr message reaches the user.
+ */
+export function classifyOsascriptExitCode(code: number | null): AdminFailureReason {
+  if (code === 1) return 'user-cancel';
+  return 'shell-error';
 }
 
 /**
  * Run `shellCmd` under a macOS admin privilege prompt via `osascript`.
  *
- * Rejects with an `Error` if the child exits non-zero — the canonical
- * signal that the user dismissed the prompt (exit code 1 / OSA error
- * `-128`). Callers catch the rejection and show a manual-install fallback
- * (install path) or silently no-op (uninstall path) — see AC1.
+ * Rejects with `AdminFailureError` whose `reason` distinguishes:
+ *   - `user-cancel` — user dismissed the Touch ID / password prompt.
+ *   - `spawn-error` — `osascript` failed to launch (ENOENT / sandbox / MDM).
+ *   - `shell-error` — the wrapped shell command returned non-zero (mid-
+ *     install partial write, EROFS, EACCES, etc.).
+ *
+ * Stderr is captured and attached to the error so the caller can surface
+ * it in the user-facing dialog (Pass 0 Major #7).
  */
 async function defaultRunAsAdmin(shellCmd: string, promptCopy: string): Promise<void> {
   const appleScript = buildAdminAppleScript(shellCmd, promptCopy);
   return new Promise<void>((resolve, reject) => {
     const child = spawn('osascript', ['-e', appleScript]);
+    let stderrBuf = '';
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrBuf += chunk.toString();
+    });
     child.on('exit', (code) => {
       if (code === 0) return resolve();
-      reject(new Error(`osascript exited with code ${code}`));
+      reject(
+        buildAdminFailureError(
+          classifyOsascriptExitCode(code),
+          `osascript exited with code ${code}`,
+          stderrBuf.trim(),
+        ),
+      );
     });
-    child.on('error', (err) => reject(err));
+    child.on('error', (err) => {
+      reject(buildAdminFailureError('spawn-error', err.message));
+    });
   });
 }
 
@@ -353,18 +437,43 @@ export async function installCli(deps: CliInstallDeps): Promise<void> {
       shellCmd,
       'Open Knowledge needs permission to install the Command-Line Tools.',
     );
-  } catch {
-    // Admin prompt dismissed OR osascript failed. Show manual-install
-    // fallback — adding the bundle's bin dir to PATH works equivalently
-    // without needing root.
+  } catch (err) {
+    // Distinguish user-cancel from spawn-error / shell-error so the user
+    // sees actionable copy instead of "cancelled" for every failure mode
+    // (Pass 0 Major #7). user-cancel → soft manual-install fallback dialog;
+    // spawn-error / shell-error → red error dialog with the underlying
+    // message AND the manual-install fallback so the user has a path
+    // forward.
+    const adminErr = err as AdminFailureError;
+    const reason = adminErr?.reason ?? 'shell-error';
+    const stderr = adminErr?.stderr ?? '';
     const binDir = target.replace(/\/ok\.sh$/, '');
+    if (reason === 'user-cancel') {
+      await deps.dialog.showMessageBox({
+        type: 'info',
+        message: 'Installation cancelled.',
+        detail:
+          `You can install manually by adding this to your ~/.zprofile:\n\n` +
+          `  export PATH="$PATH:${binDir}"\n\n` +
+          `Then restart your terminal.`,
+        buttons: ['OK'],
+      });
+      return;
+    }
+    // spawn-error / shell-error — surface the underlying signal. A
+    // shell-error mid-flow can leave /usr/local/bin half-written; the
+    // launch-time G5 repair hook will re-detect and offer recovery on
+    // next boot, but the user deserves to know NOW.
+    const detailLines = [
+      `The installer ${reason === 'spawn-error' ? 'could not start' : 'returned an error'}.`,
+      stderr ? `\nDetails: ${stderr}` : '',
+      `\nYou can install manually by adding this to your ~/.zprofile:\n\n  export PATH="$PATH:${binDir}"\n\nThen restart your terminal.`,
+    ];
+    console.warn('[cli-install] admin install failed', { reason, message: adminErr?.message });
     await deps.dialog.showMessageBox({
-      type: 'info',
-      message: 'Installation cancelled.',
-      detail:
-        `You can install manually by adding this to your ~/.zprofile:\n\n` +
-        `  export PATH="$PATH:${binDir}"\n\n` +
-        `Then restart your terminal.`,
+      type: 'warning',
+      message: 'Could not install Command-Line Tools.',
+      detail: detailLines.join(''),
       buttons: ['OK'],
     });
     return;
@@ -404,9 +513,31 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
   const shellCmd = buildUninstallShellCmd(toRemove);
   try {
     await runAsAdmin(shellCmd, 'Open Knowledge needs permission to remove the Command-Line Tools.');
-  } catch {
-    // Admin prompt dismissed — silent no-op (menu label doesn't flip,
-    // user can click again).
+  } catch (err) {
+    // user-cancel → silent no-op (the menu label stays "Uninstall", user
+    // can click again). spawn-error / shell-error → surface a warning so
+    // the user knows the menu click landed somewhere bad — without this,
+    // a partial-uninstall (e.g., `ok` removed but `open-knowledge` failed)
+    // leaves the install in a 'broken' state with no signal that anything
+    // happened (Pass 0 Major #8).
+    const adminErr = err as AdminFailureError;
+    const reason = adminErr?.reason ?? 'shell-error';
+    if (reason === 'user-cancel') return;
+    const stderr = adminErr?.stderr ?? '';
+    console.warn('[cli-install] admin uninstall failed', {
+      reason,
+      message: adminErr?.message,
+    });
+    await deps.dialog.showMessageBox({
+      type: 'warning',
+      message: 'Could not remove Command-Line Tools.',
+      detail: [
+        `The uninstaller ${reason === 'spawn-error' ? 'could not start' : 'returned an error'}.`,
+        stderr ? `\nDetails: ${stderr}` : '',
+        `\nIf needed, remove manually:\n\n  sudo rm /usr/local/bin/ok /usr/local/bin/open-knowledge`,
+      ].join(''),
+      buttons: ['OK'],
+    });
     return;
   }
 

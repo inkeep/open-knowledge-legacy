@@ -461,8 +461,27 @@ export async function writeUserMcpConfigs(
  * absent, unreadable, unparseable, or has no entry for this editor's
  * server name.
  *
- * Never throws — tolerant on purpose so the first-launch consent flow can
- * classify every selected editor without aborting on one malformed config.
+ * **Never-throws contract (load-bearing — Pass 0 Major #13):** the M6b
+ * first-launch consent flow MUST be able to classify every selected editor
+ * without aborting on one malformed config. A corrupt user config (e.g.,
+ * stale `~/.codex/config.toml` from a half-completed third-party edit) on
+ * ANY selected editor would otherwise crash `confirmHandler`, leave the
+ * marker absent, and create an infinite dialog re-fire loop on the user's
+ * machine. Every reachable failure path here returns `null`:
+ *   - configPath() throws → null (platform-mismatched target, e.g.
+ *     Claude Desktop on Linux)
+ *   - readJson/readToml throws → null (unparseable config)
+ *   - top-level mcpServers/servers/mcp_servers key absent → null
+ *   - top-level key value not a plain object → null (e.g., array)
+ *   - server entry value not a plain object → null (e.g., bare string)
+ *
+ * Note: `null` deliberately conflates "absent" with "malformed" — both mean
+ * "no compatible existing entry to merge into" from `computeForce`'s
+ * perspective. The downstream `writeEditorMcpConfig` re-reads via the same
+ * format-aware parser and would itself throw on truly corrupt files; that
+ * write-side error path is what surfaces the corruption to the user via
+ * the `mcp-wiring-write-failed` event in `mcp-wiring.ts` (Pass 0 Critical
+ * #1's toast contract).
  */
 export function readExistingMcpEntry(
   target: EditorMcpTarget,

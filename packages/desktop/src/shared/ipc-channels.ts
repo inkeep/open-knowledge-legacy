@@ -96,11 +96,13 @@ export interface McpWiringConfirmRequest {
   readonly editorIds: readonly McpWiringEditorId[];
 }
 
-/** Confirm / skip response shape. `ok:false` currently only surfaces when
- *  `writeUserMcpConfigs` throws — per-editor failures still resolve `ok:true`
- *  and are surfaced via `mcp-wiring-write-failed` structured log events. */
+/** Confirm / skip response shape. `ok:false` surfaces when (a)
+ *  `writeUserMcpConfigs` throws, (b) any per-editor write returns
+ *  `action:'failed'` (deferred-marker per OQ-19 — caller fires a sonner
+ *  toast since the dialog itself unmounts on result), or (c) the
+ *  skip-marker write fails. The `error` string is user-facing copy. */
 export type McpWiringConfirmResult = { ok: true } | { ok: false; error: string };
-export type McpWiringSkipResult = { ok: true };
+export type McpWiringSkipResult = { ok: true } | { ok: false; error: string };
 
 export interface RequestChannels {
   /** Open native folder-picker (`showOpenDialog({ properties: ['openDirectory'] })`). */

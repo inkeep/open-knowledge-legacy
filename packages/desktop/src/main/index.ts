@@ -25,6 +25,13 @@ import {
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  ALL_EDITOR_IDS,
+  detectInstalledEditors,
+  EDITOR_TARGETS,
+  readExistingMcpEntry,
+  writeUserMcpConfigs,
+} from '@inkeep/open-knowledge';
 import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
 import {
   app,
@@ -37,12 +44,6 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '../../../cli/src/commands/editors.ts';
-import {
-  detectInstalledEditors,
-  readExistingMcpEntry,
-  writeUserMcpConfigs,
-} from '../../../cli/src/commands/init.ts';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
@@ -801,10 +802,11 @@ function bootPrimaryInstance(): void {
     // ack event lands on a dead channel. `runMcpWiringOnFirstLaunch` no-ops
     // (returns an inert handle) when the platform is non-darwin, the app is
     // in dev mode without `OK_M6B_FORCE=1`, the user-scoped marker is present,
-    // or `app.getPath('exe')` doesn't match the bundle shape. The cli
-    // surface pulls from the workspace's CLI source directly — not a
-    // package import — keeping the DMG bundle size bounded (Rollup tree-
-    // shakes unused CLI code at electron-vite build time).
+    // or `app.getPath('exe')` doesn't match the bundle shape. The cli surface
+    // is imported via the published-package name `@inkeep/open-knowledge` so
+    // turbo's `^build` topology correctly invalidates desktop's cache when CLI
+    // internals change (Pass 0 Major #2). Rollup tree-shakes unused CLI code
+    // at electron-vite build time, keeping the DMG bundle size bounded.
     const mcpWiringCli: McpWiringCliSurface = {
       detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
       writeUserMcpConfigs: (opts) => writeUserMcpConfigs(opts),

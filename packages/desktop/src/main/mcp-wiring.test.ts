@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '../../../cli/src/commands/editors.ts';
+import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '@inkeep/open-knowledge';
 import {
   computeForce,
   type ForceComputeTarget,
+  formatPartialFailureMessage,
   type IpcMainEventLike,
   type IpcMainLike,
   type McpStatusMarker,
@@ -42,6 +43,10 @@ const EINVAL: NodeJS.ErrnoException = Object.assign(new Error('EINVAL'), { code:
  * Virtual filesystem stub for the marker round-trip tests. Captures
  * `writeFileSync` + `mkdirSync` calls into maps so tests can re-read
  * and assert shape without touching disk.
+ *
+ * `renameSync` + `unlinkSync` (Pass 0 Minor #2 — atomic write pattern)
+ * are modeled identically to real fs: rename moves the file (overwriting
+ * the destination if present), unlink removes it.
  */
 function createVirtualFs(): {
   fs: McpWiringFsOps;
@@ -67,6 +72,16 @@ function createVirtualFs(): {
     },
     mkdirSync(path) {
       dirs.add(path);
+    },
+    renameSync(oldPath, newPath) {
+      const content = files.get(oldPath);
+      if (content === undefined) throw ENOENT;
+      files.set(newPath, content);
+      files.delete(oldPath);
+    },
+    unlinkSync(path) {
+      if (!files.has(path)) throw ENOENT;
+      files.delete(path);
     },
   };
   return { fs, files, dirs };
@@ -98,6 +113,8 @@ function stubFsForResolve(opts: {
     },
     writeFileSync() {},
     mkdirSync() {},
+    renameSync() {},
+    unlinkSync() {},
   };
 }
 
@@ -201,6 +218,65 @@ describe('writeMcpStatusMarker', () => {
     const written = files.get('/Users/andrew/.open-knowledge/.mcp-status.json');
     if (written === undefined) throw new Error('marker not written');
     expect(written.endsWith('\n')).toBe(true);
+  });
+
+  test('Pass 0 Minor #2: write is atomic via tmp+rename (no stray .tmp on success)', () => {
+    const { fs, files } = createVirtualFs();
+    writeMcpStatusMarker(
+      '/Users/andrew',
+      { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
+      fs,
+    );
+    const canonical = '/Users/andrew/.open-knowledge/.mcp-status.json';
+    // Canonical path present.
+    expect(files.has(canonical)).toBe(true);
+    // No stray .tmp-<pid>-<ts> sibling — rename cleaned it up.
+    const strayTmps = [...files.keys()].filter((p) => p.startsWith(`${canonical}.tmp-`));
+    expect(strayTmps).toEqual([]);
+  });
+
+  test('Pass 0 Minor #2: rename failure cleans up the .tmp sibling and rethrows', () => {
+    const { files, dirs } = createVirtualFs();
+    let renameAttempts = 0;
+    const renameFailingFs: McpWiringFsOps = {
+      existsSync(path) {
+        return files.has(path) || dirs.has(path);
+      },
+      readlinkSync() {
+        throw ENOENT;
+      },
+      readFileSync(path) {
+        const content = files.get(path);
+        if (content === undefined) throw ENOENT;
+        return content;
+      },
+      writeFileSync(path, content) {
+        files.set(path, content);
+      },
+      mkdirSync(path) {
+        dirs.add(path);
+      },
+      renameSync() {
+        renameAttempts++;
+        throw Object.assign(new Error('EXDEV: cross-device link'), { code: 'EXDEV' });
+      },
+      unlinkSync(path) {
+        files.delete(path);
+      },
+    };
+    expect(() =>
+      writeMcpStatusMarker(
+        '/Users/andrew',
+        { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
+        renameFailingFs,
+      ),
+    ).toThrow(/EXDEV/);
+    expect(renameAttempts).toBe(1);
+    // No stray .tmp sibling — catch block cleaned it up.
+    const strayTmps = [...files.keys()].filter((p) => p.includes('.tmp-'));
+    expect(strayTmps).toEqual([]);
+    // Canonical marker was NEVER created — failure must not leave partial state.
+    expect(files.has('/Users/andrew/.open-knowledge/.mcp-status.json')).toBe(false);
   });
 });
 
@@ -690,6 +766,50 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
     }
   });
 
+  test('Pass 0 Major #6: failed dispatch keeps handler armed for next renderer-ready invoke', async () => {
+    // If sendToRenderer throws (WebContents destroyed mid-handshake, channel
+    // drift, etc.), the handler MUST stay armed. Without this, a failed first
+    // dispatch leaves the dialog permanently undeliverable until next boot.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface({ detected: ['claude'] });
+    const { logger, errors } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      // First sender throws on send (WebContents destroyed scenario). The
+      // handler logs + leaves itself armed.
+      const failingEvent: IpcMainEventLike = {
+        sender: {
+          send() {
+            throw new Error('WebContents destroyed');
+          },
+        },
+      };
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', failingEvent);
+      expect(errors.some((e) => e.msg.includes('show dispatch failed'))).toBe(true);
+      expect(ipcMain.handlers.has('ok:mcp-wiring:renderer-ready')).toBe(true);
+
+      // Second sender (a different live WebContents) must succeed and clear
+      // the one-shot.
+      const second = createShowCapturingEvent();
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', second.event);
+      expect(second.captured.length).toBe(1);
+      expect(second.captured[0]?.channel).toBe('ok:mcp-wiring:show');
+      expect(ipcMain.handlers.has('ok:mcp-wiring:renderer-ready')).toBe(false);
+    } finally {
+      handle.destroy();
+    }
+  });
+
   test('second renderer-ready rejects (handler removed after first fire; one-shot)', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
@@ -777,6 +897,8 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       },
       writeFileSync() {},
       mkdirSync() {},
+      renameSync() {},
+      unlinkSync() {},
     };
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface();
@@ -866,7 +988,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with partial failure → marker NOT written, emits mcp-wiring-write-failed per failed editor', async () => {
+  test('confirm with partial failure → returns ok:false with user-facing error, marker NOT written, emits mcp-wiring-write-failed per failed editor (Pass 0 Critical #1)', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli } = createCliSurface({
@@ -903,10 +1025,17 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       logger,
     });
     try {
-      const result = await ipcMain.invoke('ok:mcp-wiring:confirm', {
+      const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
         editorIds: ['claude', 'cursor'],
-      });
-      expect(result).toEqual({ ok: true });
+      })) as { ok: boolean; error?: string };
+      // Pass 0 Critical #1: previously returned `{ok:true}` which the renderer
+      // store cleared the snapshot on, leaving the user with no UI signal that
+      // anything failed. Now `ok:false` so the dialog body fires a sonner toast
+      // before the snapshot clears.
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('cursor');
+      expect(result.error).toContain('EACCES');
+      expect(result.error).toContain('reappear on next launch');
       // Marker must NOT be written (deferred-marker per OQ-19).
       expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
       const failedEvents = events.filter((e) => e.event === 'mcp-wiring-write-failed');
@@ -1006,6 +1135,49 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
     }
   });
 
+  test('skip with marker write failure → returns ok:false with user-facing error (Pass 0 Major #9)', async () => {
+    // Wrap a working virtual fs so reads succeed but writes throw — simulates
+    // EACCES / EROFS on the marker path. Without this fix, the handler returned
+    // `ok:true` on writeMcpStatusMarker failure; the user saw the dialog close
+    // believing Skip persisted, then the dialog re-fired next boot with no
+    // explanation. Now `ok:false` so the renderer surfaces a sonner toast.
+    const inner = createVirtualFs();
+    const fs: McpWiringFsOps = {
+      ...inner.fs,
+      writeFileSync() {
+        throw Object.assign(new Error('EACCES: permission denied, open marker'), {
+          code: 'EACCES',
+        });
+      },
+    };
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger, errors } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const result = (await ipcMain.invoke('ok:mcp-wiring:skip')) as {
+        ok: boolean;
+        error?: string;
+      };
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('EACCES');
+      expect(result.error).toContain('reappear on next launch');
+      // Operator-grade structured log still fires regardless of user-facing toast.
+      expect(errors.some((e) => e.msg.includes('skip-marker write failed'))).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
   test('skip after confirm → second call is idempotent no-op', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
@@ -1032,6 +1204,167 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
     } finally {
       handle.destroy();
     }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — handled flag concurrency (Pass 0 Major #12)', () => {
+  test('racing confirm + skip while writeUserMcpConfigs is in flight → exactly one handler runs, the other returns ok:true no-op', async () => {
+    // Without the `handled` flag flip happening synchronously at handler entry,
+    // a rage-click of Add-then-Skip while the first write is in flight would
+    // trigger TWO writeUserMcpConfigs calls and TWO competing marker writes.
+    // The existing happy-path tests await between calls, which doesn't exercise
+    // this race. This test stalls the write so the second invoke can land
+    // before the first resolves.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    let resolveWrite: (() => void) | null = null;
+    const writePromise = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const writeCalls: WriteCall[] = [];
+    const cli: McpWiringCliSurface = {
+      detectInstalledEditors: () => [],
+      writeUserMcpConfigs: async (call) => {
+        writeCalls.push(call);
+        await writePromise;
+        return call.editors.map((editorId) => ({
+          editorId,
+          label: EDITOR_TARGETS[editorId].label,
+          action: 'written' as const,
+          configPath: `/fake/${editorId}/config.json`,
+          serverName: 'open-knowledge',
+        }));
+      },
+      readExistingMcpEntry: () => null,
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      // Fire confirm WITHOUT awaiting; immediately fire skip while confirm's
+      // write is stalled. The `handled` flag MUST be flipped synchronously
+      // at handler entry so skip's first line returns the no-op.
+      const confirmPromise = ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
+      const skipPromise = ipcMain.invoke('ok:mcp-wiring:skip');
+
+      // Drain the skip first — it should resolve immediately as a no-op.
+      const skipResult = await skipPromise;
+      expect(skipResult).toEqual({ ok: true });
+
+      // Now release the confirm write.
+      resolveWrite?.();
+      const confirmResult = await confirmPromise;
+      expect(confirmResult).toEqual({ ok: true });
+
+      // Exactly one writeUserMcpConfigs invocation must have happened.
+      expect(writeCalls.length).toBe(1);
+
+      // Marker reflects confirm — skip never wrote.
+      const marker = readMcpStatusMarker('/Users/andrew', fs);
+      expect(marker?.configured).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('racing two confirm calls → exactly one writeUserMcpConfigs invocation', async () => {
+    // Symmetric guard for the double-Add rage-click case.
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    let resolveWrite: (() => void) | null = null;
+    const writePromise = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const writeCalls: WriteCall[] = [];
+    const cli: McpWiringCliSurface = {
+      detectInstalledEditors: () => [],
+      writeUserMcpConfigs: async (call) => {
+        writeCalls.push(call);
+        await writePromise;
+        return call.editors.map((editorId) => ({
+          editorId,
+          label: EDITOR_TARGETS[editorId].label,
+          action: 'written' as const,
+          configPath: `/fake/${editorId}/config.json`,
+          serverName: 'open-knowledge',
+        }));
+      },
+      readExistingMcpEntry: () => null,
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const first = ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
+      const second = ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
+      const secondResult = await second;
+      expect(secondResult).toEqual({ ok: true });
+      resolveWrite?.();
+      await first;
+      expect(writeCalls.length).toBe(1);
+      // Marker reflects the FIRST call's editors, not the second's.
+      const marker = readMcpStatusMarker('/Users/andrew', fs);
+      expect((marker as { editors: string[] } | null)?.editors).toEqual(['claude']);
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('formatPartialFailureMessage (Pass 0 Critical #1)', () => {
+  test('single failure → mentions the editor + error inline', () => {
+    const msg = formatPartialFailureMessage(
+      [{ editorId: 'cursor', error: 'EACCES: permission denied' }],
+      3,
+    );
+    expect(msg).toContain('cursor');
+    expect(msg).toContain('EACCES: permission denied');
+    expect(msg).toContain('reappear on next launch');
+  });
+
+  test('multiple failures → counts + concatenates editor list', () => {
+    const msg = formatPartialFailureMessage(
+      [
+        { editorId: 'cursor', error: 'EACCES' },
+        { editorId: 'codex', error: 'invalid TOML' },
+      ],
+      3,
+    );
+    expect(msg).toContain('2 of 3');
+    expect(msg).toContain('cursor');
+    expect(msg).toContain('codex');
+    expect(msg).toContain('1 succeeded');
+  });
+
+  test('all editors failed → no successHint', () => {
+    const msg = formatPartialFailureMessage([{ editorId: 'cursor', error: 'EACCES' }], 1);
+    expect(msg).not.toContain('succeeded');
+  });
+
+  test('failure without error string → omits the colon', () => {
+    const msg = formatPartialFailureMessage([{ editorId: 'cursor' }], 1);
+    expect(msg).toContain('cursor');
+    expect(msg).not.toMatch(/cursor:\s/);
   });
 });
 

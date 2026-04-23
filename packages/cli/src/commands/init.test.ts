@@ -23,6 +23,7 @@ import {
   detectInstalledEditors,
   type EditorMcpResult,
   formatInitResult,
+  readExistingMcpEntry,
   runInit,
   type WriteUserMcpConfigsOptions,
   writeEditorMcpConfig,
@@ -1490,5 +1491,138 @@ describe('writeEditorMcpConfig (exported for Electron main)', () => {
       command: CLI_PATH,
       args: ['mcp'],
     });
+  });
+});
+
+/**
+ * Pass 0 Major #13 — direct unit coverage for `readExistingMcpEntry`.
+ *
+ * The function is the M6b consent-flow tolerance boundary: every reachable
+ * fail mode (config absent, config unparseable, top-level not an object,
+ * server entry not an object, configPath throws on platform mismatch) MUST
+ * return `null`, never throw. A regression that makes any branch throw
+ * crashes `confirmHandler`, leaves the marker absent, and creates an infinite
+ * dialog re-fire loop on user machines with corrupted editor configs.
+ *
+ * The orchestration tests in `mcp-wiring.test.ts` stub this function, so
+ * direct coverage here is the only guard against tolerance regressions.
+ */
+describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `read-existing-mcp-entry-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('returns null when the editor config file is absent', () => {
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when configPath throws (platform-mismatched target)', () => {
+    // Claude Desktop's configPath only resolves on macOS / Windows. Switch to
+    // linux so the configPath helper throws — readExistingMcpEntry MUST
+    // catch + return null rather than propagate the throw.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    expect(readExistingMcpEntry(EDITOR_TARGETS['claude-desktop'], '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid JSON (corrupt config)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{ this is not valid JSON', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid TOML (corrupt Codex config)', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'not = valid = toml = at = all', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when top-level mcpServers key is not an object (e.g. array)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ mcpServers: ['not', 'an', 'object'] }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the server entry exists but is not an object', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'open-knowledge': 'not-an-object' } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns the parsed entry when JSON config is well-formed', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ mcpServers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toEqual(entry);
+  });
+
+  it('returns the parsed entry when TOML config (Codex) is well-formed', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    // Codex's `mcp_servers."open-knowledge"` table — quoted key form so the
+    // TOML parser keeps the dash-bearing name as one identifier (per
+    // smol-toml grammar). Same shape Codex itself writes via `ok init`.
+    writeFileSync(
+      path,
+      '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["@inkeep/open-knowledge", "mcp"]\n',
+      'utf-8',
+    );
+    const result = readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome);
+    expect(result).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
+  });
+
+  it('returns null when config has the top-level key but no entry for our serverName', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'some-other-server': { command: 'foo' } } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the file exists but is empty', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
   });
 });

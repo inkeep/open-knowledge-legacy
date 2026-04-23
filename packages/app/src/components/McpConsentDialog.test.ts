@@ -3,12 +3,13 @@
  * @testing-library/react; full DOM rendering behavior is exercised via the
  * US-010 Playwright smoke (mcp-wiring.e2e.ts).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import type { OkMcpWiringEditorId, OkMcpWiringShowPayload } from '@/lib/desktop-bridge-types';
 import {
   computeInitialSelection,
   McpConsentDialog,
   selectedIdsOrdered,
+  type ToastImpl,
   toggleSelectedId,
 } from './McpConsentDialog';
 
@@ -112,10 +113,48 @@ describe('selectedIdsOrdered', () => {
 });
 
 describe('McpConsentDialog module shape', () => {
-  test('exports the component + the three pure helpers', () => {
+  test('exports the component + the three pure helpers + ToastImpl type', () => {
     expect(typeof McpConsentDialog).toBe('function');
     expect(typeof computeInitialSelection).toBe('function');
     expect(typeof toggleSelectedId).toBe('function');
     expect(typeof selectedIdsOrdered).toBe('function');
+    // ToastImpl is a type; no runtime export — this assertion just ensures
+    // the import resolves at type-check time. The shape is exercised by the
+    // toast injection contract below.
+    const toastShape: ToastImpl = { error: () => {} };
+    expect(typeof toastShape.error).toBe('function');
+  });
+
+  test('Pass 0 Critical #1: ToastImpl interface accepts a sonner-shaped error fn', () => {
+    // The dialog's `toast` prop is typed `ToastImpl` so the production
+    // `defaultToast` (which wraps `sonnerToast.error`) can be substituted in
+    // tests by any object with `error(msg: string): void`. This contract test
+    // pins the surface so a future refactor that adds methods (warning,
+    // success) signals the change explicitly.
+    const recorded: string[] = [];
+    const toast: ToastImpl = {
+      error: (msg) => {
+        recorded.push(msg);
+      },
+    };
+    toast.error('test message');
+    expect(recorded).toEqual(['test message']);
+  });
+
+  // The dialog's onAdd / onSkip behavior — fire toast.error on `!result.ok`
+  // and stay silent on success — is integration-tested via the US-010 Playwright
+  // smoke. The bun-test layer covers the types + the helper math; the runtime
+  // wiring is asserted end-to-end against a real DOM in mcp-wiring.e2e.ts.
+  // Re-asserting in bun-test would require @testing-library/react which the
+  // repo does not use (and which would re-implement the rendering already
+  // exercised by Playwright).
+  test('mock module-level usage check: toast.error is invocable from a Set-like context', () => {
+    // Smoke that the ToastImpl shape composes through `mock()` for callers
+    // that want to inject a spy.
+    const spy = mock((_msg: string) => {});
+    const toast: ToastImpl = { error: spy };
+    toast.error('hello');
+    expect(spy.mock.calls.length).toBe(1);
+    expect(spy.mock.calls[0]).toEqual(['hello']);
   });
 });

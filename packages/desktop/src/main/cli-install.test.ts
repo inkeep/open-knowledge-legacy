@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type AdminFailureError,
+  type AdminFailureReason,
   buildAdminAppleScript,
+  buildAdminFailureError,
   buildInstallShellCmd,
   buildUninstallShellCmd,
   type CliInstallDeps,
+  classifyOsascriptExitCode,
   classifySymlinkState,
   type FsOps,
   getInstallStatus,
@@ -219,6 +223,46 @@ describe('classifySymlinkState', () => {
   });
 });
 
+describe('classifyOsascriptExitCode (Pass 0 Major #7)', () => {
+  test("exit 1 → 'user-cancel' (Touch ID dismiss / OSA error -128)", () => {
+    expect(classifyOsascriptExitCode(1)).toBe('user-cancel');
+  });
+
+  test("any other non-zero exit → 'shell-error'", () => {
+    expect(classifyOsascriptExitCode(2)).toBe('shell-error');
+    expect(classifyOsascriptExitCode(127)).toBe('shell-error');
+    expect(classifyOsascriptExitCode(-1)).toBe('shell-error');
+  });
+
+  test("null exit code → 'shell-error' (signal-killed / unknown)", () => {
+    expect(classifyOsascriptExitCode(null)).toBe('shell-error');
+  });
+});
+
+describe('buildAdminFailureError (Pass 0 Major #7)', () => {
+  test('shapes the error with reason + message + optional stderr', () => {
+    const err: AdminFailureError = buildAdminFailureError(
+      'shell-error',
+      'osascript exited with code 2',
+      'rm: /usr/local/bin/ok: EROFS',
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.reason).toBe('shell-error');
+    expect(err.message).toBe('osascript exited with code 2');
+    expect(err.stderr).toBe('rm: /usr/local/bin/ok: EROFS');
+  });
+
+  test('omits stderr when caller passes empty string (avoids confusing "Details:" with empty body)', () => {
+    const err = buildAdminFailureError('user-cancel', 'cancelled', '');
+    expect(err.stderr).toBeUndefined();
+  });
+
+  test('omits stderr when caller passes undefined', () => {
+    const err = buildAdminFailureError('spawn-error', 'ENOENT');
+    expect(err.stderr).toBeUndefined();
+  });
+});
+
 describe('buildAdminAppleScript', () => {
   test('embeds the shell command inside `do shell script "<cmd>"`', () => {
     const script = buildAdminAppleScript('ls /Applications', 'Needs admin');
@@ -261,7 +305,78 @@ describe('buildInstallShellCmd', () => {
       cmd.indexOf(`ln -s '${INSTALLED_TARGET}' '/usr/local/bin/ok'`),
     );
   });
+
+  test('Pass 0 Major #1: target paths containing apostrophes are POSIX-escaped, no shell injection', () => {
+    // macOS users can rename `.app` bundles freely AND user account names can
+    // contain apostrophes (e.g. `/Users/Bob's Mac/Applications/...`). Without
+    // escaping, an apostrophe inside `target` closes the single-quote literal
+    // early — anything after is evaluated as bash. Since the result feeds
+    // `osascript ... do shell script "..." with administrator privileges`
+    // (root execution), this is a real privilege-escalation surface even
+    // though the user must consent at the admin prompt.
+    //
+    // Attacker payload: an apostrophe inside the bundle path that, without
+    // escaping, would close the `'...'` literal and inject `; touch ...; echo`
+    // as separate shell commands. POSIX-correct escaping replaces each `'`
+    // with `'\''` (close, literal apostrophe, reopen) so the shell parses
+    // the entire payload as ONE quoted string argument to `ln -s` / `rm -f`.
+    const malicious =
+      "/Users/foo/Downloads/My'; touch /tmp/pwned; echo '.app/Contents/Resources/cli/bin/ok.sh";
+    const cmd = buildInstallShellCmd(malicious);
+
+    // Behavioral assertion: the cmd, when fed to a shell, MUST run exactly
+    // 5 statements separated by `&&` — `mkdir`, `rm -f ok`, `ln -s`,
+    // `rm -f open-knowledge`, `ln -s`. Any unescaped `;` from the payload
+    // would inject extra statements between the legitimate ones. We split on
+    // unquoted top-level operators and count.
+    expect(countTopLevelStatements(cmd)).toBe(5);
+
+    // Structural assertion: the escaped substring must appear surrounding
+    // every embedded apostrophe via the POSIX `'\''` close-escape-reopen
+    // pattern. If a future refactor swaps escape strategies (e.g. shell-
+    // quote pkg), this test fails — at which point a maintainer must verify
+    // the new strategy is also POSIX-compliant.
+    expect(cmd).toContain(`Downloads/My'\\''; touch /tmp/pwned; echo '\\''.app`);
+
+    // Negative assertion against the most obvious naive-escape regression
+    // (e.g., re-enabling unsafe template-literal interpolation). The
+    // unescaped `My'; touch` shape — apostrophe followed by `;` outside
+    // any escape — is exactly the byte sequence that closes `'` and starts
+    // a new statement. Asserting its absence makes a regression load-bearing.
+    expect(cmd).not.toMatch(/(?<!\\)My';\s*touch/);
+  });
+
+  test('plain bundle paths without apostrophes are emitted byte-identically (no over-escape)', () => {
+    // Defense-in-depth — POSIX-safe escaping must not corrupt clean inputs.
+    const clean = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
+    const cmd = buildInstallShellCmd(clean);
+    expect(cmd).toContain(`'${clean}'`);
+    expect(cmd).not.toContain("'\\''"); // the escape sequence must not appear at all
+  });
 });
+
+/**
+ * Count top-level shell statements separated by `&&` outside any quoted
+ * region. Used by the shell-injection regression tests to verify the
+ * payload is one argument, not several. A single-quoted region in POSIX
+ * shell cannot contain `'` — a literal apostrophe must close the quote,
+ * escape, and reopen — so `'` toggles in/out of quote state.
+ */
+function countTopLevelStatements(cmd: string): number {
+  let inQuote = false;
+  let count = 1;
+  for (let i = 0; i < cmd.length; i++) {
+    if (cmd[i] === "'") {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote && cmd[i] === '&' && cmd[i + 1] === '&') {
+      count++;
+      i++;
+    }
+  }
+  return count;
+}
 
 describe('buildUninstallShellCmd', () => {
   test('emits `rm -f` for each supplied path', () => {
@@ -272,6 +387,21 @@ describe('buildUninstallShellCmd', () => {
 
   test('returns empty string when given no paths (upstream filtered nothing to remove)', () => {
     expect(buildUninstallShellCmd([])).toBe('');
+  });
+
+  test('Pass 0 Major #1: POSIX-escapes apostrophes in arbitrary paths', () => {
+    // Defense-in-depth — uninstallCli filters via classifySymlinkState before
+    // calling here, so the input list shouldn't contain hostile paths in
+    // practice. But the function is exported and a future caller might pass
+    // raw user-controlled paths; keep escaping symmetric with install.
+    const malicious = "/usr/local/bin/foo'; rm -rf /tmp/oops; echo '";
+    const cmd = buildUninstallShellCmd([malicious]);
+    // Behavioral: exactly ONE statement (the rm -f). The injection's `;`
+    // would split into multiple statements without escaping.
+    expect(countTopLevelStatements(cmd)).toBe(1);
+    // Each `'` in the input was replaced with the POSIX `'\''` close-escape-
+    // reopen sequence, leaving the original `;` chars inside the quoted region.
+    expect(cmd).toContain(`bin/foo'\\''; rm -rf /tmp/oops; echo '\\''`);
   });
 });
 
@@ -297,8 +427,14 @@ function makeDeps(opts: {
   /** Queue of `response` numbers returned by successive showMessageBox calls.
    *  Missing entries default to 0 (Cancel). */
   responses?: number[];
-  /** Whether runAsAdmin resolves (success) or rejects (user cancelled admin prompt). */
-  adminOutcome?: 'ok' | 'cancel';
+  /** Whether runAsAdmin resolves (success) or rejects, and how it rejects.
+   *  - 'ok' → resolves
+   *  - 'cancel' → rejects with reason='user-cancel' (Touch ID dismiss)
+   *  - 'spawn-error' → rejects with reason='spawn-error' (osascript ENOENT)
+   *  - 'shell-error' → rejects with reason='shell-error' (mid-flow shell fail) */
+  adminOutcome?: 'ok' | 'cancel' | 'spawn-error' | 'shell-error';
+  /** Stderr to surface in the AdminFailureError on `shell-error` / `spawn-error`. */
+  adminStderr?: string;
   /** When true, no runAsAdmin stub is installed — lets the test observe whether
    *  the runtime ever reached the admin-prompt stage. */
   omitRunAsAdmin?: boolean;
@@ -311,6 +447,12 @@ function makeDeps(opts: {
   const adminCalls: Array<{ shellCmd: string; promptCopy: string }> = [];
   const responses = opts.responses ?? [];
   let responseIdx = 0;
+
+  const reasonForOutcome = (outcome: typeof opts.adminOutcome): AdminFailureReason => {
+    if (outcome === 'cancel') return 'user-cancel';
+    if (outcome === 'spawn-error') return 'spawn-error';
+    return 'shell-error';
+  };
 
   const deps: CliInstallDeps = {
     executablePath: opts.executablePath ?? INSTALLED_EXE,
@@ -334,9 +476,13 @@ function makeDeps(opts: {
       ? undefined
       : (shellCmd, promptCopy) => {
           adminCalls.push({ shellCmd, promptCopy });
-          return opts.adminOutcome === 'cancel'
-            ? Promise.reject(new Error('user cancelled'))
-            : Promise.resolve();
+          if (opts.adminOutcome === 'ok' || opts.adminOutcome === undefined) {
+            return Promise.resolve();
+          }
+          const reason = reasonForOutcome(opts.adminOutcome);
+          return Promise.reject(
+            buildAdminFailureError(reason, `osascript reason=${reason}`, opts.adminStderr),
+          );
         },
   };
 
@@ -422,6 +568,50 @@ describe('installCli', () => {
     expect(dialogCalls[0].detail).toContain('ok --version');
   });
 
+  test('Pass 0 Major #7: spawn-error surfaces warning dialog with stderr (NOT soft cancel copy)', async () => {
+    const fs = stubFs({});
+    const { deps, dialogCalls } = makeDeps({
+      fs,
+      adminOutcome: 'spawn-error',
+      adminStderr: 'osascript: command not found',
+    });
+    await installCli(deps);
+    expect(dialogCalls).toHaveLength(1);
+    expect(dialogCalls[0].type).toBe('warning');
+    expect(dialogCalls[0].message).toBe('Could not install Command-Line Tools.');
+    expect(dialogCalls[0].detail).toContain('could not start');
+    expect(dialogCalls[0].detail).toContain('osascript: command not found');
+    expect(dialogCalls[0].detail).toContain('~/.zprofile');
+  });
+
+  test('Pass 0 Major #7: shell-error surfaces warning dialog with stderr', async () => {
+    const fs = stubFs({});
+    const { deps, dialogCalls } = makeDeps({
+      fs,
+      adminOutcome: 'shell-error',
+      adminStderr: 'mkdir: /usr/local/bin: Read-only file system',
+    });
+    await installCli(deps);
+    expect(dialogCalls).toHaveLength(1);
+    expect(dialogCalls[0].type).toBe('warning');
+    expect(dialogCalls[0].message).toBe('Could not install Command-Line Tools.');
+    expect(dialogCalls[0].detail).toContain('returned an error');
+    expect(dialogCalls[0].detail).toContain('Read-only file system');
+  });
+
+  test('Pass 0 Major #7: user-cancel still gets the soft "cancelled" fallback (existing UX preserved)', async () => {
+    const fs = stubFs({});
+    const { deps, dialogCalls } = makeDeps({ fs, adminOutcome: 'cancel' });
+    await installCli(deps);
+    expect(dialogCalls).toHaveLength(1);
+    expect(dialogCalls[0].type).toBe('info');
+    expect(dialogCalls[0].message).toBe('Installation cancelled.');
+    // No "could not start" / "returned an error" wording — that's reserved
+    // for spawn / shell errors per the new branching.
+    expect(dialogCalls[0].detail).not.toContain('could not start');
+    expect(dialogCalls[0].detail).not.toContain('returned an error');
+  });
+
   test('skips collision prompts entirely when both paths are already ours (idempotent re-install)', async () => {
     const fs = stubFs({
       readlink: {
@@ -475,6 +665,48 @@ describe('uninstallCli', () => {
     // Admin was invoked, but no success dialog surfaced (silent return).
     expect(adminCalls).toHaveLength(1);
     expect(dialogCalls).toHaveLength(0);
+  });
+
+  test('Pass 0 Major #8: spawn-error surfaces warning with manual rm instruction', async () => {
+    const fs = stubFs({
+      readlink: {
+        '/usr/local/bin/ok': INSTALLED_TARGET,
+        '/usr/local/bin/open-knowledge': INSTALLED_TARGET,
+      },
+    });
+    const { deps, dialogCalls } = makeDeps({
+      fs,
+      adminOutcome: 'spawn-error',
+      adminStderr: 'osascript missing',
+    });
+    await uninstallCli(deps);
+    expect(dialogCalls).toHaveLength(1);
+    expect(dialogCalls[0].type).toBe('warning');
+    expect(dialogCalls[0].message).toBe('Could not remove Command-Line Tools.');
+    expect(dialogCalls[0].detail).toContain('could not start');
+    expect(dialogCalls[0].detail).toContain(
+      'sudo rm /usr/local/bin/ok /usr/local/bin/open-knowledge',
+    );
+  });
+
+  test('Pass 0 Major #8: shell-error (e.g. partial-rm) surfaces warning with stderr', async () => {
+    const fs = stubFs({
+      readlink: {
+        '/usr/local/bin/ok': INSTALLED_TARGET,
+        '/usr/local/bin/open-knowledge': INSTALLED_TARGET,
+      },
+    });
+    const { deps, dialogCalls } = makeDeps({
+      fs,
+      adminOutcome: 'shell-error',
+      adminStderr: 'rm: /usr/local/bin/ok: Operation not permitted',
+    });
+    await uninstallCli(deps);
+    expect(dialogCalls).toHaveLength(1);
+    expect(dialogCalls[0].type).toBe('warning');
+    expect(dialogCalls[0].message).toBe('Could not remove Command-Line Tools.');
+    expect(dialogCalls[0].detail).toContain('returned an error');
+    expect(dialogCalls[0].detail).toContain('Operation not permitted');
   });
 
   test('shows confirmation dialog after admin-prompt resolves', async () => {
