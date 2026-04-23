@@ -28,9 +28,7 @@
 
 import { realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import type { UploadConfig } from '@inkeep/open-knowledge-core';
 import { sendToRenderer } from '../shared/ipc-send.ts';
-import { loadResolvedUploadConfig } from './upload-config-load.ts';
 
 /**
  * Editor window title format — `<projectName> — Open Knowledge`. The em dash
@@ -225,17 +223,6 @@ export interface WindowManagerDeps {
    * injections typically pass a much smaller value.
    */
   utilityInitTimeoutMs?: number;
-  /**
-   * Resolve the upload config for a project (YAML + Obsidian vault
-   * detection + defaults). Production: `loadResolvedUploadConfig` from
-   * `./upload-config-load.ts`. Injected so tests don't need to stage
-   * real YAML / `.obsidian/app.json` fixtures on disk — they can return
-   * a literal `UploadConfig` to assert threading.
-   *
-   * When omitted, `createProjectWindow` falls back to the real
-   * filesystem loader.
-   */
-  loadUploadConfig?(projectPath: string): UploadConfig;
   /** Logger. */
   log?: {
     info(obj: object, msg: string): void;
@@ -446,23 +433,6 @@ export class WindowManager {
       },
     );
 
-    // Major-2 fix: resolve `upload.*` from YAML + Obsidian vault + defaults
-    // and pass it through the init IPC. Without this thread-through,
-    // `getUploadConfig` in the server falls through to DEFAULT_UPLOAD_CONFIG
-    // and every desktop user silently ignores `.open-knowledge/config.yml`
-    // + `.obsidian/app.json`. CLI `ok start` and the Vite dev plugin
-    // already compose this — desktop was the lone outlier.
-    const uploadLoader = this.deps.loadUploadConfig ?? loadResolvedUploadConfig;
-    let uploadConfig: UploadConfig | undefined;
-    try {
-      uploadConfig = uploadLoader(projectPath);
-    } catch (err) {
-      this.deps.log?.warn(
-        { err: (err as Error).message, projectPath },
-        'upload-config load failed; falling through to DEFAULT_UPLOAD_CONFIG',
-      );
-    }
-
     utility.postMessage({
       type: 'init',
       opts: {
@@ -470,7 +440,6 @@ export class WindowManager {
         projectDir: projectPath,
         port: 0,
         host: 'localhost',
-        uploadConfig,
       },
     });
 

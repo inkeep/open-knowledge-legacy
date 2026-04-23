@@ -7,7 +7,6 @@ import {
   createBasenameIndex,
   type Principal,
   prependFrontmatter,
-  type UploadConfig,
 } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -127,12 +126,6 @@ export interface ServerOptions {
    * runtime that launched this server — necessary in dev (bun + .ts entry).
    */
   localOpCliArgs?: string[];
-  /**
-   * Resolved upload.* config (SPEC §6 FR-5). The CLI merges yaml + Obsidian
-   * vault detection (US-007) and passes the result here. When omitted, the
-   * upload handler falls back to the schema defaults.
-   */
-  uploadConfig?: UploadConfig;
 }
 
 export interface ServerInstance {
@@ -358,9 +351,6 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentDir,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
-      getUploadConfig: options.uploadConfig
-        ? () => options.uploadConfig as UploadConfig
-        : undefined,
       enableTestRoutes,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),

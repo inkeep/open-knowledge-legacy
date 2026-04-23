@@ -317,14 +317,14 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 // Image-extension set is canonical at `constants/upload.ts` — one source
 // for every dispatch question (client emit-shape, server mdast→PM,
 // TipTap renderHTML). Non-image wikiembed extensions are derived from
-// `DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions` minus `IMAGE_EXTENSIONS`
-// so widening the canonical list (e.g. adding `heic`) flows here
-// automatically — no manual edit in this file.
-import { DEFAULT_UPLOAD_CONFIG, IMAGE_EXTENSIONS } from '../constants/upload.ts';
+// `WIKI_EMBED_EXTENSIONS` minus `IMAGE_EXTENSIONS` so widening the
+// canonical list (e.g. adding `heic`) flows here automatically — no
+// manual edit in this file.
+import { IMAGE_EXTENSIONS, WIKI_EMBED_EXTENSIONS } from '../constants/upload.ts';
 
 const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
 const WIKI_EMBED_NON_IMAGE_EXTS: ReadonlySet<string> = new Set(
-  DEFAULT_UPLOAD_CONFIG.wikiEmbedExtensions.filter((e) => !IMAGE_EXTENSIONS.has(e)),
+  [...WIKI_EMBED_EXTENSIONS].filter((e) => !IMAGE_EXTENSIONS.has(e)),
 );
 
 import { extensionOf } from '../utils/extension.ts';

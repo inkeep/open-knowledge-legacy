@@ -398,119 +398,11 @@ describe('handleUploadImage', () => {
   });
 });
 
-describe('handleUploadImage — config-driven upload surface (FR-5)', () => {
-  let tmpDir: string;
-  let contentDir: string;
-  let server: import('node:http').Server;
-  let port: number;
-
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'upload-config-'));
-    contentDir = join(tmpDir, 'content');
-    mkdirSync(contentDir, { recursive: true });
-    mkdirSync(join(contentDir, 'docs'), { recursive: true });
-    writeFileSync(join(contentDir, 'docs', 'guide.md'), '# Guide');
-
-    const { Hocuspocus } = await import('@hocuspocus/server');
-    const { AgentSessionManager } = await import('./agent-sessions.ts');
-    const { createApiExtension } = await import('./api-extension.ts');
-
-    const hocuspocus = new Hocuspocus({ quiet: true });
-    const sessionManager = new AgentSessionManager(hocuspocus);
-    const ext = createApiExtension({
-      hocuspocus,
-      sessionManager,
-      contentDir,
-      getFileIndex: () => new Map(),
-      // Custom `wikiEmbedExtensions` allowlist so we can verify the
-      // server reflects operator config verbatim on `GET /api/upload-config`.
-      getUploadConfig: () => ({
-        attachmentFolderPath: './',
-        emitFormat: 'wikiembed',
-        dedup: { mode: 'same-dir', ui: 'toast' },
-        wikiEmbedExtensions: ['png'],
-      }),
-    });
-
-    const { createServer } = await import('node:http');
-    server = createServer((req, res) => {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness
-      hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-        if (!res.writableEnded) {
-          res.writeHead(500);
-          res.end('Error');
-        }
-      });
-    });
-
-    hocuspocus.configuration.extensions.push(ext);
-
-    port = await new Promise<number>((res) => {
-      server.listen(0, () => {
-        const addr = server.address();
-        res(typeof addr === 'object' && addr ? addr.port : 0);
-      });
-    });
-  });
-
-  afterEach(async () => {
-    await new Promise<void>((res) => server.close(() => res()));
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  // Post-streaming refactor: there is no user-facing upload cap. The busboy
-  // `limits.fileSize` guard was a memory-safety backstop for the buffer-to-
-  // memory anti-pattern; `stream.pipeline` + on-the-fly sha256 makes memory
-  // O(1), so the cap serves no purpose. Every file drop under disk capacity
-  // accepts. See reports/streaming-upload-refactor/REPORT.md §D8 +
-  // .changeset/asset-embed-surface.md. The previously-asserted 413 envelope
-  // + P1.3 scenario are deleted intentionally.
-
-  test('small upload works with custom config', async () => {
-    const tiny = Buffer.from('tiny');
-    const formData = new FormData();
-    formData.append('parentDocName', 'docs/guide.md');
-    formData.append('file', new Blob([tiny]), 'tiny.txt');
-    const res = await fetch(`http://localhost:${port}/api/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    expect(res.status).toBe(200);
-  });
-
-  // US-015: client-side emit-dispatch reads operator-resolved `upload.*`
-  // via this endpoint. Returning the configured values is the contract.
-  test('GET /api/upload-config returns the resolved upload config (no maxBytes post-streaming)', async () => {
-    const res = await fetch(`http://localhost:${port}/api/upload-config`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      emitFormat: string;
-      dedup: { mode: string; ui: string };
-      wikiEmbedExtensions: string[];
-      attachmentFolderPath: string;
-    };
-    expect(body.emitFormat).toBe('wikiembed');
-    expect(body.dedup.mode).toBe('same-dir');
-    expect(body.dedup.ui).toBe('toast');
-    expect(body.wikiEmbedExtensions).toEqual(['png']);
-    expect(body.attachmentFolderPath).toBe('./');
-    // Post-streaming (2026-04-22) the response no longer carries a
-    // `maxBytes` field. See reports/streaming-upload-refactor/REPORT.md §D8.
-    expect(Object.hasOwn(body, 'maxBytes')).toBe(false);
-  });
-
-  test('GET /api/upload-config rejects non-GET methods', async () => {
-    const res = await fetch(`http://localhost:${port}/api/upload-config`, { method: 'POST' });
-    expect(res.status).toBe(405);
-  });
-});
-
 describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
   let tmpDir: string;
   let contentDir: string;
   let server: import('node:http').Server;
   let port: number;
-  let dedupMode: 'off' | 'same-dir' = 'same-dir';
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'upload-dedup-'));
@@ -532,14 +424,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
       sessionManager,
       contentDir,
       getFileIndex: () => new Map(),
-      getUploadConfig: () => ({
-        attachmentFolderPath: './',
-        emitFormat: 'wikiembed',
-        // The mode is read per-request, so flipping the closure variable
-        // between tests is enough to exercise both branches.
-        dedup: { mode: dedupMode, ui: 'toast' },
-        wikiEmbedExtensions: ['png', 'jpg'],
-      }),
     });
 
     const { createServer } = await import('node:http');
@@ -564,7 +448,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
   });
 
   afterEach(async () => {
-    dedupMode = 'same-dir';
     await new Promise<void>((res) => server.close(() => res()));
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -639,27 +522,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
     // Both files exist on disk — same bytes, separate paths.
     expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
     expect(existsSync(join(contentDir, 'archive', 'shot.png'))).toBe(true);
-  });
-
-  test('upload.dedup.mode = "off" disables the dedup scan', async () => {
-    dedupMode = 'off';
-    const buf = pngFixture();
-    const first = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
-      ok: boolean;
-      src: string;
-      deduped: boolean;
-    };
-    const second = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {
-      ok: boolean;
-      src: string;
-      deduped: boolean;
-    };
-    expect(first.src).toBe('shot.png');
-    expect(second.deduped).toBe(false);
-    // Without dedup, the collision-suffix loop produces shot-1.png.
-    expect(second.src).toBe('shot-1.png');
-    expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
-    expect(existsSync(join(contentDir, 'docs', 'shot-1.png'))).toBe(true);
   });
 
   test('dedup ignores non-asset files (markdown sibling does not trigger a hash hit)', async () => {

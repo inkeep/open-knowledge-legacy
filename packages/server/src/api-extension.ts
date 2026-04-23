@@ -34,14 +34,14 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
-  DEFAULT_UPLOAD_CONFIG,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
   stripFrontmatter,
-  type UploadConfig,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -714,13 +714,6 @@ export interface ApiExtensionOptions {
   contentDir: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
-  /**
-   * Accessor for the resolved upload.* config (SPEC §6 FR-5). When omitted,
-   * the handler falls back to the schema defaults — keeps existing test
-   * harnesses functional without forcing every caller to wire the accessor.
-   * Per-request invocation supports config hot-reload patterns.
-   */
-  getUploadConfig?: () => UploadConfig;
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
@@ -902,7 +895,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sessionManager,
     contentDir,
     getFileIndex,
-    getUploadConfig,
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
@@ -3132,19 +3124,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
-  // US-015: expose the resolved `upload.*` subtree to the client editor
-  // so emit-dispatch (wikiembed vs markdown-image) honors operator
-  // overrides in `.open-knowledge/config.yml`. No auth — same local-first
-  // posture as the rest of the API; loopback binding limits blast radius.
-  async function handleUploadConfigGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const cfg = getUploadConfig ? getUploadConfig() : DEFAULT_UPLOAD_CONFIG;
-    json(res, 200, cfg);
-  }
-
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -4033,9 +4012,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const resolvedContentDir = resolve(contentDir);
-    const attachmentFolderPath =
-      getUploadConfig?.().attachmentFolderPath ?? DEFAULT_UPLOAD_CONFIG.attachmentFolderPath;
-    const destDir = resolveUploadDestDir(parentDocName, attachmentFolderPath, resolvedContentDir);
+    const destDir = resolveUploadDestDir(
+      parentDocName,
+      DEFAULT_ATTACHMENT_FOLDER_PATH,
+      resolvedContentDir,
+    );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
       cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
@@ -4113,14 +4094,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // happens BEFORE filename synthesis so a duplicate paste preserves
     // the existing on-disk basename instead of producing a fresh
     // pasted-<ts>.png stub. Server returns { deduped: true } so the
-    // client decides toast/silent/confirm per upload.dedup.ui.
+    // client surfaces a toast (DEFAULT_DEDUP_UI).
     //
     // The hash + size come from the streaming pipeline (no buffer). On a
     // dedup hit the tempfile is unlinked and we short-circuit without
     // touching the destDir inode — `linkTempToFinalWithCollisionRetry`
     // never runs.
-    const dedupMode = getUploadConfig?.().dedup.mode ?? 'same-dir';
-    if (dedupMode === 'same-dir') {
+    if (DEFAULT_DEDUP_MODE === 'same-dir') {
       const existing = await findDuplicateAsset(destDir, sha, byteLength);
       if (existing) {
         cleanupTempfile();
@@ -5392,7 +5372,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/metrics/agent-presence': handleMetricsAgentPresence,
     '/api/principal': handlePrincipal,
-    '/api/upload-config': handleUploadConfigGet,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,

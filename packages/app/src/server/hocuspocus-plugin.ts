@@ -12,10 +12,7 @@ import {
   type BasenameIndex,
   createBasenameIndex,
   MarkdownManager,
-  type PartialUserUploadConfig,
-  resolveUploadConfig,
   sharedExtensions,
-  type UploadConfig,
 } from '@inkeep/open-knowledge-core';
 import {
   AgentFocusBroadcaster,
@@ -31,7 +28,6 @@ import {
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
   createServerObserverExtension,
-  detectObsidianVault,
   handleCollabSocketError,
   loadPrincipal,
   type Principal,
@@ -71,21 +67,20 @@ interface ContentConfig {
   dir: string;
   include: string[];
   exclude: string[];
-  /**
-   * Loosely-parsed user `upload.*` partial read straight from YAML. Only
-   * the fields `resolveUploadConfig` cares about are surfaced; unknown
-   * extras are silently dropped (matches Zod strip-mode on `ok start`).
-   * The full Zod validation lives in `packages/cli/src/config/schema.ts`
-   * — the dev plugin parses loose here because an app→cli dependency
-   * would invert the monorepo layering (app shouldn't import cli).
-   */
-  upload?: PartialUserUploadConfig;
 }
 
 /**
- * Read content + upload config from .open-knowledge/config.yml. Falls back
- * to defaults (PROJECT_ROOT + all-markdown include + empty exclude, upload
- * undefined) if no config exists or fields are unspecified.
+ * Read content config from .open-knowledge/config.yml. Falls back to
+ * defaults (PROJECT_ROOT + all-markdown include + empty exclude) if no
+ * config exists or fields are unspecified.
+ *
+ * Upload config is not user-facing per SPEC 2026-04-24 amendment — every
+ * value lives as a module-level constant in
+ * `@inkeep/open-knowledge-core/constants/upload.ts`. Legacy YAMLs
+ * carrying `upload.*` fields parse cleanly (unknown keys are ignored);
+ * the deprecation is silent because warning about a value we intend to
+ * deprecate-and-ignore for good creates noise for operators who copy-
+ * pasted an earlier config.
  */
 function resolveContentConfig(): ContentConfig {
   const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
@@ -109,70 +104,6 @@ function resolveContentConfig(): ContentConfig {
           (p): p is string => typeof p === 'string',
         );
         if (valid.length > 0) defaults.exclude = valid;
-      }
-      // Loose validation with warn-on-drop to match `ok start`'s fail-fast
-      // posture in observability if not in severity (Zod rejects an invalid
-      // enum at CLI startup; here we warn + fall back to default). Silent
-      // drop would let a `dedup.ui: 'confir'` typo silently revert to the
-      // default `'toast'` — the operator reasonably believes their config
-      // is in effect and files a bug only after running `ok start` reveals
-      // the real error.
-      const upload = parsed?.upload as Record<string, unknown> | undefined;
-      if (upload && typeof upload === 'object') {
-        const userUpload: PartialUserUploadConfig = {};
-        if (typeof upload.attachmentFolderPath === 'string') {
-          userUpload.attachmentFolderPath = upload.attachmentFolderPath;
-        } else if (upload.attachmentFolderPath !== undefined) {
-          console.warn(
-            `[hocuspocus] config.yml upload.attachmentFolderPath must be a string (got ${JSON.stringify(upload.attachmentFolderPath)}); ignoring`,
-          );
-        }
-        if (upload.emitFormat === 'wikiembed' || upload.emitFormat === 'markdown-image') {
-          userUpload.emitFormat = upload.emitFormat;
-        } else if (upload.emitFormat !== undefined) {
-          console.warn(
-            `[hocuspocus] config.yml upload.emitFormat must be 'wikiembed' or 'markdown-image' (got ${JSON.stringify(upload.emitFormat)}); falling back to default`,
-          );
-        }
-        if (upload.maxBytes !== undefined) {
-          // Streaming-upload refactor removed user-facing upload caps
-          // (reports/streaming-upload-refactor/REPORT.md §D8). Legacy
-          // YAML still carrying this key parses cleanly; we just warn
-          // once per process so operators see the setting is ignored.
-          console.warn(
-            '[hocuspocus] config.yml upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
-          );
-        }
-        const dedup = upload.dedup as Record<string, unknown> | undefined;
-        if (dedup && typeof dedup === 'object') {
-          const dedupPartial: PartialUserUploadConfig['dedup'] = {};
-          if (dedup.mode === 'off' || dedup.mode === 'same-dir') {
-            dedupPartial.mode = dedup.mode;
-          } else if (dedup.mode !== undefined) {
-            console.warn(
-              `[hocuspocus] config.yml upload.dedup.mode must be 'off' or 'same-dir' (got ${JSON.stringify(dedup.mode)}); falling back to default`,
-            );
-          }
-          if (dedup.ui === 'silent' || dedup.ui === 'toast' || dedup.ui === 'confirm') {
-            dedupPartial.ui = dedup.ui;
-          } else if (dedup.ui !== undefined) {
-            console.warn(
-              `[hocuspocus] config.yml upload.dedup.ui must be 'silent', 'toast', or 'confirm' (got ${JSON.stringify(dedup.ui)}); falling back to default`,
-            );
-          }
-          if (Object.keys(dedupPartial).length > 0) userUpload.dedup = dedupPartial;
-        }
-        if (Array.isArray(upload.wikiEmbedExtensions)) {
-          const valid = (upload.wikiEmbedExtensions as unknown[]).filter(
-            (e): e is string => typeof e === 'string',
-          );
-          userUpload.wikiEmbedExtensions = valid;
-        } else if (upload.wikiEmbedExtensions !== undefined) {
-          console.warn(
-            `[hocuspocus] config.yml upload.wikiEmbedExtensions must be an array of strings (got ${JSON.stringify(upload.wikiEmbedExtensions)}); falling back to default`,
-          );
-        }
-        if (Object.keys(userUpload).length > 0) defaults.upload = userUpload;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
@@ -261,10 +192,6 @@ let cc1Broadcaster: CC1Broadcaster;
 // SPEC §6 FR-3b + FR-6 / D-D LOCKED: basename index for asset embed
 // resolution. Parity with `createServer()` in packages/server/src/standalone.ts.
 let basenameIndex: BasenameIndex;
-// Resolved upload config (user > vault > default) per US-018. Evaluated once
-// at plugin boot; `/api/upload-config` serves the same frozen shape until the
-// dev server restarts.
-let uploadConfig: UploadConfig;
 
 // Loaded async after init; Vite dev / Playwright must hit /api/principal
 // without 404 so the browser tab-identity fetch in main.tsx can resolve.
@@ -288,16 +215,6 @@ try {
     contentDir: CONTENT_DIR,
     contentFilter,
   });
-
-  // Non-destructive Obsidian vault detection + user-wins resolver.
-  // SPEC §6 FR-4, US-018: same precedence as `cli/src/commands/start.ts`.
-  const vaultPartial = detectObsidianVault(CONTENT_DIR);
-  uploadConfig = resolveUploadConfig(contentConfig.upload, vaultPartial);
-  if (vaultPartial) {
-    console.log(
-      `[hocuspocus] detected Obsidian vault — filled upload defaults (user config wins): ${JSON.stringify(vaultPartial)}`,
-    );
-  }
 
   // SPEC §6 FR-3b: basename index seeded below once the watcher has
   // primed the content filter's dirCount (sibling-asset admission).
@@ -346,7 +263,6 @@ try {
       contentDir: CONTENT_DIR,
       getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
-      getUploadConfig: () => uploadConfig,
       enableTestRoutes: true,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       shadowRef,

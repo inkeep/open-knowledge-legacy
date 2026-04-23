@@ -31,19 +31,7 @@ export interface UtilityInitMessage {
   type: 'init';
   opts: Pick<
     BootServerOptions,
-    | 'contentDir'
-    | 'projectDir'
-    | 'port'
-    | 'host'
-    | 'debounce'
-    | 'maxDebounce'
-    // uploadConfig carries the resolved `upload.*` subtree (user ×
-    // .obsidian/app.json × DEFAULT_UPLOAD_CONFIG). The CLI + Vite dev
-    // plugin compose this themselves; the Electron utility needs main
-    // to compose it and pass it through, otherwise every desktop user
-    // silently gets DEFAULT_UPLOAD_CONFIG — .open-knowledge/config.yml
-    // and Obsidian vault detection are dropped on the floor.
-    | 'uploadConfig'
+    'contentDir' | 'projectDir' | 'port' | 'host' | 'debounce' | 'maxDebounce'
   >;
 }
 export interface UtilityShutdownMessage {

@@ -40,11 +40,6 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | `sync.autoPull`             | `boolean`  | `true`                    | Automatically pull remote changes each cycle                                                                                                                                                         |
 | `sync.commitMessage`        | `string`   | `"auto"`                  | Commit message for auto-commits. `"auto"` uses `WIP auto-save <timestamp>`.                                                                                                                           |
 | `github.oauthAppClientId`   | `string`   | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
-| `upload.attachmentFolderPath` | `string`   | `"./"`                  | Where uploaded assets are written, relative to the containing doc. `"./"` = same directory as the doc (co-located). `"/"` = content-directory root. `"./subdir"` = subdirectory beside the doc. Any other string = a fixed content-directory-relative path. Mirrors Obsidian's literal schema. |
-| `upload.emitFormat`         | `'wikiembed' \| 'markdown-image'` | `"wikiembed"`     | How the editor writes the ref after a successful upload. `wikiembed` → `![[file.ext]]`; `markdown-image` → `![alt](relative-path)` for images, `[name](relative-path)` for non-image typed files.     |
-| `upload.dedup.mode`         | `'off' \| 'same-dir'` | `"same-dir"`        | sha256 deduplication scope. `same-dir` returns the existing path when identical bytes already exist next to the destination; `off` always writes a new file.                                          |
-| `upload.dedup.ui`           | `'silent' \| 'toast' \| 'confirm'` | `"toast"` | UX when a dedup match is found. `toast` shows `Already at <path> — reusing.`; `silent` hides the notice; `confirm` is reserved for future use (currently behaves like `toast`).                        |
-| `upload.wikiEmbedExtensions` | `string[]` | `["png","jpg","jpeg","gif","webp","avif","svg","pdf","mp4","webm","mov","mp3","wav","ogg","m4a"]` | Extensions that emit as `![[...]]` under `emitFormat: 'wikiembed'`. Extensions outside this allowlist always emit as markdown links regardless of `emitFormat`.                                        |
 
 ## Built-in directory skips
 
@@ -83,27 +78,9 @@ content:
 </Tab>
 </Tabs>
 
-### Upload configuration
+### Uploads
 
-The `upload.*` section controls where assets are written, how they're referenced in markdown, and how the editor responds to duplicate drops. See the [Assets and embeds](/guides/assets-and-embeds) guide for the full picture.
-
-```yaml title=".open-knowledge/config.yml"
-upload:
-  attachmentFolderPath: "./"        # co-located with the doc
-  emitFormat: wikiembed             # or: markdown-image
-  dedup:
-    mode: same-dir                  # or: off
-    ui: toast                       # or: silent | confirm
-  wikiEmbedExtensions:
-    - png
-    - jpg
-    - pdf
-    - mp4
-```
-
-Uploads stream to disk end-to-end with on-the-fly sha256, so there is no user-facing upload cap — drop a 500 MB video and it works. The only rejection axis is disk fullness, which surfaces as HTTP 507 (`storage-full`). Legacy configs that still carry `upload.maxBytes` parse cleanly but log a one-time deprecation WARN at boot so you can clean up `config.yml`.
-
-Projects that contain an `.obsidian/app.json` file pre-populate `attachmentFolderPath` and `emitFormat` from the vault's `attachmentFolderPath` + `useMarkdownLinks` settings at server startup (non-destructive — nothing is written back to `.obsidian/`). Precedence is **user > vault > default**: anything you set in `config.upload` wins, and vault detection only fills in where you were silent. To pin a setting explicitly, set it in `.open-knowledge/config.yml` — you do not need to touch `.obsidian/`.
+There is no `upload.*` user-facing config. Attachment placement (co-located with the referencing doc), emit shape (`![[file.ext]]` for supported extensions, standard markdown link for opaque types), same-directory sha256 dedup with a toast notice, and the wiki-embed extension list are all fixed defaults. Uploads stream to disk end-to-end with on-the-fly sha256, so there is no user-facing size cap — drop a 500 MB video and it works. The only rejection axis is disk fullness, which surfaces as HTTP 507 (`storage-full`). Legacy configs that still carry `upload.*` keys parse cleanly (the section is silently stripped). See [Assets and embeds](/guides/assets-and-embeds) for the full picture.
 
 ### Sync configuration
 

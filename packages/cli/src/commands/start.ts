@@ -323,15 +323,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
 
   const { existsSync, mkdirSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const { resolveUploadConfig } = await import('@inkeep/open-knowledge-core');
-  const {
-    bootServer,
-    detectObsidianVault,
-    ensureProjectGit,
-    getLogger,
-    isProcessAlive,
-    readUiLock,
-  } = await import('@inkeep/open-knowledge-server');
+  const { bootServer, ensureProjectGit, getLogger, isProcessAlive, readUiLock } = await import(
+    '@inkeep/open-knowledge-server'
+  );
   const { resolveContentDir } = await import('../config/paths.ts');
 
   const log = opts.log ?? getLogger('start');
@@ -342,22 +336,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   if (!existsSync(contentDir)) {
     mkdirSync(contentDir, { recursive: true });
     log.info({ contentDir }, 'Created content directory');
-  }
-
-  // SPEC §6 FR-4 + US-018: non-destructive Obsidian vault detection with
-  // **user-wins precedence** (user > vault > default). `config.upload`
-  // is the YAML-derived partial; Zod leaves `attachmentFolderPath` and
-  // `emitFormat` undefined when the user didn't set them so the vault
-  // partial can fill the gap. The canonical resolver lives in core so
-  // the Vite dev plugin reaches the same result without duplicating the
-  // merge logic.
-  const vaultPartial = detectObsidianVault(contentDir);
-  const uploadConfig = resolveUploadConfig(config.upload, vaultPartial);
-  if (vaultPartial) {
-    log.info(
-      { vault: vaultPartial, resolved: uploadConfig },
-      '[start] detected Obsidian vault — filled upload defaults (user config wins)',
-    );
   }
 
   // Track whether the upcoming auto-init actually scaffolded anything — the
@@ -438,7 +416,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     maxDebounce: config.persistence.maxDebounceMs,
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
-    uploadConfig,
     onAgentWrite,
     // Pass the exact runtime that started this server so /api/local-op/* can
     // spawn additional CLI processes without needing open-knowledge on PATH.

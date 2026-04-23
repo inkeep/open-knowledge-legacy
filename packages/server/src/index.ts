@@ -105,11 +105,6 @@ export {
   resetMetrics,
 } from './metrics.ts';
 export {
-  detectObsidianVault,
-  type ObsidianAppJson,
-  type ObsidianVaultPartialConfig,
-} from './obsidian-vault-detect.ts';
-export {
   createPersistenceExtension,
   type PersistenceHandle,
   type PersistenceOptions,

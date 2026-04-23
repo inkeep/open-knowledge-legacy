@@ -102,53 +102,76 @@ export const ASSET_EXTENSIONS = new Set([
   'woff2',
 ]);
 
-// SPEC §6 FR-5 — shape of the upload configuration shared between cli (Zod
-// schema source) and server (handler consumer). Defined in core so both sides
-// resolve the same type without crossing package boundaries.
+// Internal dispatch typing. These enums discriminate shape-selection in the
+// client `pickInsertShape` and server upload handler; they are not a user
+// config surface (SPEC 2026-04-24 amendment — zero user-facing upload config).
 export type EmitFormat = 'wikiembed' | 'markdown-image';
 export type DedupMode = 'off' | 'same-dir';
 export type DedupUIMode = 'silent' | 'toast' | 'confirm';
 
-export interface UploadConfig {
-  attachmentFolderPath: string;
-  emitFormat: EmitFormat;
-  dedup: {
-    mode: DedupMode;
-    ui: DedupUIMode;
-  };
-  wikiEmbedExtensions: string[];
-}
-
-// Canonical default. Mirrors the Zod schema default in
-// packages/cli/src/config/schema.ts. Kept here so every consumer — server
-// upload handler, `/api/upload-config` response fallback, client emit
-// dispatch — reads from the same source. If the list widens via config,
-// the server resolves at request time; this constant is only used as a
-// structural fallback when no config is wired (tests + client bootstrap
-// before the first /api/upload-config fetch completes).
+// Fixed upload-surface constants. All values previously reachable via the
+// `upload.*` YAML subtree are now hardcoded here. Every consumer — server
+// upload handler, client emit dispatch, server mdast→PM pipeline — reads
+// these directly. No /api/upload-config round-trip, no user config resolution.
 //
-// SPEC §6 FR-5 post-streaming (2026-04-22): `maxBytes` removed. The
-// buffer-to-memory pattern it guarded is gone; streaming uploads are
-// disk-bound only. See reports/streaming-upload-refactor/REPORT.md §D8.
-export const DEFAULT_UPLOAD_CONFIG: UploadConfig = {
-  attachmentFolderPath: './',
-  emitFormat: 'wikiembed',
-  dedup: { mode: 'same-dir', ui: 'toast' },
-  wikiEmbedExtensions: [
-    'png',
-    'jpg',
-    'jpeg',
-    'gif',
-    'webp',
-    'avif',
-    'svg',
-    'pdf',
-    'mp4',
-    'webm',
-    'mov',
-    'mp3',
-    'wav',
-    'ogg',
-    'm4a',
-  ],
-};
+// SPEC 2026-04-24 amendment (§Post-finalization amendment — config trim):
+// user-facing upload config was removed because every field failed the "real
+// user demand" test. Reintroduce only with concrete user evidence; don't add
+// a knob on speculation. If a future feature needs a knob it comes with its
+// own spec + its own user story.
+
+/**
+ * Where uploads land on disk, relative to the containing markdown doc's
+ * directory. `'./'` = colocated (drop-next-to-doc UX). Consumed by the
+ * server upload handler.
+ */
+export const DEFAULT_ATTACHMENT_FOLDER_PATH = './';
+
+/**
+ * How `pickInsertShape` emits renderable-asset drops. `'wikiembed'` =
+ * `![[file.ext]]` (OK-native shape). `'markdown-image'` would emit
+ * `![](path)` but is reserved for a future export-time transformation;
+ * the runtime always uses `'wikiembed'`.
+ */
+export const DEFAULT_EMIT_FORMAT: EmitFormat = 'wikiembed';
+
+/**
+ * sha256 same-directory dedup scope. Consumed by the server upload handler;
+ * if the bytes match an existing sibling, the upload handler returns the
+ * existing path.
+ */
+export const DEFAULT_DEDUP_MODE: DedupMode = 'same-dir';
+
+/**
+ * Client feedback shape when a drop dedups to an existing file.
+ * `'toast'` = "Reused existing file.png" toast notification.
+ */
+export const DEFAULT_DEDUP_UI: DedupUIMode = 'toast';
+
+/**
+ * Extensions that drop into the editor as `![[file.ext]]` wiki-embed refs.
+ * Post-roundtrip, mdast→PM dispatches via `handlers.wikiLinkEmbed`:
+ * image-ext → PM `image`; non-image wikiembed-ext → PM text+link mark with
+ * `sourceForm: 'wikiembed'`; opaque ext → plain text+link.
+ *
+ * Kept as a ReadonlySet for O(1) membership check in the client emit path.
+ * Identical contents (order-preserved as an array) are consumed by the
+ * server mdast→PM pipeline via `Array.from(WIKI_EMBED_EXTENSIONS)`.
+ */
+export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'avif',
+  'svg',
+  'pdf',
+  'mp4',
+  'webm',
+  'mov',
+  'mp3',
+  'wav',
+  'ogg',
+  'm4a',
+]);

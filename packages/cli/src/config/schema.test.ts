@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveUploadConfig } from '@inkeep/open-knowledge-core';
-import { ConfigSchema, UploadConfigSchema } from './schema';
+import { ConfigSchema } from './schema';
 
 describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
@@ -199,226 +198,25 @@ describe('ConfigSchema', () => {
   });
 });
 
-describe('ConfigSchema.upload (FR-5)', () => {
-  test('upload section omitted: other defaults populate, attachmentFolderPath + emitFormat are undefined (US-018 resolver fills them)', () => {
-    const config = ConfigSchema.parse({});
-    // attachmentFolderPath + emitFormat are deliberately optional on the
-    // Zod shape — `resolveUploadConfig` in core fills them with vault
-    // partial first, then DEFAULT_UPLOAD_CONFIG. This lets user-wins
-    // precedence work; if Zod materialized defaults here we could not
-    // distinguish "user kept default" from "user never set it."
-    expect(config.upload.attachmentFolderPath).toBeUndefined();
-    expect(config.upload.emitFormat).toBeUndefined();
-    expect(config.upload.dedup.mode).toBe('same-dir');
-    expect(config.upload.dedup.ui).toBe('toast');
-    expect(config.upload.wikiEmbedExtensions).toEqual([
-      'png',
-      'jpg',
-      'jpeg',
-      'gif',
-      'webp',
-      'avif',
-      'svg',
-      'pdf',
-      'mp4',
-      'webm',
-      'mov',
-      'mp3',
-      'wav',
-      'ogg',
-      'm4a',
-    ]);
-  });
-
-  test('partial upload override preserves other defaults', () => {
-    const config = ConfigSchema.parse({
-      upload: { dedup: { mode: 'off' } },
-    });
-    expect(config.upload.dedup.mode).toBe('off');
-    expect(config.upload.dedup.ui).toBe('toast'); // sibling default preserved
-    // emitFormat is optional pre-resolution (US-018)
-    expect(config.upload.emitFormat).toBeUndefined();
-  });
-
-  test('US-018 invariant: attachmentFolderPath + emitFormat must stay optional — adding a Zod default would break user-wins precedence', () => {
-    // Explicit regression gate. If a future refactor tightens either
-    // field to `.default(...)`, `resolveUploadConfig`'s user > vault >
-    // default precedence collapses: user's `undefined` becomes the
-    // materialized default and is indistinguishable from "user set
-    // this explicitly." The vault partial stops reaching the merge
-    // silently, flipping the documented user-wins behavior.
-    //
-    // Keep this test failing-loud. Do not weaken by materializing
-    // values here; the point is to prove the Zod shape still treats
-    // missing fields as `undefined`.
-    const parsed = UploadConfigSchema.parse({});
-    expect(parsed.attachmentFolderPath).toBeUndefined();
-    expect(parsed.emitFormat).toBeUndefined();
-  });
-
-  test('user sets attachmentFolderPath + emitFormat explicitly → Zod preserves exact values', () => {
-    const config = ConfigSchema.parse({
-      upload: { attachmentFolderPath: 'attachments', emitFormat: 'markdown-image' },
-    });
-    expect(config.upload.attachmentFolderPath).toBe('attachments');
-    expect(config.upload.emitFormat).toBe('markdown-image');
-  });
-
-  test('legacy upload.maxBytes keys parse cleanly — Zod strips unknown keys (post-streaming refactor 2026-04-22)', () => {
-    // `upload.maxBytes` was removed when uploads switched to streaming (see
-    // reports/streaming-upload-refactor/REPORT.md §D8). The field is no
-    // longer on the Zod shape, but `UploadConfigSchema` is not `.strict()`,
-    // so legacy configs that still carry the key continue to parse — the
-    // key is silently stripped. A deprecation WARN in `loader.ts` surfaces
-    // the removal so users can clean up `config.yml`.
-    const config = ConfigSchema.parse({
-      // biome-ignore lint/suspicious/noExplicitAny: intentional cast to assert shape
-      upload: { maxBytes: 104857600 } as any,
-    });
-    expect(Object.hasOwn(config.upload, 'maxBytes')).toBe(false);
-    // Other defaults untouched.
-    expect(config.upload.dedup.mode).toBe('same-dir');
-    expect(config.upload.attachmentFolderPath).toBeUndefined();
-  });
-
-  test('upload.emitFormat accepts markdown-image', () => {
-    const config = ConfigSchema.parse({
-      upload: { emitFormat: 'markdown-image' },
-    });
-    expect(config.upload.emitFormat).toBe('markdown-image');
-  });
-
-  test('upload.emitFormat rejects unknown values', () => {
-    const result = ConfigSchema.safeParse({
-      upload: { emitFormat: 'html-image' },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test('upload.dedup.mode accepts off', () => {
-    const config = ConfigSchema.parse({
-      upload: { dedup: { mode: 'off' } },
-    });
-    expect(config.upload.dedup.mode).toBe('off');
-    expect(config.upload.dedup.ui).toBe('toast');
-  });
-
-  test('upload.dedup.ui accepts silent (D-B escape hatch)', () => {
-    const config = ConfigSchema.parse({
-      upload: { dedup: { ui: 'silent' } },
-    });
-    expect(config.upload.dedup.ui).toBe('silent');
-    expect(config.upload.dedup.mode).toBe('same-dir');
-  });
-
-  test('upload.dedup.ui accepts confirm (D-B escape hatch)', () => {
-    const config = ConfigSchema.parse({
-      upload: { dedup: { ui: 'confirm' } },
-    });
-    expect(config.upload.dedup.ui).toBe('confirm');
-  });
-
-  test('upload.dedup.ui rejects unknown values', () => {
-    const result = ConfigSchema.safeParse({
-      upload: { dedup: { ui: 'loud' } },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test('upload.attachmentFolderPath accepts Obsidian-style values', () => {
-    // Per D-J, this is a free-form string matching Obsidian's literal schema.
-    // "/" (vault root), "./" (co-located), "./subdir", "attachments" (global).
-    const cases = ['/', './', './attachments', 'attachments'];
-    for (const value of cases) {
-      const config = ConfigSchema.parse({
-        upload: { attachmentFolderPath: value },
-      });
-      expect(config.upload.attachmentFolderPath).toBe(value);
-    }
-  });
-
-  test('upload.wikiEmbedExtensions accepts a custom allowlist', () => {
-    const config = ConfigSchema.parse({
-      upload: { wikiEmbedExtensions: ['png', 'pdf', 'mp4'] },
-    });
-    expect(config.upload.wikiEmbedExtensions).toEqual(['png', 'pdf', 'mp4']);
-  });
-
-  test('upload.wikiEmbedExtensions accepts empty array', () => {
-    // Empty allowlist is a valid operator choice — every drop emits as
-    // opaque markdown-link, which is a defensible posture for strict vaults.
-    const config = ConfigSchema.parse({
-      upload: { wikiEmbedExtensions: [] },
-    });
-    expect(config.upload.wikiEmbedExtensions).toEqual([]);
-  });
-
-  test('D-M no longer exposes allowedMimeTypes (removed 2026-04-21)', () => {
-    // Operator cannot tune a MIME allowlist post-D-M accept-all. If this
-    // test fails because the schema accepts the field, D-M was reversed
-    // without updating this guard — reopen the decision.
-    const config = ConfigSchema.parse({
-      // biome-ignore lint/suspicious/noExplicitAny: intentional cast to assert shape
-      upload: { allowedMimeTypes: ['image/png'] } as any,
-    });
-    // Zod strip mode silently drops unknown keys by default; assert the
-    // parsed output does NOT carry the removed field.
-    expect(Object.hasOwn(config.upload, 'allowedMimeTypes')).toBe(false);
-  });
-});
-
-describe('ConfigSchema.upload × resolveUploadConfig (US-018 precedence integration)', () => {
-  test('user omits both two-field toggles + no vault → resolver applies defaults', () => {
-    const config = ConfigSchema.parse({});
-    const resolved = resolveUploadConfig(config.upload, null);
-    expect(resolved.attachmentFolderPath).toBe('./');
-    expect(resolved.emitFormat).toBe('wikiembed');
-  });
-
-  test('user omits both + vault supplies both → vault wins over defaults', () => {
-    const config = ConfigSchema.parse({});
-    const resolved = resolveUploadConfig(config.upload, {
-      attachmentFolderPath: 'attachments',
-      emitFormat: 'markdown-image',
-    });
-    expect(resolved.attachmentFolderPath).toBe('attachments');
-    expect(resolved.emitFormat).toBe('markdown-image');
-  });
-
-  test('user sets attachmentFolderPath + vault sets both → user wins on conflict', () => {
-    const config = ConfigSchema.parse({
-      upload: { attachmentFolderPath: 'user-assets' },
-    });
-    const resolved = resolveUploadConfig(config.upload, {
-      attachmentFolderPath: 'vault-attachments',
-      emitFormat: 'markdown-image',
-    });
-    expect(resolved.attachmentFolderPath).toBe('user-assets');
-    expect(resolved.emitFormat).toBe('markdown-image'); // vault filled the gap
-  });
-
-  test('user sets both + vault sets both → user wins on every field', () => {
-    const config = ConfigSchema.parse({
+describe('ConfigSchema (upload surface removed per 2026-04-24 amendment)', () => {
+  test('legacy upload.* keys parse cleanly — Zod strips the whole section', () => {
+    // The `upload.*` user-facing config surface was removed entirely in the
+    // 2026-04-24 amendment (zero user-facing upload config; all values are
+    // module-level constants in `@inkeep/open-knowledge-core`). Legacy
+    // configs still carrying any `upload.*` shape parse cleanly because the
+    // top-level object schema strips unknown keys by default. The input
+    // object is typed as `unknown` rather than the Zod-inferred shape
+    // because the point of the test is to exercise unknown-key stripping.
+    const legacyInput: unknown = {
       upload: {
-        attachmentFolderPath: 'user-assets',
+        attachmentFolderPath: 'attachments',
         emitFormat: 'markdown-image',
+        maxBytes: 104857600,
+        dedup: { mode: 'off', ui: 'silent' },
+        wikiEmbedExtensions: ['png', 'pdf'],
       },
-    });
-    const resolved = resolveUploadConfig(config.upload, {
-      attachmentFolderPath: 'vault-attachments',
-      emitFormat: 'wikiembed',
-    });
-    expect(resolved.attachmentFolderPath).toBe('user-assets');
-    expect(resolved.emitFormat).toBe('markdown-image');
-  });
-
-  test('user sets emitFormat + no vault → resolved UploadConfig carries user value + defaults for rest', () => {
-    const config = ConfigSchema.parse({
-      upload: { emitFormat: 'markdown-image' },
-    });
-    const resolved = resolveUploadConfig(config.upload, null);
-    expect(resolved.emitFormat).toBe('markdown-image');
-    expect(resolved.attachmentFolderPath).toBe('./'); // default applied post-resolve
-    expect(resolved.dedup.mode).toBe('same-dir');
+    };
+    const config = ConfigSchema.parse(legacyInput);
+    expect(Object.hasOwn(config, 'upload')).toBe(false);
   });
 });

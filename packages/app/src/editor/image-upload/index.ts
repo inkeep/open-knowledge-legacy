@@ -1,8 +1,9 @@
 import {
-  DEFAULT_UPLOAD_CONFIG,
+  DEFAULT_DEDUP_UI,
+  DEFAULT_EMIT_FORMAT,
   extensionOf,
   IMAGE_EXTENSIONS,
-  type UploadConfig,
+  WIKI_EMBED_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
@@ -152,102 +153,27 @@ function docNameFromEditor(editor: Editor): string | null {
   return getEditorDocName(editor);
 }
 
-// US-015: live `upload.*` config, fetched from `/api/upload-config` on
-// first upload. DEFAULT_UPLOAD_CONFIG is the fallback until the fetch
-// resolves — mirrors the cli's Zod schema default so behavior at t=0 is
-// the same as a fresh config.yml with no `upload` section.
-let cachedUploadConfig: UploadConfig = DEFAULT_UPLOAD_CONFIG;
-let uploadConfigFetchInFlight: Promise<UploadConfig> | null = null;
-
-/**
- * Lightweight runtime validation at the network boundary. The dev plugin
- * parses YAML without Zod (monorepo layering — an app→cli dep would
- * invert packaging), so "the server always returns a valid UploadConfig"
- * is only true on the `ok start` path. A misconfigured proxy, a future
- * server bug, or a Cloudflare-style 401 body poisoning could otherwise
- * overwrite `cachedUploadConfig` with a shape that crashes or misroutes
- * `pickInsertShape` on the next upload. Narrow gate checks enum
- * membership (not just typeof string) so a malformed
- * `{ emitFormat: 'NUKE', dedup: { mode: 'banana', ui: 'fries' } }`
- * body is rejected rather than silently falling through `emitFormat
- * !== 'wikiembed'` as image-mode.
- */
-const EMIT_FORMATS = new Set(['wikiembed', 'markdown-image']);
-const DEDUP_MODES = new Set(['off', 'same-dir']);
-const DEDUP_UI_MODES = new Set(['silent', 'toast', 'confirm']);
-
-function isUploadConfig(x: unknown): x is UploadConfig {
-  if (!x || typeof x !== 'object') return false;
-  const c = x as Record<string, unknown>;
-  if (!Array.isArray(c.wikiEmbedExtensions)) return false;
-  if (!c.wikiEmbedExtensions.every((e) => typeof e === 'string')) return false;
-  // emitFormat + attachmentFolderPath are `.optional()` per US-018.
-  // Accept undefined; reject any other non-enum value.
-  if (c.emitFormat !== undefined && !EMIT_FORMATS.has(c.emitFormat as string)) return false;
-  if (c.attachmentFolderPath !== undefined && typeof c.attachmentFolderPath !== 'string') {
-    return false;
-  }
-  const dedup = c.dedup as Record<string, unknown> | null | undefined;
-  if (!dedup || typeof dedup !== 'object') return false;
-  if (!DEDUP_MODES.has(dedup.mode as string)) return false;
-  if (!DEDUP_UI_MODES.has(dedup.ui as string)) return false;
-  return true;
-}
-
-async function fetchUploadConfig(): Promise<UploadConfig> {
-  try {
-    const res = await fetch('/api/upload-config', { headers: { Accept: 'application/json' } });
-    if (!res.ok) {
-      // Reset the in-flight slot so a later upload can retry instead of
-      // holding the rejected promise forever (it resolves to
-      // cachedUploadConfig, but that's brittle if caching semantics change).
-      uploadConfigFetchInFlight = null;
-      return cachedUploadConfig;
-    }
-    const body: unknown = await res.json();
-    if (!isUploadConfig(body)) {
-      console.warn('[upload] /api/upload-config returned malformed body; keeping cached shape');
-      uploadConfigFetchInFlight = null;
-      return cachedUploadConfig;
-    }
-    cachedUploadConfig = body;
-    return body;
-  } catch {
-    // Transient failures (network blip, server mid-restart) shouldn't
-    // poison the cache for the entire session — drop the in-flight slot
-    // so the next upload retries from scratch.
-    uploadConfigFetchInFlight = null;
-    return cachedUploadConfig;
-  }
-}
-
-/**
- * Ensure `cachedUploadConfig` reflects the server-resolved config before
- * emit-dispatch runs. De-duplicates concurrent uploads onto one fetch.
- */
-async function ensureUploadConfig(): Promise<UploadConfig> {
-  if (!uploadConfigFetchInFlight) {
-    uploadConfigFetchInFlight = fetchUploadConfig();
-  }
-  return uploadConfigFetchInFlight;
-}
-
 interface InsertShape {
   kind: 'wikiembed' | 'image' | 'markdown-link' | 'wiki-link';
   ext: string;
 }
 
-export function pickInsertShape(filename: string, config: UploadConfig): InsertShape {
+/**
+ * Choose the PM insert shape for a freshly uploaded file. Dispatches by
+ * extension against `WIKI_EMBED_EXTENSIONS` + `IMAGE_EXTENSIONS` — both
+ * fixed constants per SPEC 2026-04-24 amendment (zero user-facing upload
+ * config). Markdown files are OK docs (wiki-link semantic), not assets.
+ */
+export function pickInsertShape(filename: string): InsertShape {
   const ext = extensionOf(filename);
   // Markdown files are first-class OK docs, not opaque assets. Emit [[foo]]
-  // (link semantic) regardless of config — `![[foo.md]]` would imply
-  // transclusion, which OK doesn't support.
+  // (link semantic) — `![[foo.md]]` would imply transclusion, which OK
+  // doesn't support.
   if (ext === 'md' || ext === 'mdx') {
     return { kind: 'wiki-link', ext };
   }
-  const wikiEmbedSet = new Set(config.wikiEmbedExtensions.map((e) => e.toLowerCase()));
-  if (wikiEmbedSet.has(ext)) {
-    if (config.emitFormat === 'wikiembed') return { kind: 'wikiembed', ext };
+  if (WIKI_EMBED_EXTENSIONS.has(ext)) {
+    if (DEFAULT_EMIT_FORMAT === 'wikiembed') return { kind: 'wikiembed', ext };
     return IMAGE_EXTENSIONS.has(ext) ? { kind: 'image', ext } : { kind: 'markdown-link', ext };
   }
   return { kind: 'markdown-link', ext };
@@ -283,10 +209,6 @@ export async function uploadAndInsert(
     return;
   }
   const uploadId = crypto.randomUUID();
-  // Prime the upload-config cache before dispatch so emit-shape honors
-  // operator overrides (US-015). Fire-and-forget the first time; later
-  // uploads reuse the cached value.
-  const uploadConfig = await ensureUploadConfig();
 
   const skeletonWidget = createSkeletonWidget(file);
   editor.view.dispatch(
@@ -354,15 +276,15 @@ export async function uploadAndInsert(
         ? `${parentDocDir}/${src}`
         : src;
 
-  // SPEC §6 FR-2 / D-B: dedup toast. `silent` suppresses the toast
-  // entirely; `toast` (default) shows the reusing message. `confirm` is
-  // reserved for a future blocking dialog — today it falls through to
-  // the toast shape so behavior is never worse than the default.
-  if (deduped && uploadConfig.dedup.ui !== 'silent') {
+  // SPEC §6 FR-2 + 2026-04-24 amendment: dedup toast. Fixed default is
+  // `DEFAULT_DEDUP_UI === 'toast'` — no user config surface. The check is
+  // kept so future spec work that reintroduces the knob with concrete user
+  // evidence does not have to re-derive the call site.
+  if (deduped && DEFAULT_DEDUP_UI !== 'silent') {
     toast.info(`Already at ${assetContentPath} — reusing.`);
   }
 
-  const shape = pickInsertShape(file.name, uploadConfig);
+  const shape = pickInsertShape(file.name);
 
   const { state } = editor;
   const pluginState = uploadPluginKey.getState(state);

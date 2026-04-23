@@ -451,3 +451,56 @@ Stamped at `616e3fe5` (pre-amendment HEAD). Commit 1 of the 6-commit plan is thi
 
 SPEC remains **Finalized**; amendment is pre-merge direct append per the 2026-04-22 precedent. Additive only — no existing §/FR/NG/D narrowed.
 
+---
+
+## 2026-04-24 — Post-finalization amendment (config trim + Obsidian deferral)
+
+### Context
+
+Pre-merge VP-of-product review surfaced two problems with the shipped `upload.*` user-facing config surface (FR-5) and Obsidian vault runtime detection (FR-4):
+
+1. Every `upload.*` field failed the "one concrete user asking for it" test. All five values (`attachmentFolderPath`, `emitFormat`, `dedup.mode`, `dedup.ui`, `wikiEmbedExtensions`) were justified by speculative operator demand or Obsidian parity. Defaults cover every known workflow; no user has requested any specific knob.
+2. Runtime coupling to Obsidian's closed-source `.obsidian/app.json` schema is architectural debt. If Obsidian renames `useMarkdownLinks` or deprecates `.obsidian/app.json`, we discover the drift in user reports. The correct shape for "Obsidian refugee onboarding" is a one-shot migration tool at first boot, not a lifetime dependency.
+
+### Scope of amendment
+
+1. Deleted the entire `upload.*` Zod block in `packages/cli/src/config/schema.ts` and the three compile-time structural guards (`_ResolvedFieldsMatch`, `_AttachmentFolderPathStaysOptional`, `_EmitFormatStaysOptional`).
+2. Deleted `packages/server/src/obsidian-vault-detect.ts` + test and `packages/core/src/utils/resolve-upload-config.ts` + test. Deleted the `PartialUserUploadConfig` interface.
+3. Deleted the vault-detect + resolver call sites in `packages/cli/src/commands/start.ts`, `packages/app/src/server/hocuspocus-plugin.ts`, and `packages/desktop/src/main/upload-config-load.ts` (whole file).
+4. Deleted the `GET /api/upload-config` HTTP endpoint + the client-side `ensureUploadConfig` / `fetchUploadConfig` / cache + `isUploadConfig` runtime validator.
+5. Deleted the `UploadConfig` interface + `DEFAULT_UPLOAD_CONFIG` + `getUploadConfig?: () => UploadConfig` DI from `ApiExtensionOptions` + every boot-plumbing type (`boot.ts`, `standalone.ts`, `server-entry.ts`, `window-manager.ts`, `hocuspocus-plugin.ts`).
+6. Added five exported module-level constants to `packages/core/src/constants/upload.ts`: `DEFAULT_ATTACHMENT_FOLDER_PATH = './'`, `DEFAULT_EMIT_FORMAT = 'wikiembed'`, `DEFAULT_DEDUP_MODE = 'same-dir'`, `DEFAULT_DEDUP_UI = 'toast'`, `WIKI_EMBED_EXTENSIONS` (15-entry `ReadonlySet<string>`). Internal enum types `EmitFormat` / `DedupMode` / `DedupUIMode` stay for `pickInsertShape` dispatch typing; not user-surfaced.
+7. Refactored runtime consumers to read constants directly — `packages/server/src/api-extension.ts` upload handler, `packages/core/src/markdown/index.ts` mdast→PM dispatch, `packages/app/src/editor/image-upload/index.ts` (`pickInsertShape` signature simplified from `(filename, config)` to `(filename)`).
+8. Updated SPEC.md with direct in-line edits — struck FR-4 + FR-5 rows, D-J row, M5 metric, P4 journey. Rewrote P2 journey to cover only the default-shape refugee path. Rewrote NG14 to reference the fixed constant.
+9. Added a §Post-finalization amendment (2026-04-24) section at the end of SPEC.md documenting the decision rationale + scope + what-did-not-change + future-work pointer.
+10. Updated `.changeset/asset-embed-surface.md` to drop Obsidian-specific paragraphs + `upload.*` config language.
+11. Updated `docs/content/guides/assets-and-embeds.mdx` + `docs/content/guides/configuration.mdx` to describe the fixed defaults (no config knob).
+12. Updated `AGENTS.md` (symlink → CLAUDE.md): rewrote upload-surface section to describe constants; deleted Obsidian vault paragraphs + HTTP surface row for `/api/upload-config`; deleted user-first precedence WARN.
+
+### Rationale
+
+- **Every config field is a promise.** Speculative knobs accumulate into schemas that stop being contracts and become wishlists. The bar for a user-facing config field is "one concrete user asking for it," not "this might be useful someday."
+- **Runtime coupling to a closed-source schema is debt.** The "Obsidian refugee" persona is real; the runtime detection shape was wrong. A one-shot migration tool reads `.obsidian/app.json` once, writes translated settings to `.open-knowledge/config.yml`, then never reads the Obsidian file again. Decouples OK's runtime from Obsidian's release cadence.
+- **The P2 "Obsidian refugee" + P4 "operator" personas remain named but have no concrete, user-sourced demand for any specific knob today.** When one materializes, a future spec reintroduces the specific field with that user's use case as the justification.
+
+### Test changes
+
+- Deleted `packages/core/src/utils/resolve-upload-config.test.ts` (~110 LOC).
+- Deleted `packages/server/src/obsidian-vault-detect.test.ts` (~188 LOC).
+- Deleted the `ConfigSchema.upload (FR-5)` + `ConfigSchema.upload × resolveUploadConfig (US-018 precedence integration)` describe blocks in `packages/cli/src/config/schema.test.ts`; replaced with a single "legacy upload.* keys parse cleanly" smoke test.
+- Deleted the `handleUploadImage — config-driven upload surface (FR-5)` describe block in `packages/server/src/api-extension.test.ts` (two `GET /api/upload-config` tests + harness).
+- Deleted the `upload.dedup.mode = "off" disables the dedup scan` test in `packages/server/src/api-extension.test.ts` (no knob → no test).
+- Refactored `packages/app/src/editor/image-upload/pickInsertShape.test.ts` to the no-arg signature; deleted operator-override tests; kept the extension-matrix coverage that matters (image / non-image wikiembed / opaque / markdown-doc).
+- Deleted the `loadUploadConfig` stub + `uploadConfig` threading assertion in `packages/desktop/tests/main/window-manager.test.ts`.
+
+### Future work
+
+- **`ok migrate --from-obsidian-vault` CLI** — separate spec, separate PR. One-shot reader of `.obsidian/app.json` that writes translated settings to `.open-knowledge/config.yml` once and never reads the Obsidian file again. Requires a companion product decision on which OK-side config fields (if any) should be reintroduced to carry those imported values.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct edit + append per the 2026-04-22 + 2026-04-23 precedent. This amendment is **reductive** (deletes user-facing surface area) rather than additive — honors the "no deferred tech debt" posture by removing overspec pre-merge rather than after it lands.
+
+### Authoritative cross-reference
+
+`~/.claude/plans/lets-do-this-transient-jellyfish.md` carries the full rationale, deletion scope by file, implementation order, and decision journal for this amendment.

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import { DEFAULT_UPLOAD_CONFIG, type UploadConfig } from '@inkeep/open-knowledge-core';
 import {
   type BrowserWindowLike,
   type ServerLockMetadataLike,
@@ -114,17 +113,6 @@ function buildEnv(): TestEnv {
         return null;
       },
       killProbe,
-      // Stub upload-config loader so the spawn path stays hermetic —
-      // without an injection the real `loadResolvedUploadConfig` reads
-      // `<projectPath>/.open-knowledge/config.yml` + `.obsidian/app.json`
-      // from disk under /tmp, which either flakes on CI (no FS write
-      // perms for arbitrary paths) or silently returns
-      // DEFAULT_UPLOAD_CONFIG for nonexistent paths. Tests that care
-      // about custom uploadConfig override this stub with their own
-      // literal value.
-      loadUploadConfig: ((): UploadConfig => DEFAULT_UPLOAD_CONFIG) as (
-        projectPath: string,
-      ) => UploadConfig,
     },
   };
 }
@@ -159,12 +147,6 @@ describe('WindowManager', () => {
         projectDir: '/tmp/test-project',
         port: 0,
         host: 'localhost',
-        // Major-2 fix: the resolved uploadConfig is threaded through
-        // the init IPC so the utilityProcess boots with user × vault ×
-        // default instead of silently falling back to the server's own
-        // DEFAULT_UPLOAD_CONFIG. The stub in `buildEnv` returns the
-        // canonical default so existing assertion values hold.
-        uploadConfig: DEFAULT_UPLOAD_CONFIG,
       },
     });
 

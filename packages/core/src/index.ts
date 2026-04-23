@@ -26,13 +26,16 @@ export { OK_DIR } from './constants/ok-dir.ts';
 export {
   ALLOWED_IMAGE_MIME_TYPES,
   ASSET_EXTENSIONS,
-  DEFAULT_UPLOAD_CONFIG,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
+  DEFAULT_DEDUP_UI,
+  DEFAULT_EMIT_FORMAT,
   type DedupMode,
   type DedupUIMode,
   type EmitFormat,
   EXECUTABLE_BLOCKLIST_EXTENSIONS,
   IMAGE_EXTENSIONS,
-  type UploadConfig,
+  WIKI_EMBED_EXTENSIONS,
 } from './constants/upload.ts';
 
 // Extensions
@@ -191,10 +194,6 @@ export {
 } from './utils/link-targets.ts';
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
-export {
-  type PartialUserUploadConfig,
-  resolveUploadConfig,
-} from './utils/resolve-upload-config.ts';
 export {
   disambiguateSlug,
   getHeadingSlug,
