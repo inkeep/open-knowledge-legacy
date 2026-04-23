@@ -91,7 +91,10 @@ function resolveIcon(icon: string | undefined, type: CalloutType): LucideIcon {
   if (!icon) return TYPE_ICON[type];
   if (!icon.startsWith('lucide:')) return TYPE_ICON[type];
   const name = icon.slice('lucide:'.length);
-  return ICON_OVERRIDES[name] ?? TYPE_ICON[type];
+  // Use Object.hasOwn to avoid prototype pollution (`__proto__`, `constructor`,
+  // `toString` all return truthy non-component values via the bracket access
+  // and would crash the renderer — co-editor DoS vector).
+  return Object.hasOwn(ICON_OVERRIDES, name) ? ICON_OVERRIDES[name] : TYPE_ICON[type];
 }
 
 function normalizeType(raw: CalloutType | string | undefined): CalloutType {

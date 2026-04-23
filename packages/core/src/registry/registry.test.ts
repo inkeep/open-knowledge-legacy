@@ -105,7 +105,7 @@ describe('builtInComponents manifest', () => {
   });
 
   test('no registered descriptor has emptyChildName (5-pack is standalone-first — no compound parents)', () => {
-    // US-002/US-003 retired the compound-components bridge (precedent #27
+    // US-002/US-003 retired the compound-components bridge (precedent #29
     // retracted on this branch). The surviving 5-pack descriptors ship without
     // `emptyChildName` — they render standalone, not as compound parents.
     // NG19 preserves the compound-tier revival path via PR #165 branch.
@@ -271,14 +271,15 @@ describe('builtInComponents manifest', () => {
 
   test('Audio exposes the 7-prop FR-4 surface', () => {
     // US-008 widens Audio from the pre-narrow 2-prop shape (src/title) to
-    // the FR-4 7-prop shape (src/title/autoplay/loop/muted/preload +
+    // the FR-4 7-prop shape (src/title/autoPlay/loop/muted/preload +
     // children). Order-insensitive — a future PropPanel reshuffle should
-    // not break this guard.
+    // not break this guard. Fix-pass 2 (post-Pass-1 review) standardized on
+    // camelCase `autoPlay` to match Video (FR-3) + React MDX-JSX canon.
     const audio = builtInComponents.find((m) => m.name === 'Audio');
     expect(audio).toBeDefined();
     if (!audio) return;
     const propNames = audio.props.map((p) => p.name).sort();
-    expect(propNames).toEqual(['src', 'title', 'autoplay', 'loop', 'muted', 'preload'].sort());
+    expect(propNames).toEqual(['src', 'title', 'autoPlay', 'loop', 'muted', 'preload'].sort());
   });
 
   test('Audio has `preload` as a 3-value enum (none|metadata|auto)', () => {

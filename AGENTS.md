@@ -119,7 +119,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Twenty-seven numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Thirty-six numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. This jump index MUST stay in lock-step with [PRECEDENTS.md](./PRECEDENTS.md), which carries the full rationale, enforcement, and evidence pointers.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -148,6 +148,15 @@ Twenty-seven numbered rules govern how work lands in this repo. Code comments ci
 25. **Classified writer IDs + subject-prefix action encoding** — Shadow refs keyed by `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`; commit subjects prefixed `wip:`, `checkpoint:`, `reconcile:`, etc.
 26. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
 27. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
+28. **Direct PM dispatch for nested editors** — CM-in-PM dispatches PM transactions, not y-codemirror.next direct Y.Text binding
+29. ~~**Compound components bridge via DOM data-attributes**~~ — **RETRACTED 2026-04-23** per `specs/2026-04-23-cb-v2-md-foundation/SPEC.md` D-MF4 + FR-15 (5-pack foundation has no compound parent-child descriptors; `compound-wrappers.tsx` + supporting machinery deleted in US-002). Full precedent text preserved on PR #165 branch at commit `e56f33c3` for future compound tier revival (NG19). Slot retained to keep `precedent #30+` citations stable.
+30. **All user content visible and editable** — No `display:none` on `NodeViewContent`; render failures degrade to nested CM source editor
+31. **Selection state as typed PM PluginState** — `SelectionStatePlugin` is single source of truth for selection-adjacent surfaces; read-only over doc
+32. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics
+33. **CSS custom-property tokens scoped via `[data-component-type]`** — Per-block-type visual tuning via `--*` overrides, not new class selectors
+34. **Innermost-wins visible chrome via state, not `:has()`** — `data-has-child-selected` propagated by plugin store; beats `:has()` on perf + compat
+35. **Floating UI for selection-anchored overlays** — `@floating-ui/dom` with virtual elements derived from PM selection; anchor preference is `view.nodeDOM(pos)` → `posToDOMRect(view, from, to)`. No scaffolded `useSelectionAnchoredPopover` / `computeSelectionAnchor` ships ahead of the first real consumer — extraction happens at that consumer's site. See PRECEDENTS.md §35.
+36. **A11y codified in the selection plugin, not retrofitted per-block** — `role="group"`, `aria-live` announcer, forced-colors / reduced-motion from plugin + descriptor
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -1258,7 +1267,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Thirty-four numbered rules (with #27 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Thirty-six numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. This jump index MUST stay in lock-step with [PRECEDENTS.md](./PRECEDENTS.md), which carries the full rationale, enforcement, and evidence pointers.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -1283,17 +1292,19 @@ Thirty-four numbered rules (with #27 retracted 2026-04-23 — slot preserved to 
 21. **Ancestor-priority for auto-revealing tree-state derivations** — Auto-reveal + user-toggle merge shape
 22. **Shell-script conventions for repo tooling** — Six sub-rules for bash library code
 23. **Async socket errors at the boundary** — Classify EPIPE/ECONNRESET at upgrade; no userspace pre-filter
-24. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
-25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
-26. **Direct PM dispatch for nested editors** — CM-in-PM dispatches PM transactions, not y-codemirror.next direct Y.Text binding
-27. ~~**Compound components bridge via DOM data-attributes**~~ — **RETRACTED 2026-04-23** per `specs/2026-04-23-cb-v2-md-foundation/SPEC.md` D-MF4 + FR-15 (5-pack foundation has no compound parent-child descriptors; `compound-wrappers.tsx` + supporting machinery deleted in US-002). Full precedent text preserved on PR #165 branch at commit `e56f33c3` for future compound tier revival (NG19). Slot retained to keep `precedent #28+` citations stable.
-28. **All user content visible and editable** — No `display:none` on `NodeViewContent`; render failures degrade to nested CM source editor
-29. **Selection state as typed PM PluginState** — `SelectionStatePlugin` is single source of truth for selection-adjacent surfaces; read-only over doc
-30. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics
-31. **CSS custom-property tokens scoped via `[data-component-type]`** — Per-block-type visual tuning via `--*` overrides, not new class selectors
-32. **Innermost-wins visible chrome via state, not `:has()`** — `data-has-child-selected` propagated by plugin store; beats `:has()` on perf + compat
-33. **Floating UI for selection-anchored overlays** — `@floating-ui/dom` with virtual elements derived from PM selection; anchor preference is `view.nodeDOM(pos)` → `posToDOMRect(view, from, to)`. No scaffolded `useSelectionAnchoredPopover` / `computeSelectionAnchor` ships ahead of the first real consumer — extraction happens at that consumer's site. See PRECEDENTS.md §33.
-34. **A11y codified in the selection plugin, not retrofitted per-block** — `role="group"`, `aria-live` announcer, forced-colors / reduced-motion from plugin + descriptor
+24. **Per-session actor identity at the CRDT origin layer** — Each session creates a frozen `LocalTransactionOrigin`; `extractAgentIdentity` is the canonical entry point; `session.dc.document.transact(fn, session.origin)` is mandatory
+25. **Classified writer IDs + subject-prefix action encoding** — Shadow refs keyed by `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`; commit subjects prefixed `wip:`, `checkpoint:`, `reconcile:`, etc.
+26. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
+27. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
+28. **Direct PM dispatch for nested editors** — CM-in-PM dispatches PM transactions, not y-codemirror.next direct Y.Text binding
+29. ~~**Compound components bridge via DOM data-attributes**~~ — **RETRACTED 2026-04-23** per `specs/2026-04-23-cb-v2-md-foundation/SPEC.md` D-MF4 + FR-15 (5-pack foundation has no compound parent-child descriptors; `compound-wrappers.tsx` + supporting machinery deleted in US-002). Full precedent text preserved on PR #165 branch at commit `e56f33c3` for future compound tier revival (NG19). Slot retained to keep `precedent #30+` citations stable.
+30. **All user content visible and editable** — No `display:none` on `NodeViewContent`; render failures degrade to nested CM source editor
+31. **Selection state as typed PM PluginState** — `SelectionStatePlugin` is single source of truth for selection-adjacent surfaces; read-only over doc
+32. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics
+33. **CSS custom-property tokens scoped via `[data-component-type]`** — Per-block-type visual tuning via `--*` overrides, not new class selectors
+34. **Innermost-wins visible chrome via state, not `:has()`** — `data-has-child-selected` propagated by plugin store; beats `:has()` on perf + compat
+35. **Floating UI for selection-anchored overlays** — `@floating-ui/dom` with virtual elements derived from PM selection; anchor preference is `view.nodeDOM(pos)` → `posToDOMRect(view, from, to)`. No scaffolded `useSelectionAnchoredPopover` / `computeSelectionAnchor` ships ahead of the first real consumer — extraction happens at that consumer's site. See PRECEDENTS.md §35.
+36. **A11y codified in the selection plugin, not retrofitted per-block** — `role="group"`, `aria-live` announcer, forced-colors / reduced-motion from plugin + descriptor
 
 ### Resolving `bun.lock` merge conflicts
 

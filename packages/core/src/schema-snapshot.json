@@ -107,9 +107,6 @@
     },
     "jsxComponent": {
       "attrs": {
-        "content": {
-          "hasDefault": true
-        },
         "componentName": {
           "hasDefault": true
         },

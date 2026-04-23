@@ -128,6 +128,26 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     regressionTestRef:
       'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
   },
+  // M4 (CB-v2 MD-Foundation pre-QA review): drop the legacy `content` attr
+  // on `jsxComponent`. It was dead storage — duplicated on every node but
+  // never read (the PM `content: 'block*'` content expression handles
+  // actual child content; the attr was a relic of an earlier iteration).
+  // The dead `(pmNode.attrs.content ? null : null)` ternary in
+  // `packages/core/src/markdown/index.ts` was removed alongside. Because
+  // the attr was unused, there is no Y.Item data to migrate — the narrow
+  // is safe under precedent #9's "attrs are add-only" rule modulo this
+  // registration. The regression suite below + the R13 y-prosemirror
+  // substitution test jointly prove that removing this attr cannot cause
+  // Y.Item data loss on downstream peers.
+  {
+    nodeType: 'jsxComponent',
+    kind: 'attr-removed',
+    attrName: 'content',
+    specRef:
+      'specs/2026-04-23-cb-v2-md-foundation/SPEC.md + pre-QA review M4 (packages/core/src/extensions/jsx-component.ts attrs L44 cleanup)',
+    regressionTestRef:
+      'packages/core/src/extensions/jsx-component.test.ts + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts',
+  },
 ];
 
 function isAllowedNarrowing(
@@ -186,13 +206,36 @@ describe('R10: schema add-only invariant', () => {
     for (const [nodeType, expected] of Object.entries(snapshot.nodes)) {
       const actual = current.nodes[nodeType];
       if (!actual) continue;
-      // Content expression must be identical or wider (superset).
-      // For now, strict equality — widening detection is non-trivial with
-      // ProseMirror content expressions. If a legitimate widening is needed,
-      // update the snapshot.
-      if (expected.content !== '') {
-        expect(actual.content).toBe(expected.content);
+      // Content expression must be identical (strict-equality check).
+      // Widening is legitimate (e.g. block+ → block* broadens) but
+      // ProseMirror content expressions lack a structural-subset operator
+      // in userspace — detecting "actual is a superset of expected"
+      // requires parsing the expression grammar. So the ratchet treats
+      // ANY change as suspect: when the expression changes, the delta
+      // must be explicitly registered in ALLOWED_NARROWINGS (with
+      // `kind: 'content'`) AND the schema-snapshot.json must be
+      // regenerated. This closes the silent-narrowing hazard flagged in
+      // the CB-v2-MD review M10 — previously a content narrowing slipped
+      // through as long as `bun run generate-schema-snapshot` was re-run
+      // in the same commit, because this test just compared against the
+      // new snapshot.
+      if (expected.content === actual.content) continue; // unchanged — OK
+      if (expected.content !== '' && isAllowedNarrowing(nodeType, 'content')) {
+        // Explicit registration consulted — delta is authorized.
+        continue;
       }
+      // Unauthorized content-expression change (narrowing OR widening
+      // without registration). Fail loudly — if this is a legit widening,
+      // register it in ALLOWED_NARROWINGS with `kind: 'content'`, spec
+      // ref, and regression-test ref (same pattern as attr-removed).
+      throw new Error(
+        `Schema content expression changed on node type '${nodeType}': ` +
+          `'${expected.content}' → '${actual.content}'. ` +
+          'This requires an ALLOWED_NARROWINGS entry with kind:"content" + ' +
+          'spec evidence. Precedent #9 (schema add-only) / R13 y-prosemirror ' +
+          'schema-throw safety net relies on this ratchet to prevent silent ' +
+          'Y.Item data loss on downstream peers.',
+      );
     }
   });
 

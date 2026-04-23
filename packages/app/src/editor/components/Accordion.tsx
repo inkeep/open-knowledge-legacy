@@ -64,7 +64,10 @@ function resolveIconOverride(icon: string | undefined): LucideIcon | null {
   if (!icon) return null;
   if (!icon.startsWith('lucide:')) return null;
   const name = icon.slice('lucide:'.length);
-  return ICON_OVERRIDES[name] ?? null;
+  // Object.hasOwn guards against prototype-pollution names (`__proto__`,
+  // `constructor`, `toString`) which would otherwise return truthy
+  // non-component values and crash the renderer — co-editor DoS vector.
+  return Object.hasOwn(ICON_OVERRIDES, name) ? ICON_OVERRIDES[name] : null;
 }
 
 /**

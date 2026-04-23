@@ -64,11 +64,25 @@ GFM types; broader Obsidian type syntax (`[!success]`, `[!idea]`, etc.)
 folds to the closest GFM type via the parser alias map but does not
 trigger foldable rendering unless the type is one of the GFM five.
 
-**Parser alias map.** Common Obsidian / Mintlify types fold losslessly
-on disk but render as their GFM-family closest (`success` → `tip`,
-`danger` → `caution`, `idea` → `tip`, `info` → `note`, etc.). Unknown
-`type` values on disk round-trip byte-identical but the renderer falls
-back to `note`.
+**Parser alias map.** Common Obsidian / Mintlify types fold on disk to
+their GFM-family closest (`success` → `tip`, `danger` → `caution`,
+`idea` → `tip`, `info` → `note`, etc.). The fold is lossy-on-edit: the
+authored form survives byte-identical on pristine save via γ
+`sourceRaw`, but an edit through the WYSIWYG / prop panel canonicalizes
+to the folded GFM type. A broader alias-preserving enum is tracked as
+a future extension (see `SPEC.md` NG26) — it would extend the `type`
+prop without a schema narrow per precedent #9.
+
+**Unknown `type` values behave differently by authoring form:**
+
+- In `<Callout type="custom">` MDX form, the **renderer** falls back to
+  `note` styling while the `type="custom"` attr survives byte-identical
+  on disk via γ `sourceRaw`.
+- In `> [!custom]` GFM-alert form, the tagged alias map (and
+  `remark-github-alerts` upstream) only recognizes a fixed set of
+  tokens. An unrecognized `[!TYPE]` stays a plain blockquote (no
+  Callout promotion, no fallback). Use the MDX JSX form for graceful
+  `note` fallback or author the type inside the recognized set.
 
 ### Image
 
@@ -89,14 +103,25 @@ default `true`).
 />
 ```
 
-```md title="Standard CommonMark renders the same descriptor"
+```md title="Standard CommonMark still round-trips"
 ![Architecture](/assets/diagram.png)
 ```
 
-When `caption` is set, the renderer wraps the image in a `<figure>` with
-a `<figcaption>`. Click-to-zoom uses `react-medium-image-zoom` with a
-native `<dialog>` modal; the library honors `prefers-reduced-motion`
-internally. Opt out of zoom with `zoom={false}`.
+When `caption` is set, the renderer wraps the image in a `<figure>`
+with a `<figcaption>`. Click-to-zoom uses `react-medium-image-zoom`
+with a native `<dialog>` modal; the library honors
+`prefers-reduced-motion` internally. Opt out of zoom with
+`zoom={false}`.
+
+**Authoring forms.** CommonMark `![alt](src)` renders via the native
+browser `<img>` (no zoom, no `<figure>` wrapper). The `<Image>` MDX
+form renders through the descriptor (zoom, caption, explicit
+dimensions, prop-panel-editable). Both forms round-trip byte-identical
+on pristine save; use `<Image>` when you want the richer UX, the
+CommonMark form when you want bare HTML semantics. Unifying the two
+parse paths to land on the same descriptor is tracked as future work
+alongside the Obsidian `![[file.ext]]` wiki-embed surface (see
+`SPEC.md` NG24).
 
 ### Video
 
@@ -119,12 +144,12 @@ round-trip as children.
 HTML5 `<audio>` wrapper with native controls always on (no way to hide
 the chrome — per the "no confidently-broken UI" rule).
 
-**Props** (7): `src` (required), `title`, `autoplay`, `loop`, `muted`,
+**Props** (6): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
 `preload` (`'none'` \| `'metadata'` \| `'auto'`). `<source>` / `<track>`
 tags round-trip as children.
 
 ```mdx title="Audio with preload hint"
-<Audio src="/clip.mp3" autoplay loop preload="metadata" />
+<Audio src="/clip.mp3" autoPlay loop preload="metadata" />
 ```
 
 Authors who want background audio with no visible controls write a raw
@@ -169,9 +194,9 @@ native behavior — no JavaScript state.
 
 ## The slash menu
 
-Type <kbd>/</kbd> at the start of an empty line to open the insertion
-menu. Start typing to filter; pick an entry with the arrow keys and
-press <kbd>Enter</kbd> to insert.
+Type `/` at the start of an empty line to open the insertion menu.
+Start typing to filter; pick an entry with the arrow keys and press
+`Enter` to insert.
 
 Every entry inserts a fully-formed MDX block with sensible defaults.
 For components with editable props, the settings panel opens
@@ -203,10 +228,35 @@ CRDT, and every keystroke propagates to other connected clients.
 
 | Action | Shortcut |
 |---|---|
-| Open settings panel (when a component is selected) | <kbd>Enter</kbd> or <kbd>Space</kbd> |
-| Close settings panel and return focus to the component | <kbd>Esc</kbd> |
-| Move selection between blocks | <kbd>↑</kbd> / <kbd>↓</kbd> |
-| Move a top-level block up / down | <kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> |
+| Open settings panel (when a component is selected) | `Enter` or `Space` |
+| Close settings panel and return focus to the component | `Esc` |
+| Move selection between blocks | `↑` / `↓` |
+| Move a top-level block up / down | `Mod`+`Shift`+`↑` / `↓` |
+
+### Accessibility
+
+Every built-in component renders with accessibility primitives baked
+into the selection layer rather than retrofitted per-block:
+
+- **Selection announcer.** Selecting a block emits an `aria-live="polite"`
+  announcement with the block's descriptor name so screen readers narrate
+  the focused element.
+- **Breadcrumb ancestry.** The selection footer renders an
+  `aria-label`-tagged list of ancestor components so keyboard users can
+  jump to any enclosing container.
+- **Halo palette.** The block selection halo degrades to a solid outline
+  under Windows High Contrast Mode (`forced-colors: active`) — no color
+  information is lost.
+- **Motion.** Halo transitions honor `prefers-reduced-motion` and collapse
+  to instant state changes when the OS setting is on. Accordion's
+  disclosure-triangle rotation honors the same preference.
+- **Keyboard parity.** Every hover-chrome action (move up / move down /
+  delete / settings) is reachable via `Tab` → `Enter` from the selected
+  block.
+
+The block-selection a11y contract is enforced in the selection-state
+plugin rather than per-renderer, so new descriptors inherit it without
+opt-in code.
 
 ## Authoring-form preservation
 
@@ -280,17 +330,17 @@ the fallback upgrades to a live component if the source now parses.
 
 ## Future work
 
-The 5-pack is the current foundation. A **compound tier** (Tabs /
-Tab, `<Accordions>` grouping wrapper, Steps / Step) is deferred — the
-supporting machinery (Context Bridge Registry, typed-children guard)
-was cut on this branch because the primitive tier has no compound
-parent-child consumers. It can be un-deferred when dev-docs or
-help-center authoring demand surfaces; the preserved design lives on
-the PR #165 branch.
+The 5-pack is the current foundation. A **compound tier** (Tabs / Tab,
+an `<Accordions>` grouping wrapper for coordinated animation + shared
+chrome, Steps / Step) is not built in today. Compound parent-child
+primitives get re-added when dev-docs or help-center authoring demand
+surfaces; no public API will change for existing 5-pack consumers.
 
-Other deferred additions include Card / CardGroup, Banner, Files-tree,
-TypeTable, InlineTOC, Math / KaTeX, and Mermaid rendering. User-
-registered custom components and live-rendered inline-component
+Other names that don't have live renderers today: Card / CardGroup,
+Banner, Files-tree, TypeTable, InlineTOC, Math / KaTeX, Mermaid. All
+of these round-trip through your files byte-identical and render as
+editable source blocks until (and unless) a live renderer lands.
+User-registered custom components and live-rendered inline-component
 editing remain out of scope.
 
 ## See also

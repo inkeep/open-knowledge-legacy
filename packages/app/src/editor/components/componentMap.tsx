@@ -16,14 +16,14 @@
  * cross-browser exclusive grouping via HTML5 `<details name>`).
  *
  * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
- * US-002 along with the Context Bridge Registry (precedent #27 / PRECEDENTS.md
- * #29 retracted on this branch; preserved on PR #165 at commit e56f33c3 for
- * future compound-tier revival per NG19).
+ * US-002 along with the Context Bridge Registry (precedent #29 retracted on
+ * this branch; preserved on PR #165 at commit e56f33c3 for future
+ * compound-tier revival per NG19).
  *
  * Descriptor names no longer in `componentMap` — Banner, Card, Cards, Step,
  * Steps, Tab, Tabs, Accordions (fumadocs compound parent), File, Files,
  * Folder, TypeTable, InlineTOC — fall through to the `'*'` wildcard per
- * `registry/index.ts:getDescriptor`. Per-Precedent #28 the children of those
+ * `registry/index.ts:getDescriptor`. Per-Precedent #30 the children of those
  * unregistered components stay editable (wildcard `hasChildren: true`).
  *
  * Mermaid was removed from the registry 2026-04-21.

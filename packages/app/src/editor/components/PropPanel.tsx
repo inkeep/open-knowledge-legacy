@@ -159,7 +159,17 @@ function PropControl({
             value={value != null ? String(value) : ''}
             onChange={(e) => {
               const raw = e.target.value;
-              if (raw === '' || raw === '-') return;
+              // Empty string → explicit clear (propagated as `undefined` so
+              // optional numeric props can be unset from the UI). Without this
+              // branch, backspace-to-empty had no onChange call and React
+              // re-rendered from the stored value, visually "reverting" the
+              // user's clear. `'-'` stays an early-return because it is a
+              // transient state while typing a negative number.
+              if (raw === '') {
+                onChange(undefined);
+                return;
+              }
+              if (raw === '-') return;
               const num = Number(raw);
               if (!Number.isNaN(num)) onChange(num);
             }}

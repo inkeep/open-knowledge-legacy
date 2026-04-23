@@ -766,7 +766,7 @@
 }
 
 /* -------------------------------------------------------------------------
- * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #25(h))
+ * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #27(h))
  *
  * Pre-V2: per-instance React MarkViews rendered styled chrome around each
  * link mark. V2 moves to plain-DOM `<span data-link>` / `<span data-wiki-link>`

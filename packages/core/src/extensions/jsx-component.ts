@@ -19,13 +19,15 @@ declare module '@tiptap/core' {
  * (registered → live React, wildcard → UnregisteredBadge, error → nested CM).
  *
  * Attrs:
- *   - content: R10-retained legacy attr (original raw source string)
- *   - componentName: the JSX tag name (e.g., 'Callout', 'Steps')
+ *   - componentName: the JSX tag name (e.g., 'Callout', 'Accordion')
  *   - kind: 'element' | 'expression' — discriminates JSX elements from {expression} blocks
  *   - attributes: preserved mdast MdxJsxAttribute[] for serialize reconstruct
  *   - sourceRaw: byte-exact source from parse (pristine serialization path)
+ *     — for `kind:'expression'` the wrapped expression bytes, for `kind:'element'`
+ *     the full `<Component …>…</Component>` source used by the γ pristine path.
  *   - sourceDirty: γ pattern flag — false = pristine (serialize via sourceRaw),
  *     true = edited (serialize via reconstruction)
+ *   - props: structured props destructured from MdxJsxAttribute[] via descriptor.props (FR-1)
  *
  * See SPEC §9.1, FR-3, Precedent #9 (schema add-only), Precedent #10.
  */
@@ -41,13 +43,11 @@ export const JsxComponent = Node.create({
 
   addAttributes() {
     return {
-      content: { default: '' },
       componentName: { default: '' },
       kind: { default: 'element' },
       attributes: { default: [] },
       sourceRaw: { default: '' },
       sourceDirty: { default: false },
-      /** Structured props destructured from MdxJsxAttribute[] via descriptor.props (FR-1). */
       props: { default: {} },
     };
   },
@@ -59,7 +59,6 @@ export const JsxComponent = Node.create({
         getAttrs: (node) => {
           if (typeof node === 'string') return false;
           return {
-            content: node.getAttribute('data-content') || '',
             componentName: node.getAttribute('data-component-name') || '',
             sourceRaw: node.getAttribute('data-source-raw') || '',
           };
@@ -87,7 +86,7 @@ export const JsxComponent = Node.create({
         ({ commands }) => {
           return commands.insertContent({
             type: this.name,
-            attrs: { content },
+            attrs: { sourceRaw: content },
           });
         },
     };

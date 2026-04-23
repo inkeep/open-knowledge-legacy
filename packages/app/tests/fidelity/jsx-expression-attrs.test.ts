@@ -185,12 +185,15 @@ describe('EX — Parse handler structured attrs (FR-1)', () => {
     expect(firstChild?.type).toBe('paragraph');
   });
 
-  test('expression flow → kind=expression, content populated', () => {
+  test('expression flow → kind=expression, sourceRaw populated', () => {
+    // Post-M4 (pre-QA review): the legacy `content` attr was removed —
+    // expression-kind nodes store their raw bytes in `sourceRaw` (the γ
+    // pristine-path attr) same as element-kind nodes.
     const json = mdManager.parse('{/* comment */}\n');
     const component = findNode(json, 'jsxComponent');
     expect(component).toBeDefined();
     expect(component?.attrs?.kind).toBe('expression');
-    expect(component?.attrs?.content).toContain('comment');
+    expect(component?.attrs?.sourceRaw).toContain('comment');
   });
 
   test('mdxJsxTextElement → jsxInline with raw source text child', () => {

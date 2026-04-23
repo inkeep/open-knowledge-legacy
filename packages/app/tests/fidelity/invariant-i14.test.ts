@@ -157,11 +157,49 @@ describe('I14 — rawMdxFallback byte-identity (hand-authored malformed fixtures
     },
   ];
 
+  // Per-fixture: byte-identity guarantee. If the parse produces a fallback,
+  // every fallback's sourceRaw must be a verbatim substring of the input.
+  // Some fixtures parse cleanly under agnostic MDX mode — that's not a
+  // failure (the parser accepted authored input without needing to degrade)
+  // — but the byte-identity exercise of any fallback emission is still
+  // asserted below.
   for (const fixture of fixtures) {
     test(`${fixture.id} — ${fixture.name}`, () => {
       assertRawMdxFallbackByteIdentity(fixture.input, fixture.id);
     });
   }
+
+  // Suite-level floor (M12 ratchet): the hand-authored corpus as a whole
+  // MUST produce at least `CORPUS_FALLBACK_FLOOR` rawMdxFallback emissions.
+  // This closes the silent-degradation failure mode the review flagged:
+  // previously the per-fixture test accepted "0 or 1+ fallbacks" — a future
+  // parser change that silently accepted every corpus fixture would have
+  // left the byte-identity invariant un-exercised. With the floor, a parser
+  // change that accepts more MDX MUST explicitly lower this constant (and
+  // the accompanying review comment) — the ratchet makes it auditable.
+  //
+  // CORPUS_FALLBACK_FLOOR is calibrated to current-state production across
+  // the 10-fixture corpus (2026-04-23): the parser currently emits ~4
+  // fallbacks. Pinning at 3 leaves room for one fixture to drift cleaner
+  // without triggering the ratchet (drift beyond that is a signal worth
+  // investigating — either a fixture regressed or the parser became more
+  // lenient in a way that collapses the byte-identity exercise).
+  const CORPUS_FALLBACK_FLOOR = 3;
+
+  test(`hand-authored corpus produces ≥ ${CORPUS_FALLBACK_FLOOR} fallbacks total (M12 ratchet)`, () => {
+    const totalFallbacks = fixtures.reduce((sum, fixture) => {
+      const parsed = mdManager.parseWithFallback(fixture.input);
+      return sum + collectRawMdxFallbacks(parsed).length;
+    }, 0);
+    expect(
+      totalFallbacks,
+      `corpus must produce ≥ ${CORPUS_FALLBACK_FLOOR} rawMdxFallback emissions total. ` +
+        'If this fails, the parser has silently become too lenient — broken MDX that ' +
+        'used to degrade now parses clean, leaving I14 byte-identity un-exercised. ' +
+        'Review whether the parser change is intentional, then consciously lower ' +
+        'CORPUS_FALLBACK_FLOOR (and update this comment) to ratchet.',
+    ).toBeGreaterThanOrEqual(CORPUS_FALLBACK_FLOOR);
+  });
 });
 
 describe('I14 — rawMdxFallback round-trip: serialize fallback subtree byte-identity', () => {

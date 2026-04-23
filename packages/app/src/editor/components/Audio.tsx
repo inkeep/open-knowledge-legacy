@@ -46,7 +46,7 @@
 interface AudioProps {
   src?: string;
   title?: string;
-  autoplay?: boolean;
+  autoPlay?: boolean;
   loop?: boolean;
   muted?: boolean;
   preload?: 'none' | 'metadata' | 'auto';
@@ -63,7 +63,7 @@ export function Audio(props: AudioProps) {
       src={props.src}
       title={props.title}
       controls
-      autoPlay={props.autoplay}
+      autoPlay={props.autoPlay}
       loop={props.loop}
       muted={props.muted}
       preload={props.preload}

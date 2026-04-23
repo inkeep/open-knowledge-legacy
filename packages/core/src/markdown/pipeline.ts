@@ -10,6 +10,8 @@
  *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
  *     → `detailsAccordionPromoterPlugin`
  *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
+ *     → `imagePromoterPlugin`
+ *        (M15 / SPEC §1+§5 G2: CommonMark `![alt](src)` → `<Image>` mdxJsxFlow)
  *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
  *        doc-start thematic fix + position slice + unknown-mdast guard)
  *     → `ensureNonEmptyDoc` → remarkProseMirror
@@ -57,6 +59,7 @@ import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
+import { imagePromoterPlugin } from './image-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -165,6 +168,14 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     // attaches data.sourceRaw onto the emitted mdxJsxFlowElement using its
     // copied opener..closer position span.
     .use(detailsAccordionPromoterPlugin)
+    // M15 / SPEC §1+§5 G2: CommonMark `![alt](src)` → `<Image>` promoter.
+    // Delivers the MDX-as-strict-superset invariant for Image — both
+    // authoring forms land on the same jsxComponent(Image) PM node; γ
+    // sourceRaw keeps the original `![alt](src)` bytes pristine on disk.
+    // Runs after details promoter so image nodes inside a <details> body
+    // (already shallow-wrapped into the Accordion's children) get
+    // promoted in the accordion's subtree too.
+    .use(imagePromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

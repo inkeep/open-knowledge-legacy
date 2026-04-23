@@ -190,10 +190,21 @@ function buildCalloutElement(
   type: CalloutType,
   title: string | null,
   foldableMarker: '+' | '-' | null,
+  authoredAsAlias: string | null = null,
 ): MdxJsxFlowElement {
   const attrs: MdxJsxAttribute[] = [{ type: 'mdxJsxAttribute', name: 'type', value: type }];
   if (title) {
     attrs.push({ type: 'mdxJsxAttribute', name: 'title', value: title });
+  }
+  if (authoredAsAlias) {
+    // M8: preserve the raw-authored token across alias coercion. See
+    // caller for rationale; this attribute survives γ via AttrBag under
+    // D-MF15's unknown-attr contract.
+    attrs.push({
+      type: 'mdxJsxAttribute',
+      name: 'data-authored-as',
+      value: authoredAsAlias,
+    });
   }
   if (foldableMarker !== null) {
     // collapsible: always true when a foldable marker was authored.
@@ -297,7 +308,53 @@ export function calloutTransformerPlugin() {
         }
       }
 
-      if (!type) return; // unknown type; leave blockquote untouched (rare)
+      // Unknown type → fall back to 'note' for symmetry with the MDX JSX
+      // path (Callout.tsx:normalizeType also defaults unrecognized tokens to
+      // 'note'). This makes the authoring contract consistent across both
+      // forms: `<Callout type="custom">` and `> [!custom]` both render with
+      // the note variant while γ `sourceRaw` preserves the authored token
+      // byte-identical on disk. Without this, the GFM path left unknown-type
+      // blockquotes as plain blockquotes (no Callout chrome at all), but the
+      // MDX path promoted them — the user-visible behavior diverged.
+      //
+      // In practice this only fires when the plugin was configured with a
+      // non-default `markers:` list (e.g. extended types beyond the GFM 5);
+      // default `remark-github-alerts` config guarantees `type` resolves.
+      const resolvedType: CalloutType = type ?? 'note';
+
+      // M8 (review finding): preserve the authored token when the alias map
+      // normalized it to a different GFM type (e.g. Obsidian `> [!success]`
+      // → `tip`). Without this, γ's edited-path reconstruction on first
+      // PropPanel edit silently loses the user's authored token — Obsidian
+      // migrators (primary persona per SPEC §4) would see their `[!success]`
+      // callouts permanently rewritten to `[!tip]` after any prop edit.
+      //
+      // Strategy: emit a `data-authored-as="<raw token>"` attr on the
+      // mdxJsxFlowElement when raw ≠ normalized (case-insensitive). γ
+      // AttrBag preserves it via D-MF15's unknown-attr contract (storage
+      // never sanitizes; PropPanel hides; renderer ignores). On the edited
+      // path, the reconstruction handler re-emits it so the disk shape
+      // stays consistent across edits. Future Callout PropPanel work (NG
+      // on the roadmap) can surface an "Authored as `success` → Convert to
+      // `tip`?" affordance reading this attr.
+      //
+      // `data-*` prefix is deliberate: (a) keeps it in the HTML5-data-attr
+      // namespace so it's clearly "out-of-band metadata" vs a first-class
+      // descriptor prop; (b) signals to future readers that this is a
+      // storage-layer breadcrumb, not a render-time prop; (c) matches the
+      // broader OK convention around state-carrying attrs (precedent #30).
+      const sourceAuthoredToken = (() => {
+        // Re-inspect opener if available — the plugin may already have
+        // lowercased / normalized `taggedType` internally. We want the
+        // ORIGINAL casing/form the user typed.
+        if (node.position?.start?.offset !== undefined) {
+          const opener = inspectOpenerLine(source, node.position.start.offset);
+          if (opener?.rawType) return opener.rawType;
+        }
+        return taggedType;
+      })();
+      const authoredAsAlias =
+        sourceAuthoredToken.toLowerCase() !== resolvedType ? sourceAuthoredToken : null;
 
       // Safety: only strip the first child if it's the plugin's synthetic
       // title paragraph. If the shape diverges (e.g. plugin disabled / a
@@ -305,7 +362,13 @@ export function calloutTransformerPlugin() {
       // handler will render it.
       if (!isPluginTitleParagraph(node.children[0])) return;
 
-      const element = buildCalloutElement(node, type, title, foldableMarker);
+      const element = buildCalloutElement(
+        node,
+        resolvedType,
+        title,
+        foldableMarker,
+        authoredAsAlias,
+      );
       (parent.children as unknown[])[index] = element;
     });
   };

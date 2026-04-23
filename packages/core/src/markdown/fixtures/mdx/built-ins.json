@@ -71,8 +71,8 @@
   },
   {
     "componentName": "Audio-widened-preload",
-    "blockForm": "<Audio src=\"/clip.mp3\" autoplay loop preload=\"metadata\" />\n",
-    "notes": "US-012 / FR-4 widened 7-prop surface: autoplay + loop + preload enum (note lowercase `autoplay` per HTML5 attr casing)"
+    "blockForm": "<Audio src=\"/clip.mp3\" autoPlay loop preload=\"metadata\" />\n",
+    "notes": "US-012 / FR-4 widened 7-prop surface: autoPlay + loop + preload enum (post-Pass-1 review standardized on camelCase `autoPlay` to match Video + React MDX-JSX canon)"
   },
   {
     "componentName": "Nested-Callout-Accordion",

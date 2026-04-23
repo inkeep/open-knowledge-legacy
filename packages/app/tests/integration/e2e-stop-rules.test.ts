@@ -429,8 +429,8 @@ describe('E2E STOP rule — zero allowlist', () => {
     }
   });
 
-  test('selection-halo CSS rules use plugin-state propagation, not `:has()` (Precedent #30)', () => {
-    // Precedent #30: innermost-wins uses `data-has-child-selected` written
+  test('selection-halo CSS rules use plugin-state propagation, not `:has()` (Precedent #34)', () => {
+    // Precedent #34: innermost-wins uses `data-has-child-selected` written
     // by the SelectionStatePlugin, NOT a CSS `:has()` cascade. Reasons:
     //   1. Firefox rollout gaps (Safari, Chrome, and Firefox all support
     //      `:has()` now, but SSR environments + older browsers don't).

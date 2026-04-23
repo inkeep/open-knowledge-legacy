@@ -100,11 +100,17 @@ test('A11Y02: NodeSelection announces component via aria-live region', async ({ 
   const proseMirror = page.locator('.ProseMirror');
   await proseMirror.click();
 
-  // Check for aria-live region presence (announcement mechanism)
-  const liveRegion = page.locator('[aria-live]');
-  const liveCount = await liveRegion.count();
-  // At minimum, the editor framework should have some live region mechanism
-  expect(liveCount).toBeGreaterThanOrEqual(0);
+  // The SelectionAnnouncer wires an aria-live="polite" region into the DOM
+  // (see `packages/app/src/components/editor/SelectionAnnouncer.tsx` +
+  // precedent #34). Assert it's present and wired so WCAG 4.1.3 Status
+  // Messages is a real contract — a refactor that removes the announcer
+  // must fail this test, not keep it green with an unconditional count >= 0.
+  const liveRegion = page.locator('[aria-live]').first();
+  await expect(liveRegion).toBeAttached({ timeout: 2000 });
+  const ariaLiveValue = await liveRegion.getAttribute('aria-live');
+  expect(ariaLiveValue, 'aria-live region must declare a polite/assertive priority').toMatch(
+    /^(polite|assertive|off)$/,
+  );
 });
 
 // ── A11Y03: PropPanel Esc closes and returns focus ─────────────
@@ -149,16 +155,23 @@ test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ p
     timeout: 5000,
   });
 
-  // Look for the nested CM editor
-  const cmEditor = page.locator('.cm-editor');
-  if ((await cmEditor.count()) > 0) {
-    // The CM container or its wrapper should have an accessible label
-    const wrapper = cmEditor.first().locator('..');
-    const ariaLabel = await wrapper.getAttribute('aria-label');
-    // Verify some form of accessible labeling exists
-    if (ariaLabel) {
-      expect(ariaLabel.toLowerCase()).toContain('source');
-    }
+  // Broken MDX must degrade to rawMdxFallback nested CM — that's the G9
+  // always-live-bridge contract (precedent #11 / D11 LOCKED). If the
+  // fallback doesn't surface, the test's precondition failed and the
+  // accessible-label invariant is vacuous. Assert presence directly.
+  const cmEditor = page.locator('.cm-editor').first();
+  await expect(
+    cmEditor,
+    'broken MDX must produce a rawMdxFallback nested CodeMirror editor',
+  ).toBeVisible({ timeout: 5000 });
+
+  // The CM container or its wrapper must carry an accessible label so
+  // screen readers can announce "editing broken MDX source" to the user.
+  const wrapper = cmEditor.locator('..');
+  const ariaLabel = await wrapper.getAttribute('aria-label');
+  expect(ariaLabel, 'rawMdxFallback wrapper must have aria-label').not.toBeNull();
+  if (ariaLabel) {
+    expect(ariaLabel.toLowerCase()).toContain('source');
   }
 });
 
@@ -175,41 +188,19 @@ test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ p
 // test short-circuits via the `count() > 0` guard and remains a no-op
 // until a new compound-container descriptor ships.
 
-test('A11Y07: Empty-container placeholder activatable via keyboard', async ({ page, api }) => {
-  await writeContent(api, '<Callout type="note">\n\n</Callout>');
-  await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
-    timeout: 5000,
-  });
-
-  // Look for the empty-container placeholder
-  const placeholder = page.locator('.jsx-empty-child-placeholder');
-  if ((await placeholder.count()) > 0) {
-    // Focus the placeholder and wait for the DOM to confirm focus before
-    // pressing Enter.
-    await placeholder.focus();
-    await page.waitForFunction(
-      () => Boolean(document.activeElement?.classList.contains('jsx-empty-child-placeholder')),
-      null,
-      { timeout: 2000 },
-    );
-
-    const isFocused = await page.evaluate(() =>
-      document.activeElement?.classList.contains('jsx-empty-child-placeholder'),
-    );
-    expect(isFocused).toBeTruthy();
-
-    // Enter should activate (insert child).
-    await page.keyboard.press('Enter');
-    // The activation is a PM transaction — condition-wait for the placeholder
-    // to disappear rather than sleeping.
-    await page.waitForFunction(
-      () => document.querySelectorAll('.jsx-empty-child-placeholder').length === 0,
-      { timeout: 5000 },
-    );
-
-    const placeholderAfter = page.locator('.jsx-empty-child-placeholder');
-    expect(await placeholderAfter.count()).toBe(0);
-  }
+test.skip('A11Y07: Empty-container placeholder activatable via keyboard — pending compound descriptor', async () => {
+  // A11Y07 is explicitly dormant under the 5-pack. The
+  // `.jsx-empty-child-placeholder` affordance only fires for descriptors
+  // with `emptyChildName` (container descriptors that promise a
+  // specific child-component type). The 5-pack has zero such descriptors
+  // (per D-MF16 Accordion is standalone; Callout has no emptyChildName).
+  //
+  // The affordance exists in `JsxComponentView.tsx:544-547` and is
+  // exercised by the wildcard + NG19 compound tier if/when it revives
+  // (SPEC §15). Re-enable this test then. Keeping it here as `skip`
+  // preserves the WCAG-4.1.2 coverage aspiration and makes the dormancy
+  // visible in test output — per the M11 review pattern of "flag
+  // intentionally-skipped cases rather than let them silently pass."
 });
 
 // ── A11Y09: Wildcard block chrome has accessible name ──────────
@@ -220,13 +211,19 @@ test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) 
     timeout: 5000,
   });
 
-  // Wildcard components should have identifiable chrome
-  const wildcardBadge = page.locator('[data-jsx-component].jsx-component-wrapper--unregistered');
-  if ((await wildcardBadge.count()) > 0) {
-    // The badge should contain the component name visibly
-    const text = await wildcardBadge.first().textContent();
-    expect(text).toContain('UnknownComponent');
-  }
+  // Unregistered-component content MUST render through the wildcard
+  // descriptor per Precedent #26 (all user content always visible) —
+  // otherwise the component name + content silently disappears. Assert
+  // the badge surfaces instead of short-circuiting on absence.
+  const wildcardBadge = page
+    .locator('[data-jsx-component].jsx-component-wrapper--unregistered')
+    .first();
+  await expect(
+    wildcardBadge,
+    'unregistered <UnknownComponent> must render through wildcard chrome',
+  ).toBeVisible({ timeout: 5000 });
+  const text = await wildcardBadge.textContent();
+  expect(text).toContain('UnknownComponent');
 });
 
 // ── A11Y10: Zero axe-core violations on fixture document ───────

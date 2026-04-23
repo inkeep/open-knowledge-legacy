@@ -47,12 +47,6 @@ export default {
     },
     'packages/core': {
       entry: ['tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
-      ignoreDependencies: [
-        // Landed in US-001 as deferred-consumer; first import arrives in US-010
-        // (Callout GFM-alerts + Obsidian-foldable parse path per FR-7 / Q-MF1 path (a)).
-        // specs/2026-04-23-cb-v2-md-foundation/SPEC.md §6 FR-17.
-        'remark-github-alerts',
-      ],
     },
     docs: {
       ignoreDependencies: [

@@ -154,7 +154,9 @@ export const SourceDirtyObserver = Extension.create({
  * arrays, and plain objects. Does NOT handle dates, maps, sets, etc.
  */
 function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
+  // Object.is handles NaN identity (a === b is false when both are NaN) so
+  // numeric props with NaN values don't force γ reconstruction on every tx.
+  if (Object.is(a, b)) return true;
   if (a == null || b == null) return false;
   if (typeof a !== typeof b) return false;
   if (typeof a !== 'object') return false;

@@ -8,7 +8,7 @@
  * Cut in US-003: Banner, Card, Cards, Step, Steps, Tab, Tabs, Accordion
  * (fumadocs shape), Accordions, File, Files, Folder, TypeTable, InlineTOC —
  * 14 fumadocs descriptors retired because the 5-pack has no compound-wrapper
- * machinery (US-002 deleted `compound-wrappers.tsx` and the precedent #27
+ * machinery (US-002 deleted `compound-wrappers.tsx` and the precedent #29
  * compound-components bridge was retracted on this branch in US-001). Names
  * that still appear in user content fall through to the wildcard `'*'`
  * descriptor (`hasChildren: true`, empty props) per `createRegistry()` /
@@ -301,8 +301,14 @@ const audioProps: PropDef[] = [
     required: false,
     description: 'Tooltip text (rendered as the native HTML title attribute)',
   },
+  // `autoPlay` matches the Video descriptor's camelCase convention (FR-3) and
+  // React's MDX-JSX attr canon; the spec's FR-4 originally called for
+  // lowercase `autoplay` (HTML5 attr form) but that split the 5-pack's two
+  // media descriptors across two casings for no authoring benefit. Per D-MF7
+  // greenfield (no migration) we standardize on camelCase here; the renderer
+  // passes `autoPlay={props.autoPlay}` straight through.
   {
-    name: 'autoplay',
+    name: 'autoPlay',
     type: 'boolean',
     required: false,
     description: 'Begin playback as soon as possible (usually requires muted)',

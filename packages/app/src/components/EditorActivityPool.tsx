@@ -295,7 +295,7 @@ function EditorActivityPoolInner({
     });
     priorMountKeyRef.current = mountKey;
     // The cache uses this list to drive provider connect/disconnect for
-    // cached-but-not-Activity-mounted editors (precedent #25(b)). Bounds
+    // cached-but-not-Activity-mounted editors (precedent #27(b)). Bounds
     // remote-peer CRDT load to the top ACTIVITY_MOUNT_LIMIT editors
     // regardless of how many docs are pool-resident.
     setActivityMountList(mounted);

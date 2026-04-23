@@ -436,10 +436,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
           void navigator.clipboard.writeText(src);
         }
-      } catch {
-        // Clipboard API may be unavailable (permissions, test env). Silently
-        // ignore — the Delete affordance still works, and the source bytes
-        // are safe in the underlying node regardless of clipboard access.
+      } catch (err) {
+        // Clipboard API may be unavailable (permissions, test env). The Delete
+        // affordance still works, and the source bytes are safe in the
+        // underlying node regardless of clipboard access — log at debug for
+        // operator visibility so the stuck-state UX leaves a support trail.
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-stuck-copy-failed',
+            component: descriptor.name,
+            rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+            reason: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+          }),
+        );
       }
     };
     const deleteNode = () => {
@@ -447,9 +456,20 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       if (typeof p !== 'number') return;
       try {
         editor.chain().focus().setNodeSelection(p).deleteSelection().run();
-      } catch {
-        // Position may have shifted; the NodeView will re-render when the
-        // underlying doc updates and the user can retry.
+      } catch (err) {
+        // Position races (concurrent remote peer edit, Observer B re-parse
+        // shift) are the expected failure shape — classify + log so the
+        // stuck-state last-line-of-defense leaves a correlatable trail. Match
+        // the Move Up/Down handler telemetry (same file, L645-656).
+        if (!(err instanceof RangeError)) throw err;
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-component-stuck-delete-failed',
+            component: descriptor.name,
+            rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+            reason: err.message.slice(0, 500),
+          }),
+        );
       }
     };
     return (
@@ -602,7 +622,6 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         ? { 'data-drag-handle': '', draggable: 'true' }
         : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
       data-component-name={descriptor.name}
-      data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
       onClick={handleBodyClick}
       onKeyDown={handleKeyDown}
     >
@@ -613,26 +632,47 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         contentEditable={false}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Move up/down — only for children inside containers; hidden at boundaries */}
+        {/* Move up/down — only for children inside containers; hidden at boundaries.
+            `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
+            node's position is out-of-bounds because a concurrent remote peer edit
+            (or an in-flight Observer B re-parse) shifted it between render and
+            click. We classify that as a user-observable move failure (logged +
+            counter-bumped) rather than letting it re-throw into the
+            `ComponentErrorBoundary`, which would mis-attribute the click-time
+            race as a `jsx-render-failure` and auto-convert this component to
+            rawMdxFallback. Pattern mirrors the `isChildOfComponent` probe at L213. */}
         {canMoveUp && (
           <button
             type="button"
             className="jsx-chrome-btn"
             aria-label="Move up"
             onClick={() => {
-              if (typeof pos !== 'number') return;
-              const $p = editor.state.doc.resolve(pos);
-              const idx = $p.index($p.depth);
-              if (idx === 0) return;
-              const parent = $p.node($p.depth);
-              const prev = parent.child(idx - 1);
-              const from = pos - prev.nodeSize;
-              const to = pos + node.nodeSize;
-              const tr = editor.state.tr;
-              const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-              const pre = editor.state.doc.slice(from, pos);
-              tr.replaceWith(from, to, cur.content.append(pre.content));
-              editor.view.dispatch(tr.scrollIntoView());
+              try {
+                if (typeof pos !== 'number') return;
+                const $p = editor.state.doc.resolve(pos);
+                const idx = $p.index($p.depth);
+                if (idx === 0) return;
+                const parent = $p.node($p.depth);
+                const prev = parent.child(idx - 1);
+                const from = pos - prev.nodeSize;
+                const to = pos + node.nodeSize;
+                const tr = editor.state.tr;
+                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                const pre = editor.state.doc.slice(from, pos);
+                tr.replaceWith(from, to, cur.content.append(pre.content));
+                editor.view.dispatch(tr.scrollIntoView());
+              } catch (err) {
+                if (!(err instanceof RangeError)) throw err;
+                console.warn(
+                  JSON.stringify({
+                    event: 'jsx-component-move-failed',
+                    direction: 'up',
+                    component: descriptor.name,
+                    rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                    reason: err.message.slice(0, 500),
+                  }),
+                );
+              }
             }}
           >
             <ArrowUp size={12} />
@@ -645,19 +685,32 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             className="jsx-chrome-btn"
             aria-label="Move down"
             onClick={() => {
-              if (typeof pos !== 'number') return;
-              const $p = editor.state.doc.resolve(pos);
-              const idx = $p.index($p.depth);
-              const parent = $p.node($p.depth);
-              if (idx >= parent.childCount - 1) return;
-              const next = parent.child(idx + 1);
-              const from = pos;
-              const to = pos + node.nodeSize + next.nodeSize;
-              const tr = editor.state.tr;
-              const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-              const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
-              tr.replaceWith(from, to, nxt.content.append(cur.content));
-              editor.view.dispatch(tr.scrollIntoView());
+              try {
+                if (typeof pos !== 'number') return;
+                const $p = editor.state.doc.resolve(pos);
+                const idx = $p.index($p.depth);
+                const parent = $p.node($p.depth);
+                if (idx >= parent.childCount - 1) return;
+                const next = parent.child(idx + 1);
+                const from = pos;
+                const to = pos + node.nodeSize + next.nodeSize;
+                const tr = editor.state.tr;
+                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+                tr.replaceWith(from, to, nxt.content.append(cur.content));
+                editor.view.dispatch(tr.scrollIntoView());
+              } catch (err) {
+                if (!(err instanceof RangeError)) throw err;
+                console.warn(
+                  JSON.stringify({
+                    event: 'jsx-component-move-failed',
+                    direction: 'down',
+                    component: descriptor.name,
+                    rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                    reason: err.message.slice(0, 500),
+                  }),
+                );
+              }
             }}
           >
             <ArrowDown size={12} />
@@ -755,10 +808,40 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                   const curNode = editor.state.doc.nodeAt(p);
                   if (!curNode) return;
                   const currentProps = (curNode.attrs.props as Record<string, unknown>) ?? {};
+                  // `undefined` means "clear this prop" — we DELETE the key
+                  // rather than storing `{[propName]: undefined}`. If we kept
+                  // the undefined entry, `reconstructAttrs` would serialize it
+                  // as a boolean-shorthand attr (`<Image width />`) via
+                  // `propToMdxJsxAttribute`'s `value == null` branch. PropPanel
+                  // passes undefined when the user backspaces a numeric input
+                  // to empty for an optional prop. We ALSO filter the matching
+                  // entry out of the preserved `attributes` array so the
+                  // dirty-path reconstruction in `reconstructAttrs` doesn't
+                  // re-emit the original (stale) value.
+                  const nextProps: Record<string, unknown> = { ...currentProps };
+                  const currentAttributes = Array.isArray(curNode.attrs.attributes)
+                    ? (curNode.attrs.attributes as unknown[])
+                    : [];
+                  let nextAttributes = currentAttributes;
+                  if (value === undefined) {
+                    delete nextProps[propName];
+                    nextAttributes = currentAttributes.filter(
+                      (a) =>
+                        !(
+                          a != null &&
+                          typeof a === 'object' &&
+                          (a as Record<string, unknown>).type === 'mdxJsxAttribute' &&
+                          (a as Record<string, unknown>).name === propName
+                        ),
+                    );
+                  } else {
+                    nextProps[propName] = value;
+                  }
                   editor.view.dispatch(
                     editor.state.tr.setNodeMarkup(p, null, {
                       ...curNode.attrs,
-                      props: { ...currentProps, [propName]: value },
+                      attributes: nextAttributes,
+                      props: nextProps,
                       sourceDirty: true,
                     }),
                   );

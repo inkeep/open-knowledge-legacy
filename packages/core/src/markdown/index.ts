@@ -745,7 +745,6 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
           attributes: node.attributes,
           sourceRaw: rawFromData(node.data) ?? '',
           sourceDirty: false,
-          content: rawFromData(node.data) ?? '',
           props: structuredAttrs,
         },
         children.length ? children : undefined,
@@ -763,7 +762,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       // Fallback: map to block jsxComponent if jsxInline not in schema
       handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
         n.jsxComponent.createAndFill({
-          content: rawFromData(node.data) ?? '',
+          sourceRaw: rawFromData(node.data) ?? '',
         });
     }
 
@@ -790,7 +789,6 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     handlers.mdxFlowExpression = (node: MdxFlowExpression) => {
       const raw = rawFromData(node.data) ?? `{${node.value ?? ''}}`;
       return n.jsxComponent.createAndFill({
-        content: raw,
         kind: 'expression',
         sourceRaw: raw,
         sourceDirty: false,
@@ -1044,15 +1042,16 @@ function buildPmToMdastHandlers(schema: Schema): {
   // semantics; the node handler just produces a structural mdast node.
   if (n.jsxComponent) {
     nodeHandlers.jsxComponent = (pmNode: PmNode, _parent: PmNode | undefined, state) => {
-      // Expression passthrough (block-level {expression})
+      // Expression passthrough (block-level {expression}): sourceRaw carries
+      // the original `{…}` bytes verbatim — emit as raw HTML so downstream
+      // mdast-to-markdown preserves the expression exactly.
       if (pmNode.attrs.kind === 'expression') {
         return {
           type: 'html' as const,
-          value: pmNode.attrs.content || pmNode.attrs.sourceRaw,
+          value: (pmNode.attrs.sourceRaw as string) ?? '',
         };
       }
-      const componentName =
-        (pmNode.attrs.componentName as string) || (pmNode.attrs.content ? null : null);
+      const componentName = (pmNode.attrs.componentName as string) || null;
       const preservedAttrs = Array.isArray(pmNode.attrs.attributes)
         ? (pmNode.attrs.attributes as Array<MdxJsxAttribute | MdxJsxExpressionAttribute>)
         : [];
