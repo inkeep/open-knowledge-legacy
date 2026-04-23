@@ -1,0 +1,114 @@
+#!/usr/bin/env zsh
+# Sandbox-recipes tier launcher. Invoked via symlinks named ccs/ccu/ccb/ccbu/ccm/ccmu
+# living in ~/.local/bin (or wherever bootstrap --install-path placed them).
+#
+# Dispatch based on $0: the symlink's basename tells us which tier to launch.
+#
+# Registry: reads ~/.ok-projects.sh if present to pick up user-added repos.
+# That file is a shared source of truth between PATH scripts and shell functions.
+#
+# Usage:  <alias-name> [-p <project>] [claude args...]
+
+set -euo pipefail
+
+# SANDBOX_RECIPES is baked in by bootstrap.sh at install time (sed substitution).
+# Uninstalled copy has a relative placeholder; installed copy has an absolute path.
+# Detect via leading '/' so the detection line isn't itself rewritten by sed.
+SANDBOX_RECIPES="@@SANDBOX_RECIPES@@"
+if [[ "$SANDBOX_RECIPES" != /* ]]; then
+  # Uninstalled: resolve from script location (bin/ is a child of sandbox-recipes/)
+  local self_dir
+  self_dir="${0:A:h}"
+  SANDBOX_RECIPES="${self_dir:h}"
+fi
+
+# ── Project registry ─────────────────────────────────────────────────────
+typeset -gA _OK_PROJECTS
+_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"
+_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"
+# User additions / overrides live in ~/.ok-projects.sh — sourced if present.
+if [[ -f "$HOME/.ok-projects.sh" ]]; then
+  source "$HOME/.ok-projects.sh"
+fi
+
+# ── -p <project> extraction ──────────────────────────────────────────────
+_resolve_project() {
+  local key="${1:-}"
+  [[ -z "$key" ]] && return 1
+  [[ -n "${_OK_PROJECTS[$key]:-}" ]] || return 1
+  printf '%s' "${_OK_PROJECTS[$key]}"
+}
+
+typeset -a remaining=()
+proj=""
+while (( $# > 0 )); do
+  case "$1" in
+    -p)
+      if [[ -z "${2:-}" ]] || [[ "${2:-}" == -* ]]; then
+        echo "error: -p requires a project shortcut (use 'ccp-list' in your shell)" >&2
+        exit 64
+      fi
+      if [[ -n "$proj" ]]; then
+        echo "error: -p specified more than once" >&2
+        exit 64
+      fi
+      proj="$2"
+      shift 2
+      ;;
+    *)
+      remaining+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$proj" ]]; then
+  dir="$(_resolve_project "$proj")" || {
+    echo "error: unknown project shortcut: '$proj'" >&2
+    echo "       known: ${(k)_OK_PROJECTS}" >&2
+    exit 1
+  }
+  cd "$dir" || exit 1
+fi
+
+# ── Dispatch ─────────────────────────────────────────────────────────────
+case "${0:t}" in
+  ccs)
+    exec claude --effort max "${remaining[@]}"
+    ;;
+  ccu)
+    exec claude --dangerously-skip-permissions --effort max "${remaining[@]}"
+    ;;
+  ccb)
+    exec "$SANDBOX_RECIPES/tier1-apple-container/ok-sandbox.sh" "${remaining[@]}"
+    ;;
+  ccbu)
+    exec "$SANDBOX_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "${remaining[@]}"
+    ;;
+  ccm)
+    exec "$SANDBOX_RECIPES/tier1-matryoshka/ok-sandbox.sh" "${remaining[@]}"
+    ;;
+  ccmu)
+    exec "$SANDBOX_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "${remaining[@]}"
+    ;;
+  ok-launcher|ok-sandbox)
+    # Direct invocation without symlink — print usage.
+    cat >&2 <<EOF
+ok-launcher: launched directly, expected a symlink invocation.
+
+Install symlinks with:
+  $SANDBOX_RECIPES/bootstrap.sh --install-path
+
+Or invoke by creating symlinks yourself:
+  ln -sf "$0" ~/.local/bin/ccs
+  ln -sf "$0" ~/.local/bin/ccb
+  (and so on for ccu, ccbu, ccm, ccmu)
+EOF
+    exit 64
+    ;;
+  *)
+    echo "ok-launcher: invoked with unknown name: ${0:t}" >&2
+    echo "       expected one of: ccs, ccu, ccb, ccbu, ccm, ccmu" >&2
+    exit 64
+    ;;
+esac

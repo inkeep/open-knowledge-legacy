@@ -3,16 +3,21 @@
 #
 #   ./bootstrap.sh                          # interactive — asks which Tier 0 profile
 #   ./bootstrap.sh unattended-trusted       # install Tier 0 profile non-interactively
-#   ./bootstrap.sh --install-aliases        # also append aliases to ~/.zshrc (backs up first)
+#   ./bootstrap.sh --install-aliases        # append aliases to ~/.zshrc (shell functions)
+#   ./bootstrap.sh --install-path           # install ccs/ccu/ccb/... to ~/.local/bin
+#                                           # (PATH scripts work from Cursor, CI, cron, etc.)
 #   ./bootstrap.sh --print-aliases          # only print the alias snippet (don't set up anything)
 #   ./bootstrap.sh --skip-build             # skip building Tier 1 images
-#   ./bootstrap.sh --yes                    # non-interactive: accept default profile + install aliases
+#   ./bootstrap.sh --yes                    # non-interactive: enable --install-aliases
+#                                           # and --install-path with default profile
 #
 # What it does (in order):
 #   1. Install a Tier 0 Claude Code settings profile into ~/.claude/settings.json
 #   2. Build the Tier 1 Apple Container image (if `container` is installed)
 #   3. Build the Tier 1 Matryoshka image (if `container` is installed)
-#   4. Print (and optionally auto-append) the alias snippet for your shell rc
+#   4. If --install-aliases: append the alias block to your shell rc
+#   5. If --install-path:    install launcher scripts to ~/.local/bin (or similar)
+#   6. Ensure ~/.ok-projects.sh exists (shared registry between rc block + PATH scripts)
 #
 # Idempotent — re-running is safe. Existing ~/.claude/settings.json and the
 # target shell rc file are backed up to .bak.<timestamp> before modification.
@@ -50,6 +55,7 @@ PROFILE=""
 SKIP_BUILD=0
 PRINT_ONLY=0
 INSTALL_ALIASES=0
+INSTALL_PATH=0
 NON_INTERACTIVE=0
 
 log() { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*" >&2; }
@@ -63,7 +69,8 @@ while [[ $# -gt 0 ]]; do
     --skip-build) SKIP_BUILD=1; shift ;;
     --print-aliases) PRINT_ONLY=1; shift ;;
     --install-aliases) INSTALL_ALIASES=1; shift ;;
-    --yes|-y) NON_INTERACTIVE=1; INSTALL_ALIASES=1; shift ;;
+    --install-path) INSTALL_PATH=1; shift ;;
+    --yes|-y) NON_INTERACTIVE=1; INSTALL_ALIASES=1; INSTALL_PATH=1; shift ;;
     --help|-h)
       head -n 18 "$0" | tail -n 16
       exit 0
@@ -94,13 +101,12 @@ print_aliases() {
 # Helpers: ccp <shortcut> (cd only), ccp-list (print registry).
 export _OK_RECIPES="$STABLE_DIR"
 
-# ── Project shortcuts: add your repos here ────────────────────────────────
-# Edit freely. Keys are arbitrary — pick what you'll remember typing.
+# ── Project shortcuts: defaults + user registry ──────────────────────────
+# Edit ~/.ok-projects.sh to add repos (shared with PATH scripts).
 typeset -gA _OK_PROJECTS 2>/dev/null || declare -A _OK_PROJECTS
 _OK_PROJECTS[ok]="\$HOME/Documents/code/open-knowledge"
 _OK_PROJECTS[agents]="\$HOME/Documents/code/agents-private"
-# _OK_PROJECTS[site]="\$HOME/Documents/code/your-site"
-# _OK_PROJECTS[app]="\$HOME/Documents/code/your-app"
+[[ -f "\$HOME/.ok-projects.sh" ]] && source "\$HOME/.ok-projects.sh"
 
 # ── Internal: resolve a project shortcut to an absolute path ──────────────
 _ok_resolve_project() {
@@ -220,6 +226,80 @@ detect_shell_rc() {
 ALIAS_BLOCK_START="# ---- Open Knowledge sandbox-recipes shortcuts ----"
 ALIAS_BLOCK_END="# ---- end sandbox-recipes ----"
 
+# Symlinks we install to PATH — all point at the same ok-launcher dispatcher.
+LAUNCHER_NAMES=(ccs ccu ccb ccbu ccm ccmu)
+
+detect_bin_dir() {
+  # Prefer ~/.local/bin if on PATH, else fall back through common choices.
+  if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
+    echo "$HOME/.local/bin"; return
+  fi
+  if [[ ":$PATH:" == *":$HOME/bin:"* ]]; then
+    echo "$HOME/bin"; return
+  fi
+  # Last resort — not on PATH but conventional
+  echo "$HOME/.local/bin"
+}
+
+ensure_ok_projects_file() {
+  local target="$HOME/.ok-projects.sh"
+  if [[ -f "$target" ]]; then
+    log "~/.ok-projects.sh already exists — leaving as-is (add entries there)."
+    return
+  fi
+  cat > "$target" <<'EOF'
+# ~/.ok-projects.sh
+# Sourced by both the zshrc alias block and the ~/.local/bin launcher scripts.
+# Add project shortcuts here. Keys are arbitrary; values are absolute paths.
+#
+# _OK_PROJECTS is already declared by the time this file runs.
+
+# _OK_PROJECTS[site]="$HOME/Documents/code/your-site"
+# _OK_PROJECTS[api]="$HOME/Documents/code/your-api"
+# _OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+EOF
+  log "Created ~/.ok-projects.sh (add your own repos there)."
+}
+
+install_launcher_to_path() {
+  local bin_dir
+  bin_dir="$(detect_bin_dir)"
+  local launcher_src="$STABLE_DIR/bin/ok-launcher"
+  local launcher_dst="$bin_dir/ok-launcher"
+
+  if [[ ! -f "$launcher_src" ]]; then
+    err "Missing launcher source: $launcher_src"
+    return 1
+  fi
+
+  mkdir -p "$bin_dir"
+
+  # Warn if $bin_dir isn't on PATH so users don't hit a silent fail.
+  if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+    warn "$bin_dir is NOT on your PATH."
+    warn "Add this to ~/.zshrc:   export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+
+  # Write the dispatcher with SANDBOX_RECIPES baked in.
+  sed "s|@@SANDBOX_RECIPES@@|$STABLE_DIR|g" "$launcher_src" > "$launcher_dst"
+  chmod +x "$launcher_dst"
+  log "Installed dispatcher: $launcher_dst"
+
+  # Symlink each alias name at $bin_dir.
+  local name
+  for name in "${LAUNCHER_NAMES[@]}"; do
+    ln -sf "$launcher_dst" "$bin_dir/$name"
+    log "  symlinked: $bin_dir/$name -> ok-launcher"
+  done
+
+  log ""
+  log "PATH scripts installed. Try from any shell (Cursor terminal, CI, etc.):"
+  log "    ccs -p ok            # Tier 0 in open-knowledge"
+  log "    ccb -p agents        # Tier 1 in agents-private"
+  log ""
+  log "Note: 'ccp' / 'ccp-list' remain as zsh functions (cd-only, can't be PATH scripts)."
+}
+
 append_aliases_to_rc() {
   local rc="$1"
 
@@ -329,33 +409,58 @@ else
 fi
 
 # ============================================================
-# Step 3: Install (or print) the alias snippet
+# Step 3: Ensure shared project registry file
+# ============================================================
+
+ensure_ok_projects_file
+
+# ============================================================
+# Step 4: Install (or print) the alias block in shell rc
 # ============================================================
 
 RC_FILE="$(detect_shell_rc)"
 
-if (( ! INSTALL_ALIASES )) && (( ! NON_INTERACTIVE )); then
+if (( ! INSTALL_ALIASES )) && (( ! INSTALL_PATH )) && (( ! NON_INTERACTIVE )); then
   log ""
-  log "Ready to install aliases into $RC_FILE ?"
-  log "  - Backs up current rc to $RC_FILE.bak.<timestamp>"
-  log "  - Replaces any existing sandbox-recipes block; safe to re-run"
-  read -r -p "[bootstrap] Install now? [Y/n] " yn
-  case "$yn" in
-    ""|[yY]*) INSTALL_ALIASES=1 ;;
-    *) INSTALL_ALIASES=0 ;;
+  log "Installation options:"
+  log "  [a] Shell aliases in $RC_FILE  (zsh functions: ccs, ccu, ccb, ccbu, ccm, ccmu, ccp, ccp-list)"
+  log "  [p] PATH scripts in ~/.local/bin (ccs, ccu, ccb, ccbu, ccm, ccmu — work from Cursor, CI, cron)"
+  log "  [b] Both  (recommended)"
+  log "  [n] Neither — I'll install manually"
+  read -r -p "[bootstrap] Choice [a/p/B/n]: " choice
+  case "${choice:-b}" in
+    [aA]*) INSTALL_ALIASES=1 ;;
+    [pP]*) INSTALL_PATH=1 ;;
+    [bB]*|"") INSTALL_ALIASES=1; INSTALL_PATH=1 ;;
+    [nN]*) ;;
+    *) err "Invalid choice"; exit 64 ;;
   esac
 fi
 
 log ""
 if (( INSTALL_ALIASES )); then
   append_aliases_to_rc "$RC_FILE"
-  log ""
-  log "Setup complete. Reload your shell to activate:"
-  log "    source $RC_FILE"
-  log ""
-  log "Then: try 'ccs' (Tier 0 sandbox) or 'ccb' (Tier 1 Apple Container)."
+fi
+
+# ============================================================
+# Step 5: Install PATH scripts (launchers in ~/.local/bin)
+# ============================================================
+
+if (( INSTALL_PATH )); then
+  install_launcher_to_path
+fi
+
+log ""
+if (( INSTALL_ALIASES || INSTALL_PATH )); then
+  log "Setup complete."
+  if (( INSTALL_ALIASES )); then
+    log "  - Reload shell to pick up functions:  source $RC_FILE"
+  fi
+  if (( INSTALL_PATH )); then
+    log "  - PATH scripts active now (new shell picks them up automatically)."
+  fi
 else
-  log "Setup complete. Aliases NOT installed — here's the snippet to paste manually:"
+  log "Setup complete. Nothing installed to shell — here's the alias snippet to paste manually:"
   log ""
   echo "# ─────────────────── copy below ───────────────────"
   print_aliases

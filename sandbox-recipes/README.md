@@ -10,15 +10,23 @@ Runnable, threat-model-tiered sandboxing for `claude`, from kernel-level Seatbel
 
 ```bash
 cd ~/Documents/code/open-knowledge            # or wherever you cloned
-./sandbox-recipes/bootstrap.sh --install-aliases
+./sandbox-recipes/bootstrap.sh -y             # installs everything: aliases + PATH scripts
+# or pick surfaces explicitly:
+./sandbox-recipes/bootstrap.sh --install-aliases             # shell functions only
+./sandbox-recipes/bootstrap.sh --install-path                # PATH scripts only
+./sandbox-recipes/bootstrap.sh --install-aliases --install-path    # both (redundant but harmonious)
 ```
 
 What it does:
 
-1. Prompts for a Tier 0 profile (or use `--yes` for `unattended-trusted`).
+1. Prompts for a Tier 0 profile (or uses `unattended-trusted` under `-y`).
 2. Builds Tier 1 Apple Container + Matryoshka images if `container` is installed.
 3. Runs `verify-matryoshka.sh` to confirm the nested sandbox works on your machine.
-4. Appends alias block to `~/.zshrc` (backs up first, replaces any existing block).
+4. Ensures `~/.ok-projects.sh` exists (shared project registry).
+5. Optionally appends alias block to `~/.zshrc` (with backup).
+6. Optionally installs launcher symlinks to `~/.local/bin/`.
+
+PATH scripts work in any shell / process that honors `$PATH` — Cursor's integrated terminal, CI, cron, IDE run actions, non-zsh shells. Shell functions give you `ccp` / `ccp-list` (which need shell-level cd), but only work from a zsh session that sourced `~/.zshrc`.
 
 Expect ~2–3 minutes the first time (image builds). Re-runnable safely.
 

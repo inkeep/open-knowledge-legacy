@@ -12,14 +12,21 @@ Short, typeable commands to launch each tier. Project is selected with `-p <shor
 
 ## One-shot install
 
+Two installation surfaces, use either or both:
+
 ```bash
-./bootstrap.sh --install-aliases       # backs up ~/.zshrc, appends the block
-# or fully non-interactive:
-./bootstrap.sh -y
-source ~/.zshrc
+./bootstrap.sh --install-aliases    # zsh functions in ~/.zshrc (includes ccp, ccp-list)
+./bootstrap.sh --install-path       # PATH scripts in ~/.local/bin (works in Cursor, CI, cron)
+./bootstrap.sh -y                   # non-interactive: install BOTH, default profile
 ```
 
-Idempotent — re-running replaces the block in place.
+- **--install-aliases**: appends zsh functions to `~/.zshrc`. You get the full set including `ccp`/`ccp-list` (which can't work as PATH scripts — a child process can't change parent cwd). Works only in zsh sessions that sourced `~/.zshrc`.
+- **--install-path**: installs one dispatcher to `~/.local/bin/ok-launcher` with symlinks `ccs`, `ccu`, `ccb`, `ccbu`, `ccm`, `ccmu` all pointing at it. Works from any process that honors `$PATH` (including Cursor's integrated terminal, cron jobs, IDE "run" actions, and bash/sh sessions).
+- **Both**: recommended. Redundant but not conflicting — shell functions shadow PATH scripts in interactive shells; PATH scripts take over when functions aren't loaded.
+
+Both flows share `~/.ok-projects.sh` as the project registry. Edit it once; both installations see the update.
+
+Idempotent — re-running replaces the alias block + overwrites launcher symlinks.
 
 ## Commands
 
@@ -148,14 +155,31 @@ You can delete `cca`/`cco` if you want to migrate, or keep alongside. Bootstrap 
 
 Network allowlist in all tiers is **domain-level**, not URL-path. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for the four options (spoiler: fine-grained GitHub PAT for github.com/org scoping).
 
-## If you'd rather have PATH-based shortcuts instead of shell functions
+## Shared project registry: `~/.ok-projects.sh`
 
-The tier wrappers are already scripts. Symlink them for non-zsh contexts (CI, Cursor's terminal-less flows, cron):
+Bootstrap creates this file on first install. Edit it to add repos — both the zsh functions and the PATH scripts source it:
 
 ```bash
-mkdir -p ~/.local/bin
-ln -sf "$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh"  ~/.local/bin/ok-boxed
-ln -sf "$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh"       ~/.local/bin/ok-matryoshka
+# ~/.ok-projects.sh
+_OK_PROJECTS[site]="$HOME/Documents/code/your-site"
+_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
+_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
 ```
 
-Those scripts mount `$PWD` directly — no `-p` resolution. `cd` before invoking.
+No bootstrap re-run needed. No double-maintenance between zshrc and PATH scripts.
+
+## Under the hood — the PATH install
+
+`--install-path` installs exactly:
+
+- `~/.local/bin/ok-launcher` (copy of the dispatcher template, with `SANDBOX_RECIPES` absolute path baked in)
+- `~/.local/bin/ccs` → symlink to `ok-launcher`
+- `~/.local/bin/ccu` → symlink
+- `~/.local/bin/ccb` → symlink
+- `~/.local/bin/ccbu` → symlink
+- `~/.local/bin/ccm` → symlink
+- `~/.local/bin/ccmu` → symlink
+
+Each symlink runs the same script, which dispatches on `${0:t}` (its own basename) to pick the tier. Moving the repo? Re-run `bootstrap.sh --install-path` to regenerate `ok-launcher` with the new absolute path.
+
+`ccp` / `ccp-list` / `cc-setup` stay as zsh functions only — they manipulate the parent shell's state and can't be packaged as PATH scripts.
