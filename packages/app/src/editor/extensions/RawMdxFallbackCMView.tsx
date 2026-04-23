@@ -69,7 +69,7 @@ export function shouldEscapeNestedCM(
  * selectionUpdate. Computed purely from state — the caller handles the
  * feedback-loop guard (`updatingRef`) and side effects (dispatch/focus).
  */
-export type CMForwardAction =
+type CMForwardAction =
   | { kind: 'noop' }
   | { kind: 'focus' }
   | { kind: 'selection'; anchor: number; head: number };
