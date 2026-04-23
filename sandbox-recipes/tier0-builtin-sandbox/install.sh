@@ -37,17 +37,17 @@ fi
 
 mkdir -p "$DST_DIR"
 
+BAK=""
 if [[ -f "$DST" ]]; then
-  TS="$(date +%Y%m%d-%H%M%S)"
-  BAK="$DST.bak.$TS"
+  BAK="$DST.bak.$(date +%Y%m%d-%H%M%S)"
   cp -p "$DST" "$BAK"
   echo "Backed up existing settings to: $BAK"
 fi
 
 # Merge with any existing settings if present; otherwise just copy.
 # This preserves non-sandbox keys the user may have configured.
-if [[ -f "$DST.bak.$TS" ]] 2>/dev/null; then
-  jq -s '.[0] * .[1]' "$DST.bak.$TS" "$SRC" > "$DST.tmp"
+if [[ -n "$BAK" && -f "$BAK" ]]; then
+  jq -s '.[0] * .[1]' "$BAK" "$SRC" > "$DST.tmp"
   mv "$DST.tmp" "$DST"
   echo "Merged profile '$PROFILE' into $DST (sandbox keys overwritten, other keys preserved)"
 else

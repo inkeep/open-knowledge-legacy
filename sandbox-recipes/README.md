@@ -1,53 +1,143 @@
 # Sandbox Recipes for Claude Code (macOS)
 
-Runnable artifacts companion to [reports/claude-code-local-sandbox-options](../reports/claude-code-local-sandbox-options/REPORT.md). Each directory is a tier from that report, with drop-in configs / scripts you can experiment with.
+Runnable, threat-model-tiered sandboxing for `claude`, from kernel-level Seatbelt (zero overhead) to nested-VM matryoshka. Companion to [reports/claude-code-local-sandbox-options](../reports/claude-code-local-sandbox-options/REPORT.md).
 
-## TL;DR — get going in 2 minutes
+---
+
+## Getting started
+
+### 1. One-command install
 
 ```bash
-./bootstrap.sh            # installs a Tier 0 profile, builds Tier 1 images, prints alias snippet
-# paste the snippet into ~/.zshrc, then:
-source ~/.zshrc
-ccs                       # Tier 0 sandboxed claude (safe default)
-ccb                       # Tier 1 Apple Container microVM
-ccm                       # Matryoshka (microVM + bubblewrap + Anthropic proxy)
+cd ~/Documents/code/open-knowledge            # or wherever you cloned
+./sandbox-recipes/bootstrap.sh --install-aliases
 ```
 
-Full alias reference: [ALIASES.md](ALIASES.md).
+What it does:
+
+1. Prompts for a Tier 0 profile (or use `--yes` for `unattended-trusted`).
+2. Builds Tier 1 Apple Container + Matryoshka images if `container` is installed.
+3. Runs `verify-matryoshka.sh` to confirm the nested sandbox works on your machine.
+4. Appends alias block to `~/.zshrc` (backs up first, replaces any existing block).
+
+Expect ~2–3 minutes the first time (image builds). Re-runnable safely.
+
+### 2. Reload shell
+
+```bash
+source ~/.zshrc
+```
+
+### 3. Use it
+
+```bash
+ccs                          # Tier 0 — sandboxed claude in current dir
+ccs ok                       # Tier 0 — cd to open-knowledge, then launch
+ccb agents                   # Tier 1 — boxed claude in agents-private
+ccmu ok                      # Matryoshka + unattended
+ccp-list                     # See registered project shortcuts
+```
+
+Full command reference: **[ALIASES.md](ALIASES.md)**.
+
+---
 
 ## Which tier do I want?
 
-| Scenario | Tier | Directory |
+| Scenario | Command | Tier | Directory |
+|---|---|---|---|
+| Daily work, fewer prompts, own code | `ccs` or `ccu` | 0 | [tier0-builtin-sandbox/](tier0-builtin-sandbox/) |
+| Unattended overnight on own code | `ccu` | 0 | (same) |
+| OSS PR / partner code review | `ccb <project>` | 1 | [tier1-apple-container/](tier1-apple-container/) |
+| Strongest isolation without Docker Desktop | `ccmu <project>` | 1 matryoshka | [tier1-matryoshka/](tier1-matryoshka/) |
+| Don't have macOS 26? | `ccp <project>` then manual `limactl shell` | 1 lima | [tier1-lima-vz/](tier1-lima-vz/) |
+
+Full threat-model mapping and tradeoffs: [the report](../reports/claude-code-local-sandbox-options/REPORT.md).
+
+---
+
+## Adding your repos
+
+Edit the `_OK_PROJECTS` block in `~/.zshrc`:
+
+```bash
+_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"       # installed
+_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"   # installed
+_OK_PROJECTS[site]="$HOME/Documents/code/your-site"          # add your own
+_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+```
+
+`source ~/.zshrc` and `ccs site` / `ccb ml` etc. work immediately. No bootstrap re-run needed.
+
+---
+
+## What each file / directory does
+
+```
+sandbox-recipes/
+├── bootstrap.sh              # one-shot install + alias setup
+├── README.md                 # you are here
+├── ALIASES.md                # full alias reference + examples
+├── URL-PATH-RESTRICTIONS.md  # why paths aren't filtered + workarounds
+│
+├── tier0-builtin-sandbox/    # Tier 0 — Seatbelt (kernel-level, no container)
+│   ├── settings-interactive.json           # supervised daily use
+│   ├── settings-unattended-trusted.json    # AFK on own code
+│   ├── settings-unattended-hardened.json   # strict allowlist
+│   ├── install.sh                          # called by bootstrap.sh
+│   ├── ok-sandbox.sh                       # wrapper (called by ccs/ccu)
+│   └── README.md
+│
+├── tier1-apple-container/    # Tier 1 — Apple Container microVM
+│   ├── Containerfile                       # Debian + Node + Claude + bubblewrap + iptables
+│   ├── entrypoint.sh                       # runs firewall-init, drops to claude user
+│   ├── firewall-init.sh                    # guest-side iptables allowlist
+│   ├── build.sh                            # called by bootstrap.sh
+│   ├── ok-sandbox.sh                       # wrapper (called by ccb/ccbu)
+│   └── README.md
+│
+├── tier1-matryoshka/         # Tier 1 — microVM + bubblewrap + Anthropic proxy
+│   ├── Containerfile                       # extends tier1 with sandbox-runtime preinstalled
+│   ├── settings.json                       # in-container ~/.claude/settings.json
+│   ├── verify-matryoshka.sh                # smoke test: confirms bubblewrap composes
+│   ├── build.sh                            # called by bootstrap.sh
+│   ├── ok-sandbox.sh                       # wrapper (called by ccm/ccmu)
+│   └── README.md
+│
+└── tier1-lima-vz/            # Tier 1 — Lima vz (macOS 13+, CNCF)
+    ├── claude-sandbox.yaml                 # Lima VM config
+    ├── setup.sh / ok-sandbox.sh / teardown.sh
+    └── README.md
+```
+
+---
+
+## Status (2026-04-23)
+
+| Tier | Tested on | Status |
 |---|---|---|
-| "I trust this code; I just want fewer permission prompts" | 0 | [tier0-builtin-sandbox/](tier0-builtin-sandbox/) |
-| "Unattended overnight run on my own trusted code" | 0 | [tier0-builtin-sandbox/](tier0-builtin-sandbox/) (`settings-unattended-*.json`) |
-| "Reviewing a semi-trusted repo (OSS PR, partner code)" | 1 | [tier1-apple-container/](tier1-apple-container/) |
-| "I want the strongest isolation available without Docker Desktop" | 1 (matryoshka) | [tier1-matryoshka/](tier1-matryoshka/) |
-| "Open-source alternative to Apple Container" | 1 | [tier1-lima-vz/](tier1-lima-vz/) |
+| 0 | claude 2.1.118 + macOS 26 | ✅ Validated |
+| 1 Apple Container | container v0.11 + macOS 26 | ✅ Validated end-to-end (build, firewall allow/deny, entrypoint, non-TTY) |
+| 1 Matryoshka | Same | ✅ `verify-matryoshka.sh` passes 5/5 after two Containerfile fixes (setuid bwrap + ripgrep) found during smoke-testing |
+| 1 Lima vz | — | ⚠️ Config based on published docs; not yet end-to-end tested (needs `brew install lima`) |
 
-Full threat-model mapping and tradeoffs live in the report; this directory is the "I want to try one of these right now" companion.
+---
 
-## Status
-
-- **Tier 0** (Anthropic's built-in sandbox) — most mature; just config files. No infrastructure overhead.
-- **Tier 1 Apple Container** — *validated 2026-04-23 on Apple Container v0.11 + macOS 26 Tahoe*. Build + entrypoint + guest-side iptables allowlist all confirmed working end-to-end. Allowed domains pass (`api.anthropic.com`, `github.com`), denied domains blocked (`example.com`, `cloudflare.com`).
-- **Tier 1 Matryoshka** — *validated 2026-04-23 on same config*. `verify-matryoshka.sh` passes 5/5 after two Containerfile fixes discovered during smoke-testing: (a) bubblewrap needs setuid (Debian file-caps default fails with `"Unexpected capabilities but not setuid"` against the Apple Container guest kernel), (b) `@anthropic-ai/sandbox-runtime` requires `ripgrep`.
-- **Tier 1 Lima vz** — config is based on published Lima v2.0 docs; not end-to-end tested. `./setup.sh` should work; report back if it doesn't.
-
-## Path-level network restrictions
-
-None of these recipes do URL-path filtering (e.g., "allow `github.com/inkeep/*` only") — they all do domain-level. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for four options (the best for the GitHub case is fine-grained PATs at the auth layer, not network layer).
-
-## Prerequisites
+## Prerequisites summary
 
 | Tier | Install |
 |---|---|
-| Tier 0 | Nothing beyond `claude` itself (v2.0+). Requires macOS 13+ for Seatbelt. |
-| Tier 1 Apple Container | `container` from https://github.com/apple/container/releases + macOS 26 Tahoe + Apple Silicon. |
-| Tier 1 Lima vz | `brew install lima` + macOS 13+. |
+| 0 | `claude` v2.0+ (you have 2.1.118). macOS 13+ for Seatbelt. |
+| 1 Apple Container | macOS 26 Tahoe + Apple Silicon, then `container` from [github.com/apple/container/releases](https://github.com/apple/container/releases) + `container system start --enable-kernel-install`. |
+| 1 Matryoshka | Same as Tier 1 Apple Container. |
+| 1 Lima vz | `brew install lima`. macOS 13+. |
+
+Everything except Lima is auto-detected by `bootstrap.sh`.
+
+---
 
 ## Repo-safety notes
 
-- Nothing here modifies product code (`packages/`, `docs/site/`). This directory is purely additive.
-- No build integration: these recipes live outside turbo/biome. They're config + shell scripts.
-- Secrets: no templates mount long-lived credentials unless the recipe explicitly documents the tradeoff.
+- Nothing in here modifies product code (`packages/`, `docs/`, etc.) or build/test config (`turbo.json`, `biome.jsonc`).
+- Recipes live outside the turbo graph — no impact on `bun run check` / `bun run build`.
+- `bootstrap.sh` only writes to: `~/.claude/settings.json` (backed up), your shell rc (backed up), and container image storage.

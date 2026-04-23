@@ -1,92 +1,141 @@
 # Shell Aliases for Sandbox Tiers
 
-Short, typeable commands to launch each tier. Matches the `cc` / `cca` / `cco` pattern from [Andrew's .zshrc](../.zshrc).
+Short, typeable commands to launch each tier, parameterized by project. Designed to scale to 10+ repos without alias combinatorial explosion.
 
-## Quick start
+## Shape
+
+```
+<tier-cmd> [project] [extra args...]
+```
+
+If the first arg matches a registered project shortcut, the function `cd`s there first. Otherwise all args pass through to `claude` (or the tier wrapper).
+
+## One-shot install
 
 ```bash
-# One-time: install Tier 0 profile, build Tier 1 images, print aliases
-./sandbox-recipes/bootstrap.sh
-
-# Paste the printed snippet into ~/.zshrc, then:
+./bootstrap.sh --install-aliases     # or --yes for fully non-interactive
+# Installs Tier 0 profile, builds Tier 1 images, appends the alias block
+# to ~/.zshrc (with backup). Re-runnable; won't double-append.
 source ~/.zshrc
 ```
 
-## Alias set
+## The commands
 
-### Tier 0 (Seatbelt — kernel-level, no container)
+### Tiers
 
-| Alias | Command | Use for |
+| Command | Tier | What it launches |
 |---|---|---|
-| `ccs` | `claude --effort max` | **S**andboxed interactive session — uses whatever's in `~/.claude/settings.json`. Drop-in for `cc`. |
-| `ccu` | `claude --dangerously-skip-permissions --effort max` | **U**nattended — safe *because* sandbox is kernel-enforced AND `allowUnsandboxedCommands: false` is set in the `unattended-trusted`/`unattended-hardened` profile. Use for AFK work on your own code. |
+| `ccs [project]` | 0 | **s**andbox — `claude --effort max` with Seatbelt sandbox from your settings |
+| `ccu [project]` | 0 | **u**nattended — adds `--dangerously-skip-permissions`; safe because sandbox is kernel-enforced + escape hatch disabled in settings |
+| `ccb [project]` | 1 | **b**oxed — Apple Container microVM |
+| `ccbu [project]` | 1 | boxed + unattended (`--dangerously-skip-permissions` inside the microVM) |
+| `ccm [project]` | 1 | **m**atryoshka — microVM + bubblewrap + Anthropic proxy |
+| `ccmu [project]` | 1 | matryoshka + unattended |
 
-### Tier 1 (Apple Container microVM)
+### Helpers
 
-| Alias | Command | Use for |
-|---|---|---|
-| `ccb` | `ok-sandbox.sh` (passes `$PWD`) | **B**oxed — per-container microVM. Real kernel boundary. |
-| `ccbu` | `ok-sandbox.sh --unattended` | Boxed + unattended. Inside-container `--dangerously-skip-permissions`. |
-| `ccm` | matryoshka `ok-sandbox.sh` | **M**atryoshka — microVM + bubblewrap + Anthropic's proxy. Strongest isolation in this set. |
-| `ccmu` | matryoshka `ok-sandbox.sh --unattended` | Matryoshka + unattended. |
-
-### Project + tier combos (extends your existing `cca` / `cco` pattern)
-
-| Alias | What | Where |
-|---|---|---|
-| `ccso` | `cd ~/Documents/code/open-knowledge && ccs` | Tier 0 in open-knowledge |
-| `ccbo` | `cd ~/Documents/code/open-knowledge && ccb` | Tier 1 in open-knowledge |
-| `ccmo` | `cd ~/Documents/code/open-knowledge && ccm` | Matryoshka in open-knowledge |
-| `ccsa` | `cd ~/Documents/code/agents-private && ccs` | Tier 0 in agents-private |
-| `ccba` | `cd ~/Documents/code/agents-private && ccb` | Tier 1 in agents-private |
-| `ccma` | `cd ~/Documents/code/agents-private && ccm` | Matryoshka in agents-private |
-
-### Bootstrap
-
-| Alias | What |
+| Command | What |
 |---|---|
-| `cc-setup` | Re-run `bootstrap.sh` — rebuild images, switch Tier 0 profile, etc. |
+| `ccp <shortcut>` | cd to a registered project (no launch) |
+| `ccp-list` | print the project registry |
+| `cc-setup` | re-run bootstrap (rebuild images, switch Tier 0 profile, etc.) |
+
+## Adding more projects
+
+Open `~/.zshrc`, find the `_OK_PROJECTS` block, and add entries:
+
+```bash
+_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"     # default
+_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private" # default
+_OK_PROJECTS[site]="$HOME/Documents/code/your-site"        # your own
+_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
+_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+```
+
+Then `source ~/.zshrc`. No re-running bootstrap needed — the registry is just an associative array the tier functions look up.
+
+## Usage examples
+
+```bash
+# In current directory
+ccs                          # sandboxed claude in $PWD
+ccb                          # boxed claude in $PWD
+ccm --unattended             # args pass through to the tier wrapper
+
+# With project shortcut
+ccs ok                       # cd to open-knowledge + sandboxed claude
+ccb agents                   # cd to agents-private + boxed claude
+ccmu site                    # cd to site + matryoshka unattended
+
+# With project + claude args
+ccs ok --resume abc123       # cd to ok, resume session abc123
+ccbu api -- --continue       # cd to api, boxed+unattended, continue last session
+
+# Just cd, no launch (useful for shell navigation)
+ccp ok                       # cd to open-knowledge
+ccp agents                   # cd to agents-private
+
+# Inspect what's registered
+ccp-list
+# ok           /Users/andrew/Documents/code/open-knowledge
+# agents       /Users/andrew/Documents/code/agents-private
+```
 
 ## Mnemonic
 
 ```
-cc   — claude (base; your existing)
-+ s  — sandbox (Seatbelt)
-+ u  — unattended (skip-permissions)
-+ b  — boxed (Apple Container)
-+ m  — matryoshka (nested)
+cc + s   sandbox (Seatbelt)
+cc + u   unattended (skip-permissions — safe because sandbox is kernel-enforced)
+cc + b   boxed (Apple Container microVM)
+cc + m   matryoshka (microVM + bubblewrap + Anthropic proxy)
+     + u append to b / m   same but --dangerously-skip-permissions inside
+cc + p   project helper (cd only, or list)
 ```
 
-Second letter = project suffix (following your `o`/`a` convention for open-knowledge / agents-private).
+Three letters max. Project is a positional arg, not encoded in the name.
 
-## Why these shortcuts and not symlinks on PATH?
+## How this interacts with your existing `cc` alias
 
-Considered symlinking each script into `~/.local/bin/ccb` etc. Rejected because:
-1. You have the `~/.local/bin` PATH line already, but your existing `cc`/`cca`/`cco` are aliases — aliases keep tier shortcuts visually adjacent to your existing pattern in `.zshrc` (one file to inspect when something's wrong).
-2. Function forms (`ccb() { … }`) pass `$@` through cleanly — you can do `ccb --cpu 8 -- --resume <id>` without escape gymnastics.
-3. Aliases respect your shell's tab completion for the wrapped command (`claude`).
+Your existing `.zshrc` has:
 
-If you'd rather have them on PATH instead, drop these lines into `~/.local/bin/`:
 ```bash
-ln -sf "$PWD/tier1-apple-container/ok-sandbox.sh"  ~/.local/bin/ccb
-ln -sf "$PWD/tier1-matryoshka/ok-sandbox.sh"       ~/.local/bin/ccm
+alias cc="claude --permission-mode bypassPermissions --effort max"
+alias cca='cd ~/Documents/code/agents-private && cc'
+alias cco='cd ~/Documents/code/open-knowledge && cc'
 ```
 
-## What the aliases reference
+The new aliases are **additive** and orthogonal:
 
+| Your existing | New equivalent | Difference |
+|---|---|---|
+| `cc` | (keep it) | Unsandboxed, bypasses prompts. Kept as the "I know what I'm doing" escape hatch. |
+| `cco` | `ccs ok` or `ccu ok` | Sandboxed at OS level. `ccs` keeps claude's prompts; `ccu` drops them (safe because kernel enforces). |
+| `cca` | `ccs agents` or `ccu agents` | Same. |
+
+You can delete `cca`/`cco` if you want to migrate, or keep them alongside. The bootstrap won't touch them.
+
+## When to use each
+
+| Task | Command |
+|---|---|
+| Daily work on code you wrote (fewer prompts, safety net) | `ccs` or `ccu` |
+| Unattended overnight run on your own code | `ccu` |
+| Reviewing an OSS PR / dep you don't fully trust | `ccb <project>` |
+| Reviewing code you actively suspect (supply-chain evaluation) | `ccmu <project>` |
+| Quick navigation (no claude session) | `ccp <project>` |
+
+## Path-filtering note
+
+The network allowlist in all tiers is **domain-level**, not URL-path-level. `github.com` means all of GitHub, not just `github.com/inkeep/*`. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for the four options (spoiler: use a fine-grained GitHub PAT for org scoping — it's cleaner than any network-layer trick).
+
+## If you'd rather have shortcuts on PATH
+
+The functions are zsh-native. If you want them as standalone scripts (accessible from any shell, inside Cursor's terminal, from cron, etc.):
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf "$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh"  ~/.local/bin/ok-boxed
+ln -sf "$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh"       ~/.local/bin/ok-matryoshka
 ```
-$_OK_RECIPES = /Users/andrew/Documents/code/open-knowledge/sandbox-recipes
-```
 
-If you move the repo, re-run `./bootstrap.sh --print-aliases` from the new location and replace the snippet in your rc.
-
-## How `cc` and the new aliases relate
-
-Your existing `cc` alias uses `--permission-mode bypassPermissions` — that sidesteps Claude Code's own prompts entirely. **That flag is orthogonal to the sandbox.** If you want:
-
-- **Prompts off + no sandbox** → your existing `cc` (current state; this session is running like this).
-- **Prompts on + Seatbelt sandbox** → `ccs` (reduces prompts via auto-allow without disabling them).
-- **Prompts off + Seatbelt sandbox** → `ccu` (true "AFK safe" — kernel enforces; claude asks nothing).
-- **Prompts off + microVM + Seatbelt** → `ccmu` (strongest; for untrusted code).
-
-Think of it as: the OS sandbox lets you safely drop the prompt layer, because the prompts are not load-bearing for safety anymore.
+Those scripts don't do project resolution (they mount `$PWD` directly), so you'd `cd` before invoking. Project shortcuts are a shell-level concern.
