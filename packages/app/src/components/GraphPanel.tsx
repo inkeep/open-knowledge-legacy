@@ -12,7 +12,6 @@ import { useEffect, useState } from 'react';
 import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
 import {
-  type GraphDocDisplayState,
   type GraphNodeSelection,
   getHashForGraphDocSelection,
 } from '@/components/graph-view-utils';
@@ -124,72 +123,6 @@ type SelectedNodeState = {
   secondaryLabel: string;
   onAction: () => void;
 };
-
-function getSelectedNodeState({
-  activeDocName,
-  collapseGraph,
-  selectedDocDisplayState,
-  selectedNode,
-}: {
-  activeDocName: string;
-  collapseGraph: () => void;
-  selectedDocDisplayState: GraphDocDisplayState;
-  selectedNode: GraphNodeSelection | null;
-}): SelectedNodeState | null {
-  if (selectedNode === null) return null;
-
-  if (selectedNode.kind === 'external') {
-    return {
-      eyebrow: 'Selected in graph',
-      description: 'Open this link in a new tab and collapse the graph.',
-      Icon: ArrowUpRight,
-      actionLabel: 'Open link',
-      secondaryLabel: selectedNode.url,
-      onAction: () => {
-        window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
-        collapseGraph();
-      },
-    };
-  }
-
-  const openSelectedDoc = () => {
-    const hash = getHashForGraphDocSelection(selectedNode);
-    collapseGraph();
-    window.location.assign(hash);
-  };
-
-  if (selectedDocDisplayState === 'missing') {
-    return {
-      eyebrow: 'Broken link',
-      description:
-        "This page doesn't exist yet. Open it to create the page in the editor and collapse the graph.",
-      Icon: AlertTriangle,
-      actionLabel: 'Create page',
-      secondaryLabel: selectedNode.docName,
-      onAction: openSelectedDoc,
-    };
-  }
-
-  if (selectedNode.docName === activeDocName) {
-    return {
-      eyebrow: 'Already open',
-      description: 'This document is already active in the editor. Use Open to collapse the graph.',
-      Icon: CheckCircle2,
-      actionLabel: 'Open',
-      secondaryLabel: selectedNode.docName,
-      onAction: openSelectedDoc,
-    };
-  }
-
-  return {
-    eyebrow: 'Selected in graph',
-    description: 'Open this document in the editor and collapse the graph.',
-    Icon: ArrowUpRight,
-    actionLabel: 'Open',
-    secondaryLabel: selectedNode.docName,
-    onAction: openSelectedDoc,
-  };
-}
 
 function getOrphanDescription(mode: OrphanMode): string {
   if (mode === 'incoming') {
@@ -392,12 +325,59 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           folderPaths,
         }).displayState
       : 'doc';
-  const selectedNodeState = getSelectedNodeState({
-    activeDocName,
-    collapseGraph: () => setIsExpanded(false),
-    selectedDocDisplayState,
-    selectedNode,
-  });
+  let selectedNodeState: SelectedNodeState | null = null;
+  if (selectedNode !== null) {
+    if (selectedNode.kind === 'external') {
+      selectedNodeState = {
+        eyebrow: 'Selected in graph',
+        description: 'Open this link in a new tab and collapse the graph.',
+        Icon: ArrowUpRight,
+        actionLabel: 'Open link',
+        secondaryLabel: selectedNode.url,
+        onAction: () => {
+          window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
+          setIsExpanded(false);
+        },
+      };
+    } else {
+      const openSelectedDoc = () => {
+        const hash = getHashForGraphDocSelection(selectedNode);
+        setIsExpanded(false);
+        window.location.assign(hash);
+      };
+
+      if (selectedDocDisplayState === 'missing') {
+        selectedNodeState = {
+          eyebrow: 'Broken link',
+          description:
+            "This page doesn't exist yet. Open it to create the page in the editor and collapse the graph.",
+          Icon: AlertTriangle,
+          actionLabel: 'Create page',
+          secondaryLabel: selectedNode.docName,
+          onAction: openSelectedDoc,
+        };
+      } else if (selectedNode.docName === activeDocName) {
+        selectedNodeState = {
+          eyebrow: 'Already open',
+          description:
+            'This document is already active in the editor. Use Open to collapse the graph.',
+          Icon: CheckCircle2,
+          actionLabel: 'Open',
+          secondaryLabel: selectedNode.docName,
+          onAction: openSelectedDoc,
+        };
+      } else {
+        selectedNodeState = {
+          eyebrow: 'Selected in graph',
+          description: 'Open this document in the editor and collapse the graph.',
+          Icon: ArrowUpRight,
+          actionLabel: 'Open',
+          secondaryLabel: selectedNode.docName,
+          onAction: openSelectedDoc,
+        };
+      }
+    }
+  }
 
   return (
     <Panel className={isExpanded ? 'fixed inset-0 z-50 bg-background overflow-hidden' : undefined}>
