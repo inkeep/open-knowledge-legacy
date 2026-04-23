@@ -16,7 +16,7 @@ import type {
   OkSeedPlanResult,
 } from '@/lib/desktop-bridge-types';
 
-export interface SeedDialogProps {
+interface SeedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }

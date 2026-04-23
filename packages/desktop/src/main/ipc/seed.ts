@@ -32,7 +32,7 @@ export type SeedPlanResult = OkSeedPlanResult;
 export type SeedApplyResult = OkSeedApplyResult;
 
 /** Injected by `main/index.ts`; `plan` / `apply` delegate to the server module. */
-export interface SeedIpcDeps {
+interface SeedIpcDeps {
   /**
    * Resolve the project root for the invoking BrowserWindow. Returns `undefined`
    * when no ProjectContext is bound (e.g. Navigator window, which never reaches

@@ -20,7 +20,7 @@ import {
 import { Command } from 'commander';
 import { accent, dim, error as errorColor, info, success, warning } from '../ui/colors.ts';
 
-export interface SeedCommandOptions {
+interface SeedCommandOptions {
   cwd?: string;
   /** Skip the Y/n confirmation prompt. */
   yes?: boolean;
@@ -30,7 +30,7 @@ export interface SeedCommandOptions {
   confirmStream?: NodeJS.ReadableStream;
 }
 
-export interface SeedCommandResult {
+interface SeedCommandResult {
   /** 'applied' (writes happened) | 'dry-run' | 'no-op' (already seeded) | 'cancelled' | 'prerequisite-missing' | 'failed' */
   status: 'applied' | 'dry-run' | 'no-op' | 'cancelled' | 'prerequisite-missing' | 'failed';
   message: string;

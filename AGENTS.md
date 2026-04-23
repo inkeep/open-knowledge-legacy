@@ -383,6 +383,7 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app                                                                     |
 | `open-knowledge init`                     | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json`                                            |
+| `open-knowledge seed` / `ok seed`         | Optional — scaffold the Karpathy three-layer knowledge-base starter (`external-sources/`, `research/`, `articles/`) + seed `log.md` + matching `config.yml` `folders:` entries. Also triggered from the editor's empty-state "Initialize LLM brain" button (web + Electron). Supports `--dry-run`, `--yes`, `[path]`. |
 | `open-knowledge mcp`                      | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
 
 Bin names: the CLI ships two bins — `open-knowledge` (long form) and `ok` (short alias). Both point to the same entrypoint. Distribution strategy, install UX, telemetry posture, and related LOCKED / NEVER / NOT NOW decisions are codified in **`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`** — read it before making changes to `packages/cli/package.json` bin config, install docs, or anything telemetry-related.

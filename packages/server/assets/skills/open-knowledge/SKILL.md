@@ -38,7 +38,7 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 
 Every call to `write_document` / `edit_document` MUST follow this sequence:
 
-1. **Call `get_preview_url(docName)`.** If it returns `null`, the UI isn't running — start it (`open-knowledge ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code). Then call `get_preview_url` again. NEVER construct a preview URL by hand.
+1. **Call `get_preview_url(docName)`.** If it returns `null`, the UI isn't running — start it (`ok ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code). Then call `get_preview_url` again. NEVER construct a preview URL by hand.
 2. **Open that URL in your preview browser** so the user sees the document.
 3. **Only then call `write_document` / `edit_document`** — the CRDT edit streams live into the already-open editor.
 
@@ -209,7 +209,7 @@ Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now
 
 ## Server lifecycle
 
-If `write_document` or `edit_document` returns a "Hocuspocus server is not running" error, start it with `open-knowledge start` (via Bash) and retry. Never fall back to native `Edit` / `Write` for in-scope markdown — always route through the MCP write tools so edits go through the CRDT with proper attribution.
+If `write_document` or `edit_document` returns a "Hocuspocus server is not running" error, start it with `ok start` (via Bash) and retry. Never fall back to native `Edit` / `Write` for in-scope markdown — always route through the MCP write tools so edits go through the CRDT with proper attribution.
 
 ## Scope recap
 
