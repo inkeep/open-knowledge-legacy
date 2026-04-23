@@ -7,12 +7,44 @@
  * `registerAllTools` function that `server.ts` calls during startup.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
 
 export type ServerInstance = McpServer;
 export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);
 export const ROUTED_CWD_DESCRIPTION =
   'Absolute host path to resolve the request against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.';
+
+// ─── Agent-write summary schema (shared across the four MCP write tools) ─────
+//
+// The 200-char Zod cap (D21 — transport-safety bound) and the "≤80 chars"
+// render-cap description (D24 — render bound, enforced server-side by
+// `MAX_SUMMARY_LENGTH` in packages/server/src/agent-write-summary.ts) were
+// previously duplicated across write-document, edit-document, rename-document,
+// and rollback-to-version. Centralizing them here keeps the two bounds in
+// sync and localizes future re-tuning to one place.
+
+/**
+ * Transport-safety upper bound for `summary` at the MCP layer.
+ * Rejects payloads > 200 chars BEFORE they hit the HTTP boundary. Separate
+ * from the server-side render cap (80) — see `MAX_SUMMARY_LENGTH`.
+ */
+export const SUMMARY_TRANSPORT_CAP = 200;
+
+/**
+ * Shared Zod schema for the `summary` param on write_document, edit_document,
+ * rename_document, and rollback_to_version. Includes the description that
+ * surfaces in tool introspection for agents — keep the "(≤80 chars)" phrasing
+ * here as the single source of truth (matches the API-side `MAX_SUMMARY_LENGTH`
+ * constant).
+ */
+export const summaryArgSchema = z
+  .string()
+  .max(SUMMARY_TRANSPORT_CAP)
+  .optional()
+  .describe(
+    'Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline.',
+  );
 
 /**
  * Wrap a single string into the content shape MCP tools require for text results.

@@ -129,6 +129,16 @@ export interface ShadowContributor {
   /** Color seed for deterministic color assignment — matches presence bar color. */
   colorSeed?: string;
   docs: string[];
+  /**
+   * Flat per-contributor array of agent-provided summaries, oldest first.
+   * Additive field (spec D9/D23) — legacy commits lack it entirely and parse
+   * with `summaries: undefined`. Per D27, malformed values (non-array, or
+   * array with non-string elements) drop just this field and leave the rest
+   * of the contributor entry intact — a deliberate divergence from the
+   * whole-entry-skip convention used for other optional fields, because
+   * decorative loss (no bullets) is preferable to attribution loss.
+   */
+  summaries?: string[];
 }
 
 const OK_CONTRIBUTORS_PREFIX = 'ok-contributors: ';
@@ -161,6 +171,17 @@ export function parseContributors(body: string): ShadowContributor[] {
         (!('colorSeed' in parsed) ||
           typeof (parsed as Record<string, unknown>).colorSeed === 'string')
       ) {
+        // D27: malformed `summaries` drops just the field; the contributor
+        // entry still parses. Decorative loss (no bullets) beats attribution
+        // loss (missing contributor). Deliberate divergence from the
+        // whole-entry-skip convention applied to other optional fields.
+        const raw = parsed as Record<string, unknown>;
+        if ('summaries' in raw) {
+          const s = raw.summaries;
+          if (!Array.isArray(s) || !s.every((x) => typeof x === 'string')) {
+            delete raw.summaries;
+          }
+        }
         contributors.push(parsed as ShadowContributor);
       }
     } catch {
@@ -295,6 +316,18 @@ export function formatCheckpointBodyLine(parsed: ParsedCheckpoint): string {
  */
 export interface OkActorEntry {
   v: 1;
+  /**
+   * The writer id — the ref-name this commit was authored under:
+   *   - `agent-<connectionId>`    — MCP agent session
+   *   - `principal-<UUID>`        — browser-tab principal
+   *   - `file-system` | `git-upstream` | `openknowledge-service` — classified
+   *
+   * Carries the identity that `ok-contributors.id` used to carry pre-consolidation,
+   * so a commit body is self-describing (`git show -s <sha>` → full attribution
+   * without needing to join against `git for-each-ref`). Also disambiguates
+   * classified writers, which otherwise share `{principal: null, agent_session: null}`.
+   */
+  writer_id: string;
   /** Long-lived principal id (US-024 stub — null until human-browser auth wired). */
   principal: string | null;
   /** Per-session agent connection id, e.g. "conn-abc123". Null for classified writers. */
@@ -313,22 +346,104 @@ export interface OkActorEntry {
   color_seed: string;
   /** Documents touched in this drain cycle. */
   docs: string[];
+  /**
+   * Flat per-contributor array of agent-provided summaries, oldest first.
+   * Elided when empty so summary-less writes stay byte-identical to legacy.
+   * Malformed values (non-array, array-with-non-string) drop JUST this field
+   * at parse time — decorative loss (no bullets) beats attribution loss.
+   * Agent-write-summaries spec D23/D27 + FR4, consolidated onto ok-actor:
+   * as the foundation's deferred read-path migration (formerly lived on
+   * ok-contributors:).
+   */
+  summaries?: string[];
 }
 
 const OK_ACTOR_PREFIX = 'ok-actor: ';
 
 /**
  * Format an `ok-actor:` JSON body line. Produces exactly one line (no trailing newline).
- * Pair with `parseOkActor` at the read path.
+ * Pair with `parseOkActor` / `parseOkActors` at the read path. Elides `summaries`
+ * when empty/absent so summary-less writes stay byte-identical to pre-consolidation
+ * ok-actor commits.
  */
 export function formatOkActor(entry: OkActorEntry): string {
-  return `${OK_ACTOR_PREFIX}${JSON.stringify(entry)}`;
+  const { summaries, ...rest } = entry;
+  const payload: Record<string, unknown> =
+    summaries && summaries.length > 0 ? { ...rest, summaries } : rest;
+  return `${OK_ACTOR_PREFIX}${JSON.stringify(payload)}`;
+}
+
+/**
+ * Parse a single JSON object into an `OkActorEntry`, or `null` on schema violation.
+ * Extracted so `parseOkActor` (first-match) and `parseOkActors` (all-matches)
+ * share one validation pass.
+ *
+ * Back-compat note: pre-consolidation `ok-actor:` lines (shipped before this
+ * unification) lacked `writer_id`. When missing, derive it:
+ *   - `agent_session` set → `agent-<agent_session>`
+ *   - `principal` set → `<principal>`  (principal ids already include the
+ *     `principal-` prefix per D34)
+ *   - otherwise → derive from `display_name` for the three classified writers;
+ *     fall back to `'openknowledge-service'` as the safest non-attributed
+ *     classified writer if display_name doesn't match.
+ */
+function parseOkActorObject(obj: Record<string, unknown>): OkActorEntry | null {
+  if (obj.v !== 1) return null;
+  if (!('display_name' in obj) || typeof obj.display_name !== 'string') return null;
+  if (!('docs' in obj) || !Array.isArray(obj.docs)) return null;
+  const principal = typeof obj.principal === 'string' ? obj.principal : null;
+  const agent_session = typeof obj.agent_session === 'string' ? obj.agent_session : null;
+  let writer_id: string;
+  if (typeof obj.writer_id === 'string' && obj.writer_id.length > 0) {
+    writer_id = obj.writer_id;
+  } else if (agent_session) {
+    writer_id = `agent-${agent_session}`;
+  } else if (principal) {
+    writer_id = principal;
+  } else {
+    // Classified writers — derive from display_name. The three recognized values
+    // are stable display strings in shadow-repo.ts (FILE_SYSTEM_WRITER etc.).
+    switch (obj.display_name) {
+      case 'File System':
+        writer_id = 'file-system';
+        break;
+      case 'Git (upstream)':
+        writer_id = 'git-upstream';
+        break;
+      default:
+        writer_id = 'openknowledge-service';
+    }
+  }
+  const summaries =
+    'summaries' in obj && Array.isArray(obj.summaries)
+      ? (obj.summaries as unknown[]).every((s) => typeof s === 'string')
+        ? (obj.summaries as string[])
+        : undefined // D27 divergence: drop field on malformed, keep entry
+      : undefined;
+  return {
+    v: 1,
+    writer_id,
+    principal,
+    agent_session,
+    agent_type: typeof obj.agent_type === 'string' ? obj.agent_type : null,
+    client_name: typeof obj.client_name === 'string' ? obj.client_name : null,
+    client_version: typeof obj.client_version === 'string' ? obj.client_version : null,
+    label: typeof obj.label === 'string' ? obj.label : null,
+    display_name: obj.display_name,
+    color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
+    docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
+    ...(summaries && summaries.length > 0 ? { summaries } : {}),
+  };
 }
 
 /**
  * Parse the first `ok-actor:` JSON body line from a commit message body.
  * Returns `null` when the line is absent, malformed, or fails schema validation
  * (v must be 1; display_name and docs must be present).
+ *
+ * Use `parseOkActors` (plural) when the body may contain multiple writers
+ * (multi-contributor L2 drain); pre-unification commits used one ok-actor
+ * per commit, but the consolidated write path emits one per writer.
  */
 export function parseOkActor(body: string): OkActorEntry | null {
   if (!body) return null;
@@ -342,25 +457,77 @@ export function parseOkActor(body: string): OkActorEntry | null {
       return null;
     }
     if (parsed === null || typeof parsed !== 'object') return null;
-    const obj = parsed as Record<string, unknown>;
-    // Schema validation: v must be 1, display_name and docs required
-    if (obj.v !== 1) return null;
-    if (!('display_name' in obj) || typeof obj.display_name !== 'string') return null;
-    if (!('docs' in obj) || !Array.isArray(obj.docs)) return null;
-    return {
-      v: 1,
-      principal: typeof obj.principal === 'string' ? obj.principal : null,
-      agent_session: typeof obj.agent_session === 'string' ? obj.agent_session : null,
-      agent_type: typeof obj.agent_type === 'string' ? obj.agent_type : null,
-      client_name: typeof obj.client_name === 'string' ? obj.client_name : null,
-      client_version: typeof obj.client_version === 'string' ? obj.client_version : null,
-      label: typeof obj.label === 'string' ? obj.label : null,
-      display_name: obj.display_name,
-      color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
-      docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
-    };
+    return parseOkActorObject(parsed as Record<string, unknown>);
   }
   return null;
+}
+
+/**
+ * Parse every `ok-actor:` JSON body line from a commit message body.
+ * Returns an empty array when the body contains no valid ok-actor lines.
+ * Malformed lines are skipped silently (mirrors `parseContributors` convention).
+ *
+ * The consolidated L2 drain emits one `ok-actor:` per writer per commit
+ * (FR-7 fan-out), so this is the right reader for post-consolidation commits.
+ */
+export function parseOkActors(body: string): OkActorEntry[] {
+  if (!body) return [];
+  const out: OkActorEntry[] = [];
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_ACTOR_PREFIX)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed.slice(OK_ACTOR_PREFIX.length));
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== 'object') continue;
+    const entry = parseOkActorObject(parsed as Record<string, unknown>);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Project an `OkActorEntry` onto the legacy `ShadowContributor` DTO that
+ * Timeline + CLI render paths consume. Kept deliberately thin — the renderers
+ * haven't been migrated to consume `OkActorEntry` fields directly (rich actor
+ * data like `agent_type`, `client_name` is available for them to adopt later).
+ */
+export function okActorToShadowContributor(a: OkActorEntry): ShadowContributor {
+  const shadow: ShadowContributor = {
+    v: 1,
+    id: a.writer_id,
+    name: a.display_name,
+    colorSeed: a.color_seed,
+    docs: a.docs,
+  };
+  if (a.summaries && a.summaries.length > 0) shadow.summaries = a.summaries;
+  return shadow;
+}
+
+/**
+ * Read contributors from a commit message body, preferring the consolidated
+ * `ok-actor:` body lines and falling back to legacy `ok-contributors:` lines
+ * when no `ok-actor:` is present.
+ *
+ * This is the single entry point the Timeline API (`timeline-query.ts`) and
+ * the CLI enrichment path (`shadow-log.ts`) should call. Callers that need
+ * the full actor tuple (e.g., a future on-behalf-of render) should consume
+ * `parseOkActors` directly.
+ *
+ * Back-compat contract: commits written before the ok-actor consolidation
+ * (on disk from pre-unification sessions) have only `ok-contributors:` lines
+ * and continue to render identically. Commits written post-consolidation
+ * have only `ok-actor:` lines. Transitional commits with both are possible
+ * during rollout and prefer `ok-actor:` — `ok-contributors:` is ignored when
+ * at least one ok-actor is present to avoid double-counting.
+ */
+export function readContributors(body: string): ShadowContributor[] {
+  const actors = parseOkActors(body);
+  if (actors.length > 0) return actors.map(okActorToShadowContributor);
+  return parseContributors(body);
 }
 
 // ─── Subject-prefix scheme (D53, FR-13) ──────────────────────────────────────
@@ -402,6 +569,52 @@ export function formatImportSubject(oldHead: string | null, newHead: string): st
   return oldHead
     ? `import: from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
     : `import: initial at ${newHead.slice(0, 8)}`;
+}
+
+// ─── Change-note subject composition (FR14 + D53 addendum) ───────────────────
+//
+// Landing per-writer summaries on the COMMIT SUBJECT line (not just the
+// `ok-contributors:` body) is what turns `git log --oneline refs/wip/main/agent-*`
+// from a wall of `wip: notes.md` duplicates into a scannable team-history feed.
+// The body still carries the full summary array for the TimelinePanel render —
+// this helper is the git-log-shaped projection.
+
+/**
+ * Upper bound on the length of the rendered commit subject line.
+ * Matches the CommonMark / git subject-line convention so `git log --oneline`
+ * stays legible without wrapping.
+ */
+export const COMMIT_SUBJECT_MAX_LEN = 72;
+
+/**
+ * Combine a base subject (from `formatWipSubject` / `formatReconcileSubject` / etc.
+ * or a `ContributorEntry.subjectOverride`) with agent-supplied change-notes,
+ * producing a single subject line capped at `COMMIT_SUBJECT_MAX_LEN`.
+ *
+ * Rules:
+ *  - 0 summaries → base subject unchanged (pre-feature byte-identity).
+ *  - 1 summary → `<base> — <summary>` truncated with a trailing U+2026
+ *    ellipsis when over budget; the `<base>` portion is never truncated.
+ *  - ≥2 summaries → `<base> (N edits)`. The bullets live in the body
+ *    (`ok-contributors.summaries`) and in the TimelinePanel UI — the
+ *    subject only carries the count so `git log --oneline` stays one line.
+ *
+ * Truncation preserves the base, separator, and suffix so the `grep`-friendly
+ * target stays intact even for very short terminal widths. Matches the
+ * `normalizeSummary` API-boundary truncation in `agent-write-summary.ts` by
+ * using the same single-codepoint `…` rather than three ASCII dots.
+ */
+export function composeCommitSubject(base: string, summaries: readonly string[]): string {
+  if (summaries.length === 0) return base;
+  if (summaries.length >= 2) return `${base} (${summaries.length} edits)`;
+  const [summary] = summaries;
+  if (summary === undefined) return base; // defensive; length-1 branch guards against this
+  const full = `${base} — ${summary}`;
+  if (full.length <= COMMIT_SUBJECT_MAX_LEN) return full;
+  const prefix = `${base} — `;
+  const budget = COMMIT_SUBJECT_MAX_LEN - prefix.length - 1; // reserve one char for the ellipsis
+  if (budget <= 0) return full.slice(0, COMMIT_SUBJECT_MAX_LEN); // base already over budget — defensive slice
+  return `${prefix}${summary.slice(0, budget)}…`;
 }
 
 /**

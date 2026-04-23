@@ -62,6 +62,18 @@ export interface ReconciliationMetrics {
    *  may disagree with what the server thinks it published — investigate
    *  the correlated `[agent-presence] awareness mutation failed` log line. */
   agentPresenceMutationErrors: number;
+  /** Successful agent-write API calls that reached recordContributor —
+   *  denominator for the M1 summary-adoption metric in spec §7. Incremented
+   *  by the five agent-write handlers only AFTER a successful recordContributor
+   *  (D22: UI-driven rollback/rename without agentId does NOT increment). */
+  agentWriteCalls: number;
+  /** Agent-write calls that carried a non-empty summary through
+   *  normalizeSummary — numerator for M1. Adoption rate = summariesProvided /
+   *  agentWriteCalls. */
+  summariesProvided: number;
+  /** Agent-write calls whose input summary exceeded the API cap and was
+   *  truncated to 79 visible chars + `…`. Spec M2 steady-state target <10 %. */
+  summariesTruncated: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -90,6 +102,9 @@ const counters: ReconciliationMetrics = {
   shadowMigrationLegacyRefsDeleted: 0,
   effectDiffCaptureFailures: 0,
   agentPresenceMutationErrors: 0,
+  agentWriteCalls: 0,
+  summariesProvided: 0,
+  summariesTruncated: 0,
 };
 
 export function incrementReconcile(): void {
@@ -156,6 +171,18 @@ export function incrementServerObserverError(direction: 'a' | 'b'): void {
 
 export function incrementBridgeMergeContentLoss(): void {
   counters.bridgeMergeContentLoss++;
+}
+
+export function incrementAgentWriteCalls(): void {
+  counters.agentWriteCalls++;
+}
+
+export function incrementSummariesProvided(): void {
+  counters.summariesProvided++;
+}
+
+export function incrementSummariesTruncated(): void {
+  counters.summariesTruncated++;
 }
 
 export function incrementBridgeMergeCheckpointCreated(): void {
@@ -255,4 +282,7 @@ export function resetMetrics(): void {
   counters.shadowMigrationLegacyRefsDeleted = 0;
   counters.effectDiffCaptureFailures = 0;
   counters.agentPresenceMutationErrors = 0;
+  counters.agentWriteCalls = 0;
+  counters.summariesProvided = 0;
+  counters.summariesTruncated = 0;
 }

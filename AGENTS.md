@@ -339,8 +339,10 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/git-identity-sanitize.ts` — shared `sanitizeGitIdentity()` utility; strips `<>`, CRLF, trims + slices to 128 chars (D36). Applied at `extractAgentIdentity` + principal.json → WriterIdentity boundaries
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
-- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
+- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B, and the agent-write-summary adoption triad (`agentWriteCalls`, `summariesProvided`, `summariesTruncated` — M1/M2 per `specs/2026-04-21-agent-write-summaries/SPEC.md` §7)
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin; records `file-system` classified writer via `contributor-tracker` (D41, FR-6)
+- `src/contributor-tracker.ts` — per-writer `ContributorEntry` accumulator drained at L2 by `persistence.ts`. Carries: `docs: Set<string>`, optional `subjectOverride` (D53 subject-prefix), optional `actor: ActorMetadata` (FR-8 tuple), and `summaries: string[]` (agent-write-summaries D23). One `ok-contributors:` JSON line per writer in the WIP commit body; summaries emitted only when non-empty (legacy byte-identity)
+- `src/agent-write-summary.ts` — `normalizeSummary(raw)`: single API-boundary truncation point for the five agent-write handlers. 80-char cap (D24), `{kind: 'absent' | 'invalid' | 'value', value?, truncatedFrom?}` contract. Whitespace-only and empty-string inputs classify as `absent` (no metric bump, no bullet)
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
 - `src/api-extension.ts` — HTTP API; `extractAgentIdentity(body)` is the canonical identity boundary every mutating POST handler calls at entry before any Y.Doc mutation (FR-5, D42, precedent #24). Includes save-version, rescue buffer, link-graph, agent-undo, metrics, and installed-agents endpoints. Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and asserts every POST handler calls `extractAgentIdentity` or is on the explicit allowlist.
 - `src/handoff-api.ts` — `GET /api/installed-agents` handler + per-OS install probes (`osascript` / `reg query` / `xdg-mime`) + per-scheme 60 s cache with in-flight dedup. Web-host parity for the Electron `ok:shell:detect-protocol` IPC
@@ -452,11 +454,25 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-tab sync is intentionally not implemented (SPEC D9 supersedes D7): each tab/window is its own session for its lifetime; the persisted value is read only at load (refresh, new tab, new window). Open tabs do NOT update each other live. Last toggle wins at the next load.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `EDITOR_MODE_VALUES` const array is the single source of truth — both `EditorModeValue` and `isEditorModeValue()` derive from it. `useState` initializer prefers `window.__OK_EDITOR_MODE__` (typed `unknown` — every reader MUST validate via `isEditorModeValue`), falls back to `localStorage`, then `'wysiwyg'`. Reads localStorage exactly once at mount; no focus listener; no `storage` event listener. Every call to the hook's setter persists to localStorage immediately. Session-local paths that bypass the hook (e.g. `RAW_MDX_NAV_EVENT` → `setEditorMode('source')` directly in `EditorPane`) do not persist. Invalid persisted values produce a `[editor-mode] invalid persisted value` `console.warn` (FR-8); storage throws stay silent.
+- `src/components/EditorPane.tsx` — consumer. `EditorMode = EditorModeValue | 'diff'` structurally encodes "diff is the only non-persistable mode." Seeds session-local `editorMode` from the read-once `persistedMode` on mount. Diff mode is ephemeral; `modeBeforeDiffRef` restores session pre-diff mode on exit (pre-existing repo behavior, unchanged by this feature).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (seven tests: T1, T2, T3 "open tabs are independent until reload", T4, T6, T8, T9; in the CI `test:e2e` file list).
+- **Drift-guard:** PRs that touch `use-editor-mode.ts` or `EditorPane.tsx` load-time initialization must re-run SPEC §8.4 MQ1 (Electron restart → new window picks up last-persisted mode). There is no `_electron.launch()` Playwright harness at baseline, so this is manual.
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
@@ -841,6 +857,13 @@ Each worktree has its own content directory. The test harness creates a fresh `t
 
 **Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
 
+**`bun run knip` false-positives in fresh worktrees:** Running the pre-push hook (`bun run check` → `bash scripts/check-knip-clean.sh` → `bun run knip`) from a worktree where `bun install` has not yet run produces spurious "Unused files / Unused dependencies / Unlisted binaries" reports and exits 1, even though the same command passes from the main repo root. Two conjoined causes, both resolved by `bun install` in the worktree:
+
+1. `docs/.source/` is a `fumadocs-mdx` postinstall artifact (gitignored via `docs/.gitignore`) that regenerates `docs/source.config.mjs` + `browser.ts` / `dynamic.ts` / `server.ts`. These files are how knip connects `docs/content/**/*.mdx` back to `zod`, `fumadocs-typescript`, `remark-mdx-snippets`, and the MDX content files. Without them, knip flags the 16 MDX files under `docs/content/**` as unused and three docs deps as unused — the exact report pattern that triggers exit 1.
+2. The `[dev] Shadow repo init failed … ENOTDIR … /.git/open-knowledge` warning is cosmetic-only. Knip's vite-config evaluator imports `packages/app/vite.config.ts` → `./src/server/hocuspocus-plugin.ts`, which has module-top-level side effects including `runDevShadowInit`. In a worktree the `.git` is a pointer file (not a directory), so `mkdirSync('.git/open-knowledge')` throws `ENOTDIR`. The error is classified as non-`ProjectGitInitError` in `handleDevShadowInitError` (`packages/app/src/server/dev-shadow-init.ts`) — warn-only, continues. It does **not** change knip's exit code; the exit 1 is exclusively from cause #1.
+
+Workflow: after `EnterWorktree` (or `git worktree add`), run `bun install` in the worktree before invoking `bun run check` / `git push`. The same `bun install` also fixes the ProseMirror-model dedup case above.
+
 ### Multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
@@ -873,6 +896,8 @@ No environment variables must be set by hand for any of these scenarios.
   5. **Event-loop serialization** — `applyAgentUndo` runs as a single `doc.transact()` block; the observer fires are `setTimeout` callbacks on the same loop. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
 
   Reference implementation: `packages/server/src/agent-sessions.ts:applyAgentUndo` (paired with `applyAgentMarkdownWrite`). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`, `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` §8.4.
+- **STOP:** When an API handler calls `recordContributor` with a summary, the summary MUST come from `normalizeSummary` in `packages/server/src/agent-write-summary.ts`. Do not scatter truncation, whitespace-trimming, or type-checking across handlers — the single boundary is load-bearing for M1/M2 metric fidelity (whitespace-only inputs classify as `absent` and do not count as adoption). If you add a sixth agent-write handler or need to thread a summary through a different path, route it through `normalizeSummary` first and branch on the discriminated `{kind}` result. SPEC: `specs/2026-04-21-agent-write-summaries/SPEC.md` §6 FR2 + D5/D24.
+- **STOP:** `handleRename` and `handleRollback` MUST guard `extractAgentIdentity` + `recordContributor` on the presence of an explicit `agentId` in the request body. The in-editor Restore button posts with no identity, and the default `claude-1/Claude` fallback in `extractAgentIdentity` would otherwise attribute every human-driven rollback to Claude on the timeline (D22 LOCKED 1-way-door — the UI behavior contract). Adding attribution by default to either handler is a scope-extension and needs user sign-off. SPEC: `specs/2026-04-21-agent-write-summaries/SPEC.md` §10 D22 + NG12.
 
 ### WARN rules
 
@@ -1571,11 +1596,25 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-tab sync is intentionally not implemented (SPEC D9 supersedes D7): each tab/window is its own session for its lifetime; the persisted value is read only at load (refresh, new tab, new window). Open tabs do NOT update each other live. Last toggle wins at the next load.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `EDITOR_MODE_VALUES` const array is the single source of truth — both `EditorModeValue` and `isEditorModeValue()` derive from it. `useState` initializer prefers `window.__OK_EDITOR_MODE__` (typed `unknown` — every reader MUST validate via `isEditorModeValue`), falls back to `localStorage`, then `'wysiwyg'`. Reads localStorage exactly once at mount; no focus listener; no `storage` event listener. Every call to the hook's setter persists to localStorage immediately. Session-local paths that bypass the hook (e.g. `RAW_MDX_NAV_EVENT` → `setEditorMode('source')` directly in `EditorPane`) do not persist. Invalid persisted values produce a `[editor-mode] invalid persisted value` `console.warn` (FR-8); storage throws stay silent.
+- `src/components/EditorPane.tsx` — consumer. `EditorMode = EditorModeValue | 'diff'` structurally encodes "diff is the only non-persistable mode." Seeds session-local `editorMode` from the read-once `persistedMode` on mount. Diff mode is ephemeral; `modeBeforeDiffRef` restores session pre-diff mode on exit (pre-existing repo behavior, unchanged by this feature).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (seven tests: T1, T2, T3 "open tabs are independent until reload", T4, T6, T8, T9; in the CI `test:e2e` file list).
+- **Drift-guard:** PRs that touch `use-editor-mode.ts` or `EditorPane.tsx` load-time initialization must re-run SPEC §8.4 MQ1 (Electron restart → new window picks up last-persisted mode). There is no `_electron.launch()` Playwright harness at baseline, so this is manual.
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
@@ -1930,6 +1969,13 @@ Each worktree has its own content directory. The test harness creates a fresh `t
 **ProseMirror-model duplication in nested worktrees:** Worktrees at `.claude/worktrees/X/` are nested inside the parent repo directory. Bun resolves workspace packages (e.g., `@inkeep/open-knowledge-core`) by walking up the directory tree — finding the parent repo's `packages/core/` and its `node_modules/` first, not the worktree's. When the parent's `prosemirror-model` instance differs from the worktree's, `PmNode.fromJSON()` fails with "looks like multiple versions of prosemirror-model were loaded."
 
 **Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
+
+**`bun run knip` false-positives in fresh worktrees:** Running the pre-push hook (`bun run check` → `bash scripts/check-knip-clean.sh` → `bun run knip`) from a worktree where `bun install` has not yet run produces spurious "Unused files / Unused dependencies / Unlisted binaries" reports and exits 1, even though the same command passes from the main repo root. Two conjoined causes, both resolved by `bun install` in the worktree:
+
+1. `docs/.source/` is a `fumadocs-mdx` postinstall artifact (gitignored via `docs/.gitignore`) that regenerates `docs/source.config.mjs` + `browser.ts` / `dynamic.ts` / `server.ts`. These files are how knip connects `docs/content/**/*.mdx` back to `zod`, `fumadocs-typescript`, `remark-mdx-snippets`, and the MDX content files. Without them, knip flags the 16 MDX files under `docs/content/**` as unused and three docs deps as unused — the exact report pattern that triggers exit 1.
+2. The `[dev] Shadow repo init failed … ENOTDIR … /.git/open-knowledge` warning is cosmetic-only. Knip's vite-config evaluator imports `packages/app/vite.config.ts` → `./src/server/hocuspocus-plugin.ts`, which has module-top-level side effects including `runDevShadowInit`. In a worktree the `.git` is a pointer file (not a directory), so `mkdirSync('.git/open-knowledge')` throws `ENOTDIR`. The error is classified as non-`ProjectGitInitError` in `handleDevShadowInitError` (`packages/app/src/server/dev-shadow-init.ts`) — warn-only, continues. It does **not** change knip's exit code; the exit 1 is exclusively from cause #1.
+
+Workflow: after `EnterWorktree` (or `git worktree add`), run `bun install` in the worktree before invoking `bun run check` / `git push`. The same `bun install` also fixes the ProseMirror-model dedup case above.
 
 ### Multi-agent local workflows
 
