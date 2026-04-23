@@ -1,0 +1,59 @@
+# Tier 1 Claude Code sandbox image for Apple Container.
+# Debian Bookworm + Node 22 + Claude Code + guest-side firewall tooling + bubblewrap for matryoshka.
+#
+# Build:  ./build.sh
+# Run:    ./ok-sandbox.sh
+
+FROM debian:bookworm-slim
+
+ARG NODE_VERSION=22
+ARG CLAUDE_USER=claude
+ARG CLAUDE_UID=1000
+
+# System deps:
+#   - git, curl, ca-certificates, jq: standard dev toolkit
+#   - sudo: for entrypoint to drop from root to claude user cleanly
+#   - iptables, ipset: guest-side firewall allowlist
+#   - bubblewrap, socat: required IF you layer Anthropic's built-in sandbox inside (matryoshka — see ../tier1-matryoshka)
+#   - dnsutils: for debugging DNS inside the VM
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      jq \
+      sudo \
+      iptables \
+      ipset \
+      bubblewrap \
+      socat \
+      dnsutils \
+      tini \
+ && rm -rf /var/lib/apt/lists/*
+
+# Node.js via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code \
+ && npm cache clean --force
+
+# Non-root user for Claude to run as.
+# Sudo NOPASSWD only for firewall-init (allows dropping to user early then escalating for iptables).
+RUN useradd -m -s /bin/bash -u "${CLAUDE_UID}" "${CLAUDE_USER}" \
+ && echo "${CLAUDE_USER} ALL=(root) NOPASSWD: /usr/local/bin/firewall-init.sh" > /etc/sudoers.d/claude-firewall \
+ && chmod 0440 /etc/sudoers.d/claude-firewall
+
+# Entry scripts
+COPY firewall-init.sh /usr/local/bin/firewall-init.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/firewall-init.sh /usr/local/bin/entrypoint.sh
+
+WORKDIR /workspace
+
+# Run as root initially; entrypoint.sh applies firewall then drops to claude user.
+USER root
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD ["claude"]
