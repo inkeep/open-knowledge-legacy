@@ -42,6 +42,7 @@ import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Root as MdastRoot } from 'mdast';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
+import remarkGithubAlerts from 'remark-github-alerts';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, unified } from 'unified';
@@ -50,6 +51,7 @@ import { VFile } from 'vfile';
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
+import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -142,6 +144,14 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
     .use(remarkWikiLink)
+    // US-010 / FR-7: GFM-alerts + Obsidian foldable parse path. The upstream
+    // plugin tags blockquotes starting with `[!TYPE]` (data.hName+class) and
+    // strips the opener line; our downstream transformer consumes that output
+    // and emits `mdxJsxFlowElement(Callout, ...)` in the blockquote's place,
+    // copying `.position` so Phase B's position-slice walker attaches the
+    // original source bytes as `data.sourceRaw` (γ pristine preservation).
+    .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
+    .use(calloutTransformerPlugin)
     .use(restoreFromMdx) // Phase A
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)

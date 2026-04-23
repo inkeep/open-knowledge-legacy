@@ -7,9 +7,14 @@ import {
 } from './index.ts';
 
 describe('fixture loaders — count + shape contracts', () => {
-  test('loadBuiltInFixtures returns 18 entries (16 fumadocs + 2 shadcn wrappers per SPEC D3)', () => {
+  test('loadBuiltInFixtures returns 25 entries (18 legacy cases + 7 GFM-alert cases per US-010)', () => {
+    // US-010 added 7 GFM-alert fixtures (5 GFM types + 2 Obsidian foldable)
+    // to exercise the callout-transformer parse path + γ pristine preservation.
+    // The legacy 18-entry corpus pre-dates narrowing — it still rides on I12
+    // byte-identity and NG12 idempotence. US-012 will narrow the pre-existing
+    // cases to 5-pack-only; until then the entry count is additive.
     const fixtures = loadBuiltInFixtures();
-    expect(fixtures).toHaveLength(18);
+    expect(fixtures).toHaveLength(25);
   });
 
   test('every BuiltInFixture has non-empty componentName + blockForm', () => {

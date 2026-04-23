@@ -88,5 +88,40 @@
     "componentName": "Comp-inline-expression-attr",
     "blockForm": "Use <Comp data={values} /> now\n",
     "notes": "inline thin shape — expression attr on self-closing"
+  },
+  {
+    "componentName": "Callout-gfm-note",
+    "blockForm": "> [!NOTE]\n> Body text\n",
+    "notes": "US-010 / FR-7: GFM alerts syntax — blockquote parses through remark-github-alerts + callout-transformer → mdxJsxFlowElement(Callout, {type:'note'}); γ pristine preserves bytes"
+  },
+  {
+    "componentName": "Callout-gfm-tip",
+    "blockForm": "> [!TIP]\n> Use `npm ci` in CI\n",
+    "notes": "US-010: GFM tip alert — inline code survives through the transformer + position-slice"
+  },
+  {
+    "componentName": "Callout-gfm-important",
+    "blockForm": "> [!IMPORTANT]\n> Critical information\n",
+    "notes": "US-010: GFM important alert"
+  },
+  {
+    "componentName": "Callout-gfm-warning",
+    "blockForm": "> [!WARNING]\n> Heads up\n",
+    "notes": "US-010: GFM warning alert"
+  },
+  {
+    "componentName": "Callout-gfm-caution",
+    "blockForm": "> [!CAUTION]\n> Dangerous action ahead\n",
+    "notes": "US-010: GFM caution alert"
+  },
+  {
+    "componentName": "Callout-obsidian-foldable-closed",
+    "blockForm": "> [!WARNING]-\n> Hidden by default (defaultOpen=false)\n",
+    "notes": "US-010 / D-MF17: Obsidian `-` marker → collapsible + defaultOpen=false; γ preserves the `-` on pristine save"
+  },
+  {
+    "componentName": "Callout-obsidian-foldable-open",
+    "blockForm": "> [!IMPORTANT]+\n> Open by default (defaultOpen=true)\n",
+    "notes": "US-010 / D-MF17: Obsidian `+` marker → collapsible + defaultOpen=true; γ preserves the `+` on pristine save"
   }
 ]
