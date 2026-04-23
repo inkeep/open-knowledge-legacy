@@ -56,6 +56,25 @@ export interface AppState {
    * breaks again after a repaired window. M3 D12.
    */
   stuckHintShown: boolean;
+  /**
+   * Per-bundle dismissal token for the M6a "Command-Line Tools are broken —
+   * repair?" launch-time modal. Keyed by `<appVersion>:<exePath>` so an
+   * auto-update OR app-move invalidates the token (the user re-consents on
+   * the new bundle). Null before any dismissal.
+   *
+   * Without this, the modal fires on every launch while status is 'broken'
+   * — a consent-fatigue hazard given the Repair button leads into the
+   * osascript admin-password prompt (Pass 0 Major #4). Users who don't
+   * care about CLI tools would be reflexively dismissing a root-adjacent
+   * modal every boot until they either run Repair or move the .app back.
+   *
+   * Per-bundle semantics (not permanent skip): an auto-update that shifts
+   * `app.getVersion()` OR a user-initiated drag-to-/Applications/ that
+   * shifts `app.getPath('exe')` forms a new token value; the modal fires
+   * exactly once against the new bundle, then respects Skip for the rest
+   * of that bundle's lifetime.
+   */
+  dismissedRepairForBundle: string | null;
 }
 
 const RECENT_CAP = 20;
@@ -68,6 +87,7 @@ export function emptyState(): AppState {
     lastSeenVersion: null,
     lastSuccessfulCheckAt: null,
     stuckHintShown: false,
+    dismissedRepairForBundle: null,
   };
 }
 
@@ -213,6 +233,11 @@ export function parseAppState(raw: unknown): AppState | null {
   const lastSuccessfulCheckAt =
     typeof obj.lastSuccessfulCheckAt === 'string' ? obj.lastSuccessfulCheckAt : null;
   const stuckHintShown = obj.stuckHintShown === true;
+  // M6a Pass 1 Major #3: defensive coercion — a pre-M6a state.json lacking
+  // this key returns null (no prior dismissal), matching emptyState()
+  // default; no quarantine.
+  const dismissedRepairForBundle =
+    typeof obj.dismissedRepairForBundle === 'string' ? obj.dismissedRepairForBundle : null;
   return {
     recentProjects,
     lastOpenedProject,
@@ -220,5 +245,6 @@ export function parseAppState(raw: unknown): AppState | null {
     lastSeenVersion,
     lastSuccessfulCheckAt,
     stuckHintShown,
+    dismissedRepairForBundle,
   };
 }

@@ -34,6 +34,28 @@ export type McpInstallMode = 'published' | 'dev';
 export interface McpInstallOptions {
   mode?: McpInstallMode;
   cliEntryPath?: string;
+  /**
+   * Absolute path to a CLI binary that spawns the Open Knowledge MCP server
+   * directly (e.g. the Electron-bundled `ok.sh` wrapper, or the `/usr/local/bin/ok`
+   * symlink when M6a is installed). When set, the managed entry is
+   * `{ command: cliPath, args: ['mcp'] }` — bypasses `npx` entirely.
+   *
+   * Highest-precedence branch of `buildManagedServerEntry`: takes effect even
+   * when `mode === 'dev'` is also set. Intended for Electron main's first-launch
+   * MCP wiring (M6b / D-M6-R9); the CLI `ok init` path never sets this.
+   */
+  cliPath?: string;
+  /**
+   * Skip `writeEditorMcpConfig`'s `isEditorTargetAvailable` check. Default
+   * `ok init` behavior (main branch PR #282) rejects writes for editors
+   * whose config dir doesn't exist — reasonable when the default editor list
+   * is being fanned out without user intent. M6b's consent dialog shows
+   * every editor with a checkbox and the user explicitly toggles; their
+   * click IS the consent, so the availability check would silently drop
+   * the selection. `writeUserMcpConfigs` (the M6b entry point) sets this
+   * to `true`; terminal-invoked `ok init` never sets it.
+   */
+  skipAvailabilityCheck?: boolean;
 }
 
 export function resolveDevCliDistPath(cliEntryPath = process.argv[1]): string {
@@ -61,7 +83,14 @@ export function resolveDevCliDistPath(cliEntryPath = process.argv[1]): string {
   return join(repoRoot, 'packages', 'cli', 'dist', 'cli.mjs');
 }
 
-function buildManagedServerEntry(options: McpInstallOptions = {}): Record<string, unknown> {
+export function buildManagedServerEntry(options: McpInstallOptions = {}): Record<string, unknown> {
+  if (options.cliPath) {
+    return {
+      command: options.cliPath,
+      args: ['mcp'],
+    };
+  }
+
   if (options.mode === 'dev') {
     return {
       command: DEV_MCP_SERVER_COMMAND,

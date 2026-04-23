@@ -64,6 +64,35 @@ export interface OkUpdateStuckHintInfo {
 }
 
 /**
+ * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
+ * Mirrors the canonical `EditorId` + desktop / core copies; drift caught
+ * by the M1 invariant drift catcher.
+ */
+export type OkMcpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Payload passed to `mcpWiring.onShow` subscribers. `willReplace: true`
+ *  signals the editor has an existing OK-managed MCP entry (canonical npx,
+ *  `-y` variant, or prior cliPath shape) that Add would overwrite (Pass 1
+ *  Major #8). */
+export interface OkMcpWiringShowPayload {
+  readonly detectedEditors: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly detected: boolean;
+    readonly willReplace: boolean;
+  }[];
+}
+
+/** Result shape for `mcpWiring.confirm` / `skip`. */
+export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+
+/**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
  * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
  * and `OkKeyringSmokeResult` in `packages/core/src/desktop-bridge.ts`.
@@ -133,6 +162,12 @@ export interface OkDesktopBridge {
   };
   update: {
     relaunchNow(): Promise<void>;
+  };
+  mcpWiring: {
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;
+    signalReady(): void;
+    confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
+    skip(): Promise<OkMcpWiringResult>;
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;

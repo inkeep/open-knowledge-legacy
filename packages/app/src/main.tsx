@@ -10,6 +10,7 @@ import '@/lib/desktop-bridge-types';
 import { installDesktopFetchRewrite } from '@/lib/desktop-fetch';
 import { installDeepLinkListener } from '@/lib/install-deep-link-listener';
 import { installGitInitToast } from '@/lib/install-git-init-toast';
+import { installMcpConsentListener } from '@/lib/mcp-consent-store';
 import { initWebVitals } from '@/lib/perf';
 import { installColdMountInstrumentation } from '@/lib/perf/cold-mount-instrumentation';
 import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
@@ -60,6 +61,16 @@ installUpdateNoticesBridge();
 // pattern — listener must be in place before the event can fire.
 if (typeof window !== 'undefined') {
   installDeepLinkListener({ bridge: window.okDesktop });
+}
+
+// Desktop-only: subscribe to the M6b first-launch MCP consent bridge event
+// and call `mcpWiring.signalReady()` so main's whenRendererReady dispatch
+// knows this renderer is attached. Same module-init pattern — listeners must
+// be in place before `ok:mcp-wiring:show` can fire, and the `signalReady`
+// invoke is what flips main's one-shot dispatch after `did-finish-load`.
+// No-op in web / CLI distribution (window.okDesktop undefined).
+if (typeof window !== 'undefined') {
+  installMcpConsentListener({ bridge: window.okDesktop });
 }
 
 const queryClient = new QueryClient({
