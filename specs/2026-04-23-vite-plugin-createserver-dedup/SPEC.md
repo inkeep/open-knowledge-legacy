@@ -10,7 +10,7 @@ status: Draft — 2026-04-23
 **Status:** Approved — ready for implementation
 **Owner(s):** Andrew Mikofalvy
 **Last updated:** 2026-04-23
-**Baseline commit:** `5ee694c2` (post-scaffold; audit + assess-findings complete)
+**Baseline commit:** `050dfe53` (post-finalize; ready for /ship)
 **Links:**
 - Sibling spec that explicitly carves out this work: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../2026-04-21-m6-cli-and-mcp-wiring/SPEC.md) §1 "Scope clarification — what M6 does not touch" names this exact refactor as out-of-scope for M6, handing it off here.
 - Evidence: `./evidence/` (spec-local findings)
