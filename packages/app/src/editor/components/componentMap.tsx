@@ -1,23 +1,26 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * LEAF components (no compound-context dependency) use direct fumadocs-ui
- * imports — full D12 fidelity. COMPOUND components (Tabs/Tab,
- * Accordions/Accordion) use editor-local wrappers because fumadocs compounds
- * rely on React Context via Radix's createContextScope which doesn't cross
- * TipTap's NodeView portal boundaries. See compound-wrappers.tsx for the
- * evidence trace and rationale.
+ * Fumadocs LEAF imports (Callout, Card, Cards, File, Files, Folder,
+ * ImageZoom, Step, Steps, Banner, TypeTable) are transitional — they
+ * keep the editor renderable while the 5-pack DIY replacements land in
+ * US-005..US-009 per `specs/2026-04-23-cb-v2-md-foundation/SPEC.md`.
+ * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut
+ * in US-002 along with the Context Bridge Registry (Precedent #27 /
+ * PRECEDENTS.md #29 retracted on this branch; preserved on PR #165 at
+ * commit e56f33c3 for future compound-tier revival per NG19).
  *
- * `Audio` is a minimal HTML5 `<audio controls>` wrapper — functional playback
- * via the browser-native media element. VR14 envisioned a shadcn-styled
- * player; the research + follow-up work item live at
+ * `Audio` is a minimal HTML5 `<audio controls>` wrapper — functional
+ * playback via the browser-native media element. VR14 envisioned a
+ * shadcn-styled player; the research + follow-up work item live at
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * (current lean: AI Elements AudioPlayer on `media-chrome`).
  *
- * Mermaid was removed from the registry 2026-04-21 — the prior placeholder
- * rendered no SVG and was tech debt under the greenfield directive. Existing
- * `<Mermaid />` user content auto-converts to `rawMdxFallback` (nested CM
- * source editor) via `JsxComponentView`'s wildcard-handling path.
+ * Mermaid was removed from the registry 2026-04-21. Content names no
+ * longer in `componentMap` (Tabs/Tab/Accordions/Accordion/InlineTOC
+ * after US-002) fall through to the `'*'` wildcard per
+ * `registry/index.ts:getDescriptor`, which renders user content verbatim
+ * under Precedent #28 (all user content visible).
  *
  * '*' maps to UnregisteredBadgeRender for the wildcard fallback.
  */
@@ -28,8 +31,6 @@ import { File, Files, Folder } from 'fumadocs-ui/components/files';
 import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { TypeTable } from 'fumadocs-ui/components/type-table';
-import { EditorAccordion, EditorAccordions, EditorTab, EditorTabs } from './compound-wrappers';
-import { InlineTOCView } from './InlineTOCView';
 
 function Audio(props: { src?: string; title?: string; children?: React.ReactNode }) {
   return (
@@ -57,17 +58,12 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Cards,
   Steps,
   Step,
-  Tabs: EditorTabs,
-  Tab: EditorTab,
-  Accordions: EditorAccordions,
-  Accordion: EditorAccordion,
   Files,
   Folder,
   File,
   ImageZoom,
   Banner,
   TypeTable,
-  InlineTOC: InlineTOCView,
   Audio,
   '*': UnregisteredBadgeRender,
 };

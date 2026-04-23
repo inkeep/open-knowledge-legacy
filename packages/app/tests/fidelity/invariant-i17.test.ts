@@ -53,14 +53,14 @@ const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * NodeView source files governed by Precedent #28 — every file that renders
  * user content through the `<NodeViewContent>` JSX element.
  *
- * Other NodeViews in the codebase (RawMdxFallbackCMView, compound-wrappers)
- * render content-bearing nodes via different mechanisms (imperative CM mount,
- * `data-state` DOM bridge) and have their own governance:
- *   - compound-wrappers.tsx tab-panel hiding: pinned separately below
- *     ("exemption discipline" test).
- *   - RawMdxFallbackCMView.tsx: NodeViewWrapper + imperative CodeMirror
- *     mount. Content hole exposed via the nested CM's contentDOM, not
- *     NodeViewContent JSX. Precedent #24 governs.
+ * RawMdxFallbackCMView.tsx is the other NodeView in the codebase: it uses
+ * NodeViewWrapper + imperative CodeMirror mount, exposing the content hole
+ * via the nested CM's contentDOM rather than NodeViewContent JSX.
+ * Precedent #24 governs that path.
+ *
+ * compound-wrappers.tsx (and its `data-[state=inactive]:hidden` exemption)
+ * was deleted 2026-04-23 per `specs/2026-04-23-cb-v2-md-foundation/` US-002 —
+ * Precedent #27 (Context Bridge Registry) retracted on this branch.
  */
 const NODE_VIEW_SOURCES = ['src/editor/extensions/JsxComponentView.tsx'];
 
@@ -123,16 +123,6 @@ describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #28)', () =>
       }
     });
   }
-
-  test('exemption discipline: tab-panel exemption documents Precedent #28', () => {
-    // Pin: compound-wrappers.tsx EditorTab uses `data-[state=inactive]:hidden`
-    // — the sole documented exemption (standard tab UX hides inactive panels;
-    // content is accessible by clicking the trigger). Enforce that the
-    // exemption comment cites Precedent #28 so future readers find the why.
-    const src = readFileSync(join(APP_ROOT, 'src/editor/components/compound-wrappers.tsx'), 'utf8');
-    expect(src.includes('data-[state=inactive]:hidden')).toBe(true);
-    expect(src.includes('documented exemption from Precedent #28')).toBe(true);
-  });
 
   test('NodeView source list: audit-complete (no new NodeView files missed)', () => {
     // Audit sanity check: the NODE_VIEW_SOURCES list should cover every

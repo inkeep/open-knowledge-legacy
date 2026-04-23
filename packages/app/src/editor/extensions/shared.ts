@@ -13,14 +13,14 @@ import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
-// BridgeIdPlugin re-enabled — SelectionStatePlugin consumes it to resolve
-// stable ancestor-chain IDs across PM re-renders (see Precedent "Selection
-// state as typed PM PluginState"). Plugin falls back to pos-derived
-// synthetic IDs if absent (unit-test path); production wants the real
-// Y.XmlElement-keyed IDs. The Context Bridge Registry that originally
-// consumed this was deleted in favor of Fallback 2 (see AGENTS.md
-// "Compound components use DOM data-attributes"); bridge-id-plugin lives
-// on as a standalone stable-identity primitive.
+// BridgeIdPlugin — SelectionStatePlugin consumes it to resolve stable
+// ancestor-chain IDs across PM re-renders (see Precedent "Selection state
+// as typed PM PluginState"). Plugin falls back to pos-derived synthetic
+// IDs if absent (unit-test path); production wants the real
+// Y.XmlElement-keyed IDs. The Context Bridge Registry / compound-wrapper
+// precedent that originally consumed this was retracted 2026-04-23 per
+// `specs/2026-04-23-cb-v2-md-foundation/SPEC.md` D-MF4 + FR-15;
+// bridge-id-plugin lives on as a standalone stable-identity primitive.
 import { BridgeIdPlugin } from './bridge-id-plugin';
 import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
@@ -30,7 +30,6 @@ import { RawMdxFallback } from './raw-mdx-fallback';
 import { SelectionStatePlugin } from './selection-state-plugin';
 import { SlashCommand } from './slash-command';
 import { SourceDirtyObserver } from './source-dirty-observer';
-import { TypedChildrenGuard } from './typed-children-guard';
 import { WikiLink } from './wiki-link';
 
 // Replace core extensions that have app-side NodeViews or mark views.
@@ -75,7 +74,6 @@ export const sharedExtensions = [
   BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,
-  TypedChildrenGuard,
   KeyboardNav,
   // Selection layer — must come after BridgeIdPlugin so ancestor-chain
   // lookups resolve stable IDs. Order is load-bearing only wrt BridgeId;

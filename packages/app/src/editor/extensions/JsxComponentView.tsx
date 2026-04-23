@@ -43,7 +43,6 @@ import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
-import { EditorContextProvider } from '../components/EditorContext.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../hooks/use-block-selection.ts';
@@ -695,22 +694,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               // on/inside the node. Defer to the next frame so PM's click
               // handler settles first, then — if the caret is still within
               // the node's range — advance it to the NEAREST VALID TEXT
-              // POSITION forward.
-              //
-              // We used to `setTextSelection(pos + node.nodeSize)`. That
-              // fails when the node sits inside a typed-children container
-              // like `<Cards>`: `pos + nodeSize` is a block boundary inside
-              // `Cards` (parent == Cards, not a textblock). Typing there
-              // wraps the keystroke in a paragraph and inserts the paragraph
-              // into `Cards` — bypassing `typedChildrenGuard`, which only
-              // fires when `$pos.depth === depth + 1` (i.e. inside a child
-              // textblock). Traced via agent-browser: pos 29 resolves with
-              // parent=Cards and isTextblock=false; the next textblock is
-              // one step forward at pos 30 (the "After card." paragraph).
-              //
-              // `TextSelection.near($pos, 1)` walks forward past block
-              // boundaries to a real text position, so typing lands in the
-              // next paragraph instead of inside the container.
+              // POSITION forward. Using `setTextSelection(pos + nodeSize)`
+              // can land on a block boundary (parent is a block container,
+              // not a textblock), so typing wraps the keystroke in a new
+              // paragraph. `TextSelection.near($pos, 1)` walks forward past
+              // block boundaries to a real text position.
               if (open) return;
               if (descriptor.hasChildren && !descriptor.isSelfClosing) return;
               requestAnimationFrame(() => {
@@ -810,18 +798,16 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
         rawComponentName={(node.attrs.componentName as string) ?? ''}
       >
-        <EditorContextProvider value={editor}>
-          <Comp {...primitiveProps}>
-            <NodeViewContent
-              className={`component-children ${
-                !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
-              }`}
-              {...(!descriptor.hasChildren || descriptor.isSelfClosing
-                ? { contentEditable: false }
-                : {})}
-            />
-          </Comp>
-        </EditorContextProvider>
+        <Comp {...primitiveProps}>
+          <NodeViewContent
+            className={`component-children ${
+              !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
+            }`}
+            {...(!descriptor.hasChildren || descriptor.isSelfClosing
+              ? { contentEditable: false }
+              : {})}
+          />
+        </Comp>
       </ComponentErrorBoundary>
 
       {/* "Add child" pill — absolute overlay at bottom edge (containers only) */}
