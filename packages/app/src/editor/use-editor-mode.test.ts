@@ -7,9 +7,9 @@
  *
  * Repo convention (see NavigatorApp.test.ts / interaction-layer.test.ts): no
  * @testing-library/react, no happy-dom. The React state-transition behavior
- * (useState init, focus listener registration/dispatch) is exercised by the
- * Playwright E2E suite added in US-004 (`editor-mode-persistence.e2e.ts`
- * tests T1, T3, T6, T7, T8).
+ * (useState init, localStorage load-time read) is exercised by the Playwright
+ * E2E suite added in US-004 (`editor-mode-persistence.e2e.ts` tests T1, T2,
+ * T3, T6, T8).
  *
  * These unit tests cover the entire input-validation + storage-interaction
  * surface so the Playwright tier focuses on user-facing behavior.
@@ -23,7 +23,6 @@ import {
   persistMode,
   readInitialMode,
   readPersistedMode,
-  shouldApplyPersistedMode,
 } from './use-editor-mode';
 
 // ---------------------------------------------------------------------------
@@ -169,8 +168,8 @@ describe('readPersistedMode — localStorage read with validation', () => {
     const storage = storageThatThrowsOnGet();
     expect(readPersistedMode(storage)).toBe('wysiwyg');
     expect(storage.getItem).toHaveBeenCalledTimes(1);
-    // Privacy-mode throws fire on every focus return — staying silent prevents
-    // per-focus log spam. Only the invalid-value branch warns.
+    // Privacy-mode throws are a normal environmental condition, not a bug —
+    // only the invalid-value branch warns (FR-8 "Warning logged").
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
@@ -256,48 +255,6 @@ describe('readInitialMode — precedence: window global > storage > default', ()
     const win = {};
     const storage = storageThatThrowsOnGet();
     expect(readInitialMode(win, storage)).toBe('wysiwyg');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// shouldApplyPersistedMode — H1 guard (cross-window sync decision)
-//
-// Unit-tests the pure helper that decides whether a cross-window
-// persistedMode change propagates into the session-local editorMode. The
-// invariant: apply the persisted change UNLESS the session is currently in
-// 'diff' mode. In 'diff', the exit path must restore the session pre-diff
-// mode via `modeBeforeDiffRef` — NOT be overridden by a concurrent cross-
-// window flip (the audit-surfaced H1 race; SPEC §7.4 R1).
-//
-// Coverage: the 2-mode × 3-current-state matrix (`source`/`wysiwyg` ×
-// `source`/`wysiwyg`/`diff`). The pure helper alone does NOT guard against
-// a future `[persistedMode, editorMode]` dep-array regression (that's the
-// E2E-level H1 scenario), but it catches guard-function drift — e.g. a
-// refactor that changes `!== 'diff'` to `=== 'diff'` or adds additional
-// conditions that break the invariant.
-// ---------------------------------------------------------------------------
-
-describe('shouldApplyPersistedMode — H1 guard', () => {
-  test("returns true when current is 'wysiwyg' — apply persisted change", () => {
-    expect(shouldApplyPersistedMode('wysiwyg')).toBe(true);
-  });
-
-  test("returns true when current is 'source' — apply persisted change", () => {
-    expect(shouldApplyPersistedMode('source')).toBe(true);
-  });
-
-  test("returns false when current is 'diff' — DO NOT apply (H1 race guard)", () => {
-    expect(shouldApplyPersistedMode('diff')).toBe(false);
-  });
-
-  // Defensive — the `current` arg is typed as `string` so a refactor that
-  // changes `editorModeRef.current`'s value space can't widen the short-
-  // circuit accidentally. Unknown strings behave like `wysiwyg`/`source`
-  // (apply), matching the "diff is the ONLY special case" invariant.
-  test('returns true for any non-diff string (open set, fail-open)', () => {
-    expect(shouldApplyPersistedMode('')).toBe(true);
-    expect(shouldApplyPersistedMode('hybrid')).toBe(true);
-    expect(shouldApplyPersistedMode('DIFF')).toBe(true); // case-sensitive
   });
 });
 

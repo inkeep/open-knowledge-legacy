@@ -4,11 +4,7 @@ import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
-import {
-  type EditorModeValue,
-  shouldApplyPersistedMode,
-  useEditorMode,
-} from '@/editor/use-editor-mode';
+import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
@@ -32,23 +28,12 @@ import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePane
 export type EditorMode = EditorModeValue | 'diff';
 
 export function EditorPane() {
-  // Persisted preference (localStorage, cross-window focus-based sync via
-  // `useEditorMode`). Seeds the session-local `editorMode` state and is re-
-  // applied when another window flips the preference and this window regains
-  // focus — except when we're in diff mode (see cross-window sync effect
-  // below + SPEC §7.4 R1).
+  // Persisted preference (localStorage). Read once at mount via
+  // `useEditorMode`'s `useState` initializer and seeded into session-local
+  // `editorMode`. Open tabs are independent for their lifetime (SPEC D9);
+  // the persisted value applies at load (refresh / new tab / new window).
   const [persistedMode, setPersistedMode] = useEditorMode();
   const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
-  // Track the session-local editorMode in a ref so the cross-window sync
-  // effect below can read it without becoming a dependency. Depending on
-  // `editorMode` would make diff-exit → restore-to-pre-diff-mode compete
-  // with the effect's own write (audit-surfaced H1 bug). The ref is updated
-  // in its own effect (not during render) so the React Compiler doesn't
-  // flag `.current = …` as a render-phase ref mutation.
-  const editorModeRef = useRef<EditorMode>(persistedMode);
-  useEffect(() => {
-    editorModeRef.current = editorMode;
-  }, [editorMode]);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -151,22 +136,6 @@ export function EditorPane() {
     // call setPersistedMode (see §7.5).
     setPersistedMode(mode);
   }
-
-  // Cross-window preference sync. `persistedMode` changes when the hook's
-  // focus-based re-check picks up a flip from another window. Apply it to
-  // the session-local editorMode UNLESS we're currently in diff — in diff,
-  // defer the application so the existing "restore to session pre-diff mode
-  // on exit" UX still runs cleanly via `modeBeforeDiffRef`. Dep array is
-  // intentionally `[persistedMode]` alone; reading `editorMode` via ref
-  // decouples the guard from the dep array (SPEC §7.4 R1, audit H1). The
-  // 'diff'-guard decision lives in `shouldApplyPersistedMode()` so the
-  // invariant is unit-tested as a pure function — adding `editorMode` to
-  // this dep array reintroduces the H1 race; the pure helper alone cannot
-  // catch that regression, but it guards the guard's own correctness.
-  useEffect(() => {
-    if (!shouldApplyPersistedMode(editorModeRef.current)) return;
-    setEditorMode(persistedMode);
-  }, [persistedMode]);
 
   async function handleSaveVersion() {
     setSaving(true);

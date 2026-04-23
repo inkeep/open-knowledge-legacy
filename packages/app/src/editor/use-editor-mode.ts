@@ -1,24 +1,27 @@
 /**
  * useEditorMode — persists the user's editor mode (`wysiwyg` / `source`) as a
  * user-global preference that survives refreshes, new tabs, and new Electron
- * windows on the same origin. Cross-window preference changes are re-applied
- * when this window regains focus (Excalidraw Pattern C — SPEC D7).
+ * windows on the same origin.
  *
- * The hook's `useState` initializer prefers `window.__OK_EDITOR_MODE__`, which
- * the FOUC-prevention inline script in `packages/app/index.html` sets before
- * React mounts. This gives flash-free first paint for users whose persisted
- * mode is `source`.
+ * Read-once at load (SPEC D9, supersedes D7): the hook reads localStorage
+ * exactly once via its `useState` initializer. `persistAndSet` writes to
+ * localStorage on every caller invocation so the last toggle wins at the next
+ * load. Open tabs/windows do NOT update each other live — each is its own
+ * session for its lifetime. Cross-window sync (Excalidraw Pattern C / next-
+ * themes Pattern A / BroadcastChannel Pattern B) was rejected: the spontaneous
+ * mode-flip on tab-focus surprises the user regardless of IME/drag-selection
+ * protection.
  *
- * Live `storage` event auto-apply was rejected (SPEC D7): the mode-swap CSS
- * class `.ok-mode-hidden` preserves DOM presence via `content-visibility` but
- * still interrupts IME composition and in-flight drag-selection — the cost
- * outweighs the eventual-consistency benefit on an unfocused window.
+ * The `useState` initializer prefers `window.__OK_EDITOR_MODE__`, which the
+ * FOUC-prevention inline script in `packages/app/index.html` sets before React
+ * mounts. This gives flash-free first paint for users whose persisted mode is
+ * `source`.
  *
  * Consumed by `EditorPane` only. Do NOT wrap in a React Context (ASK_FIRST
  * per SPEC §15 — consumer count is 1, Context would add indirection without
  * benefit).
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 const STORAGE_KEY = 'ok-editor-mode-v1';
 
@@ -59,8 +62,8 @@ export function isEditorModeValue(raw: unknown): raw is EditorModeValue {
  * On a structurally invalid persisted value (SPEC FR-8: prior-version schema
  * violation or manual localStorage tampering), logs a single bracket-prefix
  * `console.warn` so "my preference doesn't persist" reports are diagnosable.
- * The storage-throw branch stays silent — it fires on every focus return in
- * privacy mode and would generate per-focus log spam.
+ * The storage-throw branch stays silent — privacy-mode / quota throws are a
+ * normal environmental condition, not a bug.
  */
 export function readPersistedMode(
   storage: Pick<Storage, 'getItem'> = localStorage,
@@ -71,8 +74,8 @@ export function readPersistedMode(
     if (isEditorModeValue(raw)) return raw;
     console.warn('[editor-mode] invalid persisted value, falling back to default', { raw });
   } catch {
-    // Privacy mode / quota / serialization — stay silent to avoid per-focus
-    // spam; only the invalid-value branch above logs (FR-8 "Warning logged").
+    // Privacy mode / quota / serialization — stay silent; only the invalid-
+    // value branch above logs (FR-8 "Warning logged").
   }
   return DEFAULT_MODE;
 }
@@ -91,26 +94,6 @@ export function readInitialMode(
   const preloaded = win.__OK_EDITOR_MODE__;
   if (isEditorModeValue(preloaded)) return preloaded;
   return readPersistedMode(storage);
-}
-
-/**
- * Decide whether a cross-window persisted-mode change should be applied to
- * the session-local editorMode. The rule: apply unless the session is
- * currently in diff mode — diff is ephemeral and its exit path must restore
- * the session pre-diff mode via `modeBeforeDiffRef`, NOT be overridden by a
- * concurrent cross-window flip (audit-surfaced H1 race; SPEC §7.4 R1).
- *
- * Accepting `current` as a string (not just the `EditorMode` type) lets the
- * `EditorPane` sync effect call this with `editorModeRef.current` without
- * importing the `EditorMode` type into this module (which would create a
- * circular dependency). Any string the effect might hold is valid input; the
- * function's job is the 'diff' short-circuit.
- *
- * Pure — exported for unit testing (see `use-editor-mode.test.ts` describe
- * block 'shouldApplyPersistedMode — H1 guard').
- */
-export function shouldApplyPersistedMode(current: string): boolean {
-  return current !== 'diff';
 }
 
 /**
@@ -133,25 +116,14 @@ export function persistMode(
 }
 
 /**
- * React hook. Returns `[mode, setMode]`. Every `setMode` call updates React
- * state AND writes to localStorage synchronously. On window `focus`, re-reads
- * storage and updates state if the persisted value differs from current — the
- * functional-update form short-circuits the reducer when values are equal so
- * equal-value writes don't schedule re-renders.
+ * React hook. Returns `[mode, setMode]`. Reads localStorage exactly once via
+ * the `useState` initializer. Every `setMode` call updates React state AND
+ * writes to localStorage so the last toggle wins at the next load. The hook
+ * does NOT listen for cross-window changes — open tabs remain independent
+ * until one reloads (SPEC D9).
  */
 export function useEditorMode(): readonly [EditorModeValue, (next: EditorModeValue) => void] {
   const [mode, setMode] = useState<EditorModeValue>(readInitialMode);
-
-  useEffect(() => {
-    function handleFocus() {
-      const next = readPersistedMode();
-      setMode((current) => (current === next ? current : next));
-    }
-    window.addEventListener('focus', handleFocus);
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, []);
 
   function persistAndSet(next: EditorModeValue) {
     setMode(next);
