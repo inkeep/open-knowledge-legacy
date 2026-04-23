@@ -36,6 +36,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
+# Apple Container's guest kernel rejects bubblewrap's Debian default caps-based
+# config with: "bwrap: Unexpected capabilities but not setuid, old file caps config?"
+# (Discovered smoke-testing matryoshka on container v0.11, 2026-04-23.) Only matters
+# if you layer Anthropic's /sandbox inside this container — harmless if you don't.
+RUN setcap -r /usr/bin/bwrap 2>/dev/null || true \
+ && chmod u+s /usr/bin/bwrap
+
+# ripgrep is required by @anthropic-ai/sandbox-runtime if you layer it inside.
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
+
 # Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code \
  && npm cache clean --force

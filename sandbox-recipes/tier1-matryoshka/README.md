@@ -1,6 +1,8 @@
 # Tier 1 — Matryoshka: Anthropic `/sandbox` *inside* Apple Container
 
-**Experimental.** The thesis from the report: run Claude Code inside an Apple Container microVM *and* have it use its own built-in `/sandbox` (bubblewrap + proxy) inside the VM. Two isolation layers:
+**Status: verified on Apple Container v0.11 + macOS 26 Tahoe (2026-04-23).** The `verify-matryoshka.sh` smoke test passes 5/5 in this configuration. Run it yourself before depending on the pattern on a different platform combo — it's the canonical gate. The report's "untested matryoshka pattern" note is now closed; this recipe is the working one.
+
+The thesis from the report: run Claude Code inside an Apple Container microVM *and* have it use its own built-in `/sandbox` (bubblewrap + proxy) inside the VM. Two isolation layers:
 
 - **Outer:** Apple Container microVM (hypervisor boundary against the host).
 - **Inner:** Anthropic's bubblewrap-based sandbox inside the Linux guest (process boundary against the agent's own bash subprocess, plus Anthropic's own network proxy enforcing a domain allowlist).
@@ -9,12 +11,12 @@ This gives you domain-allowlist network enforcement (via Anthropic's proxy) **wi
 
 ## What's known, what's not
 
-| Question | Status |
+| Question | Status (as of 2026-04-23 on container v0.11 + macOS 26) |
 |---|---|
-| Does bubblewrap compose with the Apple Container kernel (Linux 6.12.28)? | **Unknown** — user-namespace support is standard in 6.x kernels, should work, but not tested. |
-| Does Anthropic's `@anthropic-ai/sandbox-runtime` need capabilities Apple Container doesn't expose? | **Likely OK** — bubblewrap uses user namespaces, not CAP_NET_ADMIN. But `enableWeakerNestedSandbox` exists for a reason. |
-| Can `claude /sandbox` auto-configure inside the container? | **Partial** — the in-container `~/.claude/settings.json` is pre-configured by this image. |
-| What does Anthropic mean by "`enableWeakerNestedSandbox` considerably weakens security"? | **Unclear** — their docs don't enumerate. Run `verify-matryoshka.sh` to see what the sandbox does inside the container. |
+| Does bubblewrap compose with the Apple Container kernel (Linux 6.18.5 on v0.11)? | **YES**, after the Containerfile fix documented below (setuid bwrap). Default Debian file-caps-based config fails with `"Unexpected capabilities but not setuid"` — fixed by `setcap -r /usr/bin/bwrap && chmod u+s /usr/bin/bwrap`. |
+| Does Anthropic's `@anthropic-ai/sandbox-runtime` need capabilities Apple Container doesn't expose? | **No**, but it DOES require `ripgrep` (added to base deps). |
+| Can `claude /sandbox` auto-configure inside the container? | **Yes** — the in-container `~/.claude/settings.json` is pre-configured by this image. |
+| What does Anthropic mean by "`enableWeakerNestedSandbox` considerably weakens security"? | Still **unclear** — their docs don't enumerate. `verify-matryoshka.sh` confirms bubblewrap spawns and the sandbox runtime echoes correctly, but doesn't measure what's degraded vs strict mode. |
 
 ## Files
 

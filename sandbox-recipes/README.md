@@ -16,7 +16,14 @@ Full threat-model mapping and tradeoffs live in the report; this directory is th
 
 ## Status
 
-All recipes are **experimental**. Tier 0 is most mature (just config files; zero infrastructure). Tier 1 Apple Container recipes are untested end-to-end on my machine — `container` wasn't installed when I wrote them. The matryoshka experiment has a `verify-matryoshka.sh` script that confirms bubblewrap composes with the Apple Container VM kernel — run it first and send me the output before assuming the nested sandbox actually works.
+- **Tier 0** (Anthropic's built-in sandbox) — most mature; just config files. No infrastructure overhead.
+- **Tier 1 Apple Container** — *validated 2026-04-23 on Apple Container v0.11 + macOS 26 Tahoe*. Build + entrypoint + guest-side iptables allowlist all confirmed working end-to-end. Allowed domains pass (`api.anthropic.com`, `github.com`), denied domains blocked (`example.com`, `cloudflare.com`).
+- **Tier 1 Matryoshka** — *validated 2026-04-23 on same config*. `verify-matryoshka.sh` passes 5/5 after two Containerfile fixes discovered during smoke-testing: (a) bubblewrap needs setuid (Debian file-caps default fails with `"Unexpected capabilities but not setuid"` against the Apple Container guest kernel), (b) `@anthropic-ai/sandbox-runtime` requires `ripgrep`.
+- **Tier 1 Lima vz** — config is based on published Lima v2.0 docs; not end-to-end tested. `./setup.sh` should work; report back if it doesn't.
+
+## Path-level network restrictions
+
+None of these recipes do URL-path filtering (e.g., "allow `github.com/inkeep/*` only") — they all do domain-level. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for four options (the best for the GitHub case is fine-grained PATs at the auth layer, not network layer).
 
 ## Prerequisites
 

@@ -12,7 +12,7 @@ ARG CLAUDE_USER=claude
 ARG CLAUDE_UID=1000
 
 # Same base deps as tier1-apple-container — plus we will need bubblewrap + socat
-# functional for the inner sandbox to work (they're already in the base deps).
+# functional for the inner sandbox to work, and ripgrep for @anthropic-ai/sandbox-runtime.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -23,8 +23,17 @@ RUN apt-get update \
       bubblewrap \
       socat \
       dnsutils \
+      ripgrep \
       tini \
  && rm -rf /var/lib/apt/lists/*
+
+# Apple Container's guest kernel rejects bubblewrap's Debian default caps-based
+# config with: "bwrap: Unexpected capabilities but not setuid, old file caps config?"
+# Discovered during smoke-testing the matryoshka pattern on container v0.11.
+# Fix: switch bwrap to setuid-root by stripping file caps and setting the suid bit.
+# This is how Fedora/Arch ship bubblewrap by default and works across all kernels.
+RUN setcap -r /usr/bin/bwrap 2>/dev/null || true \
+ && chmod u+s /usr/bin/bwrap
 
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
