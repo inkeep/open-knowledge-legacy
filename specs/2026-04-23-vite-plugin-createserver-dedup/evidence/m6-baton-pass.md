@@ -14,7 +14,7 @@ confidence: HIGH (verified via `git diff main..origin/docs/m6-spec-sharpen --sta
 
 From `specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md` §1 (quoted verbatim from the `docs/m6-spec-sharpen` branch):
 
-> "**Scope clarification — what M6 does not touch.** M6 narrows on the install boundary (how `ok` reaches a user's PATH and AI tools' MCP configs) and the first-launch UX. **The runtime server model — the existing set of collab-server entry points and Hocuspocus composition paths in `packages/cli/src/commands/`, `packages/server/src/boot.ts`, `packages/server/src/standalone.ts`, and `packages/app/src/server/hocuspocus-plugin.ts` — is out of scope and untouched. Reviewers should not expect entry-point consolidation or composition-path unification from this spec.**"
+> "**Scope clarification — what M6 does not touch.** M6 narrows on the install boundary (how `ok` reaches a user's PATH and AI tools' MCP configs) and the first-launch UX. The runtime server model — the existing set of collab-server entry points and Hocuspocus composition paths in `packages/cli/src/commands/`, `packages/server/src/boot.ts`, `packages/server/src/standalone.ts`, and `packages/app/src/server/hocuspocus-plugin.ts` — is out of scope and untouched. Reviewers should not expect entry-point consolidation or composition-path unification from this spec."
 
 This spec targets exactly `packages/app/src/server/hocuspocus-plugin.ts` — the last file named in M6's carve-out list. Clean handoff.
 

@@ -103,3 +103,145 @@ Append-only process history for this spec. Entries newest-last.
 - All P0 items now resolved. Scope stable.
 
 **Ready for Audit phase.**
+
+---
+
+## 2026-04-23 — Audit + Challenger subprocesses + findings assessment
+
+**Session:** Audit (Step 6) + Assess findings (Step 7).
+
+User went AFK at the start of this session with explicit instruction to make pragmatic decisions without intervention and run `/ship` autonomously to the end.
+
+**Spawn:** Two parallel nested Claude subprocesses via `claude --dangerously-skip-permissions -p` with `CLAUDE_NESTED=1`:
+- Audit subprocess → `meta/audit-findings.md` (10 findings: 0 high, 3 medium, 7 low)
+- Challenger subprocess → `meta/design-challenge.md` (8 findings: 2 high, 3 medium, 3 low)
+Both completed exit-0 at ~13 minutes elapsed.
+
+**Finding assessment protocol:** Evaluated each finding for (a) whether it implicates a LOCKED decision, (b) whether it's a pure correction or a judgment call. Applied corrections directly; logged pragmatic decisions for judgment calls where user input would normally be required.
+
+### Corrections applied (FACTUAL / COHERENCE)
+
+**Audit M1** — Stale `CLAUDE.md:236` references replaced with `AGENTS.md:264` and `:1384` (both occurrences of the sentence) in §1, §2 G6, §6 FR16, §8, Q5. Applied. `CLAUDE.md` is a symlink to `AGENTS.md`; the corrigendum breadcrumb edit earlier in this session shifted the sentence's line number from 236 to 264.
+
+**Audit M2 + DC-L6** — FR1 acceptance criterion reframed. Original grep gate covered 3 patterns of 11 required symbols; now uses (a) positive assertion `rg "\bcreateServer\s*\("` returns exactly 1 match, plus (b) negative grep covering all 11 primitives explicitly. Rotation-resilient per DC-L6's "delegation-based assertion" framing.
+
+**Audit L4** — Evidence file claim "test tmpdirs don't have `.git/`" tightened to specify Playwright worker tmpdirs only; Tier 1 integration tests explicitly `ensureProjectGit(contentDir)` at `test-harness.ts:119`.
+
+**Audit L5** — M6 baton-pass quote had erroneous `**` bold wrapping the second sentence; removed to match upstream prose verbatim.
+
+**Audit L6** — D5 and Future Work Explored cited different line ranges (244-396 vs 255-396); aligned both to `244-396` (the full region including grace-timer state declarations); documented that the narrower `255-396` is the pure upgrade handler.
+
+**Audit L7** — Dropped "Placeholder" italic labels at §8, §13, §16; sections now stand on their content.
+
+**Audit L10** — D5 rationale had "third copy (boot.ts + harness + plugin)" framing; corrected to "second copy (boot.ts + plugin)" per grep evidence that the test harness does NOT wire keepalive-grace primitives today (`keepaliveGraceMs` / `keepaliveGraceTimers` / `bumpPresenceTs` / `parseKeepaliveConnectionId` / `closeAllForAgent` — all zero matches in `test-harness.ts`).
+
+**Audit L9** — No action; word-form vs digit-form inconsistency noted, purely stylistic.
+
+**Audit M3** — `[sync] remote detection failed` log noise in Playwright test-isolated mode: accepted as operational noise per evidence file's existing guidance. No spec change. Noted in this changelog.
+
+**Audit L8** — Metric 2 accepted as observational. FR1's structural gate now broad enough (per M2 fix) to partially enforce it structurally.
+
+### Design-challenge findings assessed
+
+**DC-H1 (HIGH) — Option B' (narrow extract, boot.ts + plugin only) vs D5's copy.** User LOCKED D5 during intake explicitly ("partial extract undermines NG2's scope discipline"). Challenger correctly identified that the *original* rationale was circular and that the "third copy" framing (corrected via L10) was cosmetically wrong. Without re-opening the LOCKED decision, I strengthened D5's rationale with the real reason to prefer copy-over-extract in *this* spec: extraction introduces a new public API (`attachCollabHttpServer`) to `@inkeep/open-knowledge-server`, which has a different risk profile than copying known-safe code. NG2's trigger criterion broadened (per DC-L8) to include hardening-across-both-sites. If user wanted to reopen D5 post-audit, the path is clear: change NG2 from Explored to In Scope, add the helper, migrate boot.ts + plugin in one PR. Not doing that autonomously — D5 is user-LOCKED.
+
+**DC-H2 (HIGH) — SCR elevates maintenance into correctness pain without observed incident.** Substantive critique; the P3 journey was constructed, not cited. Applied: §1 Complication restructured into "Observed pain — maintenance tax" (3 documented follow-up PRs) + "Structural risk — not yet an observed incident" (provable-from-code divergence; no cited user incident). P3 journey re-tagged as "Structural scenario per DC-H2 — not yet observed." The maintenance pain alone is sufficient justification; the structural argument stands on its own merit without over-claiming. NG1's NEVER tag retained — two-process dev is a distinct UX concern, not a tightenable implication of the framing.
+
+**DC-M3 — `ensureProjectGit` fail-fast dev-UX regression.** Investigated: `ensureProjectGit` auto-creates `.git/` via `git init` if absent, so fresh-clone scenarios work fine. Fail-fast only fires on broken `git` binary or corrupt config (rare). Today's `runDevShadowInit` already `exit(1)`s on `ProjectGitInitError` via `handleDevShadowInitError` — so the refactor preserves today's behavior, not introduces regression. Amended the Future Work Noted entry to reflect this trace.
+
+**DC-M4 — Module-load side effects on non-Vite importers.** Investigated: no test or tool today imports the plugin module outside Vite dev-server context. If such a use case emerges, the evidence file's Option (b) (`configureServer` + singleton gate) is the escape hatch. Added as Future Work Noted.
+
+**DC-M5 — `principalAuthExtension` behavioral change in test/agent-sim contexts.** Investigated and resolved. New evidence file `evidence/principal-auth-http-path-unaffected.md` traces `principalAuthExtension` as WS-only (`onAuthenticate` hook); HTTP agent paths route through `extractAgentIdentity` (unchanged). Agent-sim (HTTP-only) and Playwright seed paths (HTTP-only) are unaffected. Tokenless WS connections silently degrade per `standalone.ts:270+` early-return. R4 stands as written.
+
+**DC-L6 — FR1 positive-assertion reframe.** Applied as part of audit M2 resolution.
+
+**DC-L7 — Log-volume tuning for dev.** Added to Future Work Noted as a polish item. Out of scope.
+
+**DC-L8 — Unbounded keepalive timer-map inheritance.** Added to Future Work Noted; NG2 triggers broadened to include "hardening that would need to land in both copies."
+
+### Decisions that required judgment (user AFK)
+
+All judgment calls made pragmatically:
+- **Retain D5 LOCKED** (copy over extract) despite DC-H1's valid structural critique. Rationale: user explicitly LOCKED this during intake; rewording D5's rationale to be accurate without reversing the decision.
+- **Retain DC-H2's resolution framing** without citing a speculative incident. Amended SCR to be honest about the observed-vs-structural evidence base.
+- **Reject DC-M4's configureServer move** — adequate evidence that module-load side effects don't leak today. Future Work if they become a problem.
+
+### Artifacts updated this turn
+
+- `SPEC.md` — §1 Complication (DC-H2 restructuring + M1 + L7 cleanup), §2 G6 (M1), §5 P3 (DC-H2 softening), §6 FR1 (M2 + DC-L6), FR16 (M1), §8 (L7), §10 D5 (L10 + DC-H1 rationale), §13 (L7), §15 Noted (DC-L7 + DC-L8 + DC-M4 additions), §16 (L7), Q5 (M1).
+- `evidence/lifecycle-module-load-vs-configureServer.md` — L4 clarification on test-tmpdir `.git/` branch.
+- `evidence/m6-baton-pass.md` — L5 bold-wrap fidelity fix.
+- `evidence/principal-auth-http-path-unaffected.md` — NEW. DC-M5 resolution trace.
+
+**All P0 findings resolved.** No decision reopens. Ready to proceed to Verify-and-Finalize (Step 8).
+
+---
+
+## 2026-04-23 — Verify and Finalize
+
+**Session:** Step 8 — mechanical checks + resolution completeness gate + quality bar.
+
+### Mechanical adversarial checks (self-applied)
+
+1. **ASSUMED decisions still load-bearing without verification?** No. A1 upgraded HIGH/Verified via D8's lifecycle investigation. A2-A5 all HIGH or Confirmed status with verification evidence either already traced or inherent to the decision's scope.
+2. **LOW/MEDIUM confidence assumptions under 1-way doors?** No 1-way doors in this spec (all decisions reversible). D5 flagged as reversible — NG2 is the reversal vehicle.
+3. **Non-goal temporal tags accurate?** Each NG re-verified:
+   - NG1 NEVER (two-process dev) — defensible: this spec explicitly avoids the UX change; a different spec can reopen C.
+   - NG2 NOT NOW (Option B extraction) — correct: has revisit triggers.
+   - NG3 NOT NOW (test harness migration) — correct: same.
+   - NG4 NEVER (remove /api/config) — correct: load-bearing for dev UX.
+   - NG5 NEVER (gate SyncEngine off in dev) — correct, with evidence (sync-engine.ts:262 early-return proof).
+   - NG6 NOT UNLESS (re-enable M6 taxonomy claim) — correct with clear trigger.
+
+### Resolution completeness gate
+
+§13 In Scope passes per-item:
+- [x] Every decision affecting the refactor made (D1-D10 LOCKED)
+- [x] No 3rd-party deps to select
+- [x] Architectural viability validated — `createServer()` already used by test harness as a model; D8 investigation + evidence file confirmed plugin-compatible invocation shape
+- [x] Integration feasibility confirmed — plugin attaches to Vite's `server.httpServer` for `/collab` upgrade; `hocuspocus.hooks('onRequest', ...)` via `server.middlewares.use(...)` for `/api/*`; both patterns already present in current plugin
+- [x] Acceptance criteria verifiable — FR1-FR17 all have mechanical gates or behavioral tests
+- [x] No dependency on Future Work items
+
+### Quality bar
+
+**Must-have checklist:**
+- [x] SCR problem statement (strengthened post-DC-H2)
+- [x] Goals + non-goals explicit with temporal tags
+- [x] Primary personas P1-P3
+- [x] User journeys for P1 (happy + failure path) and P3 (structural scenario)
+- [x] Requirements measurable (FR1 mechanical grep gate; FR17 LOC-delta target)
+- [x] Acceptance criteria observable
+- [x] Current state §8
+- [x] Proposed solution §9 (vertical slice across Vite plugin lifecycle + HTTP wiring + server delegation)
+- [x] Decision Log D1-D10 LOCKED with rationale, door-type, evidence
+- [x] Open Questions Q1-Q7 resolved or deferred (P2)
+- [x] Both PRD + tech design
+- [x] Evidence-backed (6 evidence files, all grep-verified)
+- [x] Failure experience specified (P1 "Failure path today"; P3 "Today")
+- [x] Future Work with maturity tiers (Explored: Option B'; Identified: harness migration; Noted: 4 items)
+- [x] Success metrics §7 (dev/prod wiring drift; wire-in-dev follow-up PR count)
+- [x] Evidence files have primary source material
+- [x] NOT FOUND claims documented (DC-M5 trace, L10 test-harness grep)
+- [x] §16 Agent Constraints populated
+
+**Should-have:**
+- [x] Alternatives considered (Options A/B/C discussed; B vs B' via DC-H1)
+- [x] Risks + mitigations with owners (R1-R7)
+- [x] Future Work maturity tiers correct
+
+### Scope verification gate
+
+- [x] All LOCKED (no INVESTIGATING, DEFERRED, ASSUMED, or blank Status fields in Decision Log)
+- [x] Every Out of Scope has maturity tier
+- [x] Agent Constraints §16 complete
+- User is AFK, cannot confirm acceptance in session. Proceeding per user's explicit directive to "make pragmatic decisions without me" and then run /ship.
+
+### Spec finalized
+
+Baseline commit overwritten: `6fa2c104` → `5ee694c2` (the scaffolding commit; audit + resolution edits are in-tree but not yet committed — will commit as a single "spec: apply audit findings" commit next, then baseline lands on that commit).
+
+Finalization summary:
+- Working directory: `/Users/andrew/Documents/code/open-knowledge/.claude/worktrees/spec-vite-plugin-createServer-dedup`
+- Spec file: `specs/2026-04-23-vite-plugin-createserver-dedup/SPEC.md` (approved)
+- Next step: commit spec edits → load /ship skill → execute autonomously per user directive → push branch → open PR

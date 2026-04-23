@@ -7,10 +7,10 @@ status: Draft — 2026-04-23
 
 # Vite dev plugin — call `createServer()` directly (Approach A) — Spec
 
-**Status:** Draft
+**Status:** Approved — ready for implementation
 **Owner(s):** Andrew Mikofalvy
 **Last updated:** 2026-04-23
-**Baseline commit:** `6fa2c104`
+**Baseline commit:** `5ee694c2` (post-scaffold; audit + assess-findings complete)
 **Links:**
 - Sibling spec that explicitly carves out this work: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../2026-04-21-m6-cli-and-mcp-wiring/SPEC.md) §1 "Scope clarification — what M6 does not touch" names this exact refactor as out-of-scope for M6, handing it off here.
 - Evidence: `./evidence/` (spec-local findings)
@@ -24,10 +24,13 @@ status: Draft — 2026-04-23
 
 **Complication.** The Vite dev plugin that powers `bun run dev` (`packages/app/src/server/hocuspocus-plugin.ts`, 594 LOC) is the lone outlier — it does **not** call `createServer()`. It independently imports ~11 server primitives and wires its own `Hocuspocus` instance by hand, but stops short of the full set. Prior exploration (2026-04-22 session) confirmed it is missing nine server-side subsystems (`startHeadWatcher`, `recoverPendingManagedRename`, `principalAuthExtension`, `SyncEngine`, `saveInMemoryCheckpoint`, `incrementRescueBuffer`, `PARK_SNAPSHOT_ORIGIN`, `parkBranch`, `readParkedState`) and six HTTP-layer primitives (`keepaliveGraceMs`, `keepaliveGraceTimers`, `bumpPresenceTs`, `parseKeepaliveConnectionId`, `ensureProjectGit`, `closeAllForAgent`). It also uses the simple `createExternalChangeHandler` path for disk-watch events instead of the rich `handleDiskEvent` in `standalone.ts` that performs three-way `reconcile()`, saves rescue buffers, and flips lifecycle conflict markers.
 
-Practical consequences:
-- Every new agent API endpoint / observer extension / CC1 channel has to be added in **both** places or dev silently diverges from prod. Visible in the recent PR history (#272 back-ported `/api/config`; #280 back-ported a keepalive routing fix; a "wire `AgentPresenceBroadcaster` in dev" follow-up was needed after the shared-server multi-agent-presence work).
-- A developer debugging reconciliation, principal-auth, managed-rename recovery, or SyncEngine behavior under `bun run dev` is running a different code path than `ok start` — divergences surface as "cannot reproduce" reports.
-- CLAUDE.md:236 claims the plugin "calls `createServer()` directly" — a statement that was aspirational at the time of writing and describes the **target** state of this refactor, not the current reality. The docs got ahead of the code.
+Practical consequences (post-audit, per DC-H2: separating observed pain from structural risk):
+
+**Observed pain — maintenance tax.** Every new agent API endpoint / observer extension / CC1 channel has to be added in **both** places or dev silently diverges from prod. Three documented "wire in dev" follow-ups visible in the recent PR history: #272 back-ported `/api/config`; #280 back-ported a keepalive routing fix; a "wire `AgentPresenceBroadcaster` in dev" follow-up (`fc80318a`) was needed after the shared-server multi-agent-presence work.
+
+**Structural risk — not yet an observed incident.** The 9-subsystem gap (reconciliation, principal-auth, managed-rename recovery, SyncEngine, etc.) means a developer debugging those behaviors under `bun run dev` runs a different code path than `ok start`. Divergence is provable from code — no cited user-reported "cannot reproduce" incident. This spec future-proofs against a structural gap, not a documented failure mode. DC-H2 flagged the earlier framing as over-claiming correctness pain; the structural argument stands on its own merit (the maintenance tax alone is sufficient justification) so we retain Option A but are honest about the evidence base.
+
+**Docs drift.** The AGENTS.md bootServer section (sentence appears twice — `AGENTS.md:264` and `AGENTS.md:1384`, both sections describe `bootServer`'s consumer list) claims the plugin "calls `createServer()` directly" — a statement that was aspirational at the time of writing and describes the **target** state of this refactor, not the current reality. The docs got ahead of the code. `CLAUDE.md` is a symlink to `AGENTS.md`.
 
 **Resolution.** Refactor the Vite plugin to call `createServer()` directly (Approach A from prior exploration). The plugin keeps only Vite-specific wiring: config.yml resolution, `OK_TEST_CONTENT_DIR` override, `sirv` filter-aware asset serving over `contentDir`, SPA-fallback guard for unknown `/api/*` routes, `/api/config` synthesis (dev-only analogue of `ok ui`), `/collab` upgrade handler attached to **Vite's** HTTP server, `prependListener` ordering vs HMR. Everything else — server construction, extensions, watchers, broadcasters, reconciliation, principal, SyncEngine, keepalive grace — comes from `createServer()`. Estimated net delete: **~300–400 LOC** from the plugin.
 
@@ -40,7 +43,7 @@ Goal: **single source of truth for Hocuspocus server wiring.** New agent API end
 - **G3.** Vite-specific behavior preserved: `bun run dev` stays a **single-process** dev workflow; `OK_TEST_CONTENT_DIR` isolation still works for Playwright; `/api/config` still served from the plugin before Hocuspocus routes are ready; `sirv` still serves filter-aware assets over `contentDir`; `server.lock` collision with `ok start` against the same contentDir still fires fast.
 - **G4.** `prependListener('upgrade')` ordering vs Vite's HMR handler preserved (plugin still wins the `/collab` and `/collab/keepalive` routes).
 - **G5.** HMR `configureServer` re-invocation behavior preserved or improved — whatever today's warn-and-continue path does, post-refactor must be equivalent or stricter (no *worse* HMR behavior).
-- **G6.** CLAUDE.md's stale claim at line 236 ("the Vite dev plugin … Calls `createServer()` directly") becomes **true** when this refactor merges, removing the ongoing discoverability gap.
+- **G6.** AGENTS.md's stale Vite-plugin claim at both occurrences (`:264` and `:1384`) becomes **true** when this refactor merges, and the corrigendum breadcrumbs are removed in the same atomic edit.
 - **G7.** `bun run check` stays green; `bun run check:full:parallel` stays green (no new Playwright regressions).
 
 ## 3) Non-goals
@@ -73,9 +76,9 @@ Note: end-users of the shipping product (Electron desktop app, CLI) are **not** 
 
 *Failure path (today, pre-refactor):* Agent adds route to `api-extension.ts`. Route works in `ok start` + tests. `bun run dev` 404s because the dev plugin wires its *own* `createApiExtension` invocation and — for some primitives like `principalAuthExtension` — doesn't wire the surrounding chain at all. Agent must diff standalone.ts and hocuspocus-plugin.ts to find the missing wiring and port it over. This is the pain.
 
-**P3 — Developer debugging external-change reconciliation.**
+**P3 — Developer debugging external-change reconciliation.** *(Structural scenario per DC-H2 — not yet observed as an incident, but a demonstrable code-path divergence.)*
 1. *Setup:* Developer runs `bun run dev`, edits `foo.md` on disk via another tool while the browser editor has unsaved local changes.
-2. *Today:* Dev plugin's disk-watch handler calls `createExternalChangeHandler(hocuspocus)`, which uses `applyExternalChange` directly — no three-way merge, no rescue buffer. The browser's local edits are overwritten silently. Reporter files "reconciliation bug" that turns out to be "dev mode doesn't run reconciliation."
+2. *Today:* Dev plugin's disk-watch handler calls `createExternalChangeHandler(hocuspocus)`, which uses `applyExternalChange` directly — no three-way merge, no rescue buffer. The browser's local edits are overwritten. Under `ok start` the same scenario runs `handleDiskEvent` with `reconcile()` + rescue buffer. A developer who tests the code path only via `bun run dev` gets a different outcome than a user running the shipped CLI.
 3. *Post-refactor:* Dev plugin delegates to `createServer()`, which wires `handleDiskEvent` with `reconcile()` + rescue-buffer checkpoint. Behavior matches `ok start`. No silent overwrite.
 
 ## 6) Requirements
@@ -84,7 +87,7 @@ Note: end-users of the shipping product (Electron desktop app, CLI) are **not** 
 
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
-| Must | FR1. Vite plugin calls `createServer()` for all server-side wiring | No import of `createPersistenceExtension`, `createApiExtension`, `createServerObserverExtension`, `AgentSessionManager`, `AgentFocusBroadcaster`, `AgentPresenceBroadcaster`, `CC1Broadcaster`, `BacklinkIndex`, `createContentFilter`, `startWatcher`, `createLiveDerivedIndexExtension` remains in `packages/app/src/server/hocuspocus-plugin.ts`. Grep gate: `rg "new Hocuspocus\|createApiExtension\|AgentSessionManager\(" packages/app/src/server/hocuspocus-plugin.ts` returns zero matches. | Structural assertion; caught by unit test or knip-clean gate |
+| Must | FR1. Vite plugin calls `createServer()` exactly once and does not re-implement any server-wiring primitive | **Positive assertion (per DC-L6):** `rg "\bcreateServer\s*\(" packages/app/src/server/hocuspocus-plugin.ts` returns exactly 1 match. **Negative assertion (covers all 11 primitives per M2):** `rg "\b(new Hocuspocus|createApiExtension|createServerObserverExtension|createPersistenceExtension|createLiveDerivedIndexExtension|createContentFilter|AgentSessionManager|AgentFocusBroadcaster|AgentPresenceBroadcaster|CC1Broadcaster|BacklinkIndex|startWatcher)\b" packages/app/src/server/hocuspocus-plugin.ts` returns 0 matches (excluding `createServer` invocations). Rotation-resilient: new primitives added to `@inkeep/open-knowledge-server` are automatically absent from the plugin if it delegates to `createServer()`. | Structural assertion; caught by shell check in the refactor PR's verification notes, and reinforced by the existing knip-clean gate (which fires when dead-export surfaces appear) |
 | Must | FR2. Dev mode inherits `handleDiskEvent` reconciliation | External disk edit while dev-server-browser has dirty buffer results in three-way merge outcome (noop/clean/merged/conflicts/refused) matching `ok start`. | Integration test covering reconcile path under `bun run dev` equivalent setup |
 | Must | FR3. Dev mode wires `principalAuthExtension` | Browser client passing a principal-ID token via HocuspocusProvider gets `ctx.principalId` pinned server-side per the same rules as prod (D50/US-024). | Unit test on `onAuthenticate` behavior with stubbed context |
 | Must | FR4. Dev mode wires `startHeadWatcher` + BatchBegin/BatchEnd | Branch switch during `bun run dev` parks WIP via `parkBranch` and restores on return. | Integration test simulating HEAD change |
@@ -99,7 +102,7 @@ Note: end-users of the shipping product (Electron desktop app, CLI) are **not** 
 | Must | FR13. `sirv` filter-aware asset serving over `contentDir` preserved | Assets under contentDir reachable; excluded paths 404. | Existing test coverage (no regression) |
 | Must | FR14. `prependListener('upgrade')` ordering preserved | `/collab` and `/collab/keepalive` routes take precedence over Vite HMR upgrade handler. | Existing `docs/m6-spec-sharpen`-adjacent keepalive test coverage |
 | Should | FR15. Plugin's HMR `configureServer` re-invocation path at least preserves today's warn-and-log behavior | `configureServerInvocations > 1` logs warning matching today's phrasing; post-refactor server does not leak resources on the orphan path. | Behavioral inspection + log assertion |
-| Should | FR16. CLAUDE.md:236 claim becomes true when refactor merges | After merge, `packages/app/src/server/hocuspocus-plugin.ts` grep for `createServer(` has 1+ match. Breadcrumb (per D3 below) is removed in the same PR. | Structural check |
+| Should | FR16. AGENTS.md claim (both occurrences, `:264` and `:1384`) becomes true when refactor merges | After merge, `packages/app/src/server/hocuspocus-plugin.ts` grep for `createServer(` has 1+ match. Both corrigendum breadcrumbs (per D3 below) are removed in the same PR; sentence replaced with D7 target prose. | Structural check |
 | Must | FR17. Net LOC delta from plugin + removed supporting files is clearly negative | `git diff --stat` shows plugin shrunk by ≥200 LOC, and `dev-shadow-init.ts` + `dev-shadow-init.test.ts` (263 LOC combined) are deleted. Expected total net delete: ~560-660 LOC. Hard floor: -400 LOC total | Mechanical gate |
 
 ### Non-functional requirements
@@ -128,7 +131,7 @@ Note: end-users of the shipping product (Electron desktop app, CLI) are **not** 
 
 ## 8) Current state (how it works today)
 
-*Details backed by prior exploration session 2026-04-22 and `evidence/` files below. To be populated in scaffold phase.*
+*Details backed by prior exploration session 2026-04-22 and `evidence/` files.*
 
 **Summary of current behavior (high-level):**
 - `packages/app/src/server/hocuspocus-plugin.ts` re-implements ~11 primitives from `@inkeep/open-knowledge-server` at module-load.
@@ -144,7 +147,7 @@ Note: end-users of the shipping product (Electron desktop app, CLI) are **not** 
 
 **Known gaps/bugs discovered during research (Current-state survey):**
 - 9 subsystems + 6 HTTP-layer primitives missing (see §1 Complication).
-- CLAUDE.md:236 is stale-by-aspiration (describes target state of this refactor).
+- AGENTS.md:264 + AGENTS.md:1384 (both bootServer sections carry the same sentence verbatim) are stale-by-aspiration — describe the target state of this refactor.
 
 ## 9) Proposed solution (vertical slice)
 
@@ -198,7 +201,7 @@ Delegates to `createServer()`:
 | D2 | SyncEngine wired through to dev without gating | Technical | **LOCKED** (user 2026-04-23) | No | SyncEngine is opt-in by default (`sync-engine.ts:262` early-return); "wired" means two benign local `git` subprocess calls at startup unless user has opted in | `packages/server/src/sync-engine.ts:231-269` evidence/sync-engine-startup-behavior.md (to be written) | No new flag needed on `createServer()`; dev behavior matches prod for any developer who opted in |
 | D3 | CLAUDE.md correction via corrigendum breadcrumb now; sentence rewrites to current target prose when refactor PR merges (matches repo's `<br>_[Corrected…]_` precedent) | Product/Docs | **LOCKED** (user 2026-04-23) | No | Option 3 from intake — strictly dominates "fix inline" (agents see warning immediately) and "separate doc PR" (no rewrite-then-rewrite churn) | Intake 2026-04-23; repo precedent at CLAUDE.md post-ship-corrigendum section | Breadcrumb lands in scaffolding commit; refactor PR removes breadcrumb + updates sentence in one atomic edit |
 | D4 | Spec directory: `specs/2026-04-23-vite-plugin-createserver-dedup/` | Product | **LOCKED** (user 2026-04-23) | No | Default naming per CLAUDE.md specs path contract | — | — |
-| D5 | Keepalive + presence-ts-refresh + parseKeepaliveConnectionId wiring is **copied from `boot.ts:244-396`** into the plugin rather than extracted to a shared helper in this refactor | Technical | **LOCKED** (user 2026-04-23) | No | Partial extract undermines NG2's scope discipline; Option B is the vehicle for extraction when it comes. Third copy (boot.ts + harness + plugin) is explicit tech-debt the Future Work plan owns | `evidence/collab-entry-point-taxonomy.md` + SPEC.md §15 Explored | When Option B (NG2) lands, the three copies collapse to one shared helper call |
+| D5 | Keepalive + presence-ts-refresh + parseKeepaliveConnectionId wiring is **copied from `boot.ts:244-396`** into the plugin rather than extracted to a shared helper in this refactor. The copy covers `boot.ts:244-254` (grace-timer state: `KEEPALIVE_GRACE_MS`, `keepaliveGraceTimers`, `keepaliveGraceInflight`, `shuttingDown`) AND `boot.ts:255-396` (the `httpServer.on('upgrade', ...)` handler using that state). Post-audit per DC-H1: the challenger proposed a narrower Option B' (extract scoped to boot.ts + plugin only; harness excluded). That alternative is plausible and the "third copy" framing in the original rationale was wrong per audit finding L10 — **post-refactor the copy exists in exactly two places (boot.ts + plugin); the test harness hand-rolls HTTP but does NOT wire these primitives today**. Retaining D5 LOCKED with updated rationale: extraction in this spec would add a new public API (`attachCollabHttpServer`) to `@inkeep/open-knowledge-server` — a different risk surface than copying known-safe code. NG2's trigger criterion is broadened (per DC-L8) to include "any hardening requirement that would need to apply to both copies" | Technical | **LOCKED** (user 2026-04-23; rationale strengthened post-audit 2026-04-23) | No | Copy preserves scope discipline: no public API surface changes to `@inkeep/open-knowledge-server`. Extraction is Future Work (NG2 Explored). The "third copy" framing from original rationale was a misread — corrected here | `evidence/collab-entry-point-taxonomy.md` + SPEC.md §15 Explored + `meta/design-challenge.md` DC-H1 + `meta/audit-findings.md` L10 | When NG2 (Option B') lands, both copies collapse to one shared helper call |
 | D6 | Dev-plugin logger identity **unchanged** — plugin keeps bracket-prefixed `[hocuspocus] …` / `[collab] …` console lines for its own messages; `createServer()`'s pino `[server]` lines merge into dev output | Technical/Ops | **LOCKED** (user 2026-04-23) | No | Log unification is a separate polish concern; out of scope for the divergence fix. Added as Future Work Noted | Intake 2026-04-23; SPEC.md §15 Noted | Operators see dual log styles in dev. Accepted |
 | D7 | Target prose for the CLAUDE.md/AGENTS.md sentence after refactor lands: *"**Vite dev plugin** (`packages/app/src/server/hocuspocus-plugin.ts`) — calls `createServer()` directly and attaches to Vite's existing HTTP server; it does not need `bootServer`'s HTTP-wrapping layer. Shares the `server.lock` contract so `bun run dev` and `ok start` against the same `contentDir` collide fast."* | Product/Docs | **LOCKED** (user 2026-04-23) | No | Refactor PR replaces the breadcrumb + stale sentence with this prose atomically | Breadcrumb anchor written 2026-04-23 | Implementer uses this exact string; no re-drafting at PR time |
 | D8 | Plugin invokes `createServer()` at **module-load** (not inside `configureServer`); `configureServer` attaches HTTP wiring to the module-scope `ServerInstance`. Module-load uses **top-level `await ensureProjectGit(PROJECT_ROOT)` before `createServer()`** in the non-test-isolated branch (mirrors `bootServer`'s `ensureProjectGitFn` hook; fail-fast via thrown `ProjectGitInitError`). In `isTestIsolated` branch, skip `ensureProjectGit` — test tmpdirs lack `.git/`, shadow init degrades silently (acceptable for tests) | Technical | **LOCKED** (agent investigation 2026-04-23) | No | Same-pid lock acquire is idempotent (`process-lock.ts:138-143`). `createServer()` itself does NOT call `ensureProjectGit` — every existing consumer calls it upstream (bootServer via `ensureProjectGitFn`; test harness explicitly at `test-harness.ts:119`). Plugin must preserve this contract for `.git/`-fail-fast UX. Bun + Vite support top-level await in ESM plugin modules | `evidence/lifecycle-module-load-vs-configureServer.md` | `runDevShadowInit` can be deleted after refactor — its two responsibilities (ensureProjectGit + initShadowRepo) are absorbed by explicit `ensureProjectGit` call + `createServer()`'s internal `initShadowRepo` |
@@ -213,7 +216,7 @@ Delegates to `createServer()`:
 | Q2 | Lock/init lifecycle — does `createServer()` run at module-load (today's plugin pattern) or inside `configureServer` (Vite-idiomatic)? Module-load preserves HMR behavior; `configureServer` aligns with Vite plugin lifecycle but HMR re-invocation needs explicit server-reuse logic. | Technical | P0 | Yes | Done. Resolved by D8 LOCKED — module-load. Same-pid lock acquire is idempotent; matches current plugin shape; no singleton-gate complexity; HMR warn-and-continue preserved. See `evidence/lifecycle-module-load-vs-configureServer.md`. | **Resolved** 2026-04-23 |
 | Q3 | Logger identity — `createServer()` uses pino `[server]` namespace; plugin uses `console.log('[hocuspocus] …')` bracket style. Post-refactor, do we unify (everything via pino) or keep plugin-local lines bracket-prefixed for operator legibility? | Technical | P0 | No (affects operability NFR but not correctness) | Done. Resolved by D6 LOCKED — preserve dual style. Log unification added to Future Work Noted. | **Resolved** 2026-04-23 |
 | Q4 | Verify the M6 audit's "seven entry points / three wiring paths" taxonomy. Two entries (`ok mcp` as spawner; Electron attach mode) were not verified during prior exploration — are they actual third-wiring-path consumers or do they route through `bootServer` / `createServer`? | Technical | P0 | No (surfaces NG2 correctness) | Done. `evidence/collab-entry-point-taxonomy.md`. M6 errata: `ok mcp` spawns `ok start` (consumer of P1, not a new path); Electron attach mode reads server.lock (consumer); Playwright fixture spawns `bun run dev` (consumer of P3). Corrected count: **3 producer paths, 4 producer callers**. Post-refactor: 2 producer paths. | **Resolved** 2026-04-23 |
-| Q5 | CLAUDE.md:236 correction — what's the exact replacement sentence? Draft it now so the breadcrumb points at concrete target prose. | Product/Docs | P0 | No | Done. Resolved by D7 LOCKED — prose drafted and stored in Decision Log. Refactor PR applies exact string. | **Resolved** 2026-04-23 |
+| Q5 | AGENTS.md stale-sentence correction — what's the exact replacement? Draft it now so the breadcrumb points at concrete target prose. | Product/Docs | P0 | No | Done. Resolved by D7 LOCKED — prose drafted and stored in Decision Log. Refactor PR applies exact string at both occurrences (`:264` and `:1384`). | **Resolved** 2026-04-23 |
 | Q6 | `createServer()`'s `onAgentWrite` option — plugin doesn't set it today; should it? Test harness sets it. | Technical | P2 | No | Defer — only matters if dev has a consumer. | Deferred |
 | Q7 | `localOpCliArgs` — plugin doesn't pass it today; `createServer()` uses it to wire SyncEngine credential args. | Technical | P2 | No | Defer — relevant only when user has opted into sync in dev contentDir. | Deferred |
 
@@ -221,7 +224,7 @@ Delegates to `createServer()`:
 
 | ID | Assumption | Confidence | Verification plan | Expiry | Status |
 |---|---|---|---|---|---|
-| A1 | `createServer()` can be invoked from the Vite plugin's `configureServer` (or module-load) path without incompatible Node/Bun runtime differences from its current CLI/Electron/test-harness consumers | MEDIUM | Trace `createServer()`'s imports; confirm no boot.ts-specific wrapping assumption. The fact that test-harness already uses it is strong evidence. | Before implementation (iterate phase) | Active |
+| A1 | `createServer()` can be invoked from the Vite plugin's module-load path without incompatible Node/Bun runtime differences from its current CLI/Electron/test-harness consumers | **HIGH** (upgraded post-D8 investigation) | Traced via `evidence/lifecycle-module-load-vs-configureServer.md` — same-pid lock is idempotent; test-harness already invokes createServer directly; no boot.ts-specific wrapping assumption | — (verified) | **Verified** 2026-04-23 |
 | A2 | Vite's `server.middlewares.use(async (req, res, next) => { ... await hocuspocus.hooks('onRequest', ...); ... })` dispatch is semantically equivalent to boot.ts's raw `httpServer` request handler for the /api/* surface | HIGH | Middleware chain and raw handler both terminate at `hocuspocus.hooks('onRequest', ...)` — current plugin already does this pattern and it works | Continuous | Active |
 | A3 | The M6 branch (`docs/m6-spec-sharpen`) will not land code changes to `packages/server/` or `packages/app/src/server/` between now and merge | HIGH | Already verified via `git diff main..origin/docs/m6-spec-sharpen --stat` (zero LOC in both paths) | Until M6 merges | Active |
 | A4 | Dima's earlier refactor-attempt blocker was a local-env Bun/Node issue unrelated to this refactor's technical approach | HIGH | Confirmed by Andrew in intake session 2026-04-23 | — | Confirmed |
@@ -229,9 +232,7 @@ Delegates to `createServer()`:
 
 ## 13) In Scope (implement now)
 
-*Detailed scope populated during iterate / verify-and-finalize phases. High-level placeholder:*
-
-- **Goal:** Delete ~300–400 LOC from `packages/app/src/server/hocuspocus-plugin.ts`; make it call `createServer()` from `@inkeep/open-knowledge-server` for all server-side wiring.
+- **Goal:** Delete ~300–400 LOC from `packages/app/src/server/hocuspocus-plugin.ts` + delete `dev-shadow-init.ts` + test (263 LOC) per D10; make the plugin call `createServer()` from `@inkeep/open-knowledge-server` for all server-side wiring. Net delete target: ~560–660 LOC.
 - **Non-goals:** See §3.
 - **Requirements with acceptance criteria:** See §6.
 - **Proposed solution:** See §9.
@@ -261,7 +262,8 @@ Delegates to `createServer()`:
   - Recommended approach: Extract a pure helper `attachCollabHttpServer({ httpServer, serverInstance, keepaliveGraceMs, log }): { detach: () => void }` that boot.ts, the plugin, and the test harness all call.
   - Why not in scope now: Wider merge surface; three consumer paths all need to migrate in one PR or accept an intermediate state. Plugin's divergence problem (Approach A's focus) is already solved without it.
   - Triggers to revisit: third consumer emerges, or keepalive-grace logic gets a third modification cycle (i.e., this helper is duplicated in three places).
-  - Implementation sketch: Extract the `httpServer.on('upgrade', ...)` block from `boot.ts:255-396` into a new `packages/server/src/collab-http-attach.ts`. `bootServer` calls it after `listen()`. Plugin calls it inside `configureServer` with `server.httpServer`. Test harness calls it post-listen. Delete the three parallel copies.
+  - Implementation sketch: Extract `boot.ts:244-396` (grace-timer state + `httpServer.on('upgrade', ...)` handler as a single unit — same range as D5's copy target) into a new `packages/server/src/collab-http-attach.ts`. `bootServer` calls it after `listen()`. Plugin calls it inside `configureServer` with `server.httpServer`. Test harness eventually migrates under NG3. Delete the parallel copies.
+  - **Trigger clarification (post-audit, DC-L8):** Revisit NG2 if any of: (i) a third consumer of this HTTP wiring emerges, or (ii) `boot.ts`'s keepalive-grace logic receives a hardening change (bound the timer map, add rate limits, adjust grace duration) that would need to land in both the boot.ts and plugin copies, or (iii) any keepalive behavior drifts between the two sites.
 
 ### Identified
 
@@ -270,12 +272,12 @@ Delegates to `createServer()`:
 ### Noted
 
 - **`localOpCliArgs` / `onAgentWrite` passthrough for dev-mode consumers.** Currently plugin doesn't pass these to a hypothetical `createServer()`. If a dev-mode feature emerges that needs them, plumb through.
-- **Dev-mode `ensureProjectGit` UX polish.** Today's plugin has `runDevShadowInit` (a softer variant); post-refactor, `createServer()`'s `ensureProjectGit` fail-fast may produce a different error shape for a dev who deletes `.git/` mid-session. UX observation only.
-- **Unified logger namespace.** If the plugin's bracket-prefixed `[hocuspocus]` lines become annoying alongside pino `[server]` lines, consider migrating the plugin to pino with a `[dev-plugin]` sub-namespace.
+- **Dev-mode `ensureProjectGit` UX polish.** `ensureProjectGit` auto-creates `.git/` via `git init` if absent, so fresh-clone scenarios are fine. Fail-fast only fires on a broken `git` binary / corrupt config (rare). Today's plugin uses `runDevShadowInit` (similar fail-fast path via `handleDevShadowInitError` which also `exit(1)`s on `ProjectGitInitError`) — so the refactor preserves today's behavior, not introduces a regression.
+- **Unified logger namespace (DC-L7).** If the plugin's bracket-prefixed `[hocuspocus]` lines become annoying alongside pino `[server]` lines, consider migrating the plugin to pino with a `[dev-plugin]` sub-namespace. DC-L7 also flagged log-volume increase as a first-time-contributor UX concern — consider a `LOG_LEVEL=warn` default for dev-mode pino, with `LOG_LEVEL=info bun run dev` as the opt-in for debugging. Out of scope for this refactor.
+- **Unbounded keepalive timer-map inheritance (DC-L8).** Post-refactor, both `boot.ts` and `hocuspocus-plugin.ts` carry the same unbounded `keepaliveGraceTimers: Map<string, Timeout>` from boot.ts:247. Not introduced by this spec but inherited from the copied block. If a future hardening (timer map cap, eviction policy, rate limit) lands, it must land in both sites until NG2's Option B' extraction collapses them. See NG2 triggers.
+- **Module-load side effects on non-Vite plugin importers (DC-M4).** Today's plugin does module-load side effects already; the refactor adds `ensureProjectGit` + full `createServer()` init at module load via top-level `await`. No current test or tool imports the plugin module outside a Vite dev-server context (grep-verified). If a future use case requires factory-only imports (e.g., a lint rule that introspects the plugin's shape), switch to `configureServer + singleton gate` per the evidence file's Option (b). For now, module-load with top-level await is adequate.
 
 ## 16) Agent constraints
-
-*Derived during Verify-and-Finalize phase. Placeholder.*
 
 - **SCOPE:** `packages/app/src/server/hocuspocus-plugin.ts` primary (shrinks ~300-400 LOC). `packages/app/src/server/dev-shadow-init.ts` + `packages/app/src/server/dev-shadow-init.test.ts` — **DELETE** (absorbed per D10). `packages/app/src/server/api-config-handler.ts` + test — preserved unchanged. `AGENTS.md` (remove corrigendum breadcrumb at both occurrences + replace stale sentence with D7 target prose atomically).
 - **EXCLUDE:** `packages/server/src/standalone.ts` (no changes to `createServer()` surface); `packages/server/src/boot.ts` (no changes to `bootServer()` surface); `packages/cli/src/commands/start.ts` / `mcp.ts` / `ui.ts` (unchanged); `packages/desktop/src/**` (unchanged); `packages/app/tests/integration/test-harness.ts` (NG3 — out of scope).

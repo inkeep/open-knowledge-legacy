@@ -90,7 +90,9 @@ Post-refactor, the plugin must preserve the fail-fast on missing git. Order of o
 3. *If* `!isTestIsolated`: `await ensureProjectGit(PROJECT_ROOT)` — top-level await. On `ProjectGitInitError`: module load throws → Vite plugin registration fails → `bun run dev` exits with error. Matches today's `exit(1)` behavior from `runDevShadowInit`'s error handler.
 4. Call `createServer({...})` — its `initAsync` runs `initShadowRepo` against `projectDir`.
 
-For `isTestIsolated` mode, step 3 is skipped — test tmpdirs don't have `.git/` and tests don't need shadow. `createServer()`'s internal `initShadowRepo` will fail and `degraded.push('shadow-repo')` will fire. Acceptable for tests (timeline features aren't exercised; test-harness shape already tolerates this via `gitEnabled: false` + its own contentDir `ensureProjectGit`).
+For `isTestIsolated` mode (driven by `OK_TEST_CONTENT_DIR`, set only by Playwright per-worker fixtures in `packages/app/tests/stress/_helpers/fixtures.ts`), step 3 is skipped — **Playwright worker tmpdirs do not have `.git/`** (`seedRequiredFixtureFiles` at `fixtures.ts:170-174` only seeds `.md` files). `createServer()`'s internal `initShadowRepo` will fail and `degraded.push('shadow-repo')` will fire. Acceptable for Playwright (timeline features aren't exercised).
+
+Note: Tier 1 integration tests via `test-harness.ts` take a different path — they explicitly call `await ensureProjectGit(contentDir)` at `test-harness.ts:119` before invoking `createServer()`, so shadow init succeeds. The Vite plugin's `isTestIsolated` branch is Playwright-specific; the harness is unaffected.
 
 Top-level await works natively in Bun + ESM; Vite's plugin module resolution supports async plugin modules. No config change required.
 
