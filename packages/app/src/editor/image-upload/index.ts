@@ -9,6 +9,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
 import { getEditorDocName } from '../extensions/doc-context.ts';
+import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -232,12 +233,18 @@ async function ensureUploadConfig(): Promise<UploadConfig> {
 }
 
 interface InsertShape {
-  kind: 'wikiembed' | 'image' | 'markdown-link';
+  kind: 'wikiembed' | 'image' | 'markdown-link' | 'wiki-link';
   ext: string;
 }
 
 export function pickInsertShape(filename: string, config: UploadConfig): InsertShape {
   const ext = extensionOf(filename);
+  // Markdown files are first-class OK docs, not opaque assets. Emit [[foo]]
+  // (link semantic) regardless of config — `![[foo.md]]` would imply
+  // transclusion, which OK doesn't support.
+  if (ext === 'md' || ext === 'mdx') {
+    return { kind: 'wiki-link', ext };
+  }
   const wikiEmbedSet = new Set(config.wikiEmbedExtensions.map((e) => e.toLowerCase()));
   if (wikiEmbedSet.has(ext)) {
     if (config.emitFormat === 'wikiembed') return { kind: 'wikiembed', ext };
@@ -393,6 +400,20 @@ export async function uploadAndInsert(
     }
     const alt = file.name.replace(/\.[^.]+$/, '');
     tr.insert(mappedPos, imageNode.create({ src: relPath, alt }));
+  } else if (shape.kind === 'wiki-link') {
+    const wikiLinkNode = state.schema.nodes.wikiLink;
+    if (!wikiLinkNode) {
+      console.error('[uploadAndInsert] wikiLink node missing from schema');
+      showError(editor, uploadId);
+      return;
+    }
+    const basename = file.name.replace(/\.(md|mdx)$/i, '');
+    const attrs = buildUnresolvedWikiLinkAttrs(basename);
+    if (!attrs) {
+      tr.insert(mappedPos, state.schema.text(file.name));
+    } else {
+      tr.insert(mappedPos, wikiLinkNode.create(attrs));
+    }
   } else {
     // Markdown-link fallback: insert text + link mark.
     const linkMark = state.schema.marks.link;

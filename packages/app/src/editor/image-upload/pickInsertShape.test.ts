@@ -66,6 +66,35 @@ describe('pickInsertShape — emit-dispatch by extension × emitFormat × wikiEm
     });
   });
 
+  describe('markdown files emit wiki-link (link semantic, not embed)', () => {
+    // .md / .mdx are first-class OK docs, not opaque assets. The drop surface
+    // emits a [[foo]] wiki-link so navigation, fileIndex resolution, and
+    // source-mode broken-link decoration all compose for free. `![[foo.md]]`
+    // would imply transclusion, which OK doesn't support today.
+    test('.md emits wiki-link', () => {
+      expect(pickInsertShape('notes.md', cfg()).kind).toBe('wiki-link');
+    });
+
+    test('.mdx emits wiki-link', () => {
+      expect(pickInsertShape('notes.mdx', cfg()).kind).toBe('wiki-link');
+    });
+
+    test('extension matching is case-insensitive', () => {
+      expect(pickInsertShape('NOTES.MD', cfg()).kind).toBe('wiki-link');
+      expect(pickInsertShape('NOTES.MDX', cfg()).kind).toBe('wiki-link');
+    });
+
+    test('md wins even when md is explicitly in wikiEmbedExtensions', () => {
+      const custom = cfg({ wikiEmbedExtensions: ['png', 'md'] });
+      expect(pickInsertShape('notes.md', custom).kind).toBe('wiki-link');
+    });
+
+    test('md is not affected by emitFormat override', () => {
+      const override = cfg({ emitFormat: 'markdown-image' });
+      expect(pickInsertShape('notes.md', override).kind).toBe('wiki-link');
+    });
+  });
+
   test('file without extension emits markdown-link', () => {
     // No ext → opaque.
     expect(pickInsertShape('README', cfg()).kind).toBe('markdown-link');
