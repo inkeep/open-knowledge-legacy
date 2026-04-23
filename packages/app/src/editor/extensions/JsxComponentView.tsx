@@ -41,7 +41,9 @@ import type { NodeViewProps } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
-import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
@@ -58,67 +60,84 @@ import { reconstructSource } from '../utils/reconstruct-source.ts';
 import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
+//
+// Thin wrapper around `react-error-boundary`'s `<ErrorBoundary>` — same
+// pattern as `packages/app/src/components/DocumentErrorBoundary.tsx`. The
+// prior hand-rolled `class ComponentErrorBoundary` carried its own
+// `getDerivedStateFromError` / `componentDidCatch` / `componentDidUpdate`
+// trio that duplicated library semantics for no behavioral gain. Pre-QA
+// review M13 flagged the divergence; this refactor collapses both error
+// boundaries onto the same contract:
+//
+//   <ErrorBoundary fallbackRender resetKeys={[resetKey]} onError> …
+//
+// Fallback: renders the original children wrapped in
+// `.jsx-component-error-fallback` (preserves the "surface the source so
+// users can edit out of error state" UX from Precedent #26). When
+// `resetKey` flips (prop change, node-name change, auto-convert reset —
+// see the orchestrating effect at `resetKey` computation), the library
+// auto-remounts the subtree.
 
-interface ErrorBoundaryProps {
-  onError: (error: Error) => void;
+interface ComponentErrorBoundaryProps {
   children: ReactNode;
+  /** Flips when we want to force a retry (prop change, node-name change,
+   *  post-auto-convert reset). Threaded into `resetKeys`. */
   resetKey: string;
-  /** Registered descriptor name ('Callout', 'Card', …, or 'wildcard'). */
+  /** Escalates errored state out to the NodeView so the chrome can react
+   *  (show "failed to render" hint, offer copy-source / delete affordances
+   *  via the stuck-state UI). */
+  onError: (error: Error) => void;
+  /** Registered descriptor name ('Callout', 'Image', …, or 'wildcard').
+   *  Low-cardinality label — safe for telemetry aggregation. */
   descriptorName: string;
-  /** Raw user-authored component name; may be arbitrary MDX text. Kept in a
-   *  separate field (not a label) so telemetry aggregation does not explode
-   *  cardinality across tenants. */
+  /** Raw user-authored component name; may be arbitrary MDX text. Kept in
+   *  a separate field (not a label) so telemetry aggregation does not
+   *  explode cardinality across tenants. Capped at 200 chars inside the
+   *  onError handler before emission (MDX permits arbitrarily-long
+   *  dotted-namespace tags that would otherwise produce multi-KB log
+   *  entries per error). */
   rawComponentName: string;
 }
 
-interface ErrorBoundaryState {
-  errored: boolean;
+function ComponentErrorFallback({ children }: FallbackProps & { children?: ReactNode }) {
+  // react-error-boundary's FallbackProps (error, resetErrorBoundary) are
+  // intentionally ignored here — Precedent #26 says errored blocks render
+  // their children (source text) in place, not an error card. The CSS
+  // class + the resetKeys-driven remount handle the visual recovery
+  // story; the children passed through are the original subtree, which
+  // renders as nested rawMdxFallback source under the wildcard path.
+  return <div className="jsx-component-error-fallback">{children}</div>;
 }
 
-class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { errored: false };
-
-  static getDerivedStateFromError(): ErrorBoundaryState {
-    return { errored: true };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.warn(
-      JSON.stringify({
-        event: 'jsx-render-failure',
-        // `component` is the low-cardinality label suitable for
-        // aggregation — always one of the 17 registered descriptor names
-        // OR the literal string 'wildcard'. The unbounded user-authored
-        // name goes in `rawComponentName` so debugging stays possible
-        // without making it a grouping key. Capped at 200 chars to match
-        // the slicing pattern in `parseWithFallback.errorPayload` — MDX
-        // permits arbitrarily-long dotted-namespace tags that would
-        // otherwise produce multi-KB log entries per error.
-        component: this.props.descriptorName,
-        rawComponentName: String(this.props.rawComponentName ?? '').slice(0, 200),
-        error: String(error),
-        stack: info.componentStack,
-      }),
-    );
-    // Counter bump alongside the log event — mirrors the `mdx-block-fallback`
-    // pattern in `parseWithFallback`. Clamped to the same label already in
-    // the `component` field so aggregate counts stay low-cardinality.
-    incrementJsxRenderFailure(this.props.descriptorName);
-    this.props.onError(error);
-  }
-
-  componentDidUpdate(prevProps: ErrorBoundaryProps): void {
-    if (prevProps.resetKey !== this.props.resetKey && this.state.errored) {
-      this.setState({ errored: false });
-    }
-  }
-
-  render(): ReactNode {
-    if (this.state.errored) {
-      return <div className="jsx-component-error-fallback">{this.props.children}</div>;
-    }
-    return this.props.children;
-  }
+function ComponentErrorBoundary(props: ComponentErrorBoundaryProps) {
+  const { children, resetKey, onError, descriptorName, rawComponentName } = props;
+  return (
+    <ErrorBoundary
+      resetKeys={[resetKey]}
+      onError={(error, info) => {
+        // react-error-boundary types `error` as `unknown` because React can
+        // capture arbitrary thrown values (strings, null, etc.). Normalize
+        // to Error for both telemetry + the upstream onError contract.
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.warn(
+          JSON.stringify({
+            event: 'jsx-render-failure',
+            component: descriptorName,
+            rawComponentName: String(rawComponentName ?? '').slice(0, 200),
+            error: String(err),
+            stack: info.componentStack,
+          }),
+        );
+        incrementJsxRenderFailure(descriptorName);
+        onError(err);
+      }}
+      fallbackRender={(fbProps) => (
+        <ComponentErrorFallback {...fbProps}>{children}</ComponentErrorFallback>
+      )}
+    >
+      {children}
+    </ErrorBoundary>
+  );
 }
 
 // ── Prop extraction ─────────────────────────────────────────────────────

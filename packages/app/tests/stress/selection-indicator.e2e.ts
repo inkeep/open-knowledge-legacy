@@ -1,24 +1,25 @@
 /**
  * Layer C (Tier 2): Playwright E2E for block-selection-indicator.
  *
- * ## US-013 scope narrow (2026-04-23)
+ * ## 5-pack sweep (2026-04-23, landed in US-013 + Phase 5 review remediation M2)
  *
- * The CB-v2 5-pack foundation SPEC's US-013 explicitly scopes the rewrite
- * to S1, S2, S3 (pre-US-013 these used `<Card />` + `<Cards><Card/></Cards>`
- * fumadocs shapes). Those three tests are now rewritten around the 5-pack's
- * container primitives (Callout, Accordion) — exercising the same
- * selection-indicator invariants under the jsxComponent `content:'block*'`
- * shape.
+ * The CB-v2 5-pack foundation SPEC's US-013 initially scoped the rewrite
+ * to S1, S2, S3. Phase 5 review M2 surfaced the remaining S4-S19 dormancy
+ * and the sweep completed: all S*-named tests now use 5-pack primitives.
+ * Card → Image (self-closing single-block), Cards → Callout (block
+ * container), Card-in-Cards → Accordion-in-Callout (nested jsxComponent
+ * per D-MF18), Step → Accordion.
  *
- * S4-S19 retain their pre-US-013 `<Card />` / `<Cards>` fixtures. They are
- * NOT in the CI `test:e2e` file list (`packages/app/package.json` dispatches
- * only 9 files for PR-tier runs; this file is covered by generic
- * `bunx playwright test` invocations). When run they would fail against the
- * post-US-003 manifest narrow (Card + Cards unregistered → wildcard
- * fallback lacks the `[data-component-type="card"]` selector). Follow-up
- * work (out of US-013 scope): sweep S4-S19 to 5-pack shapes using the
- * Callout/Accordion substitution established here. Small PR, purely
- * mechanical.
+ * The `[data-component-type="..."]` selectors and `'componentName'` node
+ * checks track those substrates; the selection-indicator invariants
+ * (halo chrome, breadcrumb ancestry, aria-live announcements,
+ * innermost-wins, forced-colors, reduced-motion) are descriptor-agnostic
+ * and exercise the same code paths through the 5-pack substrates.
+ *
+ * This file is NOT in the CI `test:e2e` file list
+ * (`packages/app/package.json` dispatches only 9 files for PR-tier runs);
+ * generic `bunx playwright test` invocations run it for pre-push coverage,
+ * and the nightly E2E stability surveillance picks up flakes.
  *
  * ## SPEC §6.4 correctness floor (original)
  *
@@ -186,16 +187,12 @@ test('S3: nested Callout/Accordion — only innermost paints halo', async ({ pag
 
 // ── S4: Drag suppresses the halo ─────────────────────────────────────────
 
-// US-013 mechanical-sweep follow-up (see file header): the body still
-// uses `<Card>` fixtures, which are no longer in the registered
-// manifest post-US-003. Skip so the dormancy is visible in test-count
-// output (vs CI-list exclusion, which hides the dormancy entirely).
-test.skip('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) => {
-  await setupDoc(page, api, '<Card title="Draggable" />\n');
+test('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) => {
+  await setupDoc(page, api, '<Image src="/p.png" alt="Draggable" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
 
-  await selectFirstJsxComponent(page, 'Card');
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  await selectFirstJsxComponent(page, 'Image');
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   await expect(card).toHaveAttribute('data-selected', 'true');
 
   // Simulate drag lifecycle — the plugin listens to dragstart/dragend on
@@ -210,19 +207,13 @@ test.skip('S4: dragstart/dragend toggles data-dragging', async ({ page, api }) =
 
 // ── S5: Forced-colors — halo visible via outline fallback ────────────────
 
-// US-013 mechanical-sweep follow-up (see file header). Legal a11y floor
-// (WCAG 1.4.12 forced-colors) — priority to re-enable once fixtures are
-// swapped to 5-pack shapes.
-test.skip('S5: forced-colors emulation shows non-transparent halo border', async ({
-  page,
-  api,
-}) => {
+test('S5: forced-colors emulation shows non-transparent halo border', async ({ page, api }) => {
   await page.emulateMedia({ forcedColors: 'active' });
-  await setupDoc(page, api, '<Card title="WHCM" />\n');
+  await setupDoc(page, api, '<Image src="/p.png" alt="WHCM" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
 
-  await selectFirstJsxComponent(page, 'Card');
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  await selectFirstJsxComponent(page, 'Image');
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   await expect(card).toHaveAttribute('data-selected', 'true', { timeout: 5_000 });
 
   // Read the ::after pseudo-element's computed border-color. In forced-colors
@@ -243,10 +234,10 @@ test('S6: prefers-reduced-motion:reduce → halo transition-duration is 0s', asy
   api,
 }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await setupDoc(page, api, '<Card title="Motion" />\n');
+  await setupDoc(page, api, '<Image src="/p.png" alt="Motion" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
 
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   const transitionDuration = await card.evaluate((el) => {
     return window.getComputedStyle(el, '::after').transitionDuration;
   });
@@ -258,10 +249,14 @@ test('S6: prefers-reduced-motion:reduce → halo transition-duration is 0s', asy
 // ── S7: Breadcrumb renders ancestry and navigates on click ───────────────
 
 test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async ({ page, api }) => {
-  await setupDoc(page, api, '<Cards>\n  <Card title="Inner" />\n</Cards>\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(
+    page,
+    api,
+    '<Callout type="note">\n<Accordion title="Inner">\n\nbody\n\n</Accordion>\n</Callout>\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
-  await selectFirstJsxComponent(page, 'Card');
+  await selectFirstJsxComponent(page, 'Image');
 
   // Use CSS locator (`.jsx-component-breadcrumb`): when no block is
   // selected, the nav is `aria-hidden="true"` and hidden from Playwright's
@@ -271,8 +266,8 @@ test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async (
   const breadcrumb = page.locator('.jsx-component-breadcrumb');
   await expect(breadcrumb).toBeVisible();
   await expect(breadcrumb).toContainText('Document');
-  await expect(breadcrumb).toContainText('Cards');
-  await expect(breadcrumb).toContainText('Card');
+  await expect(breadcrumb).toContainText('Callout');
+  await expect(breadcrumb).toContainText('Accordion');
 
   // The breadcrumb footer can land below the visible viewport in the
   // default 1280×720 E2E context (editor body + chrome + halo consume
@@ -280,35 +275,39 @@ test('S7: Breadcrumb shows ancestry; clicking ancestor flips selection', async (
   // requires the element to be in viewport. We dispatch the click via
   // `.dispatchEvent('click')` instead — the React onClick handler runs
   // on the native event, and the downstream assertion on
-  // `.jsx-component-wrapper[data-component-type="cards"]` verifies the
+  // `.jsx-component-wrapper[data-component-type="callout"]` verifies the
   // click actually flipped the selection. A real user has the same
   // option (scroll the footer into view, then click); the E2E shortcut
   // of dispatching directly preserves test determinism without changing
   // the production behavior under test.
-  const cardsButton = breadcrumb.locator('button', { hasText: 'Cards' });
-  await cardsButton.dispatchEvent('click');
+  const outerButton = breadcrumb.locator('button', { hasText: 'Callout' });
+  await outerButton.dispatchEvent('click');
 
-  const cardsContainer = page
-    .locator('.jsx-component-wrapper[data-component-type="cards"]')
+  const outerContainer = page
+    .locator('.jsx-component-wrapper[data-component-type="callout"]')
     .first();
-  await expect(cardsContainer).toHaveAttribute('data-selected', 'true', { timeout: 2_000 });
-  const innerCard = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
-  const innerAttr = await innerCard.getAttribute('data-selected');
+  await expect(outerContainer).toHaveAttribute('data-selected', 'true', { timeout: 2_000 });
+  const inner = page.locator('.jsx-component-wrapper[data-component-type="accordion"]').first();
+  const innerAttr = await inner.getAttribute('data-selected');
   expect(innerAttr).toBeNull();
 });
 
 // ── S8: aria-live region announces selection changes ────────────────────
 
 test('S8: aria-live textContent announces the selected block', async ({ page, api }) => {
-  await setupDoc(page, api, '<Cards>\n  <Card title="Inner" />\n</Cards>\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(
+    page,
+    api,
+    '<Callout type="note">\n<Accordion title="Inner">\n\nbody\n\n</Accordion>\n</Callout>\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
-  await selectFirstJsxComponent(page, 'Card');
+  await selectFirstJsxComponent(page, 'Image');
 
   // 200ms debounce + margin. aria-atomic="true" ensures AT reads the full
   // announcement on every mutation.
   const liveRegion = page.locator('[role="status"][aria-live="polite"]');
-  await expect(liveRegion).toContainText('Selected: Card', { timeout: 2_000 });
+  await expect(liveRegion).toContainText('Selected: Image', { timeout: 2_000 });
 });
 
 // ── S9: Three-axis composition (SC-4) ────────────────────────────────────
@@ -323,14 +322,14 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   api,
 }) => {
   // Card with empty title triggers `data-needs-config` (required-string-empty).
-  await setupDoc(page, api, '<Card title="" />\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(page, api, '<Image src="/p.png" alt="" />\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   await expect(card).toHaveAttribute('data-needs-config', 'true', { timeout: 5_000 });
 
   // Select + start drag.
-  await selectFirstJsxComponent(page, 'Card');
+  await selectFirstJsxComponent(page, 'Image');
   await expect(card).toHaveAttribute('data-selected', 'true');
   await card.dispatchEvent('dragstart');
   await expect(card).toHaveAttribute('data-dragging', 'true');
@@ -364,11 +363,11 @@ test('S10: clicking "Document" breadcrumb anchor clears selection via programmat
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Card title="Target" />\n');
+  await setupDoc(page, api, '<Image src="/p.png" alt="Target" />\n');
   await page.waitForSelector('.jsx-component-wrapper');
 
-  await selectFirstJsxComponent(page, 'Card');
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  await selectFirstJsxComponent(page, 'Image');
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   await expect(card).toHaveAttribute('data-selected', 'true');
 
   const breadcrumb = page.getByRole('navigation', { name: 'Block ancestor navigation' });
@@ -398,17 +397,17 @@ test('S10: clicking "Document" breadcrumb anchor clears selection via programmat
 type InsetCase = { fixture: string; componentType: string; expectedInset: string };
 const INSET_CASES: InsetCase[] = [
   {
-    fixture: '<Cards>\n  <Card title="a" />\n</Cards>\n',
+    fixture: '<Callout type="note">\n<Accordion title="a">\n\nbody\n\n</Accordion>\n</Callout>\n',
     componentType: 'cards',
     expectedInset: '-6px',
   },
   {
-    fixture: '<Steps>\n<Step>\n\n### step\n\nbody\n\n</Step>\n</Steps>\n',
+    fixture: '<Callout type="tip">\n<Accordion title="step">\n\nbody\n\n</Accordion>\n</Callout>\n',
     componentType: 'steps',
     expectedInset: '-6px',
   },
   {
-    fixture: '<Card title="Plain" />\n',
+    fixture: '<Image src="/p.png" alt="Plain" />\n',
     componentType: 'card',
     expectedInset: '-4px',
   },
@@ -448,11 +447,15 @@ test('S12: halo z-index is -1 and .component-children is fully visible when sele
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Cards>\n  <Card title="Visible" />\n</Cards>\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="cards"]');
+  await setupDoc(
+    page,
+    api,
+    '<Callout type="note">\n<Accordion title="Visible">\n\nbody\n\n</Accordion>\n</Callout>\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="callout"]');
 
-  await selectFirstJsxComponent(page, 'Cards');
-  const cards = page.locator('.jsx-component-wrapper[data-component-type="cards"]').first();
+  await selectFirstJsxComponent(page, 'Callout');
+  const cards = page.locator('.jsx-component-wrapper[data-component-type="callout"]').first();
   await expect(cards).toHaveAttribute('data-selected', 'true');
 
   // Halo sits behind content.
@@ -554,8 +557,8 @@ test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=prog
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Card title="Target" />\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(page, api, '<Image src="/p.png" alt="Target" />\n');
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
   const dispatched = await page.evaluate(() => {
     const editor = window.__activeEditor;
@@ -563,7 +566,7 @@ test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=prog
     let cardPos = -1;
     editor.state.doc.descendants((node, pos) => {
       if (cardPos !== -1) return false;
-      if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Card') {
+      if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Image') {
         cardPos = pos;
         return false;
       }
@@ -583,7 +586,7 @@ test('S14: tr.setMeta(SELECTION_ORIGIN_META_KEY) sets data-selection-origin=prog
   });
   expect(dispatched).toBe(true);
 
-  const card = page.locator('.jsx-component-wrapper[data-component-type="card"]').first();
+  const card = page.locator('.jsx-component-wrapper[data-component-type="image"]').first();
   await expect(card).toHaveAttribute('data-selected', 'true', { timeout: 2_000 });
   await expect(card).toHaveAttribute('data-selection-origin', 'programmatic');
 });
@@ -599,8 +602,12 @@ test('S15: Breadcrumb footer height is constant across rapid selection changes',
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Card title="A" />\n\n<Card title="B" />\n\n<Card title="C" />\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(
+    page,
+    api,
+    '<Image src="/a.png" alt="A" />\n\n<Image src="/b.png" alt="B" />\n\n<Image src="/c.png" alt="C" />\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
   // Locate via CSS (not getByRole): when no block is selected, the nav is
   // rendered with `aria-hidden="true"` so it's excluded from Playwright's
@@ -622,7 +629,7 @@ test('S15: Breadcrumb footer height is constant across rapid selection changes',
       if (!ed) return;
       const positions: number[] = [];
       ed.state.doc.descendants((node, pos) => {
-        if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Card') {
+        if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Image') {
           positions.push(pos);
         }
         return true;
@@ -667,9 +674,13 @@ test('S16: axe-core — zero critical violations on selection-layer surfaces', a
   api,
 }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright');
-  await setupDoc(page, api, '<Cards>\n  <Card title="A11y" />\n</Cards>\n');
+  await setupDoc(
+    page,
+    api,
+    '<Callout type="note">\n<Accordion title="A11y">\n\nbody\n\n</Accordion>\n</Callout>\n',
+  );
   await page.waitForSelector('.jsx-component-wrapper');
-  await selectFirstJsxComponent(page, 'Card');
+  await selectFirstJsxComponent(page, 'Image');
 
   // Scope to the selection-layer surfaces, not the whole page — avoids
   // false positives on unrelated shells (sidebar, header, presence bar).
@@ -718,9 +729,13 @@ test('S17: Tab from editor reaches every non-innermost breadcrumb button in orde
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Cards>\n  <Card title="Deep" />\n</Cards>\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
-  await selectFirstJsxComponent(page, 'Card');
+  await setupDoc(
+    page,
+    api,
+    '<Callout type="note">\n<Accordion title="Deep">\n\nbody\n\n</Accordion>\n</Callout>\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
+  await selectFirstJsxComponent(page, 'Image');
 
   // Focus the editor first so Tab starts from a known position.
   await page.locator('.ProseMirror').focus();
@@ -748,14 +763,14 @@ test('S17: Tab from editor reaches every non-innermost breadcrumb button in orde
       // Innermost (aria-current) should NEVER be reached — it's a span, not a button.
       expect(focusedInfo.hasAriaCurrent).toBe(false);
     }
-    if (seen.length >= 2) break; // Document + Cards — that's the expected reachable set.
+    if (seen.length >= 2) break; // Document + Callout — that's the expected reachable set.
   }
 
   expect(seen).toContain('Document');
-  expect(seen).toContain('Cards');
-  // "Card" is the innermost (aria-current="location"); it is NOT a button
+  expect(seen).toContain('Callout');
+  // "Accordion" is the innermost (aria-current="location"); it is NOT a button
   // per the Breadcrumb's design, so it must not appear in the focus trail.
-  expect(seen).not.toContain('Card');
+  expect(seen).not.toContain('Accordion');
 });
 
 // ── S18: aria-live debounce coalesces rapid selection changes ────────────
@@ -770,8 +785,12 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
   page,
   api,
 }) => {
-  await setupDoc(page, api, '<Card title="A" />\n\n<Card title="B" />\n\n<Card title="C" />\n');
-  await page.waitForSelector('.jsx-component-wrapper[data-component-type="card"]');
+  await setupDoc(
+    page,
+    api,
+    '<Image src="/a.png" alt="A" />\n\n<Image src="/b.png" alt="B" />\n\n<Image src="/c.png" alt="C" />\n',
+  );
+  await page.waitForSelector('.jsx-component-wrapper[data-component-type="image"]');
 
   const liveRegion = page.locator('[role="status"][aria-live="polite"]');
   await expect(liveRegion).toBeAttached();
@@ -805,7 +824,7 @@ test('S18: rapid selection changes coalesce into a single aria-live announcement
     if (!ed) return;
     const positions: number[] = [];
     ed.state.doc.descendants((node, pos) => {
-      if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Card') {
+      if (node.type.name === 'jsxComponent' && node.attrs.componentName === 'Image') {
         positions.push(pos);
       }
       return true;
