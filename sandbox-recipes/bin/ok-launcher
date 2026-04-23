@@ -39,10 +39,14 @@ _resolve_project() {
   printf '%s' "${_OK_PROJECTS[$key]}"
 }
 
+# Capture the symlink basename *before* entering any function, because inside
+# a zsh function $0 resolves to the function name, not the script invocation.
+INVOKED_AS="${0:t}"
+
 # ── Help output ──────────────────────────────────────────────────────────
 # Launcher intercepts --help/-h and --about. Pass-through to claude via --.
 print_short_help() {
-  local name="${0:t}"
+  local name="$INVOKED_AS"
   local tier_desc=""
   case "$name" in
     ccs)  tier_desc="Tier 0 — Seatbelt sandbox (kernel-level, no container)." ;;
@@ -154,7 +158,7 @@ if [[ -n "$proj" ]]; then
 fi
 
 # ── Dispatch ─────────────────────────────────────────────────────────────
-case "${0:t}" in
+case "$INVOKED_AS" in
   ccs)
     exec claude --effort max "${remaining[@]}"
     ;;
@@ -189,7 +193,7 @@ EOF
     exit 64
     ;;
   *)
-    echo "ok-launcher: invoked with unknown name: ${0:t}" >&2
+    echo "ok-launcher: invoked with unknown name: $INVOKED_AS" >&2
     echo "       expected one of: ccs, ccu, ccb, ccbu, ccm, ccmu" >&2
     exit 64
     ;;
