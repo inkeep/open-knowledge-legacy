@@ -179,6 +179,7 @@ export {
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,
+  type AssetLinkTarget,
   buildRelativeMarkdownHref,
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
@@ -186,6 +187,7 @@ export {
   type DocLinkTarget,
   type ExternalLinkTarget,
   isExternalHref,
+  resolveAssetProjectPath,
 } from './utils/link-targets.ts';
 export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';

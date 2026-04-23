@@ -33,9 +33,14 @@
  * Schema unchanged (precedent #9 add-only). All identity + resolution state
  * lives in PluginState / decoration attrs.
  */
-import { classifyMarkdownHref, LinkFidelity } from '@inkeep/open-knowledge-core';
+import {
+  classifyMarkdownHref,
+  LinkFidelity,
+  resolveAssetProjectPath,
+} from '@inkeep/open-knowledge-core';
 import { mergeAttributes } from '@tiptap/core';
 import { createElement } from 'react';
+import { dispatchAssetClick } from '../asset-dispatch/dispatcher';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { InternalLinkPropPanel } from './InternalLinkPropPanel';
@@ -108,13 +113,45 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
             onClose: deactivate,
           }),
         handlePrimary: ({ editor, nodeId, newTab }) => {
-          // Only handle Cmd/Ctrl/middle-click (newTab=true). Bare click
-          // opens the PropPanel (fall through by returning false).
-          if (!newTab) return false;
           const info = getCurrentMarkInfo(editor.state, nodeId);
           const href = info?.attrs?.href;
           if (typeof href !== 'string' || !href) return false;
+
+          // Asset dispatch branch (SPEC 2026-04-23 amendment FR-A4).
+          // Fires on BOTH bare click AND Cmd/Ctrl+click — asset hrefs
+          // never open the PropPanel. Cmd+click forces OS delegation
+          // (D-A6 escape hatch). The classifier returns `asset` kind
+          // when the href has a non-md/mdx extension AND is relative;
+          // `sourceForm === 'wikiembed'` is the post-roundtrip marker
+          // kept for defensive coverage if a future mark shape ever
+          // diverges from the classifier. Both checks route the same
+          // way so adding one doesn't widen coverage twice.
+          const sourceForm = info?.attrs?.sourceForm;
           const target = classifyMarkdownHref(href, docName);
+          if (target?.kind === 'asset' || sourceForm === 'wikiembed') {
+            if (target?.kind !== 'asset') return false;
+            const projectRelPath = resolveAssetProjectPath(target.url, docName);
+            if (!projectRelPath) {
+              // Path-escape detected at the renderer boundary — fall
+              // through to PropPanel so the author sees the suspicious
+              // href. Main-process `openAssetSafely` is the defense-in-
+              // depth if the renderer ever calls with an escape.
+              return false;
+            }
+            void dispatchAssetClick({
+              url: target.url,
+              projectRelPath,
+              ext: target.ext,
+              title: projectRelPath.split('/').pop() ?? target.url,
+              forceOsDelegation: newTab,
+            });
+            return true;
+          }
+
+          // Non-asset paths — only handle Cmd/Ctrl/middle-click
+          // (newTab=true). Bare click opens the PropPanel (fall through
+          // by returning false).
+          if (!newTab) return false;
           if (!target) return false;
           if (target.kind === 'doc') {
             openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });

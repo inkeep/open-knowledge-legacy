@@ -3,6 +3,7 @@ import {
   buildRelativeMarkdownHref,
   classifyMarkdownHref,
   classifyWikiLinkTarget,
+  resolveAssetProjectPath,
 } from './link-targets.ts';
 
 describe('classifyMarkdownHref', () => {
@@ -92,6 +93,48 @@ describe('classifyWikiLinkTarget', () => {
       kind: 'external',
       url: 'https://example.com/docs#section',
     });
+  });
+});
+
+describe('resolveAssetProjectPath', () => {
+  test('same-dir asset resolves to sourceDoc-dir/basename', () => {
+    expect(resolveAssetProjectPath('./meeting.pdf', 'notes/readme')).toBe('notes/meeting.pdf');
+  });
+
+  test('parent-relative asset walks up one dir', () => {
+    expect(resolveAssetProjectPath('../shared.pdf', 'notes/sub/readme')).toBe('notes/shared.pdf');
+  });
+
+  test('subdir-relative asset descends into sub', () => {
+    expect(resolveAssetProjectPath('./assets/photo.png', 'docs/guide')).toBe(
+      'docs/assets/photo.png',
+    );
+  });
+
+  test('path escape above project root returns null', () => {
+    expect(resolveAssetProjectPath('../../etc/passwd', 'notes/readme')).toBeNull();
+  });
+
+  test('strips anchor from returned path', () => {
+    expect(resolveAssetProjectPath('./meeting.pdf#page=3', 'notes/readme')).toBe(
+      'notes/meeting.pdf',
+    );
+  });
+
+  test('absolute path returns null (external-not-asset)', () => {
+    expect(resolveAssetProjectPath('/docs/file.pdf', 'notes/readme')).toBeNull();
+  });
+
+  test('HTTPS URL returns null', () => {
+    expect(resolveAssetProjectPath('https://example.com/doc.pdf', 'notes/readme')).toBeNull();
+  });
+
+  test('source doc at root — `..` pop fails', () => {
+    expect(resolveAssetProjectPath('../escape.pdf', 'readme')).toBeNull();
+  });
+
+  test('empty href returns null', () => {
+    expect(resolveAssetProjectPath('', 'notes/readme')).toBeNull();
   });
 });
 

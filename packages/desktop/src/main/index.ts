@@ -41,6 +41,7 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
+import { attachAssetSafetyNet } from './asset-safety-net.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
@@ -330,6 +331,24 @@ function openNavigator() {
 async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
   ensureWindowManager();
   const ctx = await wm.createProjectWindow({ projectPath, pendingDeepLinkDoc });
+  // SPEC 2026-04-23 amendment FR-A7 / D-A10 — defense-in-depth for asset
+  // clicks that escape the renderer dispatcher (drop-time `<a target="_blank">`,
+  // pasted raw `<a href>`, future plugin content). Two-handler intercept
+  // on the editor's webContents routes localhost asset URLs to the same
+  // `openAssetSafely` gate that the `ok:shell:open-asset` IPC uses —
+  // containment + blocklist enforced uniformly regardless of entry point.
+  attachAssetSafetyNet(ctx.window.webContents, {
+    editorOrigin: ctx.apiOrigin,
+    openAsset: (relPath) =>
+      openAssetSafely(
+        {
+          projectPath: ctx.projectPath,
+          platform: process.platform,
+          openPath: (canonical) => shell.openPath(canonical),
+        },
+        relPath,
+      ),
+  });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
   // Keep File → Open Recent current. Menu rebuild is cheap (<1ms) and

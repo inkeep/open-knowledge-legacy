@@ -116,6 +116,60 @@ export function classifyWikiLinkTarget(
   };
 }
 
+/**
+ * Resolve a relative asset href (like `./meeting.pdf`, `../shared/photo.png`)
+ * against the source doc's dirname to produce a project-root-relative path.
+ *
+ * Used by the asset-click dispatcher's Electron branch (`shell.openAsset`
+ * expects a project-relative path) and by the right-click context menu
+ * builder. Mirrors `resolveInternalHref`'s path-walking logic but preserves
+ * the file extension (non-md/mdx) rather than stripping it.
+ *
+ * Refuses paths that escape the project root — returns `null` if `..`
+ * pops past the source doc's top-level directory. This is the renderer-
+ * side "eager refusal" before IPC; the main-process `isPathWithinProject`
+ * + `realpath` in `openAssetSafely` is the authoritative defense-in-depth.
+ *
+ * Contract:
+ *   - Input `href` MUST be relative (no scheme, no `//`, no leading `/`)
+ *     and non-empty. Inputs that violate this return `null`.
+ *   - `#anchor` and `?query` suffixes are preserved in the input form but
+ *     stripped from the returned project-relative path (the path is the
+ *     canonical filesystem location; anchor/query are URL concerns).
+ *   - Source doc at the root (no `/` in `sourceDocName`) means `dirParts`
+ *     starts empty; any `..` pops fail → returns `null`.
+ */
+export function resolveAssetProjectPath(href: string, sourceDocName: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+
+  // External / anchor-only / absolute → not a resolvable relative asset.
+  if (URI_SCHEME_RE.test(trimmed)) return null;
+  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
+
+  // Strip anchor + query from the path portion (same-shape as
+  // `resolveInternalHref`). The returned project-rel-path is a filesystem
+  // location; the URL-layer concerns live on the original href.
+  const hashIdx = trimmed.indexOf('#');
+  const pathPart = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
+  const cleanPath = (pathPart.split('?')[0] ?? '').trim();
+  if (!cleanPath) return null;
+
+  const dirParts = sourceDocName.includes('/') ? sourceDocName.split('/').slice(0, -1) : [];
+
+  for (const seg of cleanPath.split('/')) {
+    if (seg === '..') {
+      if (dirParts.length === 0) return null;
+      dirParts.pop();
+    } else if (seg !== '.' && seg !== '') {
+      dirParts.push(seg);
+    }
+  }
+
+  if (dirParts.length === 0) return null;
+  return dirParts.join('/');
+}
+
 export function buildRelativeMarkdownHref(
   sourceDocName: string,
   targetDocName: string,

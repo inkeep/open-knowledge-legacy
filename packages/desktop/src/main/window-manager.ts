@@ -61,6 +61,17 @@ export interface BrowserWindowLike {
   webContents: {
     send(channel: string, ...args: unknown[]): void;
     once(event: 'dom-ready', cb: () => void): void;
+    /**
+     * `will-navigate` + `setWindowOpenHandler` used by the asset-click
+     * safety net (SPEC 2026-04-23 FR-A7 / D-A10). Narrow structural
+     * signature — tests that don't exercise the safety net can leave
+     * these as no-ops. Matches Electron's `WebContents` at runtime.
+     */
+    setWindowOpenHandler(handler: (details: { url: string }) => { action: 'allow' | 'deny' }): void;
+    on(
+      event: 'will-navigate',
+      handler: (event: { preventDefault: () => void }, url: string) => void,
+    ): void;
   };
   loadFile(filePath: string): Promise<void>;
   loadURL(url: string): Promise<void>;

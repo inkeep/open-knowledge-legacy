@@ -46,7 +46,7 @@ import * as pathWin32 from 'node:path/win32';
 import { EXECUTABLE_BLOCKLIST_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import { isPathWithinProject } from './ipc-handlers.ts';
 
-type AssetOpenResult =
+export type AssetOpenResult =
   | { ok: true }
   | { ok: false; reason: 'extension-blocked' | 'path-escape' | 'not-found' | 'resolve-error' };
 

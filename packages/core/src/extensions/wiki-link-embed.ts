@@ -145,6 +145,22 @@ export const WikiLinkEmbed = Node.create({
     // Non-image or opaque → clickable link. Phase 2 will promote the
     // non-image typed extensions (pdf/mp4/mp3/…) to dedicated NodeViews
     // (Video/Audio/PDFViewer) at render time — storage shape unchanged.
+    //
+    // `target="_blank"` + `rel="noopener noreferrer"` is the drop-time
+    // click surface (SPEC 2026-04-23 amendment Gap 4 fix). In web the
+    // new-tab is the correct default. In Electron, `setWindowOpenHandler`
+    // on the editor webContents (wired in `window-manager.ts`) intercepts
+    // the new-window request, detects localhost asset URLs, and routes
+    // to `openAssetSafely` — which dispatches to `shell.openPath` so the
+    // OS default app opens the asset without replacing the editor
+    // window. Without `target="_blank"` an Electron bare click would
+    // replace the main webContents with the PDF viewer / binary
+    // fallback and the user would lose the editor (the root-cause bug).
+    //
+    // Post-roundtrip the wiki-embed becomes a PM `text` + `link` mark
+    // with `sourceForm='wikiembed'`, routed through `internal-link.ts`
+    // handlePrimary + the renderer dispatcher. This `<a>` exists only
+    // transiently between drop and the next save.
     const hrefBase = resolvedSrc ?? target;
     return [
       'a',
@@ -155,6 +171,8 @@ export const WikiLinkEmbed = Node.create({
         'data-alias': alias ?? '',
         'data-anchor': anchor ?? '',
         href: anchor ? `${hrefBase}#${anchor}` : hrefBase,
+        target: '_blank',
+        rel: 'noopener noreferrer',
       },
       labelFor({ target, alias, anchor }),
     ];
