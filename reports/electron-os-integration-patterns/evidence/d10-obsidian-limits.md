@@ -7,16 +7,26 @@
 
 ---
 
-## Summary
+## Summary (source-level verified via Obsidian 1.12.7 bundle inspection — 2026-04-23)
 
-- **A confirmation dialog for external-app opens landed in 1.12.2** (Early Access 2026-02-18). **Exact gating mechanism (per-click / per-file / per-extension / configurable / with-or-without checkbox) is NOT documented in the public changelog** and was not verified via forum reports in this research. UNVERIFIED how the dialog actually gates in practice.
-- **A separate executable-file warning** was added in 1.12.2. Reasonably inferred to be warn-only (not hard-block) from the wording "added a warning," but not confirmed by behavioral testing.
-- **No published extension blocklist.**
-- **No realpath-inside-vault check** documented. UNCERTAIN on absolute-path escape — no forum reports of it working, but no published guard either.
-- **No published CVE** targeting `shell.openPath` specifically.
-- **Plugins get the raw Electron `shell` object** — 1.12.2's safeguards apply only to the core "Open in default app" command; third-party plugins bypass.
+Corrected from earlier agent-inferred claims. All findings below are CONFIRMED from the main-process bundle (`Obsidian.app/Contents/Resources/obsidian.asar → main.js`) unless otherwise labeled.
 
-**Pre-1.12.2 posture was fully silent delegation** (forum #83532 confirms). **Post-1.12.2 adds at least one UX gate**, but the gate's exact shape is a knowledge gap.
+- **There is NO generic "every click → confirmation dialog" behavior.** Local non-executable files (PDF, zip, docx, csv, images, etc.) open silently via `shell.openPath` — same as pre-1.12.2 for these cases.
+- **Two conditional warnings** gate the `shell.openPath` call:
+  1. **Remote-file warning** — fires on UNC paths (`\\server\share\…`). Dialog: *"Remote file warning — This file is located on a remote server, and may be dangerous. Are you sure you want to open it?"* Buttons: Open this file / Cancel. Cancel is the default.
+  2. **Executable-file warning** — fires when the file's extension (or magic bytes for extensionless chmod+x) is in a platform-specific exec list. Dialog: *"Run executable file? — This link points to an executable file. Running it could harm your computer."* Buttons: Run File / Cancel. Cancel is the default.
+- **Executable extension list (exact, from source)** — platform-dependent:
+  - **Windows (Y branch):** `.exe`, `.bat`, `.cmd`, `.ps1`, `.com`, `.msi`, `.vbs`, `.js`, `.jse`, `.wsf`, `.wsh`
+  - **macOS + Linux:** `.sh`, `.command`, `.csh`, `.ksh`, `.bash`, `.zsh`, `.fish`, `.desktop`, `.action`, `.workflow`
+  - **Any platform:** extensionless files with chmod+x AND either `#!` shebang header OR specific binary magic (ELF/Mach-O INFERRED) — Vt() reads 4 bytes and branches.
+- **Warn-not-block.** Both dialogs default to Cancel but the user can proceed. No hard block anywhere.
+- **No realpath / vault-containment check.** Source has no prefix-match against vault root. Relies on link-resolver behavior + UNC detection only.
+- **Platform branching in `oe(path)`:** macOS + Windows → `shell.openPath(path)`; Linux → `shell.openExternal(pathToFileURL(path).href)` (OpenURI portal compatibility).
+- **Plugin bypass CONFIRMED at source level.** `BrowserWindow.webPreferences` is `contextIsolation: false, nodeIntegration: true, nodeIntegrationInWorker: true`. Plugins can `require('electron').shell.openPath` directly — bypasses Obsidian's `oe()` chain entirely. The 1.12.2 warnings apply only to Obsidian's core click-to-open flow.
+
+**Posture:** warn-on-narrow-danger (exec + remote), silent for the common case. NOT per-click. NOT per-extension. NOT configurable (no "don't ask" checkbox).
+
+---
 
 ---
 
@@ -33,32 +43,126 @@ Obsidian does not publish the executable-extension list. Based on the changelog 
 
 **Implication:** pre-1.12.2 Obsidian was the baseline "trust the OS" posture; post-1.12.2 adds a soft UX gate for exec-class but nothing for `.html` (stored-XSS class) or arbitrary `file:` targets.
 
-### Finding: A confirmation dialog for external-app opens was added in 1.12.2 (gating mechanism undocumented)
+### Finding: 1.12.2's "confirmation dialog" is TWO conditional warnings, not a generic per-click prompt
 
-**Confidence:** CONFIRMED (existence); UNVERIFIED (gating specifics)
-**Evidence:** [1.12.2 changelog](https://obsidian.md/changelog/2026-02-18-desktop-v1.12.2/), "Improvements → Other" section, verbatim:
+**Confidence:** CONFIRMED (source-code inspection of Obsidian 1.12.7's main.js, 2026-04-23)
+**Evidence:** `/Applications/Obsidian.app/Contents/Resources/obsidian.asar → main.js`, extracted via `@electron/asar`.
 
-> "Opening files in an external application now shows a confirmation dialog for added safety"
+The changelog language *"Opening files in an external application now shows a confirmation dialog for added safety"* was misleading. There is no blanket dialog. Only two narrow conditional warnings:
 
-That's the entire public documentation of this feature. The changelog does NOT specify:
+```js
+// Simplified reconstruction from minified source (main.js)
+// S = URL scheme, m = file path, e = BrowserWindow
 
-- Whether the dialog fires **per-click, per-file, per-file-type, or per-session**
-- Whether there's a "don't ask again" / "always allow" checkbox
-- Whether it's configurable in settings
-- Which file types trigger it (all external-app opens? only opaque? only exec-class?)
+if (S !== "file") return shell.openExternal(r);  // URL → shell.openExternal (6 sites in main)
 
-A WebFetch of the full 1.12.2 changelog (dated 2026-02-18) confirms these are the ONLY two external-app-related lines:
+// File path branch:
+if (ft(m) || (Y && !/^[a-z]:/i.test(m))) {  // UNC path OR Windows non-drive-letter path
+  const response = await dialog.showMessageBox(e, {
+    message: `This file is located on a remote server, and may be dangerous.\nAre you sure you want to open it?\n\nLocation: ` + truncate(m, 200),
+    type: "warning",
+    buttons: ["Open this file", "Cancel"],
+    defaultId: 1, cancelId: 1,
+    title: "Remote file warning"
+  });
+  if (response.response !== 0) return;  // Cancelled
+}
 
-1. "Opening files in an external application now shows a confirmation dialog for added safety"
-2. "Added a warning when attempting to open an executable file"
+if (await Vt(m)) {  // File is an executable per platform-specific extension list (see below)
+  const response = await dialog.showMessageBox(e, {
+    message: `This link points to an executable file. Running it could harm your computer.\n\nFile: ` + truncate(m, 200),
+    type: "warning",
+    buttons: ["Run File", "Cancel"],
+    defaultId: 1, cancelId: 1,
+    title: "Run executable file?"
+  });
+  if (response.response !== 0) return;  // Cancelled
+}
 
-Forum search across obsidian.md/forum and related threads did NOT surface user reports describing the dialog's gating mechanics (e.g. "I clicked the same PDF twice and got prompted both times" or "the dialog has a 'don't ask again' checkbox").
+// Both checks passed → actually open
+console.log("Opening file: " + m);
+oe(m);
 
-**Evidence-safe statement:** A confirmation dialog exists for external-app opens in Obsidian 1.12.2+. The gating model (per-click / per-file / per-extension / configurable) is a knowledge gap in this research.
+function oe(e) {
+  !Y && !U 
+    ? shell.openExternal(pathToFileURL(e).href)  // Linux — uses openExternal with file:// URL
+    : shell.openPath(e);                          // macOS + Windows — direct openPath
+}
+```
 
-**Comparison to Joplin — HEDGED:** Joplin's confirmation is code-confirmed as *first-time-per-extension* with "Always open .X files" checkbox at `bridge.ts:406-428`. Obsidian's dialog mechanics are undocumented — could be identical, stricter (every click), or looser (only for certain extensions). Direct comparison is not supportable from the available evidence.
+**The Vt() executable predicate, reconstructed from source:**
 
-**How to verify:** install Obsidian 1.12.2+ locally, drop a PDF + a zip + a docx into a vault, click each twice, document behavior. Not done in this research.
+```js
+async function Vt(c) {
+  const stat = await fs.stat(c);
+  if (stat.isDirectory()) return false;
+  const ext = path.extname(c).toLowerCase();
+  
+  if (Y /* Windows */) {
+    return [".exe", ".bat", ".cmd", ".ps1", ".com", ".msi", ".vbs", ".js", ".jse", ".wsf", ".wsh"].includes(ext);
+  }
+  
+  // macOS + Linux
+  if ([".sh", ".command", ".csh", ".ksh", ".bash", ".zsh", ".fish", ".desktop", ".action", ".workflow"].includes(ext)) {
+    return true;
+  }
+  
+  // No extension + chmod +x → check shebang or binary magic
+  if (!ext && (stat.mode & 0o111) !== 0) {
+    const buf = Buffer.alloc(4);
+    const fd = await fs.open(c, "r");
+    await fd.read(buf, 0, 4, 0);
+    await fd.close();
+    if (buf.toString("ascii", 0, 2) === "#!" || /* binary magic check */) return true;
+  }
+  return false;
+}
+```
+
+**The ft() remote-file predicate:**
+
+```js
+function ft(c) {
+  return typeof c === "string" && /^[\\\/]{2,}[^\\\/]+[\\\/]+[^\\\/]+/.test(c);
+  // Matches UNC paths: \\server\share\... or //server/share/...
+}
+```
+
+**What this actually means:**
+
+| File type | Dialog? |
+|---|---|
+| Local PDF, zip, docx, xlsx, txt, csv, images, any non-executable-non-remote | **ZERO dialog** — silent `shell.openPath` |
+| Executable (`.exe`, `.sh`, `.desktop`, …) | "Run executable file?" warning |
+| File on remote UNC path (`\\server\share\foo.pdf`) | "Remote file warning" |
+| Executable AND remote | Both dialogs chained (remote first, then exec) |
+
+**Comparison to Joplin — now sharp-edged:**
+
+- Joplin: *every* open of every extension outside its safe-list goes through a confirmation dialog with "Always open .X files" checkbox (`bridge.ts:406-428`). First-time-per-extension gate.
+- Obsidian: only executables + UNC paths get any dialog. PDFs/zips/docs/everything-else open silently. No "always allow" checkbox — the decision is per-click only for the narrow exec+remote cases.
+
+Joplin is strictly more conservative than Obsidian for common opaque types. Obsidian is more UX-permissive (silent for the common case) but blocks exec-class files that Joplin would dialog-prompt for.
+
+### Finding: Obsidian runs BrowserWindow with contextIsolation:false + nodeIntegration:true
+
+**Confidence:** CONFIRMED (source inspection)
+**Evidence:** main.js, webPreferences block:
+
+```js
+webPreferences: {
+  contextIsolation: false,
+  nodeIntegration: true,
+  nodeIntegrationInWorker: true,
+  spellcheck: true,
+  webviewTag: true,
+  affinity: "main-window"
+}
+```
+
+**Implications:**
+- Plugins (which run in the same renderer) can `require('electron').shell.openPath(path)` directly without going through Obsidian's `oe()` chain. They bypass both the remote-file and executable warnings. **Plugin bypass is architectural, not a gap to be closed.**
+- Obsidian explicitly opts out of the Electron security baseline (`contextIsolation: true` + `nodeIntegration: false` + `sandbox: true`) that every other surveyed OSS app (VSCode, AFFiNE, Joplin, Standard Notes) uses. The trade-off is plugin ergonomics (direct Electron API access) vs. stronger XSS-to-RCE defense.
 
 ### Finding: Vault containment is implicit via indexer, not explicit realpath check
 

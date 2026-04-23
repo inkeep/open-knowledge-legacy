@@ -157,32 +157,64 @@ Electron's `shell.*` surface gives desktop apps five OS-integration capabilities
 - The Joplin pattern ("extension allowlist + consent dialog") is the right fit when the app intentionally wants OS-delegation but needs security discipline.
 - The Zettlr pattern is viable only with a trusted-source model the user cannot inject into (citation management).
 
-### D10 — Obsidian's `shell.openPath` limits (Path C addition, 2026-04-23)
+### D10 — Obsidian's `shell.openPath` limits (Path C addition, 2026-04-23 — **source-level verified**)
 
-**Finding:** Obsidian (closed-source) delegates **opaque-type left-clicks to OS default app via `shell.openPath` automatically**. Limits are minimal and recent:
-- **No published extension blocklist.** A warning for executables landed in 1.12.2 (Early Access 2026-02-18 — *very recent*). Wording in the changelog is "added a warning," which reasonably implies warn-only rather than hard-block, but behavioral verification is outside this research.
-- **A confirmation dialog for external-app opens was added in 1.12.2.** The gating mechanism (per-click, per-file, per-extension, configurable, with-or-without checkbox) is **NOT documented in the public changelog** and was not verified via forum reports. UNVERIFIED whether it prompts every click, first-click-only, or something else.
-- **No documented realpath-inside-vault check** — vault containment is behavioral (indexer-driven) rather than enforced.
-- **No CVE targets `shell.openPath`** specifically. Obsidian's published CVEs (CVE-2023-2110, CVE-2023-27035, etc.) are about URL schemes and embedded-webpage privilege escalation, not shell misuse.
-- **Plugins bypass both 1.12.2 safeguards.** Third-party plugins get raw Electron `shell` and add no validation.
+**Finding:** Via `asar extract` of `/Applications/Obsidian.app/Contents/Resources/obsidian.asar` (Obsidian 1.12.7), the actual implementation of Obsidian's 1.12.2 "safety" additions is narrower than the changelog implies. There is **no generic per-click confirmation**; there are **two conditional warnings** (remote-file + executable) and the common case (local, non-executable) opens silently with no dialog.
 
-**Evidence:** [evidence/d10-obsidian-limits.md](evidence/d10-obsidian-limits.md)
+**Flow:**
 
-**Exact changelog language (CONFIRMED via WebFetch of [obsidian.md/changelog/2026-02-18-desktop-v1.12.2/](https://obsidian.md/changelog/2026-02-18-desktop-v1.12.2/), "Improvements → Other" section):**
+```js
+// Simplified from main.js (minified). Y = Windows, U = macOS.
+if (ft(path) || Y-non-drive-letter) → "Remote file warning" dialog (UNC paths)
+if (await Vt(path))                   → "Run executable file?" dialog (platform exec list)
+// both warnings optional; common-case files skip both → oe(path):
+function oe(e) {
+  !Y && !U 
+    ? shell.openExternal(pathToFileURL(e).href)  // Linux
+    : shell.openPath(e);                          // macOS + Windows
+}
+```
 
-> "Opening files in an external application now shows a confirmation dialog for added safety"
+**Executable extension list (exact from source, `Vt()` predicate):**
+- **Windows:** `.exe`, `.bat`, `.cmd`, `.ps1`, `.com`, `.msi`, `.vbs`, `.js`, `.jse`, `.wsf`, `.wsh`
+- **macOS + Linux:** `.sh`, `.command`, `.csh`, `.ksh`, `.bash`, `.zsh`, `.fish`, `.desktop`, `.action`, `.workflow`
+- Extensionless + chmod+x + shebang/ELF magic also flagged.
+
+**Remote-file predicate (`ft()`):** regex `^[\\\/]{2,}[^\\\/]+[\\\/]+[^\\\/]+` — matches UNC paths `\\server\share\...` only.
+
+**Dialog mechanics (both warnings):** `type: "warning"`, `buttons: ["Open this file" / "Run File", "Cancel"]`, `defaultId: 1, cancelId: 1` (Cancel is the default). No "don't ask again" checkbox. No persistence. **Single dialog per triggering click. Per-click-for-the-narrow-cases, silent-for-everything-else.**
+
+**Per-type dialog behavior:**
+
+| Type | Dialog? |
+|---|---|
+| Local PDF, zip, docx, csv, images, anything non-exec non-UNC | **Zero dialog** — silent `shell.openPath` |
+| Executable (`.exe`, `.sh`, etc. — exact lists above) | Per-click "Run executable file?" warning |
+| File on UNC path | Per-click "Remote file warning" |
+| Both exec AND UNC | Remote warning → (if proceeds) Exec warning → open |
+
+**Plugin bypass — CONFIRMED STRUCTURALLY.** Obsidian's `BrowserWindow.webPreferences` is `{ contextIsolation: false, nodeIntegration: true, nodeIntegrationInWorker: true, webviewTag: true }` (from main.js). Plugins running in the same renderer can `require('electron').shell.openPath(path)` directly — bypassing `oe()` and both warnings. This is architectural, not a gap. Obsidian opts out of the standard Electron security baseline that every other surveyed OSS app adopts, in exchange for plugin ergonomics.
+
+**Evidence:** [evidence/d10-obsidian-limits.md](evidence/d10-obsidian-limits.md) — full source reconstruction with `Vt()` + `ft()` + `oe()` definitions.
+
+**Changelog language vs reality:**
+
+> **Changelog:** "Opening files in an external application now shows a confirmation dialog for added safety" + "Added a warning when attempting to open an executable file"
 >
-> "Added a warning when attempting to open an executable file"
+> **Source reality:** no generic confirmation — **two conditional warnings** (UNC remote-file + platform-specific executable list) — and the common case opens silently.
 
-That is the entire public documentation of 1.12.2's external-app handling. Any additional specificity about gating, checkboxes, or extension coverage is inference rather than evidence.
+The changelog's phrasing implied a blanket gate that doesn't exist. The feature is narrower than marketed.
 
 **Implications:**
-- **Pre-1.12.2 Obsidian was fully silent delegation** — same "trust the OS" posture as raw `shell.openPath`. CONFIRMED via forum #83532 (zip auto-unzip, `.py`/`.c` silent execution).
-- **Post-1.12.2 adds at least one UX gate, shape unverified.** Reasonable inference is warn-not-block + some form of confirmation prompt, but the exact user flow hasn't been behaviorally tested here.
-- **Corrects an earlier research error** in [editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md](../editor-asset-embed-patterns-across-universe/evidence/d9-click-behavior.md) — that report originally claimed Obsidian shows a "blank/degraded preview pane" for opaque types. Wrong; it delegates to the OS default app (with some new-in-Feb-2026 UX gating whose exact shape is unknown).
+- **Common-case behavior (PDF, zip, docx, …) is silent delegation** — same as pre-1.12.2 for these files. The 1.12.2 changes only added exec + UNC gating.
+- **The safer-for-everyday Joplin pattern remains the gold standard.** Joplin's *every-open-outside-safelist → confirmation dialog → "always allow .X"* is strictly more conservative than Obsidian for everyday opaque types. Obsidian chose a narrower risk target (executables only, plus Windows UNC paths).
+- **Plugin bypass is load-bearing.** Obsidian's architectural security trade-off (contextIsolation:false for plugin ergonomics) means the 1.12.2 warnings are core-click-only. Any serious threat model has to reckon with "malicious plugin → direct `shell.openPath`."
+- **Corrects an earlier D9 claim** in `editor-asset-embed-patterns-across-universe/` that Obsidian shows a blank pane for opaque types. Wrong; it delegates silently (for non-exec-non-UNC types).
 
-**Decision triggers:**
-- If aspiring to Obsidian-parity for Electron click-on-asset UX, post-1.12.2 Obsidian *may* be the reference point — but its specific dialog mechanics would need behavioral verification before being used as a pattern to match. Joplin's pattern (extension allowlist + per-extension consent with "always allow" checkbox) is code-confirmed and richer; it remains the clearest gold standard.
+**Decision triggers for OK's Electron click-on-asset UX:**
+- **If matching Obsidian's narrow-warn posture:** implement `shell.openPath` + an extension-allowlist-based warning dialog for exec-class extensions only. Common-case opens silently.
+- **If matching Joplin's gold-standard:** implement extension allowlist with first-time-per-extension consent dialog + "always allow" persistence. More conservative.
+- **Zettlr's minimal-gate trusted-source pattern is still the outlier** — Obsidian and Joplin both do more than Zettlr.
 
 ### D11 — User-activation forwarding across IPC (Path C addition, 2026-04-23)
 

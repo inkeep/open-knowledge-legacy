@@ -120,6 +120,44 @@ Corrects an error in `editor-asset-embed-patterns-across-universe/evidence/d9-cl
 
 **Calibration note (added after initial Path C write):** initial S7 output asserted "Every click, not Joplin-style first-click-only" — the orchestrator accepted this without verification. The user caught this during review. The claim is NOT supported by the changelog text (which says only "now shows a confirmation dialog"). D10 evidence file and REPORT.md D10 section were patched to replace the "every click" inference with honest UNVERIFIED labels. Lesson: "no forum report of a checkbox" is negative evidence, not proof of absence — should not be used to assert a positive claim about gating.
 
+---
+
+## 2026-04-23 — Path C second-round: source-level verification of Obsidian 1.12.7
+
+**Trigger:** After the calibration downgrade to UNVERIFIED, user noted Obsidian was installed locally. Extracted `Obsidian.app/Contents/Resources/obsidian.asar` via `@electron/asar` and inspected the minified `main.js` directly.
+
+**Key findings (all CONFIRMED from source):**
+
+1. **There is exactly ONE `shell.openPath` call site** in Obsidian's main process — inside the `oe(path)` function.
+2. **The 1.12.2 changelog language was misleading.** There is no generic per-click confirmation dialog. Instead, there are TWO **conditional** warnings:
+   - **Remote-file warning (`ft()` predicate):** fires only on UNC paths (`\\server\share\…`). Title: *"Remote file warning"*. Message: *"This file is located on a remote server, and may be dangerous. Are you sure you want to open it?"*
+   - **Executable-file warning (`Vt()` predicate):** fires only when the file extension matches a platform-specific list or when extensionless + chmod+x + shebang/binary-magic. Title: *"Run executable file?"*.
+3. **Executable extension list — exact from source:**
+   - **Windows:** `.exe, .bat, .cmd, .ps1, .com, .msi, .vbs, .js, .jse, .wsf, .wsh`
+   - **macOS + Linux:** `.sh, .command, .csh, .ksh, .bash, .zsh, .fish, .desktop, .action, .workflow`
+4. **Both dialogs:** single-dialog-per-triggering-click, Cancel as default, no "don't ask again" checkbox, no persistence.
+5. **Common case (local PDF, zip, docx, anything non-exec-non-UNC) opens silently** via `shell.openPath` with NO dialog.
+6. **Platform split in `oe()`:** macOS + Windows call `shell.openPath(path)` directly; Linux calls `shell.openExternal(pathToFileURL(path).href)` — compatible with XDG portal mediation.
+7. **Plugin bypass CONFIRMED architecturally.** `BrowserWindow.webPreferences = { contextIsolation: false, nodeIntegration: true, nodeIntegrationInWorker: true, webviewTag: true }`. Plugins can `require('electron').shell.openPath` directly and bypass both warnings. This is Obsidian's explicit opt-out of the Electron security baseline.
+8. **Renderer uses `remote.shell.showItemInFolder` via @electron/remote.** No `shell.openPath` in renderer.
+
+### Calibration lessons
+
+- **Forum archaeology + changelog reading ≠ source truth.** S7's inferences about gating were built on imprecise changelog prose; the actual implementation is materially different (narrower) than what the changelog suggested.
+- **`asar extract` is cheap and load-bearing for closed-source Electron apps.** For any meaningful research on a closed-source Electron app's behavior, this should be the first method, not the last. Obsidian's JS bundle is minified but readable — function names are obfuscated but string literals and API calls survive.
+- **Orchestrator (me) should have pushed for source-level verification earlier.** The user correctly identified this as a knowledge gap and unblocked it by noting the local installation.
+
+### Files updated in this round
+
+- `evidence/d10-obsidian-limits.md` — **rewritten** summary + new "Finding" section with full code reconstruction (`Vt()`, `ft()`, `oe()` definitions; webPreferences block; per-type dialog behavior table). Corrects earlier UNVERIFIED downgrade with CONFIRMED source-level findings.
+- `REPORT.md` D10 section — rewritten to match. Includes per-type dialog behavior table, exec extension lists, plugin-bypass architectural note.
+- (This changelog entry) — records the calibration lesson + source-dig method.
+
+### Remaining open items after this round
+
+- **Magic-byte check in `Vt()` for extensionless executables** — source reads 4 bytes and compares against `"#!"` (ASCII shebang) and a partially-decoded hex magic. Full decoding of the non-shebang binary magic branch would confirm whether ELF + Mach-O + other formats are all caught. Low-stakes; the shebang branch is the dominant case for Linux shell scripts without extensions.
+- **Did Obsidian 1.12.2 exactly introduce both the exec warning and the UNC remote-file warning, or was UNC-remote warning pre-existing?** Changelog phrasing suggests both are new; without a pre-1.12.2 binary to diff against, the attribution is INFERRED.
+
 **S8 — Gesture forwarding across IPC (new D11):** Confirmed negative on Electron's side + confirmed negative on OSS adoption.
 - Electron does NOT forward user activation across IPC. `IpcMainInvokeEvent` carries no `isTrusted` / `userActivation` / `hasTransientActivation` field.
 - No OSS app surveyed (VSCode, AFFiNE, Zettlr, Logseq) implements token-based gesture forwarding. VSCode's `userGesture: boolean` IPC arg is a UX signal (accessibility sound), trust-the-renderer.
