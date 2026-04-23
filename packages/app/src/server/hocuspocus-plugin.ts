@@ -125,19 +125,29 @@ const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 // that would keep the event loop alive past the bundle step.
 let srv: ServerInstance | null = null;
 
-// Keepalive grace-period state. Copied verbatim from boot.ts:244-396 per
-// SPEC D5 LOCKED (copy, not extract — NG2 is the extraction vehicle).
-// Plugin-local because it needs to attach via `server.httpServer.prependListener`
-// (Vite's HMR upgrade handler must come second).
+// Keepalive grace-period threshold. Copied verbatim from boot.ts:244-396 per
+// SPEC D5 LOCKED (copy, not extract — NG2 is the extraction vehicle). The
+// const stays module-scope because it's not per-instance state; the mutable
+// companions (timers, in-flight set, shuttingDown) are closure-scoped inside
+// `configureServer` so each Vite dev-server instance gets fresh state
+// (matches boot.ts's bootServer closure shape).
 const KEEPALIVE_GRACE_MS = 10_000;
-const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const keepaliveGraceInflight = new Set<Promise<void>>();
-let shuttingDown = false;
 
 export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
     async configureServer(server) {
+      // Per-invocation keepalive state. If Vite restarts the dev server
+      // in-process (e.g. vite.config.ts edit), the OLD close handler sets
+      // its own `shuttingDown = true` on its OWN binding; the NEW
+      // configureServer call gets fresh `shuttingDown = false` so new
+      // keepalive-grace timers on the new httpServer don't short-circuit
+      // against a stale flag from the previous lifecycle. Matches boot.ts's
+      // closure-scoped pattern (boot.ts:244-254).
+      const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+      const keepaliveGraceInflight = new Set<Promise<void>>();
+      let shuttingDown = false;
+
       configureServerInvocations += 1;
       if (configureServerInvocations > 1) {
         // Vite called `configureServer` a second time within the same module
