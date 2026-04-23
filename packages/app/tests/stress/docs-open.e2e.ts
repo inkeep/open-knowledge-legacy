@@ -464,7 +464,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
   });
 
-  test('F6: error boundary "Back to previous document" navigates to prior doc', async ({
+  test('F6: error boundary "Go back" navigates to prior doc', async ({
     page,
     api,
   }) => {
@@ -490,9 +490,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
     await expect(errorAlert).toContainText('Connection dropped');
 
-    // "Back to previous document" is present when previousDocName is set
+    // "Go back" is present when previousDocName is set
     // (it was — doc A was last successfully opened before the error on B).
-    const backButton = errorAlert.getByRole('button', { name: 'Back to previous document' });
+    const backButton = errorAlert.getByRole('button', { name: 'Go back' });
     await expect(backButton).toBeVisible();
     await backButton.click();
 
