@@ -4,7 +4,7 @@
 #
 # Dispatch based on $0: the symlink's basename tells us which tier to launch.
 #
-# Registry: reads ~/.ok-projects.sh if present to pick up user-added repos.
+# Registry: reads ~/.cc-projects.sh if present to pick up user-added repos.
 # That file is a shared source of truth between PATH scripts and shell functions.
 #
 # Usage:  <alias-name> [-p <project>] [claude args...]
@@ -23,19 +23,19 @@ if [[ "$SANDBOX_RECIPES" != /* ]]; then
 fi
 
 # ── Project registry ─────────────────────────────────────────────────────
-# Single source of truth: ~/.ok-projects.sh (created by bootstrap.sh).
+# Single source of truth: ~/.cc-projects.sh (created by bootstrap.sh).
 # Shared with the zshrc shell functions so they both see the same keys.
-typeset -gA _OK_PROJECTS
-if [[ -f "$HOME/.ok-projects.sh" ]]; then
-  source "$HOME/.ok-projects.sh"
+typeset -gA _CC_PROJECTS
+if [[ -f "$HOME/.cc-projects.sh" ]]; then
+  source "$HOME/.cc-projects.sh"
 fi
 
 # ── -p <project> extraction ──────────────────────────────────────────────
 _resolve_project() {
   local key="${1:-}"
   [[ -z "$key" ]] && return 1
-  [[ -n "${_OK_PROJECTS[$key]:-}" ]] || return 1
-  printf '%s' "${_OK_PROJECTS[$key]}"
+  [[ -n "${_CC_PROJECTS[$key]:-}" ]] || return 1
+  printf '%s' "${_CC_PROJECTS[$key]}"
 }
 
 # Capture the symlink basename *before* entering any function, because inside
@@ -72,7 +72,7 @@ Examples:
   $name -p ok -r abc123       # + pass claude's -r (resume session)
   $name -- --help             # show claude's own help (bypasses launcher)
 
-Project registry: ~/.ok-projects.sh   (list via 'ccp-list' in your shell)
+Project registry: ~/.cc-projects.sh   (list via 'ccp-list' in your shell)
 
 Claude's -p (print mode) is shadowed by our -p. Use --print instead.
 EOF
@@ -93,7 +93,7 @@ Open Knowledge sandbox-recipes — tier comparison
   ccmu        Tier 1 — Matryoshka                 unattended      strongest + AFK
 
   Shape:      <cmd> [-p <project>] [claude args]
-  Project:    -p <key>    (see ~/.ok-projects.sh or run 'ccp-list')
+  Project:    -p <key>    (see ~/.cc-projects.sh or run 'ccp-list')
   Helpers:    ccp <key>   (cd only)     ccp-list (show registry)     cc-setup (re-run bootstrap)
 
   Suffixes:
@@ -150,13 +150,13 @@ done
 if [[ -n "$proj" ]]; then
   if ! dir="$(_resolve_project "$proj")"; then
     echo "error: unknown project shortcut: '$proj'" >&2
-    if (( ${#_OK_PROJECTS[@]} == 0 )); then
+    if (( ${#_CC_PROJECTS[@]} == 0 )); then
       echo "       project registry is empty." >&2
-      echo "       edit ~/.ok-projects.sh to add entries, or re-run bootstrap:" >&2
+      echo "       edit ~/.cc-projects.sh to add entries, or re-run bootstrap:" >&2
       echo "         $SANDBOX_RECIPES/bootstrap.sh --install-path" >&2
     else
-      echo "       known: ${(k)_OK_PROJECTS}" >&2
-      echo "       edit ~/.ok-projects.sh to add more." >&2
+      echo "       known: ${(k)_CC_PROJECTS}" >&2
+      echo "       edit ~/.cc-projects.sh to add more." >&2
     fi
     exit 1
   fi
@@ -183,10 +183,10 @@ case "$INVOKED_AS" in
   ccmu)
     exec "$SANDBOX_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "${remaining[@]}"
     ;;
-  ok-launcher|ok-sandbox)
+  cc-launcher|ok-sandbox)
     # Direct invocation without symlink — print usage.
     cat >&2 <<EOF
-ok-launcher: launched directly, expected a symlink invocation.
+cc-launcher: launched directly, expected a symlink invocation.
 
 Install symlinks with:
   $SANDBOX_RECIPES/bootstrap.sh --install-path
@@ -199,7 +199,7 @@ EOF
     exit 64
     ;;
   *)
-    echo "ok-launcher: invoked with unknown name: $INVOKED_AS" >&2
+    echo "cc-launcher: invoked with unknown name: $INVOKED_AS" >&2
     echo "       expected one of: ccs, ccu, ccb, ccbu, ccm, ccmu" >&2
     exit 64
     ;;

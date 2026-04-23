@@ -17,7 +17,7 @@
 #   3. Build the Tier 1 Matryoshka image (if `container` is installed)
 #   4. If --install-aliases: append the alias block to your shell rc
 #   5. If --install-path:    install launcher scripts to ~/.local/bin (or similar)
-#   6. Ensure ~/.ok-projects.sh exists (shared registry between rc block + PATH scripts)
+#   6. Ensure ~/.cc-projects.sh exists (shared registry between rc block + PATH scripts)
 #
 # Idempotent — re-running is safe. Existing ~/.claude/settings.json and the
 # target shell rc file are backed up to .bak.<timestamp> before modification.
@@ -90,7 +90,7 @@ print_aliases() {
 #
 # Shape:  <tier-cmd> [-p <project>] [claude args...]
 #   -p <project>   cd to the registered project before launching
-#                  (see _OK_PROJECTS below; list with ccp-list)
+#                  (see _CC_PROJECTS below; list with ccp-list)
 #
 # Note: claude's own -p (print mode) is shadowed by our -p. To use
 # claude's print mode from these aliases, use --print instead.
@@ -99,24 +99,24 @@ print_aliases() {
 #        ccb (Apple Container), ccbu (+ unattended),
 #        ccm (Matryoshka),       ccmu (+ unattended).
 # Helpers: ccp <shortcut> (cd only), ccp-list (print registry).
-export _OK_RECIPES="$STABLE_DIR"
+export _CC_RECIPES="$STABLE_DIR"
 
 # ── Project registry ─────────────────────────────────────────────────────
-# Single source of truth: ~/.ok-projects.sh (created/updated by bootstrap).
+# Single source of truth: ~/.cc-projects.sh (created/updated by bootstrap).
 # Edit that file to add repos; shared with ~/.local/bin launcher scripts.
-typeset -gA _OK_PROJECTS 2>/dev/null || declare -A _OK_PROJECTS
-[[ -f "\$HOME/.ok-projects.sh" ]] && source "\$HOME/.ok-projects.sh"
+typeset -gA _CC_PROJECTS 2>/dev/null || declare -A _CC_PROJECTS
+[[ -f "\$HOME/.cc-projects.sh" ]] && source "\$HOME/.cc-projects.sh"
 
 # ── Internal: resolve a project shortcut to an absolute path ──────────────
-_ok_resolve_project() {
+_cc_resolve_project() {
   local key="\${1:-}"
   [[ -z "\$key" ]] && return 1
-  [[ -n "\${_OK_PROJECTS[\$key]:-}" ]] || return 1
-  printf '%s' "\${_OK_PROJECTS[\$key]}"
+  [[ -n "\${_CC_PROJECTS[\$key]:-}" ]] || return 1
+  printf '%s' "\${_CC_PROJECTS[\$key]}"
 }
 
-# ── Internal: shared help printers (identical to bin/ok-launcher's) ──────
-_ok_print_help() {
+# ── Internal: shared help printers (identical to bin/cc-launcher's) ──────
+_cc_print_help() {
   local name="\$1"
   local tier_desc=""
   case "\$name" in
@@ -142,12 +142,12 @@ Examples:
   \$name -p ok -r abc123       # + pass claude's -r (resume session)
   \$name -- --help             # show claude's own help (bypasses launcher)
 
-Project registry: ~/.ok-projects.sh   (list via 'ccp-list')
+Project registry: ~/.cc-projects.sh   (list via 'ccp-list')
 Claude's -p (print mode) is shadowed by our -p. Use --print instead.
 HELP
 }
 
-_ok_print_about() {
+_cc_print_about() {
   cat >&2 <<'ABOUT'
 Open Knowledge sandbox-recipes — tier comparison
 
@@ -162,31 +162,31 @@ Open Knowledge sandbox-recipes — tier comparison
   ccmu        Tier 1 — Matryoshka                 unattended      strongest + AFK
 
   Shape:      <cmd> [-p <project>] [claude args]
-  Project:    -p <key>    (see ~/.ok-projects.sh or run 'ccp-list')
+  Project:    -p <key>    (see ~/.cc-projects.sh or run 'ccp-list')
   Helpers:    ccp <key>   (cd only)     ccp-list (show registry)     cc-setup (re-run bootstrap)
 
-  Full docs: \$_OK_RECIPES/ALIASES.md
+  Full docs: \$_CC_RECIPES/ALIASES.md
 ABOUT
 }
 
 # ── Internal: scan args for --help/--about; print and return 10 if found ─
 # Callers treat return=10 as "help handled, don't launch".
-_ok_maybe_help() {
+_cc_maybe_help() {
   local name="\$1"; shift
   local arg
   for arg in "\$@"; do
     case "\$arg" in
       --) return 0 ;;  # stop scanning; pass-through
-      --help|-h) _ok_print_help "\$name"; return 10 ;;
-      --about|--tiers) _ok_print_about; return 10 ;;
+      --help|-h) _cc_print_help "\$name"; return 10 ;;
+      --about|--tiers) _cc_print_about; return 10 ;;
     esac
   done
 }
 
 # ── Internal: extract -p <proj> anywhere in args; cd to project, leave
-#             remaining args in a global _OK_REMAINING_ARGS. Returns 0 on
+#             remaining args in a global _CC_REMAINING_ARGS. Returns 0 on
 #             success (incl. -p absent), 1 on error (unknown proj, missing val).
-_ok_extract_project() {
+_cc_extract_project() {
   local -a remaining=()
   local proj="" dir=""
   while [[ \$# -gt 0 ]]; do
@@ -215,12 +215,12 @@ _ok_extract_project() {
     esac
   done
   if [[ -n "\$proj" ]]; then
-    if ! dir="\$(_ok_resolve_project "\$proj")"; then
+    if ! dir="\$(_cc_resolve_project "\$proj")"; then
       echo "error: unknown project shortcut: '\$proj'" >&2
-      if (( \${#_OK_PROJECTS[@]} == 0 )); then
+      if (( \${#_CC_PROJECTS[@]} == 0 )); then
         echo "       project registry is empty." >&2
-        echo "       edit ~/.ok-projects.sh to add entries, or re-run bootstrap:" >&2
-        echo "         \$_OK_RECIPES/bootstrap.sh --install-path" >&2
+        echo "       edit ~/.cc-projects.sh to add entries, or re-run bootstrap:" >&2
+        echo "         \$_CC_RECIPES/bootstrap.sh --install-path" >&2
       else
         echo "       use 'ccp-list' to see registered shortcuts" >&2
       fi
@@ -228,58 +228,58 @@ _ok_extract_project() {
     fi
     cd "\$dir" || return 1
   fi
-  _OK_REMAINING_ARGS=("\${remaining[@]}")
+  _CC_REMAINING_ARGS=("\${remaining[@]}")
 }
 
 # ── Tier 0: Seatbelt sandbox (kernel-level, no container) ────────────────
 ccs() {
-  _ok_maybe_help ccs "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  command claude --effort max "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccs "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  command claude --effort max "\${_CC_REMAINING_ARGS[@]}"
 }
 ccu() {
-  _ok_maybe_help ccu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  command claude --dangerously-skip-permissions --effort max "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  command claude --dangerously-skip-permissions --effort max "\${_CC_REMAINING_ARGS[@]}"
 }
 
 # ── Tier 1: Apple Container microVM ──────────────────────────────────────
 ccb() {
-  _ok_maybe_help ccb "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccb "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  "\$_CC_RECIPES/tier1-apple-container/ok-sandbox.sh" "\${_CC_REMAINING_ARGS[@]}"
 }
 ccbu() {
-  _ok_maybe_help ccbu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccbu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  "\$_CC_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "\${_CC_REMAINING_ARGS[@]}"
 }
 
 # ── Tier 1 Matryoshka: microVM + bubblewrap + Anthropic proxy ────────────
 ccm() {
-  _ok_maybe_help ccm "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccm "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  "\$_CC_RECIPES/tier1-matryoshka/ok-sandbox.sh" "\${_CC_REMAINING_ARGS[@]}"
 }
 ccmu() {
-  _ok_maybe_help ccmu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
-  _OK_REMAINING_ARGS=()
-  _ok_extract_project "\$@" || return
-  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"
+  _cc_maybe_help ccmu "\$@"; local rc=\$?; [[ \$rc == 10 ]] && return 0
+  _CC_REMAINING_ARGS=()
+  _cc_extract_project "\$@" || return
+  "\$_CC_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "\${_CC_REMAINING_ARGS[@]}"
 }
 
 # ── Project helpers ───────────────────────────────────────────────────────
 ccp() {
   local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then
+  if dir="\$(_cc_resolve_project "\${1:-}")"; then
     cd "\$dir"
   else
-    echo "[ok] unknown project shortcut: \${1:-<empty>}" >&2
+    echo "[cc] unknown project shortcut: \${1:-<empty>}" >&2
     echo "Use 'ccp-list' to see registered shortcuts." >&2
     return 1
   fi
@@ -287,13 +287,13 @@ ccp() {
 ccp-list() {
   # zsh-native (the aliases target zsh). Bash users: replace \${(k)arr} with \${!arr[@]}.
   local k
-  for k in \${(k)_OK_PROJECTS}; do
-    printf '%-12s %s\n' "\$k" "\${_OK_PROJECTS[\$k]}"
+  for k in \${(k)_CC_PROJECTS}; do
+    printf '%-12s %s\n' "\$k" "\${_CC_PROJECTS[\$k]}"
   done
 }
 
 # ── Re-run bootstrap (rebuild images, switch Tier 0 profile, etc.) ────────
-alias cc-setup='"\$_OK_RECIPES/bootstrap.sh"'
+alias cc-setup='"\$_CC_RECIPES/bootstrap.sh"'
 # ---- end sandbox-recipes ----
 EOF
 }
@@ -310,7 +310,7 @@ detect_shell_rc() {
 ALIAS_BLOCK_START="# ---- Open Knowledge sandbox-recipes shortcuts ----"
 ALIAS_BLOCK_END="# ---- end sandbox-recipes ----"
 
-# Symlinks we install to PATH — all point at the same ok-launcher dispatcher.
+# Symlinks we install to PATH — all point at the same cc-launcher dispatcher.
 LAUNCHER_NAMES=(ccs ccu ccb ccbu ccm ccmu)
 
 detect_bin_dir() {
@@ -325,21 +325,40 @@ detect_bin_dir() {
   echo "$HOME/.local/bin"
 }
 
-ensure_ok_projects_file() {
-  local target="$HOME/.ok-projects.sh"
+migrate_from_ok_prefix() {
+  # Older installs used _OK_* names and ~/.ok-projects.sh. Rename to _CC_*.
+  local old="$HOME/.ok-projects.sh"
+  local new="$HOME/.cc-projects.sh"
+  if [[ -f "$old" && ! -f "$new" ]]; then
+    log "Migrating ~/.ok-projects.sh → ~/.cc-projects.sh (variable prefix _OK_ → _CC_)"
+    sed 's/_OK_PROJECTS/_CC_PROJECTS/g' "$old" > "$new"
+    mv "$old" "$old.migrated.$(date +%Y%m%d-%H%M%S)"
+    log "  kept backup at $old.migrated.*"
+  fi
+
+  # Old launcher in ~/.local/bin. Remove so reinstall plants cc-launcher clean.
+  local bin_dir; bin_dir="$(detect_bin_dir)"
+  if [[ -e "$bin_dir/ok-launcher" ]]; then
+    rm -f "$bin_dir/ok-launcher"
+    log "Removed stale $bin_dir/ok-launcher (replaced by cc-launcher on install)"
+  fi
+}
+
+ensure_cc_projects_file() {
+  local target="$HOME/.cc-projects.sh"
   # The open-knowledge repo root is the parent of sandbox-recipes/
   local ok_path
   ok_path="$(dirname "$STABLE_DIR")"
 
   if [[ ! -f "$target" ]]; then
     cat > "$target" <<EOF
-# ~/.ok-projects.sh
+# ~/.cc-projects.sh
 # Sourced by sandbox-recipes shell functions + PATH launchers.
 # Keys are arbitrary shortcuts; values are absolute paths.
 # Safe to edit. Safe to delete (re-run bootstrap.sh to regenerate).
 
 # Auto-detected open-knowledge location (from your bootstrap run):
-_OK_PROJECTS[ok]="$ok_path"
+_CC_PROJECTS[ok]="$ok_path"
 
 # Add your own repos. Common layouts vary per-developer:
 #   \$HOME/Documents/code/<name>
@@ -349,29 +368,29 @@ _OK_PROJECTS[ok]="$ok_path"
 #   \$HOME/dev/<name>
 #
 # Examples (uncomment + adjust to match your layout):
-# _OK_PROJECTS[agents]="\$HOME/Documents/code/agents-private"
-# _OK_PROJECTS[site]="\$HOME/src/my-site"
-# _OK_PROJECTS[api]="\$HOME/code/my-api"
+# _CC_PROJECTS[agents]="\$HOME/Documents/code/agents-private"
+# _CC_PROJECTS[site]="\$HOME/src/my-site"
+# _CC_PROJECTS[api]="\$HOME/code/my-api"
 EOF
-    log "Created ~/.ok-projects.sh with detected 'ok' = $ok_path"
+    log "Created ~/.cc-projects.sh with detected 'ok' = $ok_path"
   else
     # File exists — non-destructively add the auto-detected 'ok' if absent.
-    if ! grep -qE '^_OK_PROJECTS\[ok\]=' "$target"; then
-      printf '\n# Auto-added by bootstrap on %s:\n_OK_PROJECTS[ok]="%s"\n' \
+    if ! grep -qE '^_CC_PROJECTS\[ok\]=' "$target"; then
+      printf '\n# Auto-added by bootstrap on %s:\n_CC_PROJECTS[ok]="%s"\n' \
         "$(date +%Y-%m-%d)" "$ok_path" >> "$target"
-      log "Appended 'ok' shortcut to existing ~/.ok-projects.sh (= $ok_path)"
+      log "Appended 'ok' shortcut to existing ~/.cc-projects.sh (= $ok_path)"
     else
       # Entry exists; check if it still matches what bootstrap just detected.
       local existing
-      existing=$(grep -E '^_OK_PROJECTS\[ok\]=' "$target" | head -1 | sed -E 's/.*="([^"]*)".*/\1/')
+      existing=$(grep -E '^_CC_PROJECTS\[ok\]=' "$target" | head -1 | sed -E 's/.*="([^"]*)".*/\1/')
       if [[ "$existing" != "$ok_path" ]]; then
-        warn "~/.ok-projects.sh has a different 'ok' path than bootstrap detected:"
+        warn "~/.cc-projects.sh has a different 'ok' path than bootstrap detected:"
         warn "  existing: $existing"
         warn "  detected: $ok_path"
-        warn "Edit ~/.ok-projects.sh manually if you want to update, or delete it"
+        warn "Edit ~/.cc-projects.sh manually if you want to update, or delete it"
         warn "and re-run bootstrap to regenerate."
       else
-        log "~/.ok-projects.sh 'ok' entry matches detection — no change."
+        log "~/.cc-projects.sh 'ok' entry matches detection — no change."
       fi
     fi
   fi
@@ -380,8 +399,8 @@ EOF
 install_launcher_to_path() {
   local bin_dir
   bin_dir="$(detect_bin_dir)"
-  local launcher_src="$STABLE_DIR/bin/ok-launcher"
-  local launcher_dst="$bin_dir/ok-launcher"
+  local launcher_src="$STABLE_DIR/bin/cc-launcher"
+  local launcher_dst="$bin_dir/cc-launcher"
 
   if [[ ! -f "$launcher_src" ]]; then
     err "Missing launcher source: $launcher_src"
@@ -405,7 +424,7 @@ install_launcher_to_path() {
   local name
   for name in "${LAUNCHER_NAMES[@]}"; do
     ln -sf "$launcher_dst" "$bin_dir/$name"
-    log "  symlinked: $bin_dir/$name -> ok-launcher"
+    log "  symlinked: $bin_dir/$name -> cc-launcher"
   done
 
   log ""
@@ -525,10 +544,11 @@ else
 fi
 
 # ============================================================
-# Step 3: Ensure shared project registry file
+# Step 3: Migrate old _OK_/ok-launcher install, then ensure shared registry
 # ============================================================
 
-ensure_ok_projects_file
+migrate_from_ok_prefix
+ensure_cc_projects_file
 
 # ============================================================
 # Step 4: Install (or print) the alias block in shell rc

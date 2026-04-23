@@ -22,7 +22,7 @@ What it does:
 1. Prompts for a Tier 0 profile (or uses `unattended-trusted` under `-y`).
 2. Builds Tier 1 Apple Container + Matryoshka images if `container` is installed.
 3. Runs `verify-matryoshka.sh` to confirm the nested sandbox works on your machine.
-4. Ensures `~/.ok-projects.sh` exists (shared project registry).
+4. Ensures `~/.cc-projects.sh` exists (shared project registry).
 5. Optionally appends alias block to `~/.zshrc` (with backup).
 6. Optionally installs launcher symlinks to `~/.local/bin/`.
 
@@ -69,19 +69,19 @@ Full threat-model mapping and tradeoffs: [the report](../reports/claude-code-loc
 
 ## Adding your repos (portability-friendly)
 
-Edit `~/.ok-projects.sh` — **a single source of truth shared by both the shell functions and the PATH scripts**. Bootstrap creates it on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge`. Common layouts across devs vary (`~/Documents/code/`, `~/src/`, `~/code/`, `~/workspace/`, `~/dev/`) — nothing is assumed.
+Edit `~/.cc-projects.sh` — **a single source of truth shared by both the shell functions and the PATH scripts**. Bootstrap creates it on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge`. Common layouts across devs vary (`~/Documents/code/`, `~/src/`, `~/code/`, `~/workspace/`, `~/dev/`) — nothing is assumed.
 
 ```bash
-# ~/.ok-projects.sh
-_OK_PROJECTS[ok]="<auto-detected by bootstrap>"
-_OK_PROJECTS[agents]="$HOME/src/agents-private"      # your own — any layout
-_OK_PROJECTS[site]="$HOME/code/my-site"
-_OK_PROJECTS[ml]="$HOME/workspace/ml-experiments"
+# ~/.cc-projects.sh
+_CC_PROJECTS[ok]="<auto-detected by bootstrap>"
+_CC_PROJECTS[agents]="$HOME/src/agents-private"      # your own — any layout
+_CC_PROJECTS[site]="$HOME/code/my-site"
+_CC_PROJECTS[ml]="$HOME/workspace/ml-experiments"
 ```
 
 Both `ccs -p <key>` and `ccp <key>` work immediately after saving (no bootstrap re-run needed — the file is sourced on every invocation).
 
-**If you move the open-knowledge repo**, re-run `./sandbox-recipes/bootstrap.sh` from the new location. It'll detect the path mismatch and print a warning telling you to update `~/.ok-projects.sh` manually (non-destructive — bootstrap never silently overwrites a user-managed entry).
+**If you move the open-knowledge repo**, re-run `./sandbox-recipes/bootstrap.sh` from the new location. It'll detect the path mismatch and print a warning telling you to update `~/.cc-projects.sh` manually (non-destructive — bootstrap never silently overwrites a user-managed entry).
 
 ---
 

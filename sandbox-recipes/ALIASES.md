@@ -21,10 +21,10 @@ Two installation surfaces, use either or both:
 ```
 
 - **--install-aliases**: appends zsh functions to `~/.zshrc`. You get the full set including `ccp`/`ccp-list` (which can't work as PATH scripts — a child process can't change parent cwd). Works only in zsh sessions that sourced `~/.zshrc`.
-- **--install-path**: installs one dispatcher to `~/.local/bin/ok-launcher` with symlinks `ccs`, `ccu`, `ccb`, `ccbu`, `ccm`, `ccmu` all pointing at it. Works from any process that honors `$PATH` (including Cursor's integrated terminal, cron jobs, IDE "run" actions, and bash/sh sessions).
+- **--install-path**: installs one dispatcher to `~/.local/bin/cc-launcher` with symlinks `ccs`, `ccu`, `ccb`, `ccbu`, `ccm`, `ccmu` all pointing at it. Works from any process that honors `$PATH` (including Cursor's integrated terminal, cron jobs, IDE "run" actions, and bash/sh sessions).
 - **Both**: recommended. Redundant but not conflicting — shell functions shadow PATH scripts in interactive shells; PATH scripts take over when functions aren't loaded.
 
-Both flows share `~/.ok-projects.sh` as the project registry. Edit it once; both installations see the update.
+Both flows share `~/.cc-projects.sh` as the project registry. Edit it once; both installations see the update.
 
 Idempotent — re-running replaces the alias block + overwrites launcher symlinks.
 
@@ -75,14 +75,14 @@ ccp-list                            # inspect registry
 
 ## Adding your repos — portability-friendly
 
-Edit `~/.ok-projects.sh` — the single source of truth shared by shell functions AND PATH scripts. Bootstrap creates this on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge` (no `~/Documents/code/` assumption).
+Edit `~/.cc-projects.sh` — the single source of truth shared by shell functions AND PATH scripts. Bootstrap creates this on first run, seeded with an auto-detected `ok` entry pointing at wherever you cloned `open-knowledge` (no `~/Documents/code/` assumption).
 
 ```bash
-# ~/.ok-projects.sh
-_OK_PROJECTS[ok]="<auto-detected>"                       # set by bootstrap
-_OK_PROJECTS[agents]="$HOME/src/agents-private"          # your own layout
-_OK_PROJECTS[site]="$HOME/code/my-site"
-_OK_PROJECTS[ml]="$HOME/workspace/ml-experiments"
+# ~/.cc-projects.sh
+_CC_PROJECTS[ok]="<auto-detected>"                       # set by bootstrap
+_CC_PROJECTS[agents]="$HOME/src/agents-private"          # your own layout
+_CC_PROJECTS[site]="$HOME/code/my-site"
+_CC_PROJECTS[ml]="$HOME/workspace/ml-experiments"
 ```
 
 Save the file → `ccs -p ml` works immediately. No bootstrap re-run needed — the file is sourced on every invocation.
@@ -157,15 +157,15 @@ You can delete `cca`/`cco` if you want to migrate, or keep alongside. Bootstrap 
 
 Network allowlist in all tiers is **domain-level**, not URL-path. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for the four options (spoiler: fine-grained GitHub PAT for github.com/org scoping).
 
-## Shared project registry: `~/.ok-projects.sh`
+## Shared project registry: `~/.cc-projects.sh`
 
 Bootstrap creates this file on first install. Edit it to add repos — both the zsh functions and the PATH scripts source it:
 
 ```bash
-# ~/.ok-projects.sh
-_OK_PROJECTS[site]="$HOME/Documents/code/your-site"
-_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
-_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+# ~/.cc-projects.sh
+_CC_PROJECTS[site]="$HOME/Documents/code/your-site"
+_CC_PROJECTS[api]="$HOME/Documents/code/your-api"
+_CC_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
 ```
 
 No bootstrap re-run needed. No double-maintenance between zshrc and PATH scripts.
@@ -174,14 +174,14 @@ No bootstrap re-run needed. No double-maintenance between zshrc and PATH scripts
 
 `--install-path` installs exactly:
 
-- `~/.local/bin/ok-launcher` (copy of the dispatcher template, with `SANDBOX_RECIPES` absolute path baked in)
-- `~/.local/bin/ccs` → symlink to `ok-launcher`
+- `~/.local/bin/cc-launcher` (copy of the dispatcher template, with `SANDBOX_RECIPES` absolute path baked in)
+- `~/.local/bin/ccs` → symlink to `cc-launcher`
 - `~/.local/bin/ccu` → symlink
 - `~/.local/bin/ccb` → symlink
 - `~/.local/bin/ccbu` → symlink
 - `~/.local/bin/ccm` → symlink
 - `~/.local/bin/ccmu` → symlink
 
-Each symlink runs the same script, which dispatches on `${0:t}` (its own basename) to pick the tier. Moving the repo? Re-run `bootstrap.sh --install-path` to regenerate `ok-launcher` with the new absolute path.
+Each symlink runs the same script, which dispatches on `${0:t}` (its own basename) to pick the tier. Moving the repo? Re-run `bootstrap.sh --install-path` to regenerate `cc-launcher` with the new absolute path.
 
 `ccp` / `ccp-list` / `cc-setup` stay as zsh functions only — they manipulate the parent shell's state and can't be packaged as PATH scripts.
