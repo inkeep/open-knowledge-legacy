@@ -525,6 +525,90 @@ If you uninstall the app (drag to Trash) without clicking **Uninstall Command-Li
 
 This check fires once per app session on packaged builds only — dev-mode launches (`electron-vite dev`) never classify a prior user's symlinks as "broken" relative to the dev binary, which would otherwise be a contamination vector.
 
+## M6b — MCP wiring (first-launch consent)
+
+First-launch MCP consent dialog on packaged-app first-open — user-scoped (not per-project per D-M6-R1) — that writes MCP server entries to detected AI-tool user-level configs and records a marker so it never re-fires. Spec: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../../specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md).
+
+### What fires and when
+
+On every packaged-app launch (`app.isPackaged === true`, macOS-only in v0), `runMcpWiringOnFirstLaunch` (`src/main/mcp-wiring.ts`) checks for `~/.open-knowledge/.mcp-status.json`. Marker absent → install IPC handlers, wait for the first renderer's `ok:mcp-wiring:renderer-ready` ack, send `ok:mcp-wiring:show` back with the detected-editors payload. `<McpConsentDialog>` is subscribed from BOTH `NavigatorApp` and `App.tsx` (host-agnostic per D-M6-R10), so whichever window opens first — Navigator (common case), editor via `lastOpenedProject`, or editor via `openknowledge://` cold-start deep-link — renders the dialog.
+
+Marker present (either shape below) → skip immediately; dialog never re-fires on that boot.
+
+### Marker shape and location
+
+`~/.open-knowledge/.mcp-status.json` — user-scoped, sits next to `~/.open-knowledge/config.yml`.
+
+Confirmed:
+
+```json
+{
+  "configured": true,
+  "configuredAt": "2026-04-23T15:30:00Z",
+  "editors": ["claude", "cursor"],
+  "cliPath": "/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh"
+}
+```
+
+Skipped:
+
+```json
+{
+  "configured": false,
+  "skippedAt": "2026-04-23T15:30:00Z"
+}
+```
+
+**Re-triggering the dialog:** delete the marker file. Next app launch surfaces the consent flow again.
+
+### Hybrid `cliPath` resolution (D-M6-R9)
+
+At confirm time, `resolveCliPath(app.getPath('exe'))` prefers a bundle-owned symlink over the bundle-absolute path:
+
+1. Probe `/usr/local/bin/ok`. If it exists AND is a symlink AND `readlinkSync` resolves into the current `.app/` bundle (ownership check), return `/usr/local/bin/ok` — stable across Squirrel.Mac atomic-swap auto-updates and user drag-to-new-location moves.
+2. Otherwise return `${bundleRoot}/Contents/Resources/cli/bin/ok.sh` — self-contained, works without the M6a CLI-on-PATH install.
+
+MCP entries are written as `{"command": <cliPath>, "args": ["mcp"]}` — never `npx` for Electron-origin writes. CLI-origin `ok init` continues to produce `{"command": "npx", "args": ["@inkeep/open-knowledge", "mcp"]}` since CLI users have Node by definition.
+
+### Dev-mode contamination guard
+
+The consent flow is gated on `app.isPackaged === true`. In `electron-vite dev`, `app.getPath('exe')` points at the dev Electron binary (not a bundle) and `extraResources` aren't mounted — writing `cliPath` against that path would contaminate the developer's real `~/.claude.json` irrecoverably. Dev-mode invocations are a no-op.
+
+Developer opt-in for testing the flow requires BOTH the env bypass AND an isolated `HOME`:
+
+```bash
+OK_M6B_FORCE=1 HOME=/tmp/ok-m6b-home \
+  bun run --filter=@inkeep/open-knowledge-desktop dev
+```
+
+### Merge semantics
+
+`computeForce(existing, target)` classifies each editor's existing OK entry in three tiers:
+
+1. `target.isCompatible(existing, '', {mode: 'published'})` — canonical `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}` (including user-added `env` augmentation).
+2. Historical `-y npx` variant (`{command: 'npx', args: ['-y', '@inkeep/open-knowledge', 'mcp']}`).
+3. Prior `cliPath` shape from an earlier M6b run (`{command: <path-ending-in-ok.sh-or-ok>, args: ['mcp']}`).
+
+Any match → overwrite with the current cliPath shape (preserving `env` / other managed fields). Foreign customization (`{command: 'custom-wrapper', ...}`) is preserved; `mcp-wiring-skip-customized` JSON event emitted for observability.
+
+### Partial-failure recovery (OQ-19)
+
+If any per-editor write returns `action: 'failed'` (read-only target dir, platform not supported, etc.), the marker is NOT written so the dialog re-fires on next launch. Successful writes still land. One `mcp-wiring-write-failed` structured JSON event emits per failed editor.
+
+### Testing
+
+- **Unit tests:** `packages/desktop/src/main/mcp-wiring.test.ts` (49 tests — pure helpers + runtime orchestration).
+- **Playwright smoke:** `packages/desktop/tests/smoke/mcp-wiring.e2e.ts`. Invoke:
+
+```bash
+bun run build:desktop
+OK_DESKTOP_E2E_SMOKE=1 bunx playwright test \
+  --config packages/desktop/playwright.config.ts \
+  packages/desktop/tests/smoke/mcp-wiring.e2e.ts
+```
+
+5 active scenarios (happy-path, skip, idempotency, partial-failure, F1 `lastOpenedProject`) + 2 documented-skip (F2 cold-start deep-link and AC2.6 P1 E2E — both gated on signed DMG delivery via `openknowledge://` through Launch Services).
+
 ## Scope boundary
 
-This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification + M6a (CLI-on-PATH install). M6b (first-launch MCP wiring) is in progress; M7 is out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers.
+This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification + M6a (CLI-on-PATH install) + M6b (first-launch MCP wiring). M7 (Windows + Linux parity) is out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers.
