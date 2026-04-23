@@ -42,7 +42,7 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
     match: 'external-sources/**',
     title: 'External Sources',
     description:
-      'Raw preserved sources (URLs, PDFs, files). Immutable — captured verbatim via `ingest`. No analysis in these files; takeaways belong in `research/`.',
+      'Raw sources SAVED verbatim — not just cited. The actual fetched text of URLs, extracted text of PDFs, and copies of any referenced files live as .md files here, each with frontmatter carrying the original URL, access date, and any publisher / author metadata. Produced by `ingest`. Immutable after capture (update only to refresh a stale fetch). No analysis in these files — that belongs in `research/`. Downstream articles cite specific docs here by path so every claim is traceable to preserved evidence rather than a dead link.',
     tags: ['source', 'immutable', 'layer-ingest'],
   },
   {
@@ -50,7 +50,7 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
     match: 'research/**',
     title: 'Research',
     description:
-      'Provisional analysis synthesizing external sources. Produced by the `research` tool. Each article has `status: provisional` and a `sources:` list citing `external-sources/` or external URLs. Promoted to `articles/` via `consolidate` when the team decides.',
+      'Provisional analysis synthesizing external sources. Produced by the `research` tool. Every factual claim cites a specific doc in `external-sources/` (or an inline URL if ingest was skipped) — no unsourced assertions. Each article has `status: provisional` and a `sources:` frontmatter list of cited paths. Promoted to `articles/` via `consolidate` once the team decides the findings are stable.',
     tags: ['research', 'provisional', 'layer-research'],
   },
   {
@@ -58,7 +58,7 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
     match: 'articles/**',
     title: 'Articles',
     description:
-      'Canonical knowledge committed after a team decision. Produced by the `consolidate` tool. Carries `status: canonical` and a `supersedes:` chain tying back to the research that preceded it. Source-of-truth for the domain.',
+      'Canonical knowledge committed after a team decision. Produced by `consolidate`. Carries `status: canonical` plus a `supersedes:` chain tying back to the `research/` docs it replaces, which in turn cite `external-sources/` — the full evidence chain is traceable without leaving the repo. Source-of-truth for the domain; update only when a new decision supersedes it.',
     tags: ['article', 'canonical', 'layer-consolidate'],
   },
 ] as const;
