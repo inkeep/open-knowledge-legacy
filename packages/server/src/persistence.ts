@@ -11,7 +11,12 @@ import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'n
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { type Principal, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  normalizeBridge,
+  type Principal,
+  prependFrontmatter,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import {
   composeCommitSubject,
   formatOkActor,
@@ -145,17 +150,6 @@ export interface PersistenceOptions {
    * of a "Local User" stub (post-QA review fix).
    */
   getPrincipal?: () => Principal | null;
-}
-
-/**
- * Strip trailing whitespace/newlines for semantically-unchanged comparison.
- * y-prosemirror's ySyncPlugin appends an empty <paragraph> on every editor
- * mount which serializes to trailing newline(s) — byte-unequal but semantic
- * no-op. onStoreDocument uses this to skip redundant disk writes + suppress
- * the phantom-principal commit that would otherwise land at L2 fan-out.
- */
-function stripTrailingWs(s: string): string {
-  return s.replace(/\s+$/, '');
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -627,16 +621,19 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // tables, added backslash-escapes, etc.), polluting the user's git
       // working tree on mere file open.
       //
-      // Trailing-whitespace-tolerant compare: y-prosemirror's ySyncPlugin
-      // appends an empty <paragraph> to Y.XmlFragment on every editor mount.
-      // That serializes to one or two extra trailing newlines — byte-unequal
-      // to currentBase but semantically identical. Treating it as a no-op
-      // skips both the disk write AND the principal safety-net below, which
-      // prevents phantom commits attributed to the browser's principal when
-      // a later agent write triggers the L2 fan-out.
+      // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
+      // an empty <paragraph> to Y.XmlFragment on every editor mount. That
+      // serializes to extra trailing newlines — byte-unequal to currentBase
+      // but semantically identical. Reusing normalizeBridge (the canonical
+      // bridge-invariant normalization — trim per-line whitespace, collapse
+      // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
+      // consistent with server-observers.ts + the test-harness. Catching this
+      // class as a no-op skips both the disk write AND the principal
+      // safety-net below, preventing phantom commits attributed to the
+      // browser's principal when a later agent write triggers the L2 fan-out.
       const currentBase = getReconciledBase(documentName);
       const markdownSemanticallyUnchanged =
-        currentBase !== undefined && stripTrailingWs(markdown) === stripTrailingWs(currentBase);
+        currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
       if (markdownSemanticallyUnchanged) {
         if (contributorCount() > 0) scheduleGitCommit();
         return;
