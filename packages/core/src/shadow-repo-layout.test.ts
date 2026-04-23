@@ -21,7 +21,9 @@ import {
   parseCheckpoint,
   parseContributors,
   parseOkActor,
+  parseOkActors,
   parseWriterId,
+  readContributors,
 } from './shadow-repo-layout.ts';
 
 let tmp: string;
@@ -407,6 +409,7 @@ describe('formatWipSubject', () => {
 describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
   const baseEntry: OkActorEntry = {
     v: 1,
+    writer_id: 'agent-conn-abc123',
     principal: null,
     agent_session: 'conn-abc123',
     agent_type: 'claude-3-5-sonnet',
@@ -437,6 +440,7 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
   test('round-trips an entry with all nullable fields null', () => {
     const sparse: OkActorEntry = {
       v: 1,
+      writer_id: 'openknowledge-service',
       principal: null,
       agent_session: null,
       agent_type: null,
@@ -450,6 +454,7 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
     const line = formatOkActor(sparse);
     const parsed = parseOkActor(`wip: auto-save\n\n${line}`);
     expect(parsed).not.toBeNull();
+    expect(parsed?.writer_id).toBe('openknowledge-service');
     expect(parsed?.agent_session).toBeNull();
     expect(parsed?.docs).toEqual([]);
   });
@@ -501,6 +506,255 @@ describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
     const line = 'ok-actor: {"v":1,"display_name":"X","docs":[]}';
     const parsed = parseOkActor(line);
     expect(parsed?.color_seed).toBe('unknown');
+  });
+});
+
+// ─── writer_id + summaries consolidation (ok-contributors retirement) ────────
+
+describe('OkActorEntry writer_id field + derivation back-compat', () => {
+  test('formatOkActor emits writer_id inline', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-abc123',
+      principal: null,
+      agent_session: 'abc123',
+      agent_type: 'claude',
+      client_name: 'claude-code',
+      client_version: null,
+      label: null,
+      display_name: 'Claude (abc1)',
+      color_seed: 'claude-code',
+      docs: ['a.md'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"writer_id":"agent-abc123"');
+  });
+
+  test('parseOkActor derives writer_id from agent_session when missing (pre-consolidation commit back-compat)', () => {
+    const line =
+      'ok-actor: {"v":1,"principal":null,"agent_session":"old-conn","display_name":"Claude","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('agent-old-conn');
+  });
+
+  test('parseOkActor derives writer_id from principal when agent_session is null', () => {
+    const line =
+      'ok-actor: {"v":1,"principal":"principal-alice-uuid","agent_session":null,"display_name":"Alice","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('principal-alice-uuid');
+  });
+
+  test('parseOkActor derives writer_id from display_name for classified writers (file-system)', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"File System","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('file-system');
+  });
+
+  test('parseOkActor derives writer_id from display_name for classified writers (git-upstream)', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"Git (upstream)","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('git-upstream');
+  });
+
+  test('parseOkActor falls back to openknowledge-service for unknown classified display_name', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"Open Knowledge (service)","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('openknowledge-service');
+  });
+
+  test('explicit writer_id in stored JSON wins over any derivation', () => {
+    // Even if fields look principal-shaped, explicit writer_id is authoritative.
+    const line =
+      'ok-actor: {"v":1,"writer_id":"custom-writer","principal":"principal-ignored","display_name":"X","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('custom-writer');
+  });
+});
+
+describe('OkActorEntry summaries field (consolidated from ok-contributors:)', () => {
+  test('formatOkActor elides summaries when empty/absent (legacy byte-identity)', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+    };
+    expect(formatOkActor(entry)).not.toContain('summaries');
+  });
+
+  test('formatOkActor elides summaries when explicitly empty array', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: [],
+    };
+    expect(formatOkActor(entry)).not.toContain('summaries');
+  });
+
+  test('formatOkActor includes summaries when populated', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: ['Added auth design', 'Fixed typo'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"summaries":["Added auth design","Fixed typo"]');
+  });
+
+  test('parseOkActor round-trips summaries', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: ['one', 'two'],
+    };
+    const parsed = parseOkActor(formatOkActor(entry));
+    expect(parsed?.summaries).toEqual(['one', 'two']);
+  });
+
+  test('parseOkActor drops summaries field when malformed (D27 divergence — keep entry)', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"summaries":"not-an-array"}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.writer_id).toBe('agent-a');
+    expect(parsed?.summaries).toBeUndefined();
+  });
+
+  test('parseOkActor drops summaries field when array has non-string element', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"summaries":["ok",42,"also-ok"]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.summaries).toBeUndefined();
+  });
+});
+
+describe('parseOkActors (plural — multi-writer L2 drain)', () => {
+  test('empty body → []', () => {
+    expect(parseOkActors('')).toEqual([]);
+  });
+
+  test('returns every ok-actor line, in file order', () => {
+    const body = [
+      'wip: notes.md (2 edits)',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-alice","display_name":"Alice","docs":["a.md"],"summaries":["Alice note"]}',
+      'ok-actor: {"v":1,"writer_id":"agent-bob","display_name":"Bob","docs":["b.md"],"summaries":["Bob note"]}',
+    ].join('\n');
+    const actors = parseOkActors(body);
+    expect(actors).toHaveLength(2);
+    expect(actors[0]?.writer_id).toBe('agent-alice');
+    expect(actors[1]?.writer_id).toBe('agent-bob');
+  });
+
+  test('skips malformed lines silently, keeps valid ones', () => {
+    const body = [
+      'ok-actor: {not json}',
+      'ok-actor: {"v":1,"writer_id":"agent-ok","display_name":"Good","docs":[]}',
+      'ok-actor: {"v":0,"display_name":"wrong-version","docs":[]}',
+    ].join('\n');
+    const actors = parseOkActors(body);
+    expect(actors).toHaveLength(1);
+    expect(actors[0]?.writer_id).toBe('agent-ok');
+  });
+
+  test('no ok-actor lines → []', () => {
+    const body = 'wip: foo\n\nok-contributors: {"id":"x","name":"X","docs":[]}';
+    expect(parseOkActors(body)).toEqual([]);
+  });
+});
+
+describe('readContributors (dispatcher: prefers ok-actor, falls back to ok-contributors)', () => {
+  test('modern commit with only ok-actor: → projects to ShadowContributor[]', () => {
+    const body = [
+      'wip: a.md — added design',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-claude","principal":null,"agent_session":"claude","agent_type":"claude","display_name":"Claude","color_seed":"claude","docs":["a.md"],"summaries":["added design"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-claude');
+    expect(contributors[0]?.name).toBe('Claude');
+    expect(contributors[0]?.colorSeed).toBe('claude');
+    expect(contributors[0]?.docs).toEqual(['a.md']);
+    expect(contributors[0]?.summaries).toEqual(['added design']);
+  });
+
+  test('legacy commit with only ok-contributors: → falls back to parseContributors', () => {
+    const body = [
+      'wip: legacy.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-legacy","name":"Legacy","colorSeed":"seed","docs":["legacy.md"],"summaries":["pre-consolidation note"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-legacy');
+    expect(contributors[0]?.summaries).toEqual(['pre-consolidation note']);
+  });
+
+  test('transitional commit with BOTH lines → ok-actor wins (no double-counting)', () => {
+    const body = [
+      'wip: both.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-stale","name":"Stale","colorSeed":"x","docs":["both.md"]}',
+      'ok-actor: {"v":1,"writer_id":"agent-fresh","display_name":"Fresh","color_seed":"y","docs":["both.md"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-fresh'); // ok-actor, not ok-contributors
+  });
+
+  test('multi-writer modern commit → one ShadowContributor per ok-actor line', () => {
+    const body = [
+      'wip: shared.md',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"A","docs":["x.md"]}',
+      'ok-actor: {"v":1,"writer_id":"file-system","display_name":"File System","docs":["y.md"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(2);
+    expect(contributors.map((c) => c.id).sort()).toEqual(['agent-a', 'file-system']);
+  });
+
+  test('empty body → []', () => {
+    expect(readContributors('')).toEqual([]);
+  });
+
+  test('body with neither prefix → []', () => {
+    expect(readContributors('wip: test\n\njust a plain body')).toEqual([]);
   });
 });
 

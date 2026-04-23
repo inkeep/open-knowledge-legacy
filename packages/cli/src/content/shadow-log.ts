@@ -14,8 +14,8 @@ import type { ShadowContributor } from '@inkeep/open-knowledge-core';
 import {
   getShadowRepoPath,
   getWipRefPattern,
-  parseContributors,
   parseWriterId,
+  readContributors,
   type WriterClassification,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit, { type SimpleGit } from 'simple-git';
@@ -117,7 +117,7 @@ async function logOnRef(
       date,
       writerName,
       message,
-      contributors: parseContributors(rawBody),
+      contributors: readContributors(rawBody),
       writerId,
       isAgent: parsed.isAgent,
       writerClassification: parsed.classification,
