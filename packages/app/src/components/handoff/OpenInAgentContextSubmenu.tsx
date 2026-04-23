@@ -28,6 +28,7 @@ import type {
   InstallState,
   TargetData,
 } from '@inkeep/open-knowledge-core';
+import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
   ContextMenuItem,
@@ -36,7 +37,7 @@ import {
   ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
-import { computeRowState } from './OpenInAgentMenuItem';
+import { computeRowState, TargetIcon } from './OpenInAgentMenuItem';
 import type { HandoffDispatchInput } from './useHandoffDispatch';
 
 /**
@@ -81,7 +82,10 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
   const { input, installStates, isElectronHost, dispatch } = props;
   return (
     <ContextMenuSub>
-      <ContextMenuSubTrigger>Open in…</ContextMenuSubTrigger>
+      <ContextMenuSubTrigger>
+        <Sparkles aria-hidden="true" />
+        Open in…
+      </ContextMenuSubTrigger>
       <ContextMenuSubContent>
         {KNOWN_TARGETS.map((target) => {
           const installState = installStates[target.id];
@@ -109,7 +113,8 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
               data-testid={`file-tree-open-in-${target.id}`}
               aria-label={accessibleLabel}
             >
-              <span className="flex-1">Open in {target.displayName}</span>
+              <TargetIcon id={target.id} aria-hidden="true" />
+              <span className="flex-1">{target.displayName}</span>
               {hint ? (
                 <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
                   {hint}
