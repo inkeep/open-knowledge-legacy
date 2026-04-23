@@ -1,24 +1,27 @@
 /**
- * Built-ins manifest — 5-pack foundation (Callout + Image + Audio slotted here,
- * Video in US-007, Accordion in US-009).
+ * Built-ins manifest — 5-pack foundation (Callout + Image + Video + Audio
+ * slotted here, Accordion in US-009).
  *
  * Scope contract for this file after US-003 (`specs/2026-04-23-cb-v2-md-foundation/`):
- * exactly three registered descriptors (+ wildcard `'*'` injected by the
- * registry factory). Cut in US-003: Banner, Card, Cards, Step, Steps, Tab,
- * Tabs, Accordion (fumadocs shape), Accordions, File, Files, Folder,
- * TypeTable, InlineTOC — 14 fumadocs descriptors retired because the 5-pack
- * has no compound-wrapper machinery (US-002 deleted `compound-wrappers.tsx`
- * and the precedent #27 compound-components bridge was retracted on this
- * branch in US-001). Names that still appear in user content fall through to
- * the wildcard `'*'` descriptor (`hasChildren: true`, empty props) per
- * `createRegistry()` / `getOrWildcard()`.
+ * four registered descriptors after US-007 (+ wildcard `'*'` injected by the
+ * registry factory); Accordion in US-009 brings the count to 5 + wildcard.
+ * Cut in US-003: Banner, Card, Cards, Step, Steps, Tab, Tabs, Accordion
+ * (fumadocs shape), Accordions, File, Files, Folder, TypeTable, InlineTOC —
+ * 14 fumadocs descriptors retired because the 5-pack has no compound-wrapper
+ * machinery (US-002 deleted `compound-wrappers.tsx` and the precedent #27
+ * compound-components bridge was retracted on this branch in US-001). Names
+ * that still appear in user content fall through to the wildcard `'*'`
+ * descriptor (`hasChildren: true`, empty props) per `createRegistry()` /
+ * `getOrWildcard()`.
  *
  * ImageZoom renamed to Image (US-003 / FR-20); US-006 widens the prop surface
  * to the FR-2 8-prop shape (src, alt, width, height, caption, title, loading,
  * zoom) alongside the DIY `react-medium-image-zoom` renderer. US-005 widened
  * Callout to 7 props (GFM 5-type enum + title/icon/color/collapsible/
- * defaultOpen). Audio stays at the pre-US-006 shape here; US-008 widens it to
- * 7 props (src/title/autoplay/loop/muted/preload + children).
+ * defaultOpen). US-007 adds Video with the FR-3 9-prop HTML5 `<video>` shape
+ * (pure HTML5 wrapper per D-MF12 — no URL sniffing, no iframe emission, no
+ * `start` prop). Audio stays at the pre-US-006 shape here; US-008 widens it
+ * to 7 props (src/title/autoplay/loop/muted/preload + children).
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
@@ -173,6 +176,88 @@ const imageProps: PropDef[] = [
   },
 ];
 
+// ── Video (US-007) ───────────────────────────────────────────────────────────
+//
+// FR-3 (SPEC 2026-04-23-cb-v2-md-foundation): pure HTML5 `<video>` wrapper per
+// D-MF12 — matches Mintlify's explicit-iframe pattern (Fumadocs has no Video
+// component at all). 9-prop surface: `src` + `title` + `controls` (default
+// true) + `autoPlay` + `muted` + `loop` + `playsInline` + `poster` + `preload`
+// (enum) + children (reactnode, for `<track>` passthrough).
+//
+// Explicitly out-of-scope (per D-MF12 / NG27 / NG28):
+//   - YouTube / Vimeo URL sniffing → users author raw `<iframe>` for service
+//     embeds; future NG27 promotes auto-detection when authoring friction
+//     surfaces. Cheap to add later (~40 LoC render-time URL sniff) and
+//     strictly additive — no descriptor shape change.
+//   - `start` seek prop → Mintlify + Fumadocs both omit; video seeking is
+//     runtime behavior, not a persisted authoring prop.
+//   - Custom player chrome → HTML5 native controls are the UX; matches the
+//     NG7 "no confidently-broken chrome" rule.
+//
+// `children` is declared (`hasChildren: true`) so authored `<track>` /
+// `<source>` tags round-trip as PM children. Runtime subtitle rendering
+// depends on browser tolerance of the NodeView wrapper — fidelity-first;
+// editability over runtime-media semantics (QA-009 best-effort).
+
+const videoProps: PropDef[] = [
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    description: 'Video source URL',
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    description: 'Tooltip text (native HTML title attribute)',
+  },
+  {
+    name: 'controls',
+    type: 'boolean',
+    required: false,
+    defaultValue: true,
+    description: 'Show native HTML5 video controls (defaults to true)',
+  },
+  {
+    name: 'autoPlay',
+    type: 'boolean',
+    required: false,
+    description: 'Begin playback as soon as possible',
+  },
+  {
+    name: 'muted',
+    type: 'boolean',
+    required: false,
+    description: 'Mute audio on load (required for autoPlay in most browsers)',
+  },
+  {
+    name: 'loop',
+    type: 'boolean',
+    required: false,
+    description: 'Restart from the beginning when playback ends',
+  },
+  {
+    name: 'playsInline',
+    type: 'boolean',
+    required: false,
+    description: 'Play inline on iOS rather than entering fullscreen',
+  },
+  {
+    name: 'poster',
+    type: 'string',
+    required: false,
+    description: 'Poster image URL shown before playback',
+  },
+  {
+    name: 'preload',
+    type: 'enum',
+    enumValues: ['none', 'metadata', 'auto'],
+    required: false,
+    description: 'Hint for how much of the video to preload',
+  },
+];
+
 // ── Audio ────────────────────────────────────────────────────────────────────
 
 const audioProps: PropDef[] = [
@@ -217,6 +302,16 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with optional caption, explicit dimensions, and click-to-zoom',
     searchTerms: ['image', 'zoom', 'picture', 'photo', 'figure', 'caption'],
+  },
+  {
+    name: 'Video',
+    hasChildren: true,
+    props: videoProps,
+    icon: 'Film',
+    category: 'media',
+    displayName: 'Video',
+    description: 'HTML5 video player with native controls (track/source passthrough via children)',
+    searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
   },
   {
     name: 'Audio',

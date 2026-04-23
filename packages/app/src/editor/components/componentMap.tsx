@@ -1,16 +1,15 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * Transitional state (US-003/US-005/US-006 shipped, US-007..US-009 in flight):
- * the registry manifest is narrowed to the 5-pack foundation (Callout + Image
- * + Audio registered today; Video in US-007, Accordion in US-009). Callout
- * is a DIY renderer (US-005, 7-prop GFM shape at `./Callout`). Image is a
- * DIY renderer wrapping `react-medium-image-zoom` (US-006, 8-prop shape at
- * `./Image`). Audio is still the inline HTML5 wrapper below — US-008
- * extracts it into its own module and widens the prop shape per FR-4. Once
- * US-008 ships its DIY component, the last upstream-docs-lib React import
- * in this file goes away and `fumadocs-ui` drops from
- * `packages/app/package.json`.
+ * Transitional state (US-003/US-005/US-006/US-007 shipped, US-008..US-009 in flight):
+ * the registry manifest is the 5-pack foundation (Callout + Image + Video +
+ * Audio registered today; Accordion in US-009). Callout is a DIY renderer
+ * (US-005, 7-prop GFM shape at `./Callout`). Image is a DIY renderer wrapping
+ * `react-medium-image-zoom` (US-006, 8-prop shape at `./Image`). Video is a
+ * DIY pure HTML5 `<video>` wrapper (US-007, 9-prop shape at `./Video` per
+ * D-MF12 — no URL sniffing, no iframe emission). Audio is still the inline
+ * HTML5 wrapper below — US-008 extracts it into its own module and widens
+ * the prop shape per FR-4.
  *
  * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
  * US-002 along with the Context Bridge Registry (precedent #27 / PRECEDENTS.md
@@ -29,6 +28,7 @@
  */
 import { Callout } from './Callout.tsx';
 import { Image } from './Image.tsx';
+import { Video } from './Video.tsx';
 
 function Audio(props: { src?: string; title?: string; children?: React.ReactNode }) {
   return (
@@ -53,6 +53,7 @@ function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
 export const componentMap: Record<string, React.ComponentType<any>> = {
   Callout,
   Image,
+  Video,
   Audio,
   '*': UnregisteredBadgeRender,
 };

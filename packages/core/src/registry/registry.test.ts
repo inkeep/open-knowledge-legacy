@@ -3,12 +3,12 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the partial 5-pack (3 registered + wildcard) after US-003 narrow', () => {
-    // US-003 cut 14 fumadocs descriptors; Callout/Image/Audio stay. Video + Accordion
-    // land in US-007 / US-009 via `coreRegistry.set(...)` once their descriptors ship.
+  test('returns the partial 5-pack (4 registered + wildcard) after US-007 adds Video', () => {
+    // US-003 cut 14 fumadocs descriptors; US-005/US-006 widened Callout/Image;
+    // US-007 adds Video. Accordion lands in US-009 to complete the 5-pack.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(4);
+    expect(entries.length).toBe(5);
   });
 
   test('get returns registered component by name', () => {
@@ -71,6 +71,7 @@ describe('createRegistry', () => {
     const registry = createRegistry();
     expect(registry.has('Callout')).toBe(true);
     expect(registry.has('Image')).toBe(true);
+    expect(registry.has('Video')).toBe(true);
     expect(registry.has('Audio')).toBe(true);
     expect(registry.has('*')).toBe(true);
     // Cut-in-US-003 descriptors (Steps, Cards, Tabs, etc.) are no longer registered —
@@ -81,8 +82,8 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains exactly 3 entries (partial 5-pack — Video in US-007, Accordion in US-009)', () => {
-    expect(builtInComponents.length).toBe(3);
+  test('contains exactly 4 entries (partial 5-pack — Accordion in US-009)', () => {
+    expect(builtInComponents.length).toBe(4);
   });
 
   test('all entries have required fields', () => {
@@ -193,6 +194,77 @@ describe('builtInComponents manifest', () => {
     const image = builtInComponents.find((m) => m.name === 'Image');
     expect(image?.hasChildren).toBe(false);
     expect(image?.isSelfClosing).toBe(true);
+  });
+
+  test('Video exposes the 9-prop FR-3 surface', () => {
+    // US-007 adds Video as the first pure-HTML5 descriptor (D-MF12 —
+    // no URL sniffing, no iframe emission, no `start` prop). The 9 props
+    // mirror the native <video> attrs consumers expect: src, title,
+    // controls (default true), autoPlay, muted, loop, playsInline, poster,
+    // preload. Order-insensitive — a future PropPanel reshuffle should
+    // not break this guard.
+    const video = builtInComponents.find((m) => m.name === 'Video');
+    expect(video).toBeDefined();
+    if (!video) return;
+    const propNames = video.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(
+      [
+        'src',
+        'title',
+        'controls',
+        'autoPlay',
+        'muted',
+        'loop',
+        'playsInline',
+        'poster',
+        'preload',
+      ].sort(),
+    );
+  });
+
+  test('Video has `controls` as a boolean with `true` default', () => {
+    // The default matches browser HTML5 authoring intuition — a video
+    // inserted via slash-menu renders with controls visible. Authors who
+    // want a chrome-less video (background loop, hero autoplay) set
+    // controls={false} explicitly.
+    const video = builtInComponents.find((m) => m.name === 'Video');
+    const controls = video?.props.find((p) => p.name === 'controls');
+    expect(controls).toBeDefined();
+    if (controls?.type === 'boolean') {
+      expect(controls.defaultValue).toBe(true);
+    } else {
+      throw new Error('Video.controls must be a boolean');
+    }
+  });
+
+  test('Video has `preload` as a 3-value enum (none|metadata|auto)', () => {
+    const video = builtInComponents.find((m) => m.name === 'Video');
+    const preload = video?.props.find((p) => p.name === 'preload');
+    expect(preload).toBeDefined();
+    if (preload?.type === 'enum') {
+      expect([...preload.enumValues].sort()).toEqual(['auto', 'metadata', 'none'].sort());
+    } else {
+      throw new Error('Video.preload must be an enum');
+    }
+  });
+
+  test('Video has `hasChildren: true` for <track>/<source> passthrough (D-MF12)', () => {
+    // Per FR-3: `children` is a reactnode for <track> / <source> passthrough.
+    // Editability + γ round-trip over runtime media semantics (QA-009 is
+    // best-effort). The descriptor MUST NOT flip to self-closing — that
+    // would strip authored track/source tags on re-serialize.
+    const video = builtInComponents.find((m) => m.name === 'Video');
+    expect(video?.hasChildren).toBe(true);
+    expect(video?.isSelfClosing).toBeUndefined();
+  });
+
+  test('Video has no `start` prop (D-MF12 — matches Mintlify / Fumadocs)', () => {
+    // Runtime seek is not a persisted authoring concern. NG27 / NG28 cover
+    // future extensions (YouTube/Vimeo auto-embed, rich iframe UX);
+    // schema-add-only makes additive props free later.
+    const video = builtInComponents.find((m) => m.name === 'Video');
+    const start = video?.props.find((p) => p.name === 'start');
+    expect(start).toBeUndefined();
   });
 
   test('each name is unique', () => {
