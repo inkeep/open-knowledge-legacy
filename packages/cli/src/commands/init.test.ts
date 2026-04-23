@@ -25,7 +25,7 @@ import {
   formatInitResult,
   readExistingMcpEntry,
   runInit,
-  type WriteUserMcpConfigsOptions,
+  type UserMcpConfigsOptions,
   writeEditorMcpConfig,
   writeUserMcpConfigs,
 } from './init.ts';
@@ -1214,7 +1214,7 @@ describe('writeUserMcpConfigs', () => {
   });
 
   it('writes the cliPath shape for every selected editor', async () => {
-    const opts: WriteUserMcpConfigsOptions = {
+    const opts: UserMcpConfigsOptions = {
       editors: ['claude', 'cursor'],
       cliPath: CLI_PATH,
       home: fakeHome,

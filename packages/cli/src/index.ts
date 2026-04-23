@@ -16,7 +16,7 @@ export {
   detectInstalledEditors,
   type EditorMcpResult,
   readExistingMcpEntry,
-  type WriteUserMcpConfigsOptions,
+  type UserMcpConfigsOptions,
   writeEditorMcpConfig,
   writeUserMcpConfigs,
 } from './commands/init.ts';

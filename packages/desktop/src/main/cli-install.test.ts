@@ -2,13 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import {
   AdminFailureError,
   type AdminFailureReason,
+  type BrokenSymlinkRepairDeps,
   buildAdminAppleScript,
   buildAdminFailureError,
   buildInstallShellCmd,
   buildUninstallShellCmd,
   type CliInstallDeps,
+  type CliInstallStatus,
   classifyOsascriptExitCode,
   classifySymlinkState,
+  createBrokenSymlinkRepairHandler,
   type FsOps,
   getInstallStatus,
   installCli,
@@ -754,5 +757,217 @@ describe('uninstallCli', () => {
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
     expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
+  });
+});
+
+/**
+ * Pass 1 Major #4: `createBrokenSymlinkRepairHandler` — factored out of
+ * `main/index.ts` so the privilege-escalation-adjacent launch-time prompt
+ * has deterministic unit coverage. Each guard is exercised via injected
+ * deps; no Electron runtime, no real fs, no `osascript` spawn.
+ */
+describe('createBrokenSymlinkRepairHandler', () => {
+  interface StubDeps {
+    deps: BrokenSymlinkRepairDeps;
+    dialogCalls: DialogCall[];
+    installCalls: CliInstallDeps[];
+    refreshCalls: number;
+  }
+
+  function makeRepairDeps(
+    opts: {
+      platform?: NodeJS.Platform | string;
+      isPackaged?: boolean;
+      status?: CliInstallStatus;
+      /** Response to the repair dialog — 0 = Skip, 1 = Repair. Defaults to 0. */
+      response?: number;
+    } = {},
+  ): StubDeps {
+    const dialogCalls: DialogCall[] = [];
+    const installCalls: CliInstallDeps[] = [];
+    let refreshCalls = 0;
+    const deps: BrokenSymlinkRepairDeps = {
+      executablePath: INSTALLED_EXE,
+      platform: opts.platform ?? 'darwin',
+      isPackaged: opts.isPackaged ?? true,
+      dialog: {
+        showMessageBox(options) {
+          dialogCalls.push({
+            type: options.type,
+            message: options.message,
+            detail: options.detail,
+            buttons: options.buttons,
+          });
+          return Promise.resolve({
+            response: opts.response ?? 0,
+            checkboxChecked: false,
+          } satisfies { response: number; checkboxChecked: boolean });
+        },
+      },
+      install: async (d) => {
+        installCalls.push(d);
+      },
+      refreshMenu: () => {
+        refreshCalls++;
+      },
+      getStatus: () => opts.status ?? 'broken',
+    };
+    return {
+      deps,
+      dialogCalls,
+      installCalls,
+      get refreshCalls() {
+        return refreshCalls;
+      },
+    } as StubDeps;
+  }
+
+  test('no-op when platform !== "darwin" (Windows/Linux deferred per NG4)', async () => {
+    const { deps, dialogCalls, installCalls } = makeRepairDeps({ platform: 'win32' });
+    const handler = createBrokenSymlinkRepairHandler(deps);
+    await handler();
+    // Must short-circuit BEFORE firing any dialog — spec NG4 gate on non-darwin.
+    expect(dialogCalls).toHaveLength(0);
+    expect(installCalls).toHaveLength(0);
+  });
+
+  test('no-op when !isPackaged (dev-mode contamination guard — M6a analogue of STOP_IF (e))', async () => {
+    const { deps, dialogCalls, installCalls } = makeRepairDeps({ isPackaged: false });
+    const handler = createBrokenSymlinkRepairHandler(deps);
+    await handler();
+    // Dev mode MUST NOT fire the repair — `app.getPath('exe')` resolves to
+    // the electron dev binary, so a prior DMG's symlinks would always
+    // classify 'broken' against it and the Repair branch would install
+    // dev-path symlinks into the user's /usr/local/bin.
+    expect(dialogCalls).toHaveLength(0);
+    expect(installCalls).toHaveLength(0);
+  });
+
+  test("no-op when status !== 'broken' (no prompt on fresh install)", async () => {
+    const { deps, dialogCalls, installCalls } = makeRepairDeps({ status: 'not-installed' });
+    const handler = createBrokenSymlinkRepairHandler(deps);
+    await handler();
+    expect(dialogCalls).toHaveLength(0);
+    expect(installCalls).toHaveLength(0);
+  });
+
+  test("no-op when status is 'installed' (happy path)", async () => {
+    const { deps, dialogCalls, installCalls } = makeRepairDeps({ status: 'installed' });
+    const handler = createBrokenSymlinkRepairHandler(deps);
+    await handler();
+    expect(dialogCalls).toHaveLength(0);
+    expect(installCalls).toHaveLength(0);
+  });
+
+  test("fires repair prompt when platform=darwin + isPackaged=true + status='broken'", async () => {
+    const stub = makeRepairDeps({ status: 'broken', response: 0 });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    expect(stub.dialogCalls).toHaveLength(1);
+    expect(stub.dialogCalls[0].type).toBe('question');
+    expect(stub.dialogCalls[0].message).toBe('Command-Line Tools are broken — repair?');
+    expect(stub.dialogCalls[0].buttons).toEqual(['Skip', 'Repair']);
+  });
+
+  test('Skip response (0) does NOT invoke installCli or refresh menu', async () => {
+    const stub = makeRepairDeps({ status: 'broken', response: 0 });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    expect(stub.installCalls).toHaveLength(0);
+    expect(stub.refreshCalls).toBe(0);
+  });
+
+  test('Repair response (1) invokes installCli with executablePath + dialog, then refreshes menu', async () => {
+    const stub = makeRepairDeps({ status: 'broken', response: 1 });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    expect(stub.installCalls).toHaveLength(1);
+    expect(stub.installCalls[0].executablePath).toBe(INSTALLED_EXE);
+    expect(stub.installCalls[0].dialog).toBe(stub.deps.dialog);
+    // Menu refresh MUST fire — the label needs to flip from
+    // "Install Command-Line Tools…" to "Uninstall Command-Line Tools".
+    expect(stub.refreshCalls).toBe(1);
+  });
+
+  test('menu refresh fires AFTER installCli resolves (ordering invariant)', async () => {
+    const order: string[] = [];
+    const deps: BrokenSymlinkRepairDeps = {
+      executablePath: INSTALLED_EXE,
+      platform: 'darwin',
+      isPackaged: true,
+      dialog: {
+        showMessageBox() {
+          return Promise.resolve({ response: 1, checkboxChecked: false });
+        },
+      },
+      install: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push('install');
+      },
+      refreshMenu: () => {
+        order.push('refresh');
+      },
+      getStatus: () => 'broken',
+    };
+    await createBrokenSymlinkRepairHandler(deps)();
+    // Refresh must run AFTER install resolves — otherwise the menu label
+    // is rebuilt against the pre-install (still-broken) status.
+    expect(order).toEqual(['install', 'refresh']);
+  });
+
+  test('Pass 1 Major #3: defaultId=0 so Enter-default is Skip (safe cancel path)', async () => {
+    const stub = makeRepairDeps({ status: 'broken', response: 0 });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    // Probe the actual dialog options payload by intercepting showMessageBox.
+    // The makeRepairDeps stub above only captures `type / message / detail /
+    // buttons`, so wire a dedicated probe here for cancelId / defaultId.
+    const captured: Parameters<Dialog['showMessageBox']>[0][] = [];
+    const probingDeps: BrokenSymlinkRepairDeps = {
+      ...stub.deps,
+      dialog: {
+        showMessageBox(options) {
+          captured.push(options);
+          return Promise.resolve({ response: 0, checkboxChecked: false });
+        },
+      },
+    };
+    await createBrokenSymlinkRepairHandler(probingDeps)();
+    expect(captured).toHaveLength(1);
+    expect(captured[0].cancelId).toBe(0);
+    // defaultId: 0 means Enter-activate lands on Skip (no-op). If this
+    // flipped back to 1, a reflexive Enter on the startup modal would
+    // trigger the osascript admin password prompt — Pass 0 Major #4.
+    expect(captured[0].defaultId).toBe(0);
+  });
+
+  test('falls back to production getInstallStatus when getStatus dep is omitted', async () => {
+    // When the factory isn't handed a `getStatus`, it defaults to
+    // `getInstallStatus` from this module. Without a packaged macOS
+    // fixture present, that path will return 'not-installed' (both
+    // symlinks ENOENT on the test machine OR 'broken' if a prior DMG
+    // install remains). Either way, no dialog should fire from a
+    // non-darwin / non-packaged test run — we gate BEFORE getStatus.
+    const dialogCalls: DialogCall[] = [];
+    const deps: BrokenSymlinkRepairDeps = {
+      executablePath: INSTALLED_EXE,
+      // Force the short-circuit on !isPackaged so we never reach getStatus.
+      platform: 'darwin',
+      isPackaged: false,
+      dialog: {
+        showMessageBox(options) {
+          dialogCalls.push({
+            type: options.type,
+            message: options.message,
+            buttons: options.buttons,
+          });
+          return Promise.resolve({ response: 0, checkboxChecked: false });
+        },
+      },
+      install: async () => {},
+      refreshMenu: () => {},
+    };
+    await createBrokenSymlinkRepairHandler(deps)();
+    expect(dialogCalls).toHaveLength(0);
   });
 });

@@ -48,7 +48,12 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
-import { getInstallStatus, installCli, uninstallCli } from './cli-install.ts';
+import {
+  createBrokenSymlinkRepairHandler,
+  getInstallStatus,
+  installCli,
+  uninstallCli,
+} from './cli-install.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
@@ -451,46 +456,31 @@ function refreshApplicationMenu() {
 /**
  * Launch-time broken-symlink repair prompt (G5 / AC1.6).
  *
- * Fires on every app launch while `getInstallStatus` reports 'broken' — the
- * drag-to-Trash-then-reinstall case where `/usr/local/bin/ok` points at a
- * bundle path that no longer exists, OR a foreign file stomped our symlink
- * after install. The user has two affordances each boot: Repair (re-link via
- * `installCli`) or Skip (one-time dismiss for THIS boot only — Skip does not
- * persist across relaunches; the modal re-fires next boot if status is still
- * 'broken'). Pass 1/2 Minor noted "session" was ambiguous (Electron's
- * `app.getPath('sessionData')` reads as cross-boot); the per-boot semantics
- * are intentional — recovery is the user's repair action OR moving the .app
- * back into place, not a long-lived skip token.
+ * Full handler logic + guards live in
+ * `createBrokenSymlinkRepairHandler` (`cli-install.ts`) — extracted per
+ * Pass 1 Major #4 to unlock unit coverage for this privilege-adjacent
+ * path. This function just binds Electron globals to the factory.
  *
- * Dev mode is gated out because `app.getPath('exe')` in dev resolves to the
- * electron binary (not a packaged bundle), so a symlink from a prior DMG
- * install would always classify as 'broken' relative to the dev exe —
- * triggering the repair in dev would install a dev-path symlink into the
- * user's system (STOP_IF (e) analogue for M6a).
+ * Fires on every app launch while `getInstallStatus` reports 'broken' — the
+ * drag-to-Trash-then-reinstall case. The per-boot (not per-bundle) firing
+ * matches spec AC1.6 ("one-time-per-session"); recovery is the user's
+ * Repair action OR moving the `.app` back into place, not a persistent
+ * dismiss token. Dev mode is gated out because `app.getPath('exe')` in dev
+ * resolves to the electron binary (not a packaged bundle); a prior DMG's
+ * symlinks would always classify 'broken' relative to the dev exe, and the
+ * Repair branch would install dev-path symlinks into the user's system
+ * (STOP_IF (e) analogue for M6a).
  */
-async function maybeOfferBrokenSymlinkRepair(): Promise<void> {
-  if (process.platform !== 'darwin') return;
-  if (!app.isPackaged) return;
-  const executablePath = app.getPath('exe');
-  if (getInstallStatus(executablePath) !== 'broken') return;
-  const { response } = await dialog.showMessageBox({
-    type: 'question',
-    message: 'Command-Line Tools are broken — repair?',
-    detail:
-      "The Command-Line Tools for Open Knowledge point at a path that's no longer valid. This happens if the app was moved or reinstalled from a new DMG. Repair to re-link them at this bundle, or skip to dismiss.",
-    buttons: ['Skip', 'Repair'],
-    cancelId: 0,
-    // Flip the Enter-default to Skip (Pass 0 Major #4). Repair leads into
-    // the osascript admin-password prompt — a user reflexively dismissing
-    // a startup modal with Enter should land on the no-op path, not on
-    // a root-write they didn't intend. Users who want to repair still get
-    // there with one explicit keystroke (Tab then Enter) or one click.
-    defaultId: 0,
+function maybeOfferBrokenSymlinkRepair(): Promise<void> {
+  const handler = createBrokenSymlinkRepairHandler({
+    executablePath: app.getPath('exe'),
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    dialog,
+    install: installCli,
+    refreshMenu: refreshApplicationMenu,
   });
-  if (response === 1) {
-    await installCli({ executablePath, dialog });
-    refreshApplicationMenu();
-  }
+  return handler();
 }
 
 function registerIpcHandlers() {

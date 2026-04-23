@@ -398,7 +398,7 @@ function collectLegacyProjectConfig(
 // User-scoped MCP config writer (Electron main entry, NOT CLI `ok init`)
 // ---------------------------------------------------------------------------
 
-export interface WriteUserMcpConfigsOptions {
+export interface UserMcpConfigsOptions {
   /**
    * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
    * is responsible for filtering out editors whose existing entry is a
@@ -440,9 +440,7 @@ export interface WriteUserMcpConfigsOptions {
  * user explicitly toggled the editor checkbox; their click IS the consent,
  * so skip-on-missing would silently drop their selection.
  */
-export async function writeUserMcpConfigs(
-  opts: WriteUserMcpConfigsOptions,
-): Promise<EditorMcpResult[]> {
+export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<EditorMcpResult[]> {
   const targets = resolveEditorTargets(opts.editors);
   const installOptions: McpInstallOptions = {
     mode: 'published',

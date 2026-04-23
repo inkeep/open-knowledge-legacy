@@ -587,3 +587,90 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
     buttons: ['OK'],
   });
 }
+
+// ---------------------------------------------------------------------------
+// Launch-time broken-symlink repair (G5 / AC1.6 — extracted per Pass 1 Major #4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for `createBrokenSymlinkRepairHandler`. All Electron touches
+ * are injected so the handler is bun-test loadable without spinning up an
+ * Electron runtime. Mirrors `CliInstallDeps` + the existing DI pattern from
+ * `mcp-wiring.runMcpWiringOnFirstLaunch`.
+ *
+ * `getStatus` defaults to `getInstallStatus` and is exposed as a dep so a
+ * test can synthesize 'broken' / 'installed' / 'not-installed' without
+ * stubbing the full `FsOps` surface. `refreshMenu` runs after a successful
+ * repair so the `File → Uninstall Command-Line Tools…` label reflects the
+ * newly-installed state.
+ *
+ * Pass 1 Major #4 rationale: this function is privilege-escalation-adjacent
+ * (the Repair branch leads to an osascript admin prompt). Inline in
+ * `main/index.ts` it had ZERO test coverage — a regression that dropped
+ * `!isPackaged` would install dev-path symlinks into the user's
+ * `/usr/local/bin`, and the M6 e2e runs unpackaged with `OK_M6B_FORCE` so
+ * it couldn't catch packaging-gate regressions either. The factory + DI
+ * pattern unlocks deterministic unit coverage.
+ */
+export interface BrokenSymlinkRepairDeps {
+  executablePath: string;
+  platform: NodeJS.Platform | string;
+  /** `app.isPackaged` — packaging-gate. Dev mode must never offer repair
+   *  because `app.getPath('exe')` resolves to the electron dev binary and
+   *  a prior DMG's symlinks would always classify 'broken' against it;
+   *  running the repair would install dev-path symlinks into the user's
+   *  system (M6a analogue of M6b's STOP_IF (e) contamination guard). */
+  isPackaged: boolean;
+  dialog: Pick<Dialog, 'showMessageBox'>;
+  /** Callable-once installer for the Repair branch. Defaults to `installCli`
+   *  in production; injected as a stub in tests so we can assert it fires
+   *  without actually spawning osascript. */
+  install: (deps: CliInstallDeps) => Promise<void>;
+  /** Rebuild the application menu after a successful repair so the label
+   *  flips from "Install Command-Line Tools…" to "Uninstall Command-Line
+   *  Tools". Injected so tests can assert the ordering (refresh AFTER
+   *  install resolves). */
+  refreshMenu: () => void;
+  getStatus?: (executablePath: string) => CliInstallStatus;
+}
+
+/**
+ * Factory that returns an async handler fit for `app.whenReady().then(...)`.
+ * Called once per boot; the internal guards (`platform`, `isPackaged`,
+ * `status === 'broken'`) short-circuit to a no-op on every path except the
+ * one it was designed for — drag-to-Trash-then-reinstall recovery on a
+ * packaged macOS build.
+ *
+ * Per spec AC1.6 the dialog fires "per session" (per-boot). No dismissal
+ * token persists across boots — a user who keeps seeing it either repairs
+ * or moves the `.app` back into place. Pass 1 Major #3 flipped `defaultId`
+ * to 0 (Skip) so cancel-via-Enter is the safe action.
+ */
+export function createBrokenSymlinkRepairHandler(
+  deps: BrokenSymlinkRepairDeps,
+): () => Promise<void> {
+  const getStatus = deps.getStatus ?? getInstallStatus;
+  return async () => {
+    if (deps.platform !== 'darwin') return;
+    if (!deps.isPackaged) return;
+    const status = getStatus(deps.executablePath);
+    if (status !== 'broken') return;
+    const { response } = await deps.dialog.showMessageBox({
+      type: 'question',
+      message: 'Command-Line Tools are broken — repair?',
+      detail:
+        "The Command-Line Tools for Open Knowledge point at a path that's no longer valid. This happens if the app was moved or reinstalled from a new DMG. Repair to re-link them at this bundle, or skip to dismiss.",
+      buttons: ['Skip', 'Repair'],
+      cancelId: 0,
+      // Pass 1 Major #3: Enter-default = Skip. Repair leads into the
+      // osascript admin-password prompt — a user reflexively dismissing
+      // a startup modal with Enter should land on the no-op path, not
+      // on a root-write they didn't intend.
+      defaultId: 0,
+    });
+    if (response === 1) {
+      await deps.install({ executablePath: deps.executablePath, dialog: deps.dialog });
+      deps.refreshMenu();
+    }
+  };
+}
