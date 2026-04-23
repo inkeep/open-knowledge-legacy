@@ -32,6 +32,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   session,
   shell,
@@ -41,6 +42,7 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
+import { popAssetMenu } from './asset-menu.ts';
 import { attachAssetSafetyNet } from './asset-safety-net.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
@@ -542,10 +544,57 @@ function registerIpcHandlers() {
     );
   });
 
-  // Placeholder until Commit 5 — the renderer's right-click context menu
-  // plugin invokes this but the native menu construction + popup lives in
-  // the next commit. Returning undefined is the bridge-contract shape.
-  handle('ok:shell:show-asset-menu', async (_event, _params) => {
+  // Native right-click context menu (SPEC 2026-04-23 amendment FR-A8).
+  // Renderer plugin resolves the clicked on-disk reference (asset chip,
+  // wiki-link chip, or image) and invokes this with {relPath, title,
+  // kind}. Main builds the menu via `Menu.buildFromTemplate` and pops
+  // it on the caller window — gesture-attested (D11) because main
+  // observes the click directly (the renderer plugin merely forwards
+  // the intent; the actual popup is sourced in main). Actions route
+  // through the same `openAssetSafely` / `revealAssetSafely` gates as
+  // the left-click flow.
+  handle('ok:shell:show-asset-menu', async (event, params) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    if (!callerWin || !wm) return undefined;
+    const projectPath = wm.getContextForBrowserWindow(
+      callerWin as unknown as BrowserWindowLike,
+    )?.projectPath;
+    if (!projectPath) return undefined;
+    popAssetMenu(
+      {
+        Menu,
+        window: callerWin,
+      },
+      {
+        kind: params.kind,
+        platform: process.platform,
+        actions: {
+          reveal: async () => {
+            await revealAssetSafely(
+              {
+                projectPath,
+                platform: process.platform,
+                showItemInFolder: (canonical) => shell.showItemInFolder(canonical),
+              },
+              params.relPath,
+            );
+          },
+          openInDefault: async () => {
+            await openAssetSafely(
+              {
+                projectPath,
+                platform: process.platform,
+                openPath: (canonical) => shell.openPath(canonical),
+              },
+              params.relPath,
+            );
+          },
+          copyLink: () => {
+            clipboard.writeText(params.relPath);
+          },
+        },
+      },
+    );
     return undefined;
   });
 

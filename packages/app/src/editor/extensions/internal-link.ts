@@ -42,6 +42,7 @@ import { mergeAttributes } from '@tiptap/core';
 import { createElement } from 'react';
 import { dispatchAssetClick } from '../asset-dispatch/dispatcher';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { createAssetContextMenuPlugin } from '../plugins/asset-context-menu';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { InternalLinkPropPanel } from './InternalLinkPropPanel';
 import { makeLinkResolutionAttrsComputer } from './link-resolution';
@@ -181,6 +182,12 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
         markTypes: ['link'],
         computeAttrs: makeLinkResolutionAttrsComputer(docName),
       }),
+      // 4. Right-click context menu for on-disk references (SPEC
+      //    2026-04-23 amendment FR-A8). Attaches a `contextmenu` DOM
+      //    listener on `editor.view.dom` and routes matched targets
+      //    (wiki-embed chips, asset link marks, images) through the
+      //    showAssetMenu IPC. No-op in web (browser default).
+      createAssetContextMenuPlugin({ sourceDocName: docName }),
     ];
   },
 });
