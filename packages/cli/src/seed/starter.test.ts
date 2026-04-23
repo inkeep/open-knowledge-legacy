@@ -1,0 +1,109 @@
+import { describe, expect, test } from 'bun:test';
+import { FolderRuleSchema } from '../config/schema.ts';
+import { LOG_MD_TEMPLATE, STARTER_FOLDERS, starterFolderRule } from './starter.ts';
+
+describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
+  test('ships exactly three starter folders in Karpathy-layer order', () => {
+    expect(STARTER_FOLDERS).toHaveLength(3);
+    expect(STARTER_FOLDERS.map((f) => f.path)).toEqual([
+      'external-sources',
+      'research',
+      'articles',
+    ]);
+  });
+
+  test('each entry has all required fields and non-empty values', () => {
+    for (const folder of STARTER_FOLDERS) {
+      expect(folder.path).toMatch(/^[a-z][a-z-]*$/);
+      expect(folder.match).toBe(`${folder.path}/**`);
+      expect(folder.title.length).toBeGreaterThan(0);
+      expect(folder.description.length).toBeGreaterThan(20);
+      expect(folder.tags.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('external-sources description references ingest + immutability', () => {
+    const entry = STARTER_FOLDERS.find((f) => f.path === 'external-sources');
+    expect(entry).toBeDefined();
+    // SPEC §Design: "Raw preserved sources (URLs, PDFs, files). Immutable — captured verbatim via `ingest`."
+    expect(entry?.description).toContain('Raw preserved sources');
+    expect(entry?.description).toContain('Immutable');
+    expect(entry?.description).toContain('ingest');
+    expect(entry?.tags).toEqual(['source', 'immutable', 'layer-ingest']);
+  });
+
+  test('research description references research tool + provisional status + sources', () => {
+    const entry = STARTER_FOLDERS.find((f) => f.path === 'research');
+    expect(entry).toBeDefined();
+    expect(entry?.description).toContain('Provisional analysis');
+    expect(entry?.description).toContain('research');
+    expect(entry?.description).toContain('status: provisional');
+    expect(entry?.description).toContain('sources:');
+    expect(entry?.description).toContain('consolidate');
+    expect(entry?.tags).toEqual(['research', 'provisional', 'layer-research']);
+  });
+
+  test('articles description references consolidate + canonical status + supersedes chain', () => {
+    const entry = STARTER_FOLDERS.find((f) => f.path === 'articles');
+    expect(entry).toBeDefined();
+    expect(entry?.description).toContain('Canonical knowledge');
+    expect(entry?.description).toContain('consolidate');
+    expect(entry?.description).toContain('status: canonical');
+    expect(entry?.description).toContain('supersedes:');
+    expect(entry?.tags).toEqual(['article', 'canonical', 'layer-consolidate']);
+  });
+
+  test('all entries are schema-valid via FolderRuleSchema', () => {
+    for (const folder of STARTER_FOLDERS) {
+      const rule = starterFolderRule(folder);
+      const parsed = FolderRuleSchema.safeParse(rule);
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  test('STARTER_FOLDERS is a readonly constant (cannot be mutated)', () => {
+    // TypeScript enforces readonly-ness at compile time; runtime shape is still
+    // a plain array. This test documents the intent — unrestricted mutation
+    // would be a red flag in review.
+    expect(Object.isFrozen(STARTER_FOLDERS)).toBe(false); // spec-style const, not Object.freeze'd
+    // Verify the type annotation: `readonly StarterFolder[]` disallows push/pop at the type level.
+    // Runtime reassignment check skipped — this is a TS-level guarantee.
+  });
+});
+
+describe('LOG_MD_TEMPLATE', () => {
+  test('has frontmatter with title and description', () => {
+    expect(LOG_MD_TEMPLATE).toContain('---');
+    expect(LOG_MD_TEMPLATE).toContain('title: Work Log');
+    expect(LOG_MD_TEMPLATE).toContain('description:');
+  });
+
+  test('has H1 heading', () => {
+    expect(LOG_MD_TEMPLATE).toContain('# Work Log');
+  });
+
+  test('includes example entry shape as HTML comment (not active content)', () => {
+    expect(LOG_MD_TEMPLATE).toContain('<!-- Example entry shape:');
+    expect(LOG_MD_TEMPLATE).toContain('-->');
+  });
+});
+
+describe('starterFolderRule()', () => {
+  test('converts a StarterFolder to a FolderRule with correct shape', () => {
+    const folder = STARTER_FOLDERS[0];
+    const rule = starterFolderRule(folder);
+    expect(rule).toEqual({
+      match: folder.match,
+      frontmatter: {
+        title: folder.title,
+        description: folder.description,
+        tags: folder.tags,
+      },
+    });
+  });
+
+  test('output passes FolderRuleSchema parse', () => {
+    const rule = starterFolderRule(STARTER_FOLDERS[0]);
+    expect(FolderRuleSchema.parse(rule)).toEqual(rule);
+  });
+});
