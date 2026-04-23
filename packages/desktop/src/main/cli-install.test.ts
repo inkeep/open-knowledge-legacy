@@ -801,6 +801,13 @@ describe('createBrokenSymlinkRepairHandler', () => {
       status?: CliInstallStatus;
       /** Response to the repair dialog — 0 = Skip, 1 = Repair. Defaults to 0. */
       response?: number;
+      /** Per-bundle dismissal-token plumbing (Pass 2 Major #3). When any of
+       *  these is provided, the dismissal-gate branches light up; otherwise
+       *  the factory omits the keys so the gate behaves as if the caller
+       *  didn't plumb it (prior behavior). */
+      appVersion?: string;
+      getDismissedToken?: () => string | null;
+      setDismissedToken?: (token: string) => void;
     } = {},
   ): StubDeps {
     const dialogCalls: DialogCall[] = [];
@@ -831,6 +838,13 @@ describe('createBrokenSymlinkRepairHandler', () => {
         refreshCalls++;
       },
       getStatus: () => opts.status ?? 'broken',
+      ...(opts.appVersion !== undefined ? { appVersion: opts.appVersion } : {}),
+      ...(opts.getDismissedToken !== undefined
+        ? { getDismissedToken: opts.getDismissedToken }
+        : {}),
+      ...(opts.setDismissedToken !== undefined
+        ? { setDismissedToken: opts.setDismissedToken }
+        : {}),
     };
     return {
       deps,
@@ -989,5 +1003,104 @@ describe('createBrokenSymlinkRepairHandler', () => {
     };
     await createBrokenSymlinkRepairHandler(deps)();
     expect(dialogCalls).toHaveLength(0);
+  });
+
+  /**
+   * Pass 2 Major #3: per-bundle dismissal token. The token shape is
+   * `<appVersion>:<executablePath>` — auto-update OR app-move invalidates
+   * any prior dismissal, the modal fires once on the new bundle, Skip
+   * persists the token for the rest of that bundle's life. Without these
+   * tests, a refactor that broke the short-circuit would silently re-nag
+   * users who had already dismissed on the current bundle.
+   */
+  test('Pass 2 Major #3: short-circuits when dismissed token matches current token', async () => {
+    const currentToken = `0.1.0:${INSTALLED_EXE}`;
+    const stub = makeRepairDeps({
+      status: 'broken',
+      response: 0, // irrelevant — dialog should never fire
+      appVersion: '0.1.0',
+      getDismissedToken: () => currentToken,
+    });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    // No dialog, no install, no menu refresh — the user's prior dismissal
+    // stands for this bundle.
+    expect(stub.dialogCalls).toHaveLength(0);
+    expect(stub.installCalls).toHaveLength(0);
+    expect(stub.refreshCalls).toBe(0);
+  });
+
+  test('Pass 2 Major #3: dismissed token mismatch (different version) still fires dialog', async () => {
+    // Auto-update from 0.1.0 → 0.1.1 shifts the token; the prior dismissal
+    // should not suppress the new bundle's prompt.
+    const staleToken = `0.1.0:${INSTALLED_EXE}`;
+    const stub = makeRepairDeps({
+      status: 'broken',
+      response: 0, // Skip
+      appVersion: '0.1.1', // NEW version → token is `0.1.1:${INSTALLED_EXE}`
+      getDismissedToken: () => staleToken,
+    });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    // Dialog DID fire — token shift invalidated the prior Skip.
+    expect(stub.dialogCalls).toHaveLength(1);
+  });
+
+  test('Pass 2 Major #3: Skip (response=0) persists dismissal token via setDismissedToken', async () => {
+    let savedToken: string | null = null;
+    const stub = makeRepairDeps({
+      status: 'broken',
+      response: 0, // Skip
+      appVersion: '0.1.0',
+      getDismissedToken: () => null,
+      setDismissedToken: (t) => {
+        savedToken = t;
+      },
+    });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    // Skip persists the token so subsequent boots short-circuit until the
+    // bundle path or version changes. Shape is `<appVersion>:<execPath>`.
+    expect(savedToken).toBe(`0.1.0:${INSTALLED_EXE}`);
+    expect(stub.installCalls).toHaveLength(0);
+    expect(stub.refreshCalls).toBe(0);
+  });
+
+  test('Pass 2 Major #3: Repair (response=1) does NOT persist dismissal token', async () => {
+    // The Repair branch installs the symlinks and refreshes the menu. It
+    // must not write a dismissal token — the bundle is now healthy, so the
+    // status will be 'installed' next boot and the gate never reaches this
+    // branch anyway. Persisting would be wasted I/O and semantically wrong
+    // (dismissal ≠ repair).
+    let savedToken: string | null = null;
+    const stub = makeRepairDeps({
+      status: 'broken',
+      response: 1, // Repair
+      appVersion: '0.1.0',
+      getDismissedToken: () => null,
+      setDismissedToken: (t) => {
+        savedToken = t;
+      },
+    });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    expect(savedToken).toBeNull();
+    expect(stub.installCalls).toHaveLength(1);
+    expect(stub.refreshCalls).toBe(1);
+  });
+
+  test('Pass 2 Major #3: dismissal plumbing absent → prompt fires per-boot (back-compat)', async () => {
+    // When appVersion / getDismissedToken / setDismissedToken are not
+    // plumbed (the simpler callers, existing test shape), the gate is
+    // inert — the modal fires on every broken-status boot. This is the
+    // prior behavior and must stay back-compatible.
+    const stub = makeRepairDeps({ status: 'broken', response: 0 });
+    const handler = createBrokenSymlinkRepairHandler(stub.deps);
+    await handler();
+    expect(stub.dialogCalls).toHaveLength(1);
+    // Calling a second time still fires — no in-memory memoization at the
+    // handler level; persistence is entirely the caller's responsibility.
+    await handler();
+    expect(stub.dialogCalls).toHaveLength(2);
   });
 });
