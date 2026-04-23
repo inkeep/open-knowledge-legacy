@@ -191,20 +191,21 @@ This is primarily a human-watchability concern — the user watches edits land i
 
 ## Workflow tools — when to invoke them
 
-Four MCP tools build on the primitives above and correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+Three MCP tools build on the primitives above and correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
 
 | Tool | Layer | When to invoke |
 | --- | --- | --- |
 | `ingest` | Raw sources (immutable) | User shares a URL, PDF, or file to preserve verbatim. No analysis in the file itself — takeaways go back to the user in chat. |
 | `research` | Wiki, provisional | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Mirrors the `eng:research` skill discipline (scan-first routing, STOP scoping gate, 3P-external framing, validate checklist). |
 | `consolidate` | Wiki, canonical | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain. |
-| `init-content` | Schema + bootstrap | First-time setup or under-populated knowledge base. Reads the codebase, writes initial articles, optionally seeds a `log.md` for append-only work history. |
 
 Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
 
 Typical day-2 flow: user shares a URL → `ingest` (preserve) → user asks "now research this" → `research` (provisional article + `ingest`s more sources as needed) → decision lands → `consolidate` (canonical article, supersedes the research).
 
 **Do not chain silently.** After `ingest`, ask the user whether to proceed to `research`. After `research`, let the user decide whether the findings are ready to `consolidate`. Each tool completes on its own terms — the user drives the transitions.
+
+**Project scaffolding is a CLI operation (optional).** Users who want the Karpathy three-layer layout as their folder structure can run `open-knowledge seed` (or `ok seed`) once from a terminal. That command scaffolds `external-sources/` + `research/` + `articles/`, seeds an append-only `log.md` at the project root, and writes matching `config.yml` `folders:` entries so agents see layer descriptions at every `exec("ls <folder>")` call. It is **not required**: the three workflow tools above work against any folder structure the project already uses (`specs/`, `docs/`, `reports/`, or anything else). Only mention `ok seed` if the user explicitly asks for a starter layout or wants the Karpathy pattern specifically.
 
 ## Server lifecycle
 
