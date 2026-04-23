@@ -30,6 +30,7 @@ export {
   type DedupMode,
   type DedupUIMode,
   type EmitFormat,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
   IMAGE_EXTENSIONS,
   type UploadConfig,
 } from './constants/upload.ts';

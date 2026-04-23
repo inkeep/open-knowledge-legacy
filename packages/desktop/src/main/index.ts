@@ -40,6 +40,7 @@ import {
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
@@ -475,6 +476,57 @@ function registerIpcHandlers() {
       },
       line,
     );
+    return undefined;
+  });
+
+  // Asset-open dispatch (2026-04-23 amendment FR-A6). Threads the caller
+  // window's ProjectContext.projectPath so containment checks scope to the
+  // project that owns the click — different windows (editor + navigator)
+  // don't see each other's roots. Windows without a ProjectContext resolve
+  // as no-op refusal (`path-escape`): a click from such a window has no
+  // legitimate asset scope.
+  handle('ok:shell:open-asset', async (event, relPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    if (!callerProjectPath) {
+      return { ok: false, reason: 'path-escape' } as const;
+    }
+    return openAssetSafely(
+      {
+        projectPath: callerProjectPath,
+        platform: process.platform,
+        openPath: (canonical) => shell.openPath(canonical),
+      },
+      relPath,
+    );
+  });
+
+  handle('ok:shell:reveal-asset', async (event, relPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    if (!callerProjectPath) {
+      return { ok: false, reason: 'path-escape' } as const;
+    }
+    return revealAssetSafely(
+      {
+        projectPath: callerProjectPath,
+        platform: process.platform,
+        showItemInFolder: (canonical) => shell.showItemInFolder(canonical),
+      },
+      relPath,
+    );
+  });
+
+  // Placeholder until Commit 5 — the renderer's right-click context menu
+  // plugin invokes this but the native menu construction + popup lives in
+  // the next commit. Returning undefined is the bridge-contract shape.
+  handle('ok:shell:show-asset-menu', async (_event, _params) => {
     return undefined;
   });
 
