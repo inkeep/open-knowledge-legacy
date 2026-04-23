@@ -29,11 +29,15 @@
  * React camelCase form (`formAction`, `xlinkHref`) and the HTML lowercase
  * form (`formaction`, `action`) both hit the filter.
  *
- * Nested URL traversal: arrays + plain objects are walked one level deep
- * for URL-shaped keys so patterns like
- * `<InlineTOC items={[{url:"javascript:…"}]} />` cannot bypass. Depth is
- * bounded by `MAX_NESTED_DEPTH` to protect against cyclic / pathological
- * shapes from MDX expression literals.
+ * Nested URL traversal: arrays + plain objects are walked recursively for
+ * URL-shaped keys so patterns like `<InlineTOC items={[{url:"javascript:…"}]} />`
+ * cannot bypass at any nesting depth. MDX expression-attrs are parsed from
+ * text via `mdast-util-mdx` and produce JSON-like trees with no cycles
+ * (object identity is fresh per parse), so the recursion is bounded by the
+ * parser's own input-size limits — no runtime cap needed. Earlier revisions
+ * of this module capped recursion at depth 4 to "protect against cyclic /
+ * pathological shapes," which fail-opened a real attack class
+ * (`{a:{b:{c:{d:{url:'javascript:…'}}}}}`) for no actual safety benefit.
  *
  * Matches the shape shipped by React itself for `href` in development
  * builds (see reactjs/rfcs#186 + createSanitizeURL) and by DOMPurify's
@@ -155,13 +159,6 @@ const DANGEROUS_PROP_NAMES = new Set([
 ]);
 
 /**
- * Max depth the nested-URL traversal will descend. Keeps the sanitizer
- * O(total-entries) regardless of user-authored MDX expression shape and
- * short-circuits pathological / cyclic inputs.
- */
-const MAX_NESTED_DEPTH = 4;
-
-/**
  * Max CSS `style` string length that is scanned. Longer values are
  * preserved (no-op — the scanner would be quadratic on adversarial
  * input). Typical inline-style values are < 500 chars; 10 KB is
@@ -252,15 +249,19 @@ function sanitizeStyleString(value: string): string {
  * attributes can only produce primitives, plain objects, and arrays, so
  * this catches every realistic attack shape without interfering with
  * descriptor-provided React.ReactNode values.
+ *
+ * Recurses to arbitrary depth. MDX expression-attrs are parsed from text
+ * (no runtime object identity), so the input is acyclic and bounded by the
+ * parser's own input-size limit. Earlier revisions capped recursion at
+ * depth 4 and fail-opened nested URLs past that depth — see module header.
  */
-function sanitizeNested(value: unknown, depth: number): unknown {
-  if (depth >= MAX_NESTED_DEPTH) return value;
+function sanitizeNested(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (Array.isArray(value)) {
     let changed = false;
     const next: unknown[] = new Array(value.length);
     for (let i = 0; i < value.length; i++) {
-      const sanitized = sanitizeNested(value[i], depth + 1);
+      const sanitized = sanitizeNested(value[i]);
       next[i] = sanitized;
       if (sanitized !== value[i]) changed = true;
     }
@@ -282,7 +283,7 @@ function sanitizeNested(value: unknown, depth: number): unknown {
       if (safe !== v) changed = true;
       out[k] = safe;
     } else {
-      const safe = sanitizeNested(v, depth + 1);
+      const safe = sanitizeNested(v);
       if (safe !== v) changed = true;
       out[k] = safe;
     }
@@ -300,8 +301,8 @@ function sanitizeNested(value: unknown, depth: number): unknown {
  *     expression-authored style object can smuggle `background:"url(js:)"`
  *     values that bypass the string scanner; the safer default is to
  *     require descriptor-declared style props if a component needs them).
- *   - Recursively sanitizes nested URL-shaped keys (arrays + plain objects,
- *     one-level; bounded by `MAX_NESTED_DEPTH`).
+ *   - Recursively sanitizes nested URL-shaped keys (arrays + plain objects)
+ *     to arbitrary depth — see `sanitizeNested` for the bounded-cost rationale.
  *
  * Returns a new object when anything was rewritten; returns the input
  * unchanged otherwise (avoids unnecessary re-renders in React Compiler's
@@ -338,7 +339,7 @@ export function sanitizeComponentProps(props: Record<string, unknown>): Record<s
       }
       continue;
     }
-    const safe = sanitizeNested(value, 0);
+    const safe = sanitizeNested(value);
     if (safe !== value) changed = true;
     result[key] = safe;
   }

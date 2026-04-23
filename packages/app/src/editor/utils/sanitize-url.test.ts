@@ -272,14 +272,36 @@ describe('sanitizeComponentProps — nested URL traversal', () => {
     expect(output.meta.label).toBe('x');
   });
 
-  test('leaves deeply nested URL alone past MAX_NESTED_DEPTH', () => {
-    // Depth > MAX_NESTED_DEPTH is preserved as-is. Not a correctness
-    // concern — legitimate MDX props don't have 5-deep URL nesting, and
-    // the bound prevents pathological inputs from exploding the
-    // sanitizer cost. Documented in the module header.
+  test('sanitizes URL at depth 6 (no recursion cap)', () => {
+    // Earlier revisions capped recursion at depth 4 and fail-opened nested
+    // URLs past that depth — letting `{a:{b:{c:{d:{e:{url:'javascript:…'}}}}}}`
+    // through unchanged. The cap was over-cautious (MDX expression-attrs are
+    // text-parsed and acyclic); recursion is now unbounded and this attack
+    // class is closed.
     const deep = { a: { b: { c: { d: { e: { url: 'javascript:alert(1)' } } } } } };
     const output = sanitizeComponentProps(deep) as typeof deep;
-    // The URL at depth 5 is deeper than MAX_NESTED_DEPTH (4); pass-through.
-    expect(output.a.b.c.d.e.url).toBe('javascript:alert(1)');
+    expect(output.a.b.c.d.e.url).toBe('#');
+  });
+
+  test('sanitizes URL at depth 8 inside arrays-of-objects', () => {
+    // Deep + array-mixed shape. Verifies the recursion descends through
+    // both object and array branches without depth limit.
+    const deep = {
+      sections: [
+        {
+          rows: [
+            {
+              cells: [
+                {
+                  meta: { href: 'vbscript:msgbox' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const output = sanitizeComponentProps(deep) as typeof deep;
+    expect(output.sections[0].rows[0].cells[0].meta.href).toBe('#');
   });
 });
