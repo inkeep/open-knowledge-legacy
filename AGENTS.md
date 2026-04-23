@@ -312,13 +312,14 @@ The paired-write marker `context.paired: true` on `MANAGED_RENAME_ORIGIN` ensure
 
 **Client emit-dispatch matrix** (`packages/app/src/editor/image-upload/index.ts`): after a successful upload, `pickInsertShape(filename, config)` dispatches by `(extension × emitFormat × wikiEmbedExtensions)`:
 
-| Extension in `wikiEmbedExtensions` | `emitFormat`      | PM insert                                     |
-| ---------------------------------- | ----------------- | --------------------------------------------- |
-| Yes, image-ext                     | `wikiembed` (def) | `wikiLinkEmbed` node — `{target: src}`        |
-| Yes, image-ext                     | `markdown-image`  | `image` node — `{src: relPath, alt: stem}`    |
-| Yes, non-image (pdf/mp4/…)         | `wikiembed` (def) | `wikiLinkEmbed` node — `{target: src}`        |
-| Yes, non-image (pdf/mp4/…)         | `markdown-image`  | text + `link` mark — `{href: relPath}`        |
-| No (opaque: zip/docx/txt/…)        | (ignored)         | text + `link` mark — `{href: relPath}`        |
+| Extension                              | `emitFormat`      | PM insert                                                     |
+| -------------------------------------- | ----------------- | ------------------------------------------------------------- |
+| `.md` / `.mdx` (first-class OK doc)    | (bypass)          | `wikiLink` node — `{target: basename, alias, anchor}` (link)  |
+| Image-ext in `wikiEmbedExtensions`     | `wikiembed` (def) | `wikiLinkEmbed` node — `{target: src}`                        |
+| Image-ext in `wikiEmbedExtensions`     | `markdown-image`  | `image` node — `{src: relPath, alt: stem}`                    |
+| Non-image in `wikiEmbedExtensions`     | `wikiembed` (def) | `wikiLinkEmbed` node — `{target: src}`                        |
+| Non-image in `wikiEmbedExtensions`     | `markdown-image`  | text + `link` mark — `{href: relPath}`                        |
+| Opaque (zip/docx/txt/…)                | (ignored)         | text + `link` mark — `{href: relPath}`                        |
 
 `shortestImageRef(assetPath, mdPath)` returns the minimal relative reference under four cases: same-dir → basename; asset in ancestor of doc dir → `../<name>`; asset in subtree of doc dir → `./<sub>/<name>`; cross-tree → `../…/<name>`. (Matches the JSDoc at `packages/app/src/editor/image-upload/index.ts:101-110` and the dirname-matrix tests — the ancestor direction emits `../`, descent emits `./<sub>/...`. Do not re-swap these in docs; the pre-fix AGENTS.md wording had them inverted.)
 
