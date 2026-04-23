@@ -164,12 +164,20 @@ console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 // initShadowRepo so a missing `git` binary fails the dev server fast instead of
 // leaving the shadow in a degraded state. Core pipeline + error dispatch live in
 // `./dev-shadow-init.ts` so the fail-fast / degraded branches are unit-tested.
+//
+// Shadow init runs UNCONDITIONALLY now (per specs/2026-04-22-per-worker-shadow-
+// repo-test-harness D2 Playwright default-on) — every worker's tmpdir gets a
+// real shadow at `<tmpdir>/.git/open-knowledge/`. Under isolation, all
+// shadow-init errors (not just ProjectGitInitError) fail-fast via D13 so
+// silent shadow gaps never hide coverage regressions.
 const shadowRef: ShadowRef = { current: undefined };
-if (!isTestIsolated) {
-  void runDevShadowInit(projectRoot, (shadow) => {
+void runDevShadowInit(
+  projectRoot,
+  (shadow) => {
     shadowRef.current = shadow;
-  });
-}
+  },
+  { isTestIsolated },
+);
 
 // All throwable module-scope init runs inside this try. If anything fails we
 // release the lock synchronously before re-throwing, so a subsequent `bun run
@@ -211,7 +219,7 @@ try {
     contentDir: CONTENT_DIR,
     projectDir: projectRoot,
     contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-    gitEnabled: !isTestIsolated,
+    gitEnabled: true,
     shadowRef,
     backlinkIndex,
     getCurrentBranch: () => readBranchFromHead(resolve(projectRoot, '.git')),

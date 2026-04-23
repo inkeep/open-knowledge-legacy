@@ -38,17 +38,29 @@ const defaultDevShadowInitIo: DevShadowInitIo = {
 /**
  * The `.catch` handler for the dev plugin's shadow-init Promise chain.
  *
- * - `ProjectGitInitError` → R6 fail-fast: warn + stderr dump + `exit(1)`.
- * - Any other error → degraded warn (timeline features unavailable), do not
- *   exit; the server continues without a shadow repo (matches CLI degraded
- *   semantics for transient shadow-init failures that are NOT git-missing).
+ * - `ProjectGitInitError` → R6 fail-fast: warn + stderr dump + `exit(1)`
+ *   (production AND isolation — missing `git` is not a recoverable state).
+ * - Any other error under `isTestIsolated: true` → fail-fast warn + `exit(1)`
+ *   (D13 in specs/2026-04-22-per-worker-shadow-repo-test-harness/; silent
+ *   degradation under isolation would mask coverage gaps).
+ * - Any other error under `isTestIsolated: false` (default / production) →
+ *   degraded warn; server continues without a shadow repo (matches the CLI's
+ *   degraded semantics for transient shadow-init failures that are NOT
+ *   git-missing).
  */
-export function handleDevShadowInitError(err: unknown, io: DevShadowInitIo): void {
+export function handleDevShadowInitError(
+  err: unknown,
+  io: DevShadowInitIo,
+  opts: { isTestIsolated?: boolean } = {},
+): void {
   if (err instanceof ProjectGitInitError) {
     io.logWarn(`[dev] ensureProjectGit failed: ${err.message}`);
     if (err.stderr) io.logWarn(`[dev] git stderr: ${err.stderr.trim()}`);
     io.exit(1);
-    return;
+  }
+  if (opts.isTestIsolated) {
+    io.logWarn('[dev] Shadow repo init failed under test isolation (fail-fast per D13):', err);
+    io.exit(1);
   }
   io.logWarn('[dev] Shadow repo init failed (timeline features unavailable):', err);
 }
@@ -74,18 +86,34 @@ const defaultDevShadowInitDeps: DevShadowInitDeps = {
   initShadowRepo,
 };
 
+interface DevShadowInitOptions {
+  /** Override the production console/exit surface for tests. */
+  io?: DevShadowInitIo;
+  /** Stub the shadow-init primitives for tests. */
+  deps?: DevShadowInitDeps;
+  /**
+   * When `true`, every shadow-init error (not just `ProjectGitInitError`)
+   * produces `exit(1)`. Dev plugin threads through
+   * `Boolean(process.env.OK_TEST_CONTENT_DIR)`; production callers leave
+   * unset / pass `false` to preserve degraded-warn semantics. Default `false`.
+   */
+  isTestIsolated?: boolean;
+}
+
 export async function runDevShadowInit(
   projectRoot: string,
   onReady: (shadow: ShadowHandle) => void,
-  io: DevShadowInitIo = defaultDevShadowInitIo,
-  deps: DevShadowInitDeps = defaultDevShadowInitDeps,
+  options: DevShadowInitOptions = {},
 ): Promise<void> {
+  const io = options.io ?? defaultDevShadowInitIo;
+  const deps = options.deps ?? defaultDevShadowInitDeps;
+  const isTestIsolated = options.isTestIsolated ?? false;
   try {
     await deps.ensureProjectGit(projectRoot);
     const shadow = await deps.initShadowRepo(projectRoot);
     onReady(shadow);
     io.logInfo(`[dev] Shadow repo initialized at ${shadow.gitDir}`);
   } catch (err) {
-    handleDevShadowInitError(err, io);
+    handleDevShadowInitError(err, io, { isTestIsolated });
   }
 }
