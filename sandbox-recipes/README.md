@@ -2,6 +2,19 @@
 
 Runnable artifacts companion to [reports/claude-code-local-sandbox-options](../reports/claude-code-local-sandbox-options/REPORT.md). Each directory is a tier from that report, with drop-in configs / scripts you can experiment with.
 
+## TL;DR — get going in 2 minutes
+
+```bash
+./bootstrap.sh            # installs a Tier 0 profile, builds Tier 1 images, prints alias snippet
+# paste the snippet into ~/.zshrc, then:
+source ~/.zshrc
+ccs                       # Tier 0 sandboxed claude (safe default)
+ccb                       # Tier 1 Apple Container microVM
+ccm                       # Matryoshka (microVM + bubblewrap + Anthropic proxy)
+```
+
+Full alias reference: [ALIASES.md](ALIASES.md).
+
 ## Which tier do I want?
 
 | Scenario | Tier | Directory |
