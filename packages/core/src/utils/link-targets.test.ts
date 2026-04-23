@@ -42,6 +42,36 @@ describe('classifyMarkdownHref', () => {
       url: '//cdn.example.com/lib.js',
     });
   });
+
+  test('classifies non-markdown relative paths as asset', () => {
+    expect(classifyMarkdownHref('./meeting.pdf', 'docs/notes')).toEqual({
+      kind: 'asset',
+      url: './meeting.pdf',
+      ext: 'pdf',
+    });
+  });
+
+  test('strips .mdx extension when resolving doc-link', () => {
+    expect(classifyMarkdownHref('./guide.mdx', 'docs/index')).toEqual({
+      kind: 'doc',
+      docName: 'docs/guide',
+      anchor: null,
+    });
+  });
+
+  test('HTTPS URL with asset extension stays external (not asset)', () => {
+    expect(classifyMarkdownHref('https://example.com/doc.pdf', 'docs/index')).toEqual({
+      kind: 'external',
+      url: 'https://example.com/doc.pdf',
+    });
+  });
+
+  test('absolute path with asset extension stays external (not asset)', () => {
+    expect(classifyMarkdownHref('/docs/file.pdf', 'notes/readme')).toEqual({
+      kind: 'external',
+      url: '/docs/file.pdf',
+    });
+  });
 });
 
 describe('classifyWikiLinkTarget', () => {

@@ -402,3 +402,52 @@ Stamped at `933421fc` — the Commit 3 completion. Commit 4 carries this changel
 
 SPEC remains **Finalized**; amendment is pre-merge direct edit per the "shipped vs pre-merge" distinction in CLAUDE.md. Ready to proceed through the remaining ship phases (push, PR, review-cloud loop).
 
+---
+
+## 2026-04-23 — Post-finalization amendment: asset-click dispatcher + OS-integration surface
+
+### Context
+
+Post-merge shakedown of the 2026-04-22 streaming amendment surfaced two user-visible gaps the upstream QA matrix (P1–P8) didn't probe because it focused on drop + render + CRDT propagation, not post-reload click semantics:
+
+- **Gap 3b (post-reload click routing).** `![[meeting.pdf]]` drops as a PM `wikiLinkEmbed` node; after save → round-trip it becomes a PM text + `link` mark with `sourceForm='wikiembed'`. Clicking that chip routed through `classifyMarkdownHref → resolveInternalHref`, which only stripped `.md` — `docs/meeting.pdf` was classified as a doc named `notes/docs/meeting.pdf`. Bare click opened the doc-link PropPanel; Cmd+click tried to navigate OK's router to a nonexistent doc. The PDF never opened.
+- **Gap 4 (Electron window replacement).** Drop-time `WikiLinkEmbed.renderHTML` emitted `<a href>` without interception. In Electron's single BrowserWindow, clicking replaces the editor webContents with the PDF viewer — user loses the editor.
+
+Two research reports landed 2026-04-23 that closed the design space:
+
+- [`reports/electron-os-integration-patterns/`](../../../../reports/electron-os-integration-patterns/) — D1-D12, 7-app OSS Electron survey (VSCode, GitHub Desktop, Joplin, Logseq, AFFiNE, Zettlr, Standard Notes), source-level Obsidian 1.12.7 verification (D10: narrow-warn posture, exec-list, UNC regex, `oe()` function), gesture-forwarding limits across IPC (D11), Linux portal scope (D12).
+- [`reports/editor-asset-embed-patterns-across-universe/`](../../../../reports/editor-asset-embed-patterns-across-universe/) D9 — click behavior per editor across web + Electron; identified Docmost's Content-Disposition parity and Obsidian's right-click-only `shell.openPath` pattern.
+
+The research established that the architecturally-correct landing is a five-layer stack: first-class `asset` kind on `ClassifiedLinkTarget`; renderer-side `dispatchAssetClick` + empty-at-landing viewer registry; typed IPC for OS delegation in Electron (`shell.openPath`-class); main-process safety-net intercept (`setWindowOpenHandler` + `will-navigate`) for renderer-escape paths; right-click context menu via native `Menu.buildFromTemplate`. All five layers land in this amendment — no deferred tech debt.
+
+### Changes in this amendment
+
+- **`ClassifiedLinkTarget` widened** with `{kind: 'asset', url, ext}` fourth variant. `classifyMarkdownHref` detects relative-path non-md/non-mdx hrefs and emits the asset kind. `resolveInternalHref` gains a non-markdown-extension short-circuit (`.pdf`, `.png`, `.zip`, etc. → `null`) so `docs/meeting.pdf` stops masquerading as a doc named `docs/meeting.pdf`. `.mdx` is stripped alongside `.md` for doc-link resolution.
+- **SPEC direct edits.** New `## Post-finalization amendment (2026-04-23) — asset-click dispatcher + OS-integration surface` section appended after the 2026-04-22 streaming amendment. Covers US-A1..A6, FR-A1..A8, NG-A1..A6, D-A1..A12, acceptance criteria pointer to P9, and implementation sequence.
+- **E2E acceptance scenarios.** New `## Path P9 — Asset click dispatch` section appended to `evidence/e2e-acceptance-scenarios.md` with scenarios P9.1–P9.16 covering: asset click post-reload (web + Electron), drop-time click (web + Electron), Cmd+click escape, right-click menu (asset + wiki-link + image), markdown-wiki nav regression guard, hand-authored `[name](./file.pdf)`, image inline regression guard, executable-ext block, opaque zip click, multi-user CRDT + click, path-escape defense, safety-net coverage.
+- **Commit 1 (classifier + SPEC + evidence).** Additive classifier change, 15-test TDD coverage (plan matrix: new asset kind, `.mdx` stripping, URL-with-asset-ext regression guard, absolute-path regression guard, preserved existing `doc` / `anchor` / `external` / `null` behavior).
+- **Commits 2–6 land behind Commit 1** per implementation sequence above. Each leaves `bun run check` green.
+
+### Implementation plan
+
+Six atomic commits at `~/.claude/plans/lets-do-this-transient-jellyfish.md`:
+
+1. SPEC amendment + classifier types + 15-test coverage (this commit).
+2. `asset-dispatch/registry.ts` + `dispatcher.ts` + ~10 unit tests; zero importers at commit boundary.
+3. Electron typed IPC — 3 channels (`ok:shell:open-asset` / `reveal-asset` / `show-asset-menu`), main-process `openAssetSafely` / `revealAssetSafely` / `buildAssetMenu`, bridge-contract triplication, m1-smoke drift-guard update.
+4. Renderer hook-up — `internal-link.ts` + `InternalLinkPropPanel.tsx` asset branch + `wiki-link-embed.ts` (core + new app-level `.extend()`) + node-interaction-bridge + main-process safety nets (`setWindowOpenHandler` + `will-navigate`). FIRST user-visible behavior change — Gaps 3b + 4 close.
+5. Right-click context menu — main-process `context-menu` handler + renderer `asset-context-menu.ts` plugin + `showAssetMenu` IPC impl.
+6. E2E tests (`asset-click-dispatch.e2e.ts` covering P9.1–P9.16) + AGENTS.md emit-dispatch matrix update + IPC discipline update + STOP rule about `shell.openPath` call-site discipline + changeset bullet + `test:e2e` script file list update.
+
+### Unchanged
+
+Dual-CRDT bridge (precedent #14), the drop-to-embed flow, `pickInsertShape` emit dispatch matrix, basename-index resolution, managed-rename refs-only (D-K), FR-3a/b/c/d, FR-6 CC1 `ch:'files'`, NFR-3 SVG `<img>`-only routing, the 2026-04-22 streaming upload posture, `upload.*` config surface, server-side mdast→PM handlers, CRDT observer bridges. Dispatcher + OS-integration are purely additive.
+
+### Baseline commit
+
+Stamped at `616e3fe5` (pre-amendment HEAD). Commit 1 of the 6-commit plan is this changelog entry + SPEC amendment + classifier types + tests.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct append per the 2026-04-22 precedent. Additive only — no existing §/FR/NG/D narrowed.
+

@@ -420,3 +420,86 @@ Investigation threads (all RESOLVED):
 **Why direct edit + amendment breadcrumb (not corrigendum annotations).** Per the CLAUDE.md "Post-ship corrigendum annotations on shipped specs" convention, the breadcrumb pattern is reserved for specs whose implementation has **shipped**. This spec was Finalized but its implementation PR has not merged to main. Direct in-line edits to §3 (NG6), §5 (P4), §6 (FR-1, FR-5, NFR-1), §7 (M5), §10 (D-A→D-M row + legacy mapping), §13 in-scope + agent-constraints preserve readability; this amendment section preserves auditability. Changelog entry in `meta/_changelog.md` dated 2026-04-22.
 
 **Authoritative cross-reference.** [`reports/streaming-upload-refactor/REPORT.md`](../../reports/streaming-upload-refactor/REPORT.md) is the contract research artifact. It carries the full rationale (D1–D11 design decisions), the 11-editor peer survey, the O(1) memory proof, the disk-I/O performance table, and the 4-commit implementation plan this amendment landed.
+
+## Post-finalization amendment (2026-04-23) — asset-click dispatcher + OS-integration surface
+
+**Summary.** The upstream amendment (2026-04-22) shipped the substrate: drop → `![[file.ext]]` → basename-index resolution → in-editor render + `<img>` or plain-link fallback. What it did NOT ship is a coherent click-handling surface for those embeds. Post-merge shakedown surfaced two user-visible gaps:
+
+- **Gap 3b (post-reload click routing).** After roundtrip, `![[meeting.pdf]]` persists as a PM text + `link` mark with `sourceForm='wikiembed'`. Clicking the rendered chip routes through `classifyMarkdownHref → resolveInternalHref`, which only stripped `.md`, treating `docs/meeting.pdf` as a doc named `notes/docs/meeting.pdf`. Bare click opens the doc-link PropPanel; Cmd+click tries to navigate OK's router to a nonexistent doc. The PDF never opens.
+- **Gap 4 (Electron window replacement).** Drop-time `WikiLinkEmbed.renderHTML` emits `<a href>` without interception. In Electron's single BrowserWindow, clicking replaces the main webContents with the PDF viewer — user loses the editor.
+
+Neither gap was caught in the upstream QA pass because the test matrix focused on drop + render + CRDT propagation (P1–P8), not post-reload click semantics. Two research reports commissioned 2026-04-23 closed the design space:
+
+- [`reports/electron-os-integration-patterns/`](../../reports/electron-os-integration-patterns/) — 7 OSS Electron apps surveyed (VSCode, GitHub Desktop, Joplin, Logseq, AFFiNE, Zettlr, Standard Notes), plus source-level Obsidian 1.12.7 verification (D10), gesture-forwarding limits (D11), Linux portal scope (D12).
+- [`reports/editor-asset-embed-patterns-across-universe/`](../../reports/editor-asset-embed-patterns-across-universe/) D9 — click behavior per editor across web and Electron.
+
+The research establishes that the architecturally-correct landing is (a) first-class `asset` kind on `ClassifiedLinkTarget`, (b) renderer-side dispatcher + empty-at-landing viewer registry, (c) typed IPC for OS delegation in Electron (`shell.openPath`-class), (d) main-process safety-net intercept (`setWindowOpenHandler` + `will-navigate`), (e) right-click context menu via native `Menu.buildFromTemplate` covering all on-disk refs. All five layers land in this amendment — no deferred tech debt.
+
+### User stories
+
+- **US-A1** Post-reload, clicking an asset embed opens the asset predictably (browser new-tab in web; OS default via `shell.openPath`-class IPC in Electron).
+- **US-A2** Drop-time asset embed click never replaces the editor window in Electron.
+- **US-A3** Cmd/Ctrl+click forces OS-default delegation regardless of registered viewers — standard browser escape-hatch muscle memory.
+- **US-A4** Right-click any on-disk reference (asset, markdown wiki-link, image) shows Reveal in Finder + Open in default app.
+- **US-A5** Executable extensions cannot be opened via the dispatcher (hard blocklist at the main-process handler).
+- **US-A6** Third-party viewers (PDF.js, image lightbox, video/audio inline) register via a stable `AssetViewerRegistry.register(viewer)` API without modifying the dispatcher. Empty registry is the shipped state.
+
+### Functional requirements
+
+- **FR-A1** `ClassifiedLinkTarget` union extended with `{kind: 'asset', url, ext}`. `classifyMarkdownHref` detects relative paths with non-`.md`/`.mdx` extensions and emits `asset` kind. URL-scheme hrefs with asset extensions stay `external` (the dispatcher's path-handling logic doesn't apply to URLs; browser / `shell.openExternal` handle those via existing paths). `resolveInternalHref` short-circuits when the last path segment's extension is non-md/mdx, fixing the Gap 3b regression where `docs/meeting.pdf` was classified as a doc named `notes/docs/meeting.pdf`.
+- **FR-A2** `AssetViewerRegistry` is a module-level singleton at `packages/app/src/editor/asset-dispatch/registry.ts`, initialized empty. Exposes `register(viewer: AssetViewer)`, `lookup(ext: string): AssetViewer | undefined`, and `clearForTests()`.
+- **FR-A3** `dispatchAssetClick(ctx: AssetClickContext)` routes in this order: (1) if `ctx.forceOsDelegation` (Cmd/Ctrl+click), skip registry. (2) `registry.lookup(ctx.ext)` → invoke viewer if found. (3) Electron fallback: `window.okDesktop?.shell.openAsset(ctx.projectRelPath)`. (4) Web fallback: `openHashHrefInNewTab(ctx.url)`.
+- **FR-A4** `internal-link.ts:handlePrimary` detects `mark.attrs.sourceForm === 'wikiembed'` OR `classifyMarkdownHref(href).kind === 'asset'`, builds the `AssetClickContext`, calls `dispatchAssetClick`, returns `true` (consumes the click, bypasses PropPanel). Doc-link + anchor paths unchanged.
+- **FR-A5** `WikiLinkEmbed` drop-time PM node (transient between drop and next save) registers with InteractionLayer via a node-interaction-bridge (mirror of `mark-interaction-bridge`); its `handlePrimary` dispatches via the same `dispatchAssetClick`. `renderHTML` emits `<a data-node-id>` (consumed by InteractionLayer event delegation); the bare `<a href>` fallback is removed.
+- **FR-A6** Electron: three typed IPC channels — `ok:shell:open-asset`, `ok:shell:reveal-asset`, `ok:shell:show-asset-menu` — via the existing `createHandler`/`createInvoker` discipline (precedent D19). Main-process impl: `openAssetSafely(relPath, projectPath, platform)` = `realpath` + `isPathWithinProject` containment + `EXECUTABLE_BLOCKLIST_EXTENSIONS` check + `shell.openPath(canonical)`. Parallel `revealAssetSafely` uses `shell.showItemInFolder`. `buildAssetMenu` returns `MenuItemConstructorOptions[]` for native menu construction.
+- **FR-A7** Electron main-process safety nets (defense-in-depth for paste / plugin / future-code escapes that bypass the renderer dispatcher): `setWindowOpenHandler` + `contents.on('will-navigate')` on editor webContents. Both detect localhost asset URLs via regex, call `openAssetSafely`, deny default navigation. Logs to `[asset-safety-net]` prefix for observability.
+- **FR-A8** Right-click context menu: webContents `context-menu` event in main + ProseMirror `contextmenu` plugin in renderer. Renderer-side walks the target up to find `data-wiki-embed` / `data-link` / `data-wiki-link` / `<img>` with asset src; Electron path invokes `shell.showAssetMenu({relPath, title, kind})`; web path falls through to Chromium default. Main-process `context-menu` handler builds a native menu from template with Reveal + Open + Copy link entries, popped via `Menu.buildFromTemplate(...).popup(window)`. Covers assets + markdown wiki-links + images uniformly.
+
+### Non-goals
+
+- **NG-A1** PDF.js viewer integration — separate PR, registers via `AssetViewerRegistry.register(pdfViewer)`. Empty registry is the correct shipped state.
+- **NG-A2** Image lightbox — separate PR, same registration pattern as NG-A1.
+- **NG-A3** Video/audio inline renderer (D-F typed-component-nodes Phase 2) — separate PR; the dispatcher's fallback chain handles these until a viewer registers.
+- **NG-A4** Multi-tenant / hosted deployment hardening (full Docmost Content-Disposition) — separate spec when deployment model materializes beyond localhost.
+- **NG-A5** Markdown transclusion `![[foo]]` semantics (future-work item #9 from the upstream spec) — explicitly out of scope. The dispatcher operates on asset hrefs only, not markdown doc embeds.
+- **NG-A6** Windows/Linux XDG Desktop Portal integration (D12 research) — macOS-primary per the Electron roadmap. Linux works via `xdg-open` fallback; Windows works via default `shell.openPath` behavior. No portal wrapper library in-tree.
+
+### Decisions
+
+- **D-A1** **Precedent #19(b) honored — no `handleClickOn` / `handleDOMEvents`.** All click interception goes through InteractionLayer via `createMarkInteractionBridgePlugin` (existing) + a new `createNodeInteractionBridgePlugin` (mirror for the WikiLinkEmbed drop-time node). Rationale: established repo precedent; the existing pattern already routes through `editor.view.dom` event delegation; adding a second mechanism would fragment the click-routing surface.
+- **D-A2** **Asset is a first-class kind on `ClassifiedLinkTarget`** — `{kind: 'asset', url, ext}`. Rationale: the absence of this kind is the root cause of Gap 3b. Type-level addition forces compile-time discovery of every consumer that needs to handle asset hrefs differently. The `kind` discriminant IS the brand — no string-vs-string confusion between `DocLinkTarget.docName` and `AssetLinkTarget.url`.
+- **D-A3** **Dispatcher + registry live in `packages/app/src/editor/asset-dispatch/`** — renderer concern; viewers are React components. Core can't depend on React. Module-level singleton registry initialized empty = all clicks fall through to fallback (correct starting state).
+- **D-A4** **`<a target="_blank">` for wikiembed-source link marks; `data-node-id` anchor for WikiLinkEmbed drop-time node.** Both paths register with InteractionLayer + `handlePrimary` consumes via dispatcher. Rationale: lets browser-default semantics be the web fallback when Electron isn't present; consumes via `preventDefault` + dispatcher for OS-integration / viewer paths. `data-node-id` reuses the existing event delegation pattern that wikiLink nodes already use (`wiki-link.ts:129-166`).
+- **D-A5** **Executable extensions hard-blocked at main handler** — `.exe`, `.bat`, `.cmd`, `.ps1`, `.com`, `.msi`, `.vbs`, `.js`, `.jse`, `.wsf`, `.wsh`, `.sh`, `.command`, `.csh`, `.ksh`, `.bash`, `.zsh`, `.fish`, `.desktop`, `.action`, `.workflow`, `.html`, `.htm`, `.svg`, `.xml`, `.mhtml`, `.svgz`. Rationale: Windows exec list + POSIX exec list source-level verified from Obsidian 1.12.7 (D10 of electron-os-integration-patterns) + HTML/SVG/XML from OK's existing `SCRIPTED_DOC_EXTS` stored-XSS defense. Union is the principled blocklist.
+- **D-A6** **Cmd/Ctrl+click always forces OS delegation** — skips the viewer registry. Rationale: standard browser muscle memory for "open in new context"; gives users an escape hatch when a registered viewer isn't what they want. Simpler than a settings panel.
+- **D-A7** **Right-click context menu covers all on-disk refs** — assets + markdown wiki-link chips + images. Entries: Reveal in Finder, Open in default app, Copy link. Rationale: uniform UX matches Obsidian/Joplin/VSCode. Per D11 research, native `Menu.buildFromTemplate` in main IS the strongest gesture-attested OS-integration pattern (main observes the click directly; gesture bit does NOT cross IPC per D11 gesture-forwarding evidence).
+- **D-A8** **Typed IPC per D19; bridge-contract triplication maintained.** Three new channels via `createHandler`/`createInvoker`; shell verbs mirror across `packages/core/src/desktop-bridge.ts` + `packages/desktop/src/shared/bridge-contract.ts` + `packages/app/src/lib/desktop-bridge-types.ts`; `m1-smoke.test.ts:123-274` drift-guard updated. Rationale: precedent from the existing four shell verbs; drift-guard is CI-enforced.
+- **D-A9** **Path containment uses `isPathWithinProject` + `realpath` wrap** — renderer sends project-relative path, main resolves + canonicalizes + prefix-checks against `ProjectContext.projectPath`. Rationale: `isPathWithinProject` at `ipc-handlers.ts:231-256` is already exported and used by `spawnCursor`; `realpath` wrap closes the symlink-escape path per D4 security patterns.
+- **D-A10** **`setWindowOpenHandler` + `will-navigate` are DEFENSE-IN-DEPTH safety nets** — the renderer dispatcher handles 100% of asset clicks in the happy path. Safety nets catch escapes (bare `<a>` in pasted content, middle-click quirks, renderer handler bugs). On catch: prevent default, route to `openAssetSafely`. Two-intercept pattern from Standard Notes + AFFiNE + VSCode (P2 in D3 of electron-os-integration-patterns).
+- **D-A11** **Empty registry is the shipped state.** No PDF viewer, no image lightbox, no video/audio viewer registered at landing. Rationale: viewers are user-visible features; each deserves its own PR with user-facing changelog, design discussion, QA. Shipping the infrastructure with empty registry is correct scope boundary, not deferred debt. Rejects D9-of-editor-asset-embed-patterns' "track `shell.openPath` as Future Work" recommendation for the dispatcher surface itself; only the viewers are deferred.
+- **D-A12** **Post-finalization amendment to existing SPEC**, not a new spec. Matches the 2026-04-22 streaming-upload amendment shape. Rationale: the editor-asset-and-embed-surface spec was Finalized but pre-merge; additive amendment with its own user stories / FRs / decision log is the cleanest shape per CLAUDE.md "Post-ship corrigendum annotations" conventions (corrigendum breadcrumb pattern is reserved for *shipped* specs; direct amendment is appropriate pre-merge).
+
+### Acceptance criteria
+
+New Path P9 scenarios (P9.1–P9.16) added to [`evidence/e2e-acceptance-scenarios.md`](evidence/e2e-acceptance-scenarios.md) cover: asset click post-reload (web + Electron), drop-time asset click (web + Electron), Cmd+click escape hatch, right-click context menu (asset + markdown wiki-link + image), markdown wiki-link navigation regression guard, hand-authored markdown-link to asset, image inline render regression guard, executable extension blocked, opaque file (zip) click, multi-user CRDT propagation + click, path-escape defense, and safety-net coverage.
+
+### Implementation sequence
+
+Six atomic commits (plan at `~/.claude/plans/lets-do-this-transient-jellyfish.md`), each leaving `bun run check` green:
+
+1. **SPEC amendment + `ClassifiedLinkTarget` union widening + classifier asset detection + `resolveInternalHref` non-md short-circuit.** No consumer behavior change — union widens; existing `if (target.kind === X)` branches fall through for asset (into the "Unrecognized link" PropPanel bucket / `openHashHrefInNewTab` generic handler). Behavior correctness comes at Commit 4 when consumers gain explicit asset handling.
+2. **`asset-dispatch/registry.ts` + `dispatcher.ts` + tests.** Zero importers at this commit — infrastructure-only.
+3. **Electron typed IPC channels + main-process `openAssetSafely` / `revealAssetSafely` / `buildAssetMenu` + bridge-contract triplication + m1-smoke drift-guard update.**
+4. **Renderer hook-up** — `internal-link.ts` + `InternalLinkPropPanel.tsx` (asset branch) + `wiki-link-embed.ts` (core renderHTML + new app-level `.extend()`) + `interaction-layer.tsx` node-bridge + main-process safety nets (`setWindowOpenHandler` + `will-navigate`). FIRST user-visible behavior change — Gaps 3b + 4 close.
+5. **Right-click context menu** — main-process `context-menu` event + renderer `asset-context-menu.ts` plugin + `showAssetMenu` IPC impl.
+6. **E2E tests + AGENTS.md update + changeset + `test:e2e` script file list.**
+
+### What did not change
+
+The dual-representation CRDT bridge (precedent #14), the drop-to-embed flow, `pickInsertShape` emit dispatch, basename-index resolution, managed-rename refs-only (D-K), FR-3a/b/c/d, FR-6 CC1 `ch:'files'`, NFR-3 SVG `<img>`-only routing, the 2026-04-22 streaming upload posture, `upload.*` config surface. Dispatcher + OS-integration are purely additive.
+
+### Authoritative cross-references
+
+- [`reports/electron-os-integration-patterns/REPORT.md`](../../reports/electron-os-integration-patterns/REPORT.md) — D1-D12, 7-app survey, source-verified Obsidian 1.12.7 click behavior + executable-list + UNC regex, gesture-forwarding limits, Linux portal scope.
+- [`reports/editor-asset-embed-patterns-across-universe/REPORT.md`](../../reports/editor-asset-embed-patterns-across-universe/REPORT.md) D9 — click behavior per editor; Docmost Content-Disposition pattern (unifies web+Electron), Zettlr `shell.openPath`-on-click outlier, Obsidian right-click-only.
+- `~/.claude/plans/lets-do-this-transient-jellyfish.md` — full 6-commit implementation plan with decision table, reused utilities map, /qa invocation template.

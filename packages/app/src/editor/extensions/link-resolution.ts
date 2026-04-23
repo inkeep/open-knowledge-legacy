@@ -32,7 +32,14 @@ import { resolveLinkTargetIntent } from '../../components/link-target-intent';
 import type { PageListCacheSnapshot } from '../page-list-cache';
 import type { MarkInfo } from './mark-identity';
 
-type LinkResolutionState = 'loading' | 'external' | 'anchor' | 'resolved' | 'folder' | 'unresolved';
+type LinkResolutionState =
+  | 'loading'
+  | 'external'
+  | 'anchor'
+  | 'resolved'
+  | 'folder'
+  | 'unresolved'
+  | 'asset';
 
 /**
  * Compute the resolution state for a single link href + source-doc + cache snapshot.
@@ -41,6 +48,8 @@ type LinkResolutionState = 'loading' | 'external' | 'anchor' | 'resolved' | 'fol
  * - Empty / unclassifiable href → 'unresolved'
  * - External URLs → 'external' (regardless of cache state)
  * - Anchor-only hrefs → 'anchor'
+ * - Asset hrefs (non-markdown extension) → 'asset' (no red-link decoration;
+ *   routed by the asset-click dispatcher, not the pages cache)
  * - Doc-link href with `cache === null` → 'loading'
  * - Doc-link href with cache populated → 'resolved' | 'folder' | 'unresolved'
  */
@@ -53,6 +62,7 @@ export function computeLinkResolutionState(
   if (!target) return 'unresolved';
   if (target.kind === 'external') return 'external';
   if (target.kind === 'anchor') return 'anchor';
+  if (target.kind === 'asset') return 'asset';
 
   if (cache === null) return 'loading';
 

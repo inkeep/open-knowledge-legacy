@@ -14,9 +14,38 @@ export interface AnchorLinkTarget {
   anchor: string;
 }
 
-export type ClassifiedLinkTarget = DocLinkTarget | ExternalLinkTarget | AnchorLinkTarget;
+/**
+ * Asset link — reference to a non-markdown file on disk (PDF, video, audio,
+ * archive, etc.) OR an external URL pointing at an asset extension. The
+ * renderer routes `asset` clicks through the asset-click dispatcher + registry
+ * rather than doc-navigation. Distinguishing this kind from `doc` is what
+ * prevents the post-reload regression where asset hrefs get stuffed into
+ * bogus docNames (e.g. `notes/docs/meeting.pdf`).
+ */
+export interface AssetLinkTarget {
+  kind: 'asset';
+  url: string;
+  ext: string;
+}
+
+export type ClassifiedLinkTarget =
+  | DocLinkTarget
+  | ExternalLinkTarget
+  | AnchorLinkTarget
+  | AssetLinkTarget;
 
 const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
+
+/**
+ * Extract a lowercased extension from a relative-path href (no scheme, no
+ * fragment, no query). Returns null for extensionless paths. Anchor/query
+ * stripped because extension lives before them.
+ */
+function extractAssetExtension(href: string): string | null {
+  const pathOnly = href.split(/[?#]/)[0] ?? href;
+  const match = pathOnly.match(/\.([a-z0-9]+)$/i);
+  return match ? (match[1] ?? '').toLowerCase() : null;
+}
 
 function splitDocNameSegments(docName: string): string[] {
   return docName.split('/').filter(Boolean);
@@ -48,8 +77,19 @@ export function classifyMarkdownHref(
     };
   }
 
-  if (trimmed.startsWith('/') || isExternalHref(trimmed)) {
+  if (isExternalHref(trimmed) || trimmed.startsWith('/')) {
     return { kind: 'external', url: trimmed };
+  }
+
+  // Relative path that didn't resolve as a markdown doc AND isn't an
+  // external URL. If it has a non-markdown extension, treat it as an
+  // asset reference — the click dispatcher will route it to a registered
+  // viewer or OS delegation. Without this branch, post-reload clicks on
+  // `![[meeting.pdf]]` fall back to `null` (unresolved) and end up
+  // rendering as a broken doc-link.
+  const ext = extractAssetExtension(trimmed);
+  if (ext && ext !== 'md' && ext !== 'mdx') {
+    return { kind: 'asset', url: trimmed, ext };
   }
 
   return null;

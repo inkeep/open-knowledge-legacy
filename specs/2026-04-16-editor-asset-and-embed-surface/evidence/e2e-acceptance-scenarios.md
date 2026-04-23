@@ -418,3 +418,227 @@ Captures the evolution of this file across two resolution cycles on 2026-04-21. 
 - **M4 P5.3 eventual-consistency** → ADDED as sibling of P5.2. Guards F8-absorbed `emitFormat: 'markdown-image'` opt-out from silent FR-7 regression under concurrent fs-event burst.
 - **L4 Phase 2 coordination** → flipped to permanent-fallback-marker pattern. P0 assertions stay as regression guards; Phase 2 adds its own scenarios in `specs/2026-04-08-typed-component-nodes/` additively.
 - **Cross-cutting greenfield principle** → no action per user; CLAUDE.md §118 already names the "greenfield directive (2026-04-13)" as governance.
+
+---
+
+## Path P9 — Asset click dispatch + OS integration (G-A1..A4, M-A1..A3)
+
+Added 2026-04-23 by the asset-click-dispatcher post-finalization amendment. Covers US-A1..A6. Fidelity: real Chromium (Playwright) for web scenarios; Electron scenarios use the `shell.openAsset` mock assertion (Electron fidelity is not available in the Playwright harness — acceptable reduction per `/qa` skill's fidelity-ladder protocol, document as reduction in notes).
+
+### P9.1 Asset click post-reload (web, PDF) ★
+
+**Setup.** User A has `notes/meeting.md` open containing `![[meeting.pdf]]` that was saved and reloaded (so PM shape is text + `link` mark with `sourceForm='wikiembed'`, not the drop-time `wikiLinkEmbed` node). `meeting.pdf` exists at `notes/meeting.pdf`.
+
+**Action.** User A bare-clicks the PDF reference chip.
+
+**Invariants.**
+1. A new browser tab opens navigating to `http://localhost:<port>/notes/meeting.pdf`.
+2. Chromium's native PDF viewer renders the PDF.
+3. The editor tab remains open at `notes/meeting.md`.
+4. No `InternalLinkPropPanel` opens.
+
+**Perturbation check.** If FR-A1 regresses (classifier returns `{kind: 'doc', docName: 'notes/meeting.pdf'}`), invariant 1 fails (navigation to nonexistent hash route) and invariant 4 fails (PropPanel opens).
+
+### P9.2 Asset click post-reload (Electron, PDF) ★
+
+**Setup.** Same as P9.1 but inside the Electron app. `window.okDesktop.shell.openAsset` is mocked to record invocations.
+
+**Action.** User A bare-clicks the PDF reference chip.
+
+**Invariants.**
+1. `window.okDesktop.shell.openAsset` is called exactly once with `{relPath: 'notes/meeting.pdf'}`.
+2. The main-process `openAssetSafely` handler fires with `realpath`-resolved canonical path inside `ProjectContext.projectPath`.
+3. No `will-navigate` on the editor webContents fires (renderer dispatcher intercepted successfully).
+4. The editor window is NOT navigated/replaced.
+
+**Fidelity reduction.** Preview.app launch itself is unverifiable in Playwright; only `shell.openPath` invocation + args asserted.
+
+**Perturbation check.** If FR-A4 or FR-A5 regresses, the renderer doesn't intercept → `will-navigate` fires → editor webContents replaced (Gap 4 regression).
+
+### P9.3 Drop-time asset click (web, PDF)
+
+**Setup.** User A drops a PDF into an empty `notes/index.md` editor via real `DragEvent`. PM shape is the transient `wikiLinkEmbed` node (pre-save).
+
+**Action.** User A clicks the dropped `![[file.pdf]]` before the first save.
+
+**Invariants.**
+1. New browser tab opens navigating to the asset URL.
+2. Editor window remains at `notes/index.md`.
+3. No PropPanel opens.
+
+**Perturbation check.** If FR-A5 regresses (node-interaction-bridge not wired), the `<a href>` falls through to browser default → `window.location` replacement.
+
+### P9.4 Drop-time asset click (Electron, PDF)
+
+**Setup.** Same as P9.3 but inside the Electron app with `shell.openAsset` mocked.
+
+**Action.** User A clicks the dropped `![[file.pdf]]` before first save.
+
+**Invariants.**
+1. `shell.openAsset` mock called with the project-relative path of the dropped PDF.
+2. Editor window preserved.
+
+**Perturbation check.** If FR-A5 regresses, editor window replaced with PDF viewer (Gap 4).
+
+### P9.5 Cmd+click escape hatch
+
+**Setup.** User A has `notes/meeting.md` open with `![[meeting.pdf]]`. A test-only PDF viewer is registered via `assetViewerRegistry.register({exts: ['pdf'], render: mockViewer})`.
+
+**Action.** User A Cmd+clicks (macOS) / Ctrl+clicks (Windows/Linux) the PDF reference.
+
+**Invariants.**
+1. `mockViewer.render` is NOT invoked (registry bypassed per D-A6).
+2. In Electron: `shell.openAsset` fires with the canonical path.
+3. In web: a new browser tab opens.
+
+**Perturbation check.** If D-A6 regresses (Cmd+click routes through registry), invariant 1 fails and the user loses the escape hatch.
+
+### P9.6 Right-click context menu: asset (Electron)
+
+**Setup.** User A right-clicks a PDF reference chip in Electron. `dialog.showMessageBox` / `Menu.popup` instrumentation active.
+
+**Action.** Right-click observed; menu popped.
+
+**Invariants.**
+1. Native OS menu appears with entries: "Reveal in Finder" (macOS) / "Show in Explorer" (Windows) / "Open in file manager" (Linux); "Open in default app"; "Copy link".
+2. Clicking "Reveal in Finder" invokes `shell.showItemInFolder(canonicalPath)`.
+3. Clicking "Open in default app" invokes `shell.openAsset(relPath)`.
+4. Clicking "Copy link" writes the project-relative path to clipboard.
+
+**Perturbation check.** If FR-A8 regresses (main-process `context-menu` handler not attached), Chromium's default menu appears instead — no asset-specific entries.
+
+### P9.7 Right-click context menu: markdown wiki-link chip
+
+**Setup.** User A right-clicks a `[[foo]]` wiki-link chip (doc-link, not embed) in Electron.
+
+**Action.** Right-click observed.
+
+**Invariants.**
+1. Menu shows "Reveal in Finder" and "Open in default app" pointing at `foo.md`.
+2. Uniform UX with asset menu (D-A7).
+
+**Perturbation check.** If D-A7 regresses (menu logic scoped only to `data-wiki-embed`), wiki-link chips show Chromium default — non-uniform UX.
+
+### P9.8 Right-click context menu: image
+
+**Setup.** User A has an inline `<img>` rendered from `![alt](./photo.png)`. Right-clicks the image.
+
+**Action.** Right-click observed.
+
+**Invariants.**
+1. Menu shows Reveal + Open entries pointing at `photo.png`.
+2. Chromium's default image context menu entries (Copy Image, Save Image As) do NOT appear (our handler `event.preventDefault()`s).
+
+**Perturbation check.** If FR-A8's target resolution misses `<img>` with asset src, Chromium default appears without OK's entries.
+
+### P9.9 Markdown wiki-link navigation UNCHANGED (regression guard) ★
+
+**Setup.** User A has `notes/index.md` open. The doc contains `[[foo]]` (doc-link to a sibling markdown doc `notes/foo.md` that exists).
+
+**Action.** User A clicks the `[[foo]]` chip.
+
+**Invariants.**
+1. `window.location.hash` changes to `#/notes/foo` (existing markdown-wiki-link nav).
+2. OK editor switches to `notes/foo.md`.
+3. `dispatchAssetClick` is NOT invoked (doc-link path unchanged).
+
+**Perturbation check.** If FR-A1 over-broadens (classifier falsely classifies markdown refs as asset), invariant 1 fails and invariant 3 fails — markdown nav breaks.
+
+### P9.10 Hand-authored markdown-link to asset
+
+**Setup.** User A hand-authors `[spec](./file.pdf)` in source mode, saves, reloads. The text renders as a `link` mark with `href='./file.pdf'` (no `sourceForm` attr).
+
+**Action.** User A clicks the rendered link post-roundtrip.
+
+**Invariants.**
+1. `classifyMarkdownHref('./file.pdf', sourceDocName).kind === 'asset'` (FR-A1).
+2. `dispatchAssetClick` fires.
+3. Asset opens per web/Electron rules (same as P9.1 / P9.2).
+
+**Perturbation check.** If FR-A4's asset detection is gated only on `sourceForm === 'wikiembed'` (and misses the classifier's asset kind), hand-authored markdown-links fall through to the old doc-link path (Gap 3b returns via a different entry point).
+
+### P9.11 Image inline render UNCHANGED (regression guard) ★
+
+**Setup.** User A drops `photo.png`. Default emit is `![[photo.png]]` which renders as inline `<img>` via existing `wikiLinkEmbed` → PM `image` node dispatch.
+
+**Action.** User A hovers + clicks on the inline `<img>`.
+
+**Invariants.**
+1. No click-to-open behavior — images are not click-targets for dispatch.
+2. `dispatchAssetClick` is NOT invoked.
+3. Right-click still works (P9.8 covers that path separately).
+
+**Perturbation check.** If FR-A8 over-broadens to make images left-click-openable, invariant 1 fails — unexpected tab open on left-click.
+
+### P9.12 Executable extension blocked
+
+**Setup.** User A has a hand-authored `[script](./setup.sh)` in a doc (legacy or explicitly authored).
+
+**Action.** User A clicks the link.
+
+**Invariants.**
+1. Renderer dispatcher attempts to route via `shell.openAsset('notes/setup.sh')`.
+2. Main-process `openAssetSafely` refuses with structured `{ok: false, reason: 'EXTENSION_BLOCKED', ext: 'sh'}`.
+3. `shell.openPath` is NOT invoked.
+4. User sees a quiet refusal: toast "File type not supported for direct open" OR silent log (UX decided during QA per plan).
+
+**Perturbation check.** If D-A5 regresses (blocklist incomplete), `shell.openPath('/abs/path/setup.sh')` fires → OS executes shell script.
+
+### P9.13 Opaque file click (zip)
+
+**Setup.** User A has `![[archive.zip]]` reference (drop or hand-authored).
+
+**Action (web).** User A clicks.
+**Invariants (web).** Browser downloads `archive.zip` to `~/Downloads` via default browser behavior on unrecognized MIME.
+
+**Action (Electron).** User A clicks.
+**Invariants (Electron).** `shell.openAsset` fires → OS default (Archive Utility on macOS, WinRAR/7-Zip on Windows). Mock assertion covers invocation + args.
+
+**Perturbation check.** If D-A5's blocklist includes `.zip` (over-broad), invariant fails in Electron (refused instead of opened).
+
+### P9.14 Multi-user CRDT propagation + click ★
+
+Pattern replicates `qa-driver.ts:278-417` from the 2026-04-22 QA re-run (P6.1 shape).
+
+**Setup.** User A and User B are on `docs/meeting.md` via real `HocuspocusProvider` pair.
+
+**Action.** User A drops a PDF; User B observes the embed appear via CRDT propagation.
+
+**Invariants.**
+1. User B's Y.Text contains `![[meeting.pdf]]` within 500ms of User A's upload response (FR-3d + P6.1 baseline).
+2. User B clicks the embed in their session.
+3. `dispatchAssetClick` fires for User B's client.
+4. Asset opens per User B's client rules (web new-tab OR Electron `shell.openAsset`).
+
+**Perturbation check.** If FR-A4 ties dispatcher to the drop-time `wikiLinkEmbed` node only (and misses the post-propagation `link` mark), invariant 3 fails — User B's click does nothing.
+
+### P9.15 Path-escape defense
+
+**Setup.** Somehow a malicious `[exploit](../../../etc/passwd)` href reaches the dispatcher (e.g., via CRDT propagation from a compromised peer, or pasted content).
+
+**Action.** Renderer dispatcher calls `shell.openAsset('../../../etc/passwd')`.
+
+**Invariants.**
+1. Main-process handler calls `path.resolve(projectPath, relPath)` then `realpath`.
+2. `isPathWithinProject(canonical, projectPath)` returns `false`.
+3. Handler refuses with `{ok: false, reason: 'PATH_ESCAPE', requested: '../../../etc/passwd'}`.
+4. `shell.openPath` is NOT invoked.
+5. Structured log at `[asset-safety-net]` level includes the refusal event.
+
+**Perturbation check.** If D-A9 regresses (`realpath` wrap removed or `isPathWithinProject` not applied), `shell.openPath('/etc/passwd')` fires — symlink-follow escape is the class D4 research flagged.
+
+### P9.16 Safety net coverage (Electron)
+
+**Setup.** Electron app. A theoretical code path bypasses the renderer dispatcher — e.g., User A pastes a raw `<a href="http://localhost:5173/docs/foo.pdf">` into the editor (CRDT propagates; renderer event delegation doesn't intercept).
+
+**Action.** User A clicks the pasted raw link.
+
+**Invariants.**
+1. `setWindowOpenHandler` or `contents.on('will-navigate')` intercepts the click (FR-A7).
+2. Handler detects localhost asset URL via regex.
+3. Handler calls `openAssetSafely(path.relative(projectPath, url))`.
+4. Handler returns `{action: 'deny'}` / calls `preventDefault()`.
+5. Editor window is preserved.
+6. Structured log at `[asset-safety-net]` prefix records the catch.
+
+**Perturbation check.** If D-A10 regresses (safety nets removed), invariant 5 fails — editor webContents replaced with PDF viewer. This is the Gap 4 fallback path; renderer dispatcher is the happy path, safety nets are the net.

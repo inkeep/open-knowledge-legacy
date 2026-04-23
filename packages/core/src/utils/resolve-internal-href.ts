@@ -26,7 +26,23 @@ export function resolveInternalHref(
   const cleanPath = (pathPart.split('?')[0] ?? '').trim();
   if (!cleanPath) return null;
 
-  const withoutExt = cleanPath.endsWith('.md') ? cleanPath.slice(0, -3) : cleanPath;
+  // Reject paths whose LAST segment has a non-markdown extension — those
+  // are asset references (PDFs, video, audio, archives, etc.), not doc
+  // links. Without this guard, `docs/meeting.pdf` resolves as a doc named
+  // `docs/meeting.pdf` and the click dispatcher tries to navigate OK's
+  // router to that nonexistent doc (Gap 3b in PR #270 post-reload).
+  const lastSegment = cleanPath.split('/').pop() ?? '';
+  const extMatch = lastSegment.match(/\.([a-z0-9]+)$/i);
+  if (extMatch) {
+    const ext = (extMatch[1] ?? '').toLowerCase();
+    if (ext !== 'md' && ext !== 'mdx') return null;
+  }
+
+  const withoutExt = cleanPath.endsWith('.md')
+    ? cleanPath.slice(0, -3)
+    : cleanPath.endsWith('.mdx')
+      ? cleanPath.slice(0, -4)
+      : cleanPath;
   const dirParts = sourceDocName.includes('/') ? sourceDocName.split('/').slice(0, -1) : [];
 
   for (const seg of withoutExt.split('/')) {
