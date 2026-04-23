@@ -56,6 +56,7 @@ import type {
   McpWiringSkipResult,
 } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
+import { sendToRenderer } from '../shared/ipc-send.ts';
 
 /** Canonical symlink path created by M6a (`Install Command-Line Tools…`). */
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
@@ -626,7 +627,13 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       // best-effort; continue dispatching even if removeHandler glitches
     }
     try {
-      (event as unknown as IpcMainEventLike).sender.send('ok:mcp-wiring:show', {
+      // Route through `sendToRenderer` (the D19 typed wrapper) so the
+      // channel name + payload shape are validated against
+      // `EventChannels['ok:mcp-wiring:show']`. `event.sender` is the same
+      // `WebContents` the renderer mount-ack arrived from — i.e. the window
+      // that called `okDesktop.mcpWiring.signalReady()`, guaranteeing the
+      // `McpConsentDialog` subscriber is mounted when the event lands.
+      sendToRenderer(event.sender, 'ok:mcp-wiring:show', {
         detectedEditors: detections,
       });
       logger.info('dispatched show to renderer', { detectedCount: detections.length });
