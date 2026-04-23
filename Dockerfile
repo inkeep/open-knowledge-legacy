@@ -8,7 +8,8 @@ WORKDIR /app
 
 ENV HUSKY=0
 
-RUN mkdir -p docs packages/app packages/cli packages/core packages/desktop packages/plugin packages/server patches
+RUN mkdir -p docs packages/app packages/cli packages/core packages/desktop packages/plugin packages/server patches \
+  && chown -R bun:bun /app
 
 COPY --chown=bun:bun package.json bun.lock bunfig.toml biome.jsonc turbo.json tsconfig.json ./
 COPY --chown=bun:bun patches ./patches
