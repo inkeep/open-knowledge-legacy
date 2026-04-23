@@ -148,6 +148,44 @@ export interface OkDesktopBridge {
         | 'dispatch-error'
         | 'web-host-cursor-unsupported';
     }): Promise<void>;
+
+    /**
+     * Open an asset via the OS default handler. `relPath` is project-relative
+     * (main-process resolves against `ProjectContext.projectPath` + `realpath` +
+     * `isPathWithinProject`). Executable extensions (`.exe`, `.sh`, `.app`, …)
+     * hard-refuse at the main handler — see D-A5 in the 2026-04-23 asset-embed
+     * amendment for the full blocklist. Asset-click-dispatcher surface (FR-A6).
+     */
+    openAsset(
+      relPath: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'extension-blocked' | 'path-escape' | 'not-found' | 'resolve-error' }
+    >;
+
+    /**
+     * Reveal an asset in the native file manager (macOS Finder / Windows
+     * Explorer / Linux xdg-open → default). Parent-only — does NOT invoke the
+     * OS default handler for content. Lower-risk than `openAsset`; the
+     * executable blocklist does NOT apply. Asset-click-dispatcher surface (FR-A6).
+     */
+    revealAsset(
+      relPath: string,
+    ): Promise<{ ok: true } | { ok: false; reason: 'path-escape' | 'not-found' | 'resolve-error' }>;
+
+    /**
+     * Display the native right-click context menu for an on-disk reference
+     * (`asset`, `wiki-link`, or `image`). Built from `Menu.buildFromTemplate`
+     * in main — the gesture-attested pattern (D11 of electron-os-integration-
+     * patterns research: main observes the click directly; the gesture bit
+     * does NOT cross IPC). Entries: Reveal in Finder + Open in default app +
+     * Copy link. Asset-click-dispatcher surface (FR-A8).
+     */
+    showAssetMenu(params: {
+      readonly relPath: string;
+      readonly title: string;
+      readonly kind: 'asset' | 'wiki-link' | 'image';
+    }): Promise<void>;
   };
 
   clipboard: {

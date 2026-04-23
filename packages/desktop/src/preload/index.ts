@@ -113,6 +113,9 @@ const bridge: OkDesktopBridge = {
     detectProtocol: (scheme: string) => invoke('ok:shell:detect-protocol', scheme),
     spawnCursor: (path: string) => invoke('ok:shell:spawn-cursor', path),
     recordHandoff: (line) => invoke('ok:shell:record-handoff', line),
+    openAsset: (relPath: string) => invoke('ok:shell:open-asset', relPath),
+    revealAsset: (relPath: string) => invoke('ok:shell:reveal-asset', relPath),
+    showAssetMenu: (params) => invoke('ok:shell:show-asset-menu', params),
   },
 
   clipboard: {
