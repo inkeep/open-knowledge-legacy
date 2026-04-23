@@ -115,15 +115,6 @@ function navigateToDoc(docName: string) {
   window.location.assign(hashFromDocName(docName));
 }
 
-type SelectedNodeState = {
-  eyebrow: string;
-  description: string;
-  Icon: typeof AlertTriangle;
-  actionLabel: string;
-  secondaryLabel: string;
-  onAction: () => void;
-};
-
 function getOrphanDescription(mode: OrphanMode): string {
   if (mode === 'incoming') {
     return 'Project-level pages with no incoming graph edges.';
@@ -325,59 +316,61 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           folderPaths,
         }).displayState
       : 'doc';
-  let selectedNodeState: SelectedNodeState | null = null;
-  if (selectedNode !== null) {
-    if (selectedNode.kind === 'external') {
-      selectedNodeState = {
-        eyebrow: 'Selected in graph',
-        description: 'Open this link in a new tab and collapse the graph.',
-        Icon: ArrowUpRight,
-        actionLabel: 'Open link',
-        secondaryLabel: selectedNode.url,
-        onAction: () => {
-          window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
-          setIsExpanded(false);
-        },
-      };
-    } else {
-      const openSelectedDoc = () => {
-        const hash = getHashForGraphDocSelection(selectedNode);
-        setIsExpanded(false);
-        window.location.assign(hash);
-      };
-
-      if (selectedDocDisplayState === 'missing') {
-        selectedNodeState = {
-          eyebrow: 'Broken link',
-          description:
-            "This page doesn't exist yet. Open it to create the page in the editor and collapse the graph.",
-          Icon: AlertTriangle,
-          actionLabel: 'Create page',
-          secondaryLabel: selectedNode.docName,
-          onAction: openSelectedDoc,
-        };
-      } else if (selectedNode.docName === activeDocName) {
-        selectedNodeState = {
-          eyebrow: 'Already open',
-          description:
-            'This document is already active in the editor. Use Open to collapse the graph.',
-          Icon: CheckCircle2,
-          actionLabel: 'Open',
-          secondaryLabel: selectedNode.docName,
-          onAction: openSelectedDoc,
-        };
-      } else {
-        selectedNodeState = {
-          eyebrow: 'Selected in graph',
-          description: 'Open this document in the editor and collapse the graph.',
-          Icon: ArrowUpRight,
-          actionLabel: 'Open',
-          secondaryLabel: selectedNode.docName,
-          onAction: openSelectedDoc,
-        };
-      }
-    }
-  }
+  const selectedNodeState =
+    selectedNode === null
+      ? null
+      : selectedNode.kind === 'doc' && selectedDocDisplayState === 'missing'
+        ? {
+            eyebrow: 'Broken link',
+            description:
+              "This page doesn't exist yet. Open it to create the page in the editor and collapse the graph.",
+            Icon: AlertTriangle,
+            actionLabel: 'Create page',
+            secondaryLabel: selectedNode.docName,
+            onAction: () => {
+              const hash = getHashForGraphDocSelection(selectedNode);
+              setIsExpanded(false);
+              window.location.assign(hash);
+            },
+          }
+        : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
+          ? {
+              eyebrow: 'Already open',
+              description:
+                'This document is already active in the editor. Use Open to collapse the graph.',
+              Icon: CheckCircle2,
+              actionLabel: 'Open',
+              secondaryLabel: selectedNode.docName,
+              onAction: () => {
+                const hash = getHashForGraphDocSelection(selectedNode);
+                setIsExpanded(false);
+                window.location.assign(hash);
+              },
+            }
+          : selectedNode.kind === 'doc'
+            ? {
+                eyebrow: 'Selected in graph',
+                description: 'Open this document in the editor and collapse the graph.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open',
+                secondaryLabel: selectedNode.docName,
+                onAction: () => {
+                  const hash = getHashForGraphDocSelection(selectedNode);
+                  setIsExpanded(false);
+                  window.location.assign(hash);
+                },
+              }
+            : {
+                eyebrow: 'Selected in graph',
+                description: 'Open this link in a new tab and collapse the graph.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open link',
+                secondaryLabel: selectedNode.url,
+                onAction: () => {
+                  window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
+                  setIsExpanded(false);
+                },
+              };
 
   return (
     <Panel className={isExpanded ? 'fixed inset-0 z-50 bg-background overflow-hidden' : undefined}>
