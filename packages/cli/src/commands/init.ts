@@ -510,6 +510,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   const anyWritten = result.editors.some(
     (e) => e.action === 'written' || e.action === 'overwritten',
   );
+  const anyFailed = result.editors.some((e) => e.action === 'failed');
   const allSkippedFlag =
     result.editors.length > 0 && result.editors.every((e) => e.action === 'skipped-flag');
   const allSkippedMissing =
@@ -602,6 +603,29 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       }
     }
   }
+
+  // Show manual config hint for any failures
+  if (anyFailed) {
+    lines.push('');
+    lines.push('For failed editors, add the MCP server entry manually. See:');
+    lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
+  }
+
+  if (result.legacyProjectConfigs.length > 0) {
+    lines.push('');
+    lines.push('Legacy project MCP configs detected:');
+    for (const legacy of result.legacyProjectConfigs) {
+      lines.push(`  ${legacy.label}  ${relative(cwd, legacy.path)}`);
+    }
+    lines.push(
+      '  These project-local files may override the new global config. Remove them if you want fully user-scoped MCP setup in this project.',
+    );
+  }
+
+  // Root instructions (AGENTS.md) summary — removed per SPEC 2026-04-22
+  // (D2 LOCKED / FR1). `runInit` no longer writes to root AGENTS.md /
+  // CLAUDE.md; skill-install replaces it. Output block deleted along with
+  // the upstream behavior.
 
   // User-global skill install summary (SPEC 2026-04-22 FR6 / D17)
   if (result.skillInstall) {

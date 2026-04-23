@@ -78,7 +78,7 @@ interface KeepaliveOptions {
   /** Override the max backoff (default 30000ms). */
   maxBackoffMs?: number;
   /**
-   * Override the WebSocket constructor. Defaults to Node 22+ `globalThis.WebSocket`.
+   * Override the WebSocket constructor. Defaults to `globalThis.WebSocket`.
    * Tests pass a factory that returns a controllable fake.
    */
   createWebSocket?: (url: string) => MinimalWebSocket;
