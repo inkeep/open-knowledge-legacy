@@ -54,7 +54,6 @@ const EXEMPT_HANDLERS = new Set([
   'handleMetricsReconciliation',
   'handleMetricsParseHealth',
   'handleMetricsAgentPresence',
-  'handleUploadConfigGet',
   'handleWorkspace',
   'handleRescueList',
   'handleRescueGet',

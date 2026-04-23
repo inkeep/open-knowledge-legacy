@@ -260,10 +260,9 @@ Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](.
 
 ### Endpoints
 
-| Method | Path                 | Purpose |
-| ------ | -------------------- | ------- |
-| POST   | `/api/upload`        | Upload an asset (multipart, streamed to disk). Response: `{ok, src, path, deduped}` on success. Error envelope: `{ok:false, error:<reason>, message}` where `reason ∈ { 'malformed-upload' (400), 'storage-full' (507), 'storage-readonly' (500), 'collision-exhaustion' (500), 'storage-error' (500) }`. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
-| GET    | `/api/upload-config` | Resolved `upload.*` subtree (`UploadConfig` from `@inkeep/open-knowledge-core`). Client's `ensureUploadConfig()` fetches once to resolve `emitFormat` × `wikiEmbedExtensions` × `dedup.ui` × `attachmentFolderPath`. |
+| Method | Path          | Purpose |
+| ------ | ------------- | ------- |
+| POST   | `/api/upload` | Upload an asset (multipart, streamed to disk). Response: `{ok, src, path, deduped}` on success. Error envelope: `{ok:false, error:<reason>, message}` where `reason ∈ { 'malformed-upload' (400), 'storage-full' (507), 'storage-readonly' (500), 'collision-exhaustion' (500), 'storage-error' (500) }`. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
 
 ### Accept-all (D-M LOCKED)
 
@@ -288,9 +287,9 @@ Non-sniffable bytes are accepted under the client-supplied filename. The only re
 
 ### Same-directory sha256 dedup
 
-`findDuplicateAsset(destDir, sha)` bounded-scans `destDir` for asset-extension siblings (per `ASSET_EXTENSIONS` from `@inkeep/open-knowledge-core`), hashing each and returning the first match. Runs BEFORE filename synthesis so a duplicate clipboard paste preserves the existing name instead of producing a fresh `pasted-<ts>.png` stub. Scope is same-directory only (FR-2 / NG1). `upload.dedup.mode: 'off'` bypasses the branch.
+`findDuplicateAsset(destDir, sha)` bounded-scans `destDir` for asset-extension siblings (per `ASSET_EXTENSIONS` from `@inkeep/open-knowledge-core`), hashing each and returning the first match. Runs BEFORE filename synthesis so a duplicate clipboard paste preserves the existing name instead of producing a fresh `pasted-<ts>.png` stub. Scope is same-directory only (FR-2 / NG1). Behavior is always on per `DEFAULT_DEDUP_MODE = 'same-dir'` — there is no user-facing knob post-2026-04-24 amendment.
 
-Response carries `deduped: boolean`. Client toast behavior is controlled by `upload.dedup.ui: 'silent' | 'toast' | 'confirm'` (default `'toast'`, message `"Already at <path> — reusing."` per D-B).
+Response carries `deduped: boolean`. Client shows a toast (`"Already at <path> — reusing."`) on dedup match, per `DEFAULT_DEDUP_UI = 'toast'`.
 
 ### File watcher DiskEvent union
 
@@ -328,23 +327,7 @@ The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 - `applyExternalChange` → disk→CRDT bridge (markdown reload)
 - `applyAgentMarkdownWrite` → agent write composition
 
-The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure + Obsidian vault detection (US-018) so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
-
-### Obsidian vault detection (FR-4)
-
-`detectObsidianVault(contentDir)` in `src/obsidian-vault-detect.ts` reads `.obsidian/app.json` when present. Returns a `Partial<UploadConfig>` or `null` (missing file / malformed / symlink-escape).
-
-Field mapping:
-
-| `.obsidian/app.json` field | UploadConfig key         | Notes                                       |
-| -------------------------- | ------------------------ | ------------------------------------------- |
-| `attachmentFolderPath`     | `attachmentFolderPath`   | 1:1 passthrough — D-J free-form string. `"/"`, `"./"`, `"./subdir"`, bare name all preserved verbatim. |
-| `useMarkdownLinks`         | `emitFormat`             | `true → 'markdown-image'`, `false → 'wikiembed'` |
-| `newLinkFormat`            | (surfaced but unused)    | Foam-style shortest is the OK default       |
-
-Called in `packages/cli/src/commands/start.ts`. Precedence is **user > vault > default**: an explicit value in `config.upload` wins over the vault, and the vault only fills in where the user was silent. This works because `attachmentFolderPath` and `emitFormat` are declared `.optional()` on the Zod schema (no default materialized), so `undefined` is a reliable "user didn't set it" signal. See `resolveUploadConfig()` in `@inkeep/open-knowledge-core` for the resolver.
-
-Read-only posture: never writes to `.obsidian/` or `.open-knowledge/config.yml`. Errors emit structured JSON logs (`{event: 'obsidian-vault-detect', reason: 'symlink-escape' | 'read-failed' | 'parse-error'}`) + fall through to the user's config.
+The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
 
 ### Managed-rename behavior for refs (FR-7)
 
@@ -357,28 +340,27 @@ Read-only posture: never writes to `.obsidian/` or `.open-knowledge/config.yml`.
 
 The `MANAGED_RENAME_ORIGIN` is a paired-write origin (`context.paired: true`) so Observer A + Observer B both short-circuit symmetrically for the atomic `Y.XmlFragment` + `Y.Text` mutation.
 
-### Config flow summary
+### Upload-surface constants (2026-04-24 amendment)
+
+There is no user-facing `upload.*` config. Every value is a module-level constant in `packages/core/src/constants/upload.ts`:
 
 ```
-.open-knowledge/config.yml  ─┐
-                             ├─→  Zod (packages/cli/src/config/schema.ts, defaults)
-~/.open-knowledge/config.yml ┘        │
-                                      ↓
-                             config.upload (UploadConfig)
-                                      │
-                                      ├─→  detectObsidianVault()  +  resolveUploadConfig()  (user > vault > default merge)
-                                      │
-                                      ↓
-                             bootServer({ uploadConfig }) → createServer({ uploadConfig })
-                                      │
-                              getUploadConfig() accessor
-                                      │
-                      ┌───────────────┼────────────────┐
-                      ↓               ↓                ↓
-          /api/upload handler   /api/upload-config  client ensureUploadConfig()
-          (reads dedup.mode +   (returns the full   (fetches on first upload,
-           attachmentFolderPath) resolved subtree)   caches per-session)
+DEFAULT_ATTACHMENT_FOLDER_PATH = './'          // co-located with the referencing doc
+DEFAULT_EMIT_FORMAT            = 'wikiembed'   // ![[file.ext]] for supported extensions
+DEFAULT_DEDUP_MODE             = 'same-dir'    // always on, same-directory scope
+DEFAULT_DEDUP_UI               = 'toast'       // "Already at <path> — reusing."
+WIKI_EMBED_EXTENSIONS          = ReadonlySet   // images + pdf + mp4/webm/mov + mp3/wav/ogg/m4a
 ```
+
+Consumers import these directly:
+
+- `POST /api/upload` handler — reads `DEFAULT_ATTACHMENT_FOLDER_PATH` (where to write) + `DEFAULT_DEDUP_MODE` (whether to run the dedup scan).
+- Client `pickInsertShape` (`packages/app/src/editor/image-upload/index.ts`) — reads `WIKI_EMBED_EXTENSIONS` (is this an embed?) + `DEFAULT_EMIT_FORMAT` (what PM node to insert) + `DEFAULT_DEDUP_UI` (toast on dedup).
+- Server mdast→PM dispatch (`packages/core/src/markdown/index.ts`) — reads `WIKI_EMBED_EXTENSIONS` to partition image vs. non-image renderable extensions.
+
+Legacy configs carrying `upload.*` keys parse cleanly — `ConfigSchema` is not `.strict()`, so unknown sections are silently stripped. Obsidian-refugee onboarding is deferred to a future one-shot `ok migrate --from-obsidian-vault` CLI (separate spec).
+
+See the `## Post-finalization amendment (2026-04-24)` section at the bottom of [`SPEC.md`](../../specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) for the full rationale; root `AGENTS.md` carries the STOP rule that keeps the surface from regressing.
 
 ### Observability
 
