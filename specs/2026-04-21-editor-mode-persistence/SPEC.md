@@ -1,7 +1,7 @@
 # Editor Mode Persistence & Cross-Window Sync
 
-**Status:** FINALIZED — audit + challenge complete; 14 surgical corrections applied; 3 design decisions resolved; all 8 decisions LOCKED; resolution completeness gate passed.
-**Baseline commit:** `7e0beff4` (refreshed at ship-time; PR #237 "V2 editor cache + InteractionLayer + Option E cold-load" landed on main between spec finalization and ship, changing the mode-swap CSS from Tailwind `hidden` (display:none) to the custom `.ok-mode-hidden` class with `content-visibility:hidden + position:absolute + pointer-events:none`. D7 decision unchanged — interaction-state concerns (IME, drag-select) still apply under the new CSS; focus-based re-check remains the correct fit.)
+**Status:** FINALIZED — audit + challenge complete; 14 surgical corrections applied; 3 design decisions resolved; all 8 decisions LOCKED; resolution completeness gate passed.<br>_[Corrected 2026-04-22 post-ship: D7 (focus-based cross-window sync) was superseded by **D9** (cross-window sync rejected entirely; per-tab session with load-time reads only) after user UX feedback on the shipped PR #269: "seeing a page just change in front of me when i click on a tab" — the spontaneous mode-flip on tab-click surprises the user regardless of IME/drag-selection protection. D9 is canonical; D7 remains in §10 for the audit paper trail. See §10 D9 and `meta/_changelog.md`.]_
+**Baseline commit:** `7e0beff4` (refreshed at ship-time; PR #237 "V2 editor cache + InteractionLayer + Option E cold-load" landed on main between spec finalization and ship, changing the mode-swap CSS from Tailwind `hidden` (display:none) to the custom `.ok-mode-hidden` class with `content-visibility:hidden + position:absolute + pointer-events:none`. D7 decision unchanged — interaction-state concerns (IME, drag-select) still apply under the new CSS; focus-based re-check remains the correct fit.)<br>_[Corrected 2026-04-22 post-ship: D9 supersedes D7 — the mode-swap CSS class's interaction cost is still real, but D9 accepts it as out-of-scope (cross-window flips no longer happen) rather than mitigating it. See §10 D9.]_
 **Finalized:** 2026-04-22
 **Owner:** Nick Gomez
 **Created:** 2026-04-21
@@ -17,7 +17,7 @@
 
 **Complication.** Every page refresh and every new browser tab slams the user back to `'wysiwyg'` regardless of what they were just using. A user who prefers Source has to re-toggle on every reload. Forward-looking: as the M1+ Electron desktop build (one window per project) gains adoption, the friction scales with window count — a user with 3 project windows re-toggles 3 times per restart. The preference is obvious to the user ("I always work in markdown"); the app forgets it instantly.
 
-**Resolution.** Persist the editor mode (`wysiwyg` | `source`) as a user-global preference that survives refreshes, new tabs, and new Electron windows. Apply on first paint (no flash from default to user's pref). Auto-propagate preference changes across windows so a flip in Window A is reflected in Window B on B's next focus — avoiding mid-edit interaction-state loss (caret, selection, IME composition) that a live storage-event-driven auto-apply would cause. Follow the repo's existing `ok-*-v1` localStorage convention; no new storage backend introduced.
+**Resolution.** Persist the editor mode (`wysiwyg` | `source`) as a user-global preference that survives refreshes, new tabs, and new Electron windows. Apply on first paint (no flash from default to user's pref). Each tab/window is its own session for its lifetime; the persisted value applies on **load** (refresh, new tab, new window). Open tabs do NOT update each other live — the simpler per-tab-session mental model avoids the surprise of a tab spontaneously flipping mode on focus (SPEC D9 supersedes D7). Follow the repo's existing `ok-*-v1` localStorage convention; no new storage backend introduced.
 
 ---
 
@@ -26,7 +26,7 @@
 - **Markdown-first user.** Prefers Source permanently. Today: toggles Source on every session. Post-spec: toggles once; sticks.
 - **Rich-text user.** Prefers WYSIWYG (the current default). Unaffected — default behavior preserved.
 - **Mixed user.** Switches based on task (e.g., WYSIWYG for prose, Source for code-heavy docs). Post-spec: last-used mode sticks until they toggle again.
-- **Multi-window Electron user.** Opens 2+ project windows. Post-spec: toggle in one window propagates live to the others; reboot rehydrates all windows to the persisted preference.
+- **Multi-window Electron user.** Opens 2+ project windows. Post-spec: each window is its own session for its lifetime; closing + reopening a window (or a fresh launch after reboot) rehydrates to the last-persisted preference. Live cross-window propagation is deliberately out of scope (SPEC D9).
 
 ---
 
@@ -57,7 +57,7 @@
 |---|---|---|
 | S1 | Persist selected editor mode on every toggle | `packages/app/src/components/EditorPane.tsx` |
 | S2 | Read persisted mode on first paint; apply before React renders to prevent FOUC | `packages/app/index.html` (new inline `<script>`) |
-| S3 | Subscribe to `focus` events; on focus return, re-read persisted mode and auto-apply cross-window changes to live UI (deliberate focus-gated design — see D7) | New file: `packages/app/src/editor/use-editor-mode.ts` (hook) |
+| S3 | Read persisted mode once in the hook's `useState` initializer at mount. No focus listener; no cross-window live sync (deliberate per-tab-session design — see D9) | New file: `packages/app/src/editor/use-editor-mode.ts` (hook) |
 | S4 | Preserve existing `modeBeforeDiffRef` behavior (diff exits restore to session pre-diff mode, not persisted pref) | `packages/app/src/components/EditorPane.tsx` (no-op change — guard path) |
 | S5 | Unit tests for the hook + FOUC inline-script logic | `packages/app/src/editor/use-editor-mode.test.ts` (new) |
 | S6 | Playwright E2E: refresh preserves mode; new tab inherits mode; cross-window flip propagates | `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (new) |
@@ -83,9 +83,9 @@
 | FR-1 | When the user clicks the editor mode toggle (Visual / Markdown) in `EditorHeader`, the new mode SHALL be written to `localStorage` synchronously under key `ok-editor-mode-v1` | After clicking Markdown, `localStorage.getItem('ok-editor-mode-v1') === 'source'` is true synchronously on the next tick. |
 | FR-2 | On page load, before React mounts, the persisted mode SHALL be read from `localStorage` and applied to the initial React state, so the editor's first paint shows the persisted mode (no FOUC) | The inline `<script>` in `index.html` SHALL set `window.__OK_EDITOR_MODE__` before `DOMContentLoaded`. Verified by (a) a unit test asserting the hook's initial `useState` reads the preloaded global when present, and (b) a Playwright test that hard-refreshes with `source` persisted and asserts, on the first rendered frame queried via `page.evaluate(() => document.querySelector('[data-editor-mode]'))`, that the Source editor subtree is present and the WYSIWYG subtree is absent. The reverse assertion (no WYSIWYG DOM visible pre-first-frame) is proven via the unit-level assertion, not Playwright timing. |
 | FR-3 | When `localStorage` has no value for the key (first-time user or cleared storage), the default SHALL be `'wysiwyg'` | With `localStorage.removeItem('ok-editor-mode-v1')` before load, the editor loads in WYSIWYG. |
-| FR-4 | When the mode changes in another browser tab or Electron BrowserWindow (same origin), the current tab SHALL re-read the persisted value from `localStorage` when the window regains focus (`focus` event on `window`) and update its UI accordingly. Mid-edit users (tab has focus and composition/selection is in flight) are NOT interrupted — the sync waits for focus return. | In a Playwright test with one `BrowserContext` and two pages (A, B) both open to the editor: flip mode in page A, bring page B to focus via `page.bringToFront()` / `page.focus()`, assert page B's editor switches to the new mode before the next assertion tick. |
+| FR-4 | Open tabs/windows SHALL NOT propagate mode changes to each other live. Each tab is its own session for its lifetime; the persisted value is read only at load (refresh, new tab, new window). Last toggle wins at the next load. (Supersedes the D7 focus-based cross-window sync — see D9.) | In a Playwright test with one `BrowserContext` and two pages (A, B) both open to the editor in WYSIWYG: flip mode in page A, bring page B to front AND dispatch `window.focus` on B, assert page B is still in WYSIWYG (no live flip); then reload page B and assert page B is now in Source (load-time read works). Covered by E2E T3. |
 | FR-5 | Creating a new document SHALL honor the persisted mode — a new empty doc opens in the user's current preference | With `source` persisted, `POST /api/create-page` followed by navigation to the new doc shows the Source editor on arrival. |
-| FR-6 | Exiting diff mode SHALL restore the session pre-diff mode (via existing `modeBeforeDiffRef`), NOT the persisted pref — even when the persisted pref has changed via a concurrent cross-window flip while the user was in diff | (Baseline) If user is in Source, enters diff, exits diff → returns to Source. (Concurrent-flip case) If user is in Source, enters diff, another window flips the persisted pref to WYSIWYG, user regains focus and exits diff in this window → user still returns to Source (session UX continuity). Covered by E2E T5. |
+| FR-6 | Exiting diff mode SHALL restore the session pre-diff mode (via existing `modeBeforeDiffRef`), NOT the persisted pref | If user is in Source, enters diff, exits diff → returns to Source. (Pre-existing repo behavior; cross-window concurrent-flip sub-case no longer exists under D9.) |
 | FR-7 | When `localStorage.setItem` throws (privacy-mode browsers, quota), the session SHALL continue working with in-memory state and no user-visible error | Mocked `setItem` throw path: toggle still flips in-memory; no crash; no toast. Warning logged to console (bracket-prefix format per CLAUDE.md logging conventions). |
 | FR-8 | Persisting an invalid value (schema violation from a prior version or manual localStorage tampering) SHALL fall back to the default without crashing | With `localStorage.setItem('ok-editor-mode-v1', 'garbage')` before load, editor loads in WYSIWYG. Warning logged. |
 
@@ -140,10 +140,10 @@ Why a global var, not a class/attribute on `<html>`: React state initializer rea
 
 New file: `packages/app/src/editor/use-editor-mode.ts`
 
-Cross-window sync uses the **focus-based re-check** pattern (Excalidraw Pattern C — research D8) rather than the live `storage` event listener (next-themes Pattern A). Rationale: the editor is a large-state surface; the mode-swap CSS (`.ok-mode-hidden` in `packages/app/src/globals.css` — `content-visibility:hidden + position:absolute + pointer-events:none`) preserves DOM presence but interrupts IME composition and orphans in-flight drag-selection on swap. Deferring the re-apply to the next `focus` return eliminates mid-edit interruption at the cost of a slight delay before an inactive window reflects a cross-window flip — a trade-off the consuming spec accepts (see §13 R4).
+Read-once-at-load design (D9 supersedes D7): the hook reads localStorage exactly once via its `useState` initializer. `persistAndSet` writes to localStorage on every caller invocation. No focus listener, no `storage` event listener, no cross-window live sync. Each tab/window is its own session for its lifetime; the persisted value is read only when a tab loads (refresh, new tab, new window). Last toggle wins at the next load.
 
 ```typescript
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 const STORAGE_KEY = 'ok-editor-mode-v1';
 type EditorModeValue = 'wysiwyg' | 'source';
@@ -171,19 +171,6 @@ function readInitialMode(): EditorModeValue {
 export function useEditorMode(): [EditorModeValue, (next: EditorModeValue) => void] {
   const [mode, setMode] = useState<EditorModeValue>(readInitialMode);
 
-  // Focus-based re-check (Excalidraw Pattern C). Only auto-apply cross-
-  // window preference changes when this window returns to focus — avoids
-  // mid-edit caret/selection/IME loss that a live storage-event listener
-  // would cause. See §13 R4 for the trade-off analysis.
-  useEffect(() => {
-    function handleFocus() {
-      const next = readPersistedMode();
-      setMode((current) => (current === next ? current : next));
-    }
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, []);
-
   function persistAndSet(next: EditorModeValue) {
     setMode(next);
     try {
@@ -197,8 +184,6 @@ export function useEditorMode(): [EditorModeValue, (next: EditorModeValue) => vo
 }
 ```
 
-`setMode`'s functional-update form (`(current) => current === next ? current : next`) avoids the React state-set-no-op no-render-schedule fast path being subverted when the values are identical — it short-circuits at the reducer, not via reference-equality alone.
-
 ### 7.4 Integration at `EditorPane`
 
 Current code (`EditorPane.tsx:24` at baseline `7e0beff4`):
@@ -206,19 +191,13 @@ Current code (`EditorPane.tsx:24` at baseline `7e0beff4`):
 const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
 ```
 
-Becomes (add `useRef` to existing `useEffect, useRef, useState` imports in `EditorPane.tsx`):
+Becomes:
 ```typescript
-import { useEffect, useRef, useState } from 'react';
 import { useEditorMode } from '@/editor/use-editor-mode';
 
 // Replace: const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
 const [persistedMode, setPersistedMode] = useEditorMode();
 const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
-
-// Track editorMode in a ref so the cross-window-sync effect below can read it
-// without becoming a dependency (avoids a subtle diff-exit bug — see below).
-const editorModeRef = useRef(editorMode);
-editorModeRef.current = editorMode;
 ```
 
 Inside `handleModeChange(mode: 'wysiwyg' | 'source')`:
@@ -229,28 +208,9 @@ function handleModeChange(mode: 'wysiwyg' | 'source') {
 }
 ```
 
-Cross-window sync effect:
-```typescript
-// When the persisted preference changes (triggered by the hook's focus-based
-// re-check picking up a cross-window flip), apply it to the editor — UNLESS
-// we're currently in diff mode. In diff mode, defer the application so the
-// existing "restore to session pre-diff mode on exit" UX still runs cleanly
-// via `modeBeforeDiffRef`.
-//
-// Dep array deliberately excludes `editorMode`: re-running on every mode
-// transition would make diff-exit → restore-to-pre-diff-mode compete with
-// this effect's own write, producing a two-step flash (pre-diff-mode briefly
-// visible → persisted-mode). Reading `editorMode` via ref inside the effect
-// decouples the guard from the dep array.
-useEffect(() => {
-  if (editorModeRef.current === 'diff') return;
-  setEditorMode(persistedMode);
-}, [persistedMode]);
-```
+No cross-window sync effect — under D9, `persistedMode` is the seed value at mount and does not change post-mount from external sources. The only writes to `setPersistedMode` happen inside this same component via `handleModeChange`, so the session-local `editorMode` and the persisted value are already coherent without an extra useEffect.
 
-`modeBeforeDiffRef` (`EditorPane.tsx:39` at baseline `7e0beff4`) continues to capture the session-local pre-diff mode and restore to it on exit. This is distinct from the persisted preference: on diff exit you return to exactly where you were (session UX continuity), not to what some other window may have written to localStorage while you were in diff. If the user wants the cross-window update after diff exit, they can either (a) trust focus-based re-check to pick it up the next time the window regains focus, or (b) explicitly toggle — both paths work.
-
-**Scope-expansion note on diff-mode.** The Agent Constraints §15 `STOP_IF` lists "touch diff-mode behavior" as a halt signal. This spec DOES introduce a diff-aware branch (the `editorModeRef.current === 'diff'` guard) — which is a deliberate narrow extension, not a violation. The STOP_IF is revised in §15 to disambiguate.
+`modeBeforeDiffRef` (`EditorPane.tsx:39` at baseline `7e0beff4`) continues to capture the session-local pre-diff mode and restore to it on exit. Pre-existing repo behavior; unchanged by this spec.
 
 ### 7.5 Interaction with existing code paths
 
@@ -282,11 +242,9 @@ useEffect(() => {
   - Initial read falls back to `localStorage` when `window.__OK_EDITOR_MODE__` is unset.
   - Initial read falls back to `'wysiwyg'` when localStorage has invalid value.
   - `persistAndSet('source')` updates state AND writes to localStorage.
-  - `focus` event triggers re-read from localStorage; state updates when persisted value differs.
-  - `focus` event is a no-op when persisted value matches current state (guarded by the functional-update form).
-  - `focus` event with invalid localStorage value falls back to `'wysiwyg'`.
   - `localStorage.setItem` throw is swallowed; state still updates; `console.warn` fires with bracket-prefix format.
-  - `localStorage.getItem` throw (privacy mode) during focus handler is swallowed; state unchanged.
+  - `localStorage.getItem` throw (privacy mode) is swallowed; returns the default.
+  - (Focus listener tests retired with D9 — no listener exists to register/dispatch against.)
 
 ### 8.2 Integration tests
 
@@ -298,20 +256,21 @@ New file: `packages/app/tests/stress/editor-mode-persistence.e2e.ts`
 
 - **T1 (refresh):** Load app, click Markdown toggle, refresh page, assert Source editor visible on first rendered frame (no flash).
 - **T2 (new tab):** Open app in page A (one `BrowserContext`), click Markdown, `context.newPage()` for page B to same URL, assert page B opens in Source.
-- **T3 (cross-window focus-based sync):** Open same doc in pages A and B (one `BrowserContext`) both in WYSIWYG. Focus page A. Flip Markdown in page A. Bring page B to front via `page.bringToFront()`. Assert page B's editor switches to Source. Without the focus return, page B stays on WYSIWYG — documenting the deliberate focus-gated behavior.
+- **T3 (open tabs are independent until reload):** Open same doc in pages A and B (one `BrowserContext`) both in WYSIWYG. Flip Markdown in page A. Bring page B to front AND dispatch `window.focus` on page B. Assert page B is STILL in WYSIWYG (no live flip — D9 invariant; would fail if a focus listener were re-added). Then reload page B; assert page B is now in Source (load-time read works). Covers both halves of the D9 invariant.
 - **T4 (new doc honors pref):** With Source persisted, `POST /api/create-page`, navigate to new doc, assert Source editor on arrival.
-- **T5 (diff exit preserves session pre-diff mode, not persisted — with concurrent cross-window flip):** In page A: Source mode, enter diff (modeBeforeDiffRef captures Source). In page B: flip to WYSIWYG (persistedMode becomes WYSIWYG). Return focus to page A. Exit diff in page A. Assert page A returns to **Source** (session pre-diff), not WYSIWYG. This covers the audit-flagged H1 bug scenario.
 - **T6 (invalid localStorage value):** Inject `localStorage.setItem('ok-editor-mode-v1', 'bogus')`, load, assert defaults to WYSIWYG with no crash.
-- **T7 (rapid toggle robustness):** In a single page, `page.evaluate` a tight loop that writes `localStorage['ok-editor-mode-v1']` with alternating values 100 times in 200ms, then assert the final rendered mode matches the final localStorage value and the editor is still interactive (can type, can toggle via UI). Guards against state-update storms. Focus-based sync means external bursts don't reach live state until next focus — but same-page programmatic writes can still churn if `persistAndSet` is called in a loop.
 - **T8 (FOUC — first-rendered frame asserts persisted mode):** Set `localStorage.setItem('ok-editor-mode-v1', 'source')` in a pre-navigation hook, navigate to the editor, use `page.evaluate(() => ({ mode: (window as any).__OK_EDITOR_MODE__, hasSourceDom: !!document.querySelector('.cm-editor'), hasTipTapDom: !!document.querySelector('.tiptap') }))` after the first paint to confirm `__OK_EDITOR_MODE__ === 'source'` was set and the Source DOM subtree is present on first rendered frame. Stronger guarantee than T1 because it asserts on the global set by the inline script.
+- **T9 (RAW_MDX_NAV_EVENT stays session-only):** Dispatch the tool-forced `raw-mdx-nav` event; session flips to Source but localStorage stays untouched; reload returns to default WYSIWYG. Pre-existing behavior; unchanged by this feature. Guards against a DRY-minded future refactor that merges `handleModeChange` and the RAW_MDX_NAV handler through one persist-calling helper.
+
+(T5 and T7 retired with D9 — their invariants (concurrent cross-window flip during diff, rapid external-write + focus churn) no longer exist without a focus listener.)
 
 ### 8.4 Manual QA (Electron multi-window)
 
 Not automated because the repo has no `_electron.launch()` Playwright harness at baseline (NFR-4). Run after building: `bun run --cwd packages/desktop build:mac:unsigned`, launch the DMG, open 2 project windows, and verify:
 
-- **MQ1:** In window A, flip to Source. Window B still shows WYSIWYG. Click anywhere in window B's chrome (focus return). Window B now shows Source.
-- **MQ2:** In window A, open a doc and type some WYSIWYG content. Ensure focus stays in window A's editor. In window B (without focusing it), flip to Source via keyboard shortcut if available, or via toggle if window B's chrome is accessible without focusing the editor. Confirm window A's caret / text input are NOT disrupted (the focus-based re-check deliberately defers to focus return).
-- **MQ3:** Close both windows. Reopen one window for a different project. Verify it opens in the last-persisted mode.
+- **MQ1:** Close both windows. Reopen one window for a different project. Verify it opens in the last-persisted mode. (Load-time rehydration — the sole load-bearing Electron invariant under D9.)
+
+(MQ2 and MQ3 from the D7 spec retired with D9 — they both assumed cross-window live sync, which no longer exists. Same-tab persistence and first-paint FOUC are fully covered by Tier-1 Playwright.)
 
 ### 8.5 CI tier classification
 
@@ -343,8 +302,9 @@ All decisions carried through intake + research + open-question resolution. All 
 | D4 | New docs honor persisted pref — no new-doc special case | LOCKED | Silent override of user preference is the exact friction this spec fixes. |
 | D5 | Store in `localStorage` with versioned key `ok-editor-mode-v1` | LOCKED | Research D6: localStorage is Chromium-shared across same-origin BrowserWindows in Electron automatically. The repo has TWO established storage tiers for distinct concerns: (a) **project config** (`.open-knowledge/config.yml` — `content.dir`, `content.include`, MCP server list) and (b) **user UX preferences** (localStorage — `ok-theme-v1`, `ok-pin-v1`). Editor mode is a UX preference, not a project config, so it fits tier (b) cleanly alongside theme and pin. A per-project editor-mode default (e.g., "this code-heavy project defaults to Source") would be a config-tier concern and is correctly classified as Future Work. electron-store upgrade is Future Work if preferences grow structurally. |
 | D6 | FOUC prevention via inline `<script>` in `packages/app/index.html` — no new library | LOCKED | Research D4: next-themes' inline-script pattern is the canonical approach. Hand-rolled for one key = 10 lines; no library needed. Adds zero bundle weight vs. importing next-themes-equivalent. |
-| D7 | Cross-window sync via `focus` event re-check (Excalidraw Pattern C). Live `storage` event auto-apply rejected on audit/challenge review. | LOCKED | Initial recommendation was next-themes Pattern A (live `storage` event auto-apply). Audit + challenge review surfaced that "flipping a CSS class is content-safe" was narrow: the mode-swap CSS class (`.ok-mode-hidden` on `EditorActivityPool.tsx:561` / `:570` — at ship-time baseline `7e0beff4`) preserves DOM presence via `content-visibility:hidden + position:absolute + pointer-events:none`, but still interrupts IME composition and orphans in-flight drag-selection on swap. (Before PR #237, the swap used Tailwind `hidden` / `display:none` which additionally destroyed DOM focus; the new CSS is strictly less disruptive but still interaction-breaking for IME / drag-select.) Neither `SourceEditor` nor `TiptapEditor` has a `.focus()` restore call on mode flip. For a large-state editor surface, the Excalidraw team deliberately chose focus-based lazy re-check for exactly this class of concern (research D8 evidence + Issue #2791 + PR #4545). We adopt the same pattern. Cost: cross-window updates are eventually-consistent on the unfocused window, not live — user returns to window B and the mode flip is picked up at that moment. Benefit: no mid-edit IME/selection interruption. The cost is invisible to the user (they're not looking at the unfocused window anyway); the benefit is critical when they are. |
+| D7 | Cross-window sync via `focus` event re-check (Excalidraw Pattern C). Live `storage` event auto-apply rejected on audit/challenge review. | **SUPERSEDED by D9** (retained here for the audit paper trail) | Initial recommendation was next-themes Pattern A (live `storage` event auto-apply). Audit + challenge review surfaced that "flipping a CSS class is content-safe" was narrow: the mode-swap CSS class (`.ok-mode-hidden` on `EditorActivityPool.tsx:561` / `:570` — at ship-time baseline `7e0beff4`) preserves DOM presence via `content-visibility:hidden + position:absolute + pointer-events:none`, but still interrupts IME composition and orphans in-flight drag-selection on swap. (Before PR #237, the swap used Tailwind `hidden` / `display:none` which additionally destroyed DOM focus; the new CSS is strictly less disruptive but still interaction-breaking for IME / drag-select.) Neither `SourceEditor` nor `TiptapEditor` has a `.focus()` restore call on mode flip. For a large-state editor surface, the Excalidraw team deliberately chose focus-based lazy re-check for exactly this class of concern (research D8 evidence + Issue #2791 + PR #4545). We adopted the same pattern. Cost: cross-window updates are eventually-consistent on the unfocused window, not live — user returns to window B and the mode flip is picked up at that moment. Benefit: no mid-edit IME/selection interruption. The cost is invisible to the user (they're not looking at the unfocused window anyway); the benefit is critical when they are. **Superseded after shipping:** user UX feedback — "seeing a page just change in front of me when i click on a tab" — surfaced that the spontaneous mode-flip on tab-click is itself surprising, regardless of whether it protects IME state. See D9. |
 | D8 | Every toggle writes to localStorage immediately — no session-vs-persisted distinction | LOCKED | Matches next-themes, matches `ok-pin-v1`, avoids hidden state confusion. Toggle = commit. |
+| D9 | **Cross-window sync rejected entirely.** Per-tab session with load-time reads only: `useEditorMode` reads localStorage once in its `useState` initializer; open tabs do NOT update each other live. Last toggle wins at the next load. **Supersedes D7.** | LOCKED | Post-ship user UX feedback on PR #269: "seeing a page just change in front of me when i click on a tab" — even under D7's focus-gated sync (which protects IME/drag-select), the flip itself was surprising. The simpler mental model ("each tab is its own session until reload") outweighs D7's theoretical IME protection because cross-window propagation happens on a window the user isn't currently looking at — the value of eventual consistency on an unfocused window is low, and the cost (surprise-flip on tab-click) is high. Matches VS Code / IntelliJ / JetBrains "per-session" convention for this class of in-session editor toggle. No new dependencies; one `useEffect` + one ref deleted from `EditorPane`, one `useEffect` deleted from the hook, four unit tests + three E2E tests retired, one new E2E test added ("open tabs are independent until reload"). Existing `ok-editor-mode-v1` localStorage entries are forward-compatible — a user on D7 silently gets D9 behavior at their next page load with no data migration. |
 
 ---
 
@@ -362,7 +322,7 @@ None. All P0 items resolved.
 |---|---|---|---|
 | A1 | **Until future work introduces session partitioning**, every Open Knowledge Electron BrowserWindow loads the same origin → localStorage is shared cross-window as designed. If partitioning lands later (e.g., per-user Navigator profiles, per-workspace sessions via `session.fromPartition`), persistence becomes per-partition — which ALIGNS with the partition's scope semantics (each user/profile gets their own preference). This is a FEATURE, not a regression to mitigate. | HIGH (current baseline) + ROBUST-BY-DESIGN (future partitioning) | Verified by reading `packages/desktop/src/main/window-manager.ts` and `navigator-window.ts` at baseline `c29a5a14` — no `session.fromPartition` usage. If partitioning is ever introduced, the data shape (single scalar in localStorage) composes trivially with per-partition storage. No design churn required. |
 | A2 | localStorage quota is sufficient (needs < 100 B) | HIGH | Chromium's 5 MB/origin limit; we use ~30 B. Never an issue. |
-| A3 | The `focus` event on `window` fires reliably when an Electron BrowserWindow regains focus (click on its chrome, alt-tab, cross-window click) | HIGH | DOM-standard behavior. Electron's BrowserWindow is a Chromium window; focus/blur firing is spec-standard. No dependency on `storage` event cross-BrowserWindow dispatch (which would be the analog assumption for the rejected Pattern A). Covered by Playwright's `page.focus()` / `page.bringToFront()` primitives in the E2E harness. |
+| A3 | *(Retired with D9 — no focus listener or `storage` event listener exists; no cross-tab event-dispatch assumption is load-bearing.)* | — | — |
 | A4 | The existing `EditorMode` enum (`wysiwyg`/`source`/`diff`) is stable | HIGH | Locked by TQ8 (precedent #6 "mode state as enums") per CLAUDE.md; `diff` is ephemeral by design. |
 
 ---
@@ -371,13 +331,13 @@ None. All P0 items resolved.
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| R1 | Cross-window focus-based sync fires during an active `diff` mode view, overriding the session pre-diff mode restore | LOW | MEDIUM | Mitigated in §7.4 — the `useEffect` guard reads `editorModeRef.current === 'diff'` via ref (not via dep array), so diff exit cannot trigger a spurious re-apply. E2E T5 covers the exact race: diff entry, concurrent cross-window flip, diff exit, assert session pre-diff mode wins. |
+| R1 | Cross-window sync fires during diff mode, overriding the session pre-diff restore | **N/A under D9** | N/A | No cross-window sync effect exists. Diff entry / exit is pre-existing repo behavior via `modeBeforeDiffRef`; no race can occur. |
 | R2 | Inline FOUC script error blocks page load | LOW | HIGH | Mitigated by try/catch in the inline script (§7.2). Worst case: `window.__OK_EDITOR_MODE__` stays `'wysiwyg'` (default) → hook reads default. E2E T6 covers invalid localStorage values. |
 | R3 | User's privacy mode / incognito throws on `localStorage.setItem` | MEDIUM | LOW | Gracefully degrades to in-memory-only (FR-7). Documented `console.warn` with bracket-prefix format; no user-visible error. Unit test covers the throw path. |
-| R4 | Cross-window flip interrupts in-flight editing state (caret, IME, drag-select) | **CLOSED** by design choice D7 | N/A | Focus-based re-check (D7) defers the mode apply until the user actively returns to the window. The user cannot be "mid-typing in window B" at the moment of application because B only applies on focus return — by which point B is the user's attention target. The failure mode that made this a MEDIUM risk under Pattern A does not exist under Pattern C. |
+| R4 | Cross-window flip interrupts in-flight editing state (caret, IME, drag-select) | **N/A under D9** | N/A | No cross-window flip occurs. The interaction-state concerns that D7 balanced (mode-swap CSS interrupting IME/drag-select) don't surface because open tabs never swap mode without an explicit page load. |
 | R5 | Future Electron partitioning (e.g., Navigator per-user profiles via `session.fromPartition`) breaks origin-sharing for localStorage | LOW | **N/A — by design this becomes a feature** | Per A1's graceful-degradation framing: if partitioning lands, each partition tracks its own preference, which aligns with the partition's scope (different user = different preference). No code change required; the data shape (single scalar in localStorage) composes with per-partition storage trivially. The "`electron-store` upgrade required" concern in earlier drafts is not accurate — it assumed we wanted one-preference-across-all-partitions, which is not the right semantic when partitions exist. |
 | R6 | localStorage key collision with a future preference key | LOW | LOW | Key is versioned (`-v1`) and namespaced (`ok-editor-mode-v1`). Future prefs use different key names (e.g., `ok-outline-width-v1`). |
-| R7 | Programmatic `localStorage.setItem` bursts from a misbehaving browser extension cause state churn | LOW | LOW | Focus-based re-check insulates the renderer from `storage` event storms (we don't listen on `storage`). Same-page programmatic writes to `persistAndSet` within React are batched via React 19 auto-batching. E2E T7 (rapid toggle robustness) verifies interactive recovery. |
+| R7 | Programmatic `localStorage.setItem` bursts from a misbehaving browser extension cause state churn | **N/A under D9** | N/A | The hook does not listen for `storage` events and reads localStorage only at mount, so external write bursts do not reach React state in an open tab. (The write itself is write-through — the next tab load sees the final value.) |
 
 ---
 
@@ -413,7 +373,7 @@ None. All P0 items resolved.
 **STOP_IF** (halt and surface to reviewer before proceeding):
 - Implementation requires a new React Context or provider component (the hook should be used directly in `EditorPane`; if a Context is tempting, that's a sign of scope creep).
 - Implementation needs to change the `EditorMode` type or enum.
-- Implementation needs to change **the `modeBeforeDiffRef` capture/restore rule** (the existing session-local rule). The narrow diff-aware branch in §7.4's `useEffect` (a single `editorModeRef.current === 'diff'` guard) is a deliberate, spec-scoped extension — not a restriction violation. Anything beyond that single guard IS a restriction violation.
+- Implementation needs to change **the `modeBeforeDiffRef` capture/restore rule** (the existing session-local rule). This feature does not introduce any diff-mode-aware branches — diff behavior is pre-existing and untouched.
 - Implementation needs to add a new npm dependency.
 - Implementation needs to add per-doc or per-project override plumbing.
 - Implementation needs to touch CRDT layer or observer code.
@@ -431,9 +391,8 @@ None. All P0 items resolved.
 
 ### 16.1 Design alternatives considered (rejected)
 
+- **Cross-window live sync in any form** — rejected together with D9. The three mechanisms surveyed (next-themes' live `storage` event auto-apply, tldraw's BroadcastChannel per-workspace channels, Excalidraw's focus-based `localStorage.getItem` re-check) were all considered and all rejected. The user-facing symptom is the same regardless of mechanism: a tab the user isn't looking at spontaneously changes mode when they return to it. The D7-era rationale for Pattern C (protecting mid-edit IME composition / drag-select) was real but solved the wrong problem — the spontaneous flip itself was the surprise, not the interaction-state side effect. D9 treats per-tab independence as the canonical behavior, matching VS Code / JetBrains IDE convention.
 - **Storing in electron-store instead of localStorage.** Rejected — introduces main↔renderer IPC, breaks web distribution, and requires preload plumbing for FOUC-free first paint. Research D6 shows electron-store is overkill for a single renderer-visible preference.
-- **BroadcastChannel instead of `focus` event for cross-window sync.** Rejected — tldraw's use case (structured diff messages, per-workspace channels) doesn't apply. We have one boolean-equivalent preference; focus-based re-check with a `localStorage.getItem` on focus return is simpler and doesn't interrupt mid-edit interaction.
-- **Live `storage` event auto-apply (next-themes Pattern A).** **Initially recommended, rejected on audit/challenge review.** The framing "flipping a CSS class is content-safe" was narrow — the mode-swap CSS class `.ok-mode-hidden` (on `EditorActivityPool.tsx:561`/`:570` at ship-time baseline) interrupts IME composition and drag-selection gestures even though DOM focus is preserved by `content-visibility:hidden`. Pattern A works for theme (whose mid-edit cost is zero) but not for a large-state editor. Focus-based re-check (Excalidraw Pattern C) is the correct fit for this surface. See D7.
 - **React Context for the hook.** Rejected per ASK_FIRST — consumer count is 1 (`EditorPane`). Context adds indirection without buying anything.
 - **New-doc-opens-in-WYSIWYG special case** (Option c from intake Q4). Rejected per D4 — violates "user pref sticks everywhere."
 - **`auto`/`system` third mode.** Rejected per D2 — no OS-level signal analog for editor mode (unlike `prefers-color-scheme` for theme).
