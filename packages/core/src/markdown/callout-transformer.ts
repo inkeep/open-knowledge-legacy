@@ -387,36 +387,60 @@ const PLACEHOLDER_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"></svg>';
 
 /**
- * Icon map covering every alias token recognized by `TYPE_ALIAS_MAP` plus
- * the GFM 5 base types. Every entry points to the same placeholder SVG —
- * the plugin requires a non-undefined icon value for each marker it might
- * match, but our transformer strips the icon wrapper before it reaches
- * the React renderer.
+ * Icon map proxy — returns the placeholder SVG for ANY lookup. The plugin
+ * requires a non-undefined icon value for each marker it might match; we
+ * strip the plugin-injected icon wrapper before it reaches the React
+ * renderer, so the specific SVG bytes don't matter — only that every
+ * `icons[type]` access resolves to a string.
+ *
+ * Proxy vs static map: with `markers: '*'` the plugin accepts arbitrary
+ * single-word tokens (see REMARK_GITHUB_ALERTS_OPTIONS below). A static
+ * map would need an entry for every possible token, which is unbounded.
+ * The Proxy gives a constant-time catch-all that satisfies the plugin's
+ * contract without eager enumeration.
  */
-const PLUGIN_ICON_MAP: Readonly<Record<string, string>> = Object.fromEntries(
-  Object.keys(TYPE_ALIAS_MAP).map((k) => [k, PLACEHOLDER_SVG]),
-);
+const PLUGIN_ICON_MAP: Readonly<Record<string, string>> = new Proxy({} as Record<string, string>, {
+  get: () => PLACEHOLDER_SVG,
+  // `has` also intercepted so `Reflect.has` / `in` checks inside the plugin
+  // (if any) resolve truthy for every key — defense-in-depth, not observed
+  // to be read by the current upstream version but cheap to include.
+  has: () => true,
+});
 
 /**
  * Options tuple for the upstream `remark-github-alerts` plugin. Exported so
  * `pipeline.ts` can wire the plugin with our canonical options AND tests
  * can re-use the exact options shape.
  *
- * - `markers: Object.keys(TYPE_ALIAS_MAP)` — exactly the set our alias map
- *   recognizes. `'*'` (any word) would let stray `[!foo]` inside source
- *   hit the plugin but our transformer would fail to normalize → we'd
- *   leave a confusingly-tagged blockquote. Explicit allowlist keeps the
- *   plugin's match behavior aligned with our normalization behavior.
+ * - `markers: '*'` — accept ANY single-word `[!TYPE]` token (GFM-native,
+ *   Obsidian aliases, Mintlify aliases, Pandoc aliases, or arbitrary
+ *   user-coined tokens). Our transformer normalizes via `TYPE_ALIAS_MAP`
+ *   when possible and falls back to `type: 'note'` otherwise, preserving
+ *   the authored token via `data-authored-as` (M8 contract). This delivers
+ *   the symmetric "GFM path + MDX JSX path both graceful-fallback to note"
+ *   customer contract (pre-QA review M7 option (b)).
+ *
+ *   Pre-M7, this was `Object.keys(TYPE_ALIAS_MAP)` — the explicit allowlist
+ *   dropped tokens outside the 23-entry alias map back to plain blockquotes
+ *   while the JSX path promoted them to `<Callout type="...">` with fallback
+ *   rendering. The asymmetry surprised Obsidian migrators authoring exotic
+ *   `[!TYPE]` tokens; the QA plan (QA-022) caught the gap between stated
+ *   contract and shipped behavior. `markers: '*'` closes it.
+ *
+ *   Multi-word `[!DOWN FOR MAINT]` inside a blockquote still does NOT match
+ *   (the plugin's internal matcher is single-word by design), so legitimate
+ *   non-callout blockquote uses of `[!...]` with spaces stay untouched.
  *
  * - `classPrefix: CALLOUT_CLASS_PREFIX` — unambiguous signature for our
  *   transformer's detection. No collision with stray `markdown-alert` classes
  *   that might appear from other sources.
  *
- * - `icons: PLUGIN_ICON_MAP` — placeholder SVGs for every alias token so
- *   the plugin's `encodeSvg(icon)` call doesn't crash on non-GFM markers.
+ * - `icons: PLUGIN_ICON_MAP` — proxy-backed catch-all that satisfies the
+ *   plugin's `encodeSvg(icon)` path for every token, including unrecognized
+ *   ones under `markers: '*'`.
  */
 export const REMARK_GITHUB_ALERTS_OPTIONS = {
-  markers: Object.keys(TYPE_ALIAS_MAP),
+  markers: '*' as const,
   classPrefix: CALLOUT_CLASS_PREFIX,
   matchCaseSensitive: false,
   icons: PLUGIN_ICON_MAP,

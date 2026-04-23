@@ -73,16 +73,20 @@ to the folded GFM type. A broader alias-preserving enum is tracked as
 a future extension (see `SPEC.md` NG26) — it would extend the `type`
 prop without a schema narrow per precedent #9.
 
-**Unknown `type` values behave differently by authoring form:**
+**Unknown `type` values fall back to `note` in both authoring forms.**
+Whether authored as `<Callout type="custom">` MDX JSX or `> [!custom]`
+GFM-alert, unrecognized type tokens render with `note` styling. The
+authored token survives byte-identical on disk via γ `sourceRaw`, and
+the alias-coerced path (e.g. `success` → `tip`) additionally preserves
+the original token through a `data-authored-as` attribute — so when a
+future release extends the `type` enum (SPEC.md NG26), content
+authored today under the narrow surface automatically upgrades to
+richer rendering without an edit pass.
 
-- In `<Callout type="custom">` MDX form, the **renderer** falls back to
-  `note` styling while the `type="custom"` attr survives byte-identical
-  on disk via γ `sourceRaw`.
-- In `> [!custom]` GFM-alert form, the tagged alias map (and
-  `remark-github-alerts` upstream) only recognizes a fixed set of
-  tokens. An unrecognized `[!TYPE]` stays a plain blockquote (no
-  Callout promotion, no fallback). Use the MDX JSX form for graceful
-  `note` fallback or author the type inside the recognized set.
+Multi-word blockquote openers like `> [!DOWN FOR MAINT]` (tokens with
+spaces) do NOT match the GFM-alert shape and stay as plain blockquotes
+— an intentional carve-out for legitimate non-callout uses of bracketed
+notation.
 
 ### Image
 
