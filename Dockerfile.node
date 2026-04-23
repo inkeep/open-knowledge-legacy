@@ -11,26 +11,16 @@ RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 WORKDIR /app
 
-ENV HUSKY=0
+ENV HUSKY=0 \
+  ELECTRON_SKIP_REBUILD=1
 
-RUN mkdir -p docs packages/app packages/cli packages/core packages/desktop packages/plugin packages/server patches \
-  && chown -R node:node /app
+RUN chown -R node:node /app
 
-COPY --chown=node:node package.json bun.lock bunfig.toml biome.jsonc turbo.json tsconfig.json ./
-COPY --chown=node:node patches ./patches
-COPY --chown=node:node docs/package.json ./docs/package.json
-COPY --chown=node:node packages/app/package.json ./packages/app/package.json
-COPY --chown=node:node packages/cli/package.json ./packages/cli/package.json
-COPY --chown=node:node packages/core/package.json ./packages/core/package.json
-COPY --chown=node:node packages/desktop/package.json ./packages/desktop/package.json
-COPY --chown=node:node packages/plugin/package.json ./packages/plugin/package.json
-COPY --chown=node:node packages/server/package.json ./packages/server/package.json
+COPY --chown=node:node . .
 
 USER node
 
 RUN bun install --frozen-lockfile
-
-COPY --chown=node:node . .
 
 EXPOSE 5173
 

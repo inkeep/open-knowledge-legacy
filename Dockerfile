@@ -6,26 +6,16 @@ RUN apt-get update \
 
 WORKDIR /app
 
-ENV HUSKY=0
+ENV HUSKY=0 \
+  ELECTRON_SKIP_REBUILD=1
 
-RUN mkdir -p docs packages/app packages/cli packages/core packages/desktop packages/plugin packages/server patches \
-  && chown -R bun:bun /app
+RUN chown -R bun:bun /app
 
-COPY --chown=bun:bun package.json bun.lock bunfig.toml biome.jsonc turbo.json tsconfig.json ./
-COPY --chown=bun:bun patches ./patches
-COPY --chown=bun:bun docs/package.json ./docs/package.json
-COPY --chown=bun:bun packages/app/package.json ./packages/app/package.json
-COPY --chown=bun:bun packages/cli/package.json ./packages/cli/package.json
-COPY --chown=bun:bun packages/core/package.json ./packages/core/package.json
-COPY --chown=bun:bun packages/desktop/package.json ./packages/desktop/package.json
-COPY --chown=bun:bun packages/plugin/package.json ./packages/plugin/package.json
-COPY --chown=bun:bun packages/server/package.json ./packages/server/package.json
+COPY --chown=bun:bun . .
 
 USER bun
 
 RUN bun install --frozen-lockfile
-
-COPY --chown=bun:bun . .
 
 EXPOSE 5173
 
