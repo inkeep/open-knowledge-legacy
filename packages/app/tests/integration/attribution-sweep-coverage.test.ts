@@ -81,6 +81,8 @@ const EXEMPT_HANDLERS = new Set([
   // local user, not agent content — same rationale as sync/local-op handlers.
   'handleSeedPlan',
   'handleSeedApply',
+  'handleAgentActivity',
+  'handleAgentBurstDiff',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
