@@ -1,50 +1,231 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import type { AgentPresenceEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useState } from 'react';
+import {
+  type AgentPresenceAwareness,
+  hasAgentPresenceShape,
+  pickAgentsForDoc,
+} from '@/lib/agent-presence';
 import type { AwarenessState, AwarenessUser } from './identity.ts';
 
-export interface Participant {
+// NOTE: `pickAgentsForDoc` now returns `{agentId, entry}` pairs directly so
+// this hook doesn't have to reverse-lookup the id from the awareness map
+// per render (previously O(N²) against presence map entries — see review
+// pass 0 finding #11).
+
+/**
+ * A human participant — publishes per-doc awareness (name, color, icon,
+ * cursor position, mode). Cursors are rendered by `@tiptap/extension-
+ * collaboration-cursor`.
+ */
+export interface HumanParticipant {
+  kind: 'human';
   clientId: number;
   user: AwarenessUser;
   mode: AwarenessState['mode'];
 }
 
 /**
- * Watches awareness.on('change') and returns an array of participants
- * with clientId, user info, and mode.
+ * An agent participant — publishes presence via the `__system__` Y.Doc's
+ * `agentPresence` map (never per-doc awareness; see FR-3 + precedent #3).
+ * `presence` carries everything the bar needs: displayName, icon, color,
+ * currentDoc, mode, ts.
  */
-export function usePresence(provider: HocuspocusProvider | null): Participant[] {
-  const [participants, setParticipants] = useState<Participant[]>([]);
+export interface AgentParticipant {
+  kind: 'agent';
+  agentId: string;
+  presence: AgentPresenceEntry;
+}
+
+export type Participant = HumanParticipant | AgentParticipant;
+
+/**
+ * 1s cadence is a compromise. Awareness-change events fan out on every
+ * server-side `setPresence` / `touchMode` / `clearPresence` — that's the
+ * primary signal. The interval tick exists as a backup so TTL-based
+ * staleness (§13 R2 — silent WS close / clock skew) ages entries out even
+ * when no awareness-change fires. Not user-visible; small enough to catch
+ * a 5s-stale entry within ~1s of its real expiry, big enough to keep the
+ * re-render cost negligible.
+ */
+const TTL_TICK_MS = 1_000;
+
+/**
+ * Process-wide one-shot guard for the shape-guard warning. The hook remounts
+ * on every provider swap, but a shape mismatch comes from the provider
+ * class / Hocuspocus upgrade — it's a static trait of the build, not a
+ * per-mount concern. Warning once per process surfaces the drift without
+ * spamming on every remount.
+ */
+let warnedOnMalformedAwareness = false;
+
+/**
+ * Shallow-compare two Participant arrays across the render-affecting
+ * fields. Intentionally skips `presence.ts` because the timestamp shifts
+ * on every `touchMode` call (mode-flip → same render output) without
+ * changing what the bar looks like. Used to short-circuit the 1 Hz TTL
+ * tick's `setState` when no peer actually changed — React Compiler cannot
+ * elide this because every tick produces a fresh object reference.
+ */
+function participantsEqual(a: Participant[], b: Participant[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.kind !== y.kind) return false;
+    if (x.kind === 'human' && y.kind === 'human') {
+      if (x.clientId !== y.clientId || x.mode !== y.mode) return false;
+      const u = x.user;
+      const v = y.user;
+      if (u.name !== v.name || u.color !== v.color || u.icon !== v.icon) return false;
+    } else if (x.kind === 'agent' && y.kind === 'agent') {
+      if (x.agentId !== y.agentId) return false;
+      const p = x.presence;
+      const q = y.presence;
+      if (
+        p.displayName !== q.displayName ||
+        p.icon !== q.icon ||
+        p.color !== q.color ||
+        p.currentDoc !== q.currentDoc ||
+        p.mode !== q.mode
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Two-source presence reader for the sectioned PresenceBar.
+ *
+ * Humans come from the **per-doc** `activeProvider.awareness` (each human
+ * has their own Y.Doc clientID; cursor positions + name/color live here).
+ * Agents come from the **`__system__`-scoped** `systemProvider.awareness`
+ * map-valued field `agentPresence`, bucketed into `current` (same-doc as
+ * `activeDocName`) vs `crossDoc` (different doc).
+ *
+ * Returns two arrays:
+ *   - `current`: humans + agents whose `currentDoc === activeDocName`
+ *   - `crossDoc`: agents whose `currentDoc !== activeDocName` (and non-null)
+ *
+ * Ordering: humans first in `current` (they're the active user's peers on
+ * this doc), then same-doc agents. Within each group, stable insertion
+ * order (awareness state map iteration order).
+ */
+export function usePresence(
+  activeProvider: HocuspocusProvider | null,
+  systemProvider: HocuspocusProvider | null,
+  activeDocName: string | null,
+): { current: Participant[]; crossDoc: Participant[] } {
+  const [state, setState] = useState<{ current: Participant[]; crossDoc: Participant[] }>({
+    current: [],
+    crossDoc: [],
+  });
 
   useEffect(() => {
-    if (!provider) return;
+    const activeAwareness = activeProvider?.awareness;
+    // Structural guard at the one boundary where the cast happens — the
+    // only place `HocuspocusProvider.awareness`'s y-protocols shape meets
+    // our narrow `AgentPresenceAwareness` contract. If Hocuspocus ever
+    // ships a breaking upgrade or a test passes a mock that doesn't expose
+    // `getStates()`, we log a one-shot warning (`[agent-presence]` matches
+    // SystemDocSubscriber's convention) and read empty instead of crashing
+    // deep in `.getStates().values()` during a render.
+    const rawSystemAwareness: unknown = systemProvider?.awareness;
+    let systemAwareness: AgentPresenceAwareness | undefined;
+    if (rawSystemAwareness === undefined || rawSystemAwareness === null) {
+      systemAwareness = undefined;
+    } else if (hasAgentPresenceShape(rawSystemAwareness)) {
+      systemAwareness = rawSystemAwareness;
+    } else {
+      systemAwareness = undefined;
+      if (!warnedOnMalformedAwareness) {
+        warnedOnMalformedAwareness = true;
+        console.warn(
+          '[agent-presence] __system__ provider awareness missing getStates() — presence bar will render without agent peers',
+        );
+      }
+    }
 
-    const awareness = provider.awareness;
-    if (!awareness) return;
-
-    const handler = () => {
-      const entries = Array.from(awareness.getStates().entries());
-      const result: Participant[] = [];
-      for (const [clientId, state] of entries) {
-        const s = state as Record<string, unknown>;
-        if (s.user && typeof s.user === 'object') {
-          result.push({
+    const compute = (): void => {
+      const humans: HumanParticipant[] = [];
+      if (activeAwareness) {
+        for (const [clientId, rawState] of activeAwareness.getStates().entries()) {
+          const s = rawState as Record<string, unknown>;
+          if (!s.user || typeof s.user !== 'object') continue;
+          const user = s.user as AwarenessUser;
+          // Defensive: AwarenessUser.type is narrowed to 'human' by the type
+          // system but a stale bundled client could still emit 'agent'. Skip
+          // that shape silently — no warning is wired here. SystemDocSubscriber's
+          // per-clientID warn targets the `__system__` awareness surface; this
+          // hook iterates the per-doc provider's awareness, a different surface,
+          // so that warning path does not cover what this branch skips.
+          if (user.type !== 'human') continue;
+          humans.push({
+            kind: 'human',
             clientId,
-            user: s.user as Participant['user'],
-            mode: (s.mode as Participant['mode']) ?? 'wysiwyg',
+            user,
+            mode: (s.mode as HumanParticipant['mode']) ?? 'wysiwyg',
           });
         }
       }
-      setParticipants(result);
+
+      const now = Date.now();
+      const { current: currentAgents, crossDoc: crossDocAgents } = systemAwareness
+        ? pickAgentsForDoc(systemAwareness, activeDocName, now)
+        : { current: [], crossDoc: [] };
+
+      const toParticipant = ({
+        agentId,
+        entry,
+      }: {
+        agentId: string;
+        entry: AgentPresenceEntry;
+      }): AgentParticipant => ({
+        kind: 'agent',
+        agentId,
+        presence: entry,
+      });
+      const currentAgentParticipants: AgentParticipant[] = currentAgents.map(toParticipant);
+      const crossDocAgentParticipants: AgentParticipant[] = crossDocAgents.map(toParticipant);
+
+      const nextCurrent: Participant[] = [...humans, ...currentAgentParticipants];
+      const nextCrossDoc: Participant[] = crossDocAgentParticipants;
+      // Functional updater so the equality check compares against the
+      // LATEST committed state, not a stale closure capture. When both
+      // arrays are participant-equal to what's already rendered, return
+      // prev — React's useState bails out on `Object.is(prev, next)` and
+      // skips the re-render. The 1 Hz TTL tick hits this fast path on
+      // every idle second; only semantic changes (new peer, mode flip,
+      // doc move, TTL expiry) commit state.
+      setState((prev) => {
+        if (
+          participantsEqual(prev.current, nextCurrent) &&
+          participantsEqual(prev.crossDoc, nextCrossDoc)
+        ) {
+          return prev;
+        }
+        return { current: nextCurrent, crossDoc: nextCrossDoc };
+      });
     };
 
-    // Initial read
-    handler();
+    compute();
 
-    awareness.on('change', handler);
+    const handleActive = (): void => compute();
+    const handleSystem = (): void => compute();
+    activeAwareness?.on('change', handleActive);
+    systemProvider?.awareness?.on('change', handleSystem);
+
+    // TTL refresh — see TTL_TICK_MS above for rationale.
+    const interval = setInterval(compute, TTL_TICK_MS);
+
     return () => {
-      awareness.off('change', handler);
+      activeAwareness?.off('change', handleActive);
+      systemProvider?.awareness?.off('change', handleSystem);
+      clearInterval(interval);
     };
-  }, [provider]);
+  }, [activeProvider, systemProvider, activeDocName]);
 
-  return participants;
+  return state;
 }

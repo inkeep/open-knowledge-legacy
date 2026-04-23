@@ -121,6 +121,7 @@ export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
   AgentFocusEntry,
+  AgentPresenceEntry,
   AwarenessState,
   AwarenessUser,
 } from './types/awareness.ts';
@@ -147,6 +148,7 @@ export {
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
+  iconFromClientName,
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,

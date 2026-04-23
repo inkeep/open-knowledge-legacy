@@ -6,6 +6,7 @@ import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core'
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
+import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -119,6 +120,7 @@ export interface ServerInstance {
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
   agentFocusBroadcaster: AgentFocusBroadcaster;
+  agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -150,7 +152,7 @@ export interface ServerInstance {
  * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
  * concurrent observer somehow fires, it short-circuits symmetrically (D39).
  */
-export const PARK_SNAPSHOT_ORIGIN = (() => {
+const PARK_SNAPSHOT_ORIGIN = (() => {
   const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
   return Object.freeze({
     source: 'local' as const,
@@ -199,6 +201,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
   // Mutable principal holder — populated in initAsync (D50, US-024)
   let loadedPrincipal: Principal | null = null;
 
@@ -239,6 +242,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
     agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
+    agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -320,6 +324,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
+      agentPresenceBroadcaster,
       onAgentWrite: options.onAgentWrite,
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
@@ -818,9 +823,15 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
           }
 
-          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          // Phase 1b: tear down CC1 broadcaster + agent-presence broadcaster +
+          // __system__ direct connection. Both broadcasters share the same
+          // `__system__` Y.Doc — their destroys clear internal state (debounce
+          // timers for CC1; idempotent no-op for agent-presence today but
+          // symmetric with the broadcaster-lifecycle contract). The single
+          // systemDocConnection handle is torn down last.
           try {
             cc1Broadcaster?.destroy();
+            agentPresenceBroadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
@@ -1428,6 +1439,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     cc1Broadcaster,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     contentFilter,
     destroy,
     ready,

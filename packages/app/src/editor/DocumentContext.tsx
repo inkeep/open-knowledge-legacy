@@ -93,6 +93,20 @@ interface DocumentContextValue {
   /** Unpin — resume agent nav on the next focus change. */
   unpin: () => void;
   /**
+   * The `__system__` HocuspocusProvider, lifted from `SystemDocSubscriber`
+   * so presence-bar consumers (`usePresence` in US-006) can read agent
+   * presence from `__system__.awareness` without re-materializing a second
+   * provider. `null` while the subscriber is mounting or between collabUrl
+   * resets. Set via `setSystemProvider` — do NOT assign directly.
+   */
+  systemProvider: HocuspocusProvider | null;
+  /**
+   * Provider-registration callback used by `SystemDocSubscriber` to publish
+   * its `__system__` provider (and null on unmount). Single-writer by
+   * convention — only one SystemDocSubscriber should mount at a time.
+   */
+  setSystemProvider: (provider: HocuspocusProvider | null) => void;
+  /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
    * while `server.lock` is absent — consumers that also need the URL
@@ -214,6 +228,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
   const {
     collabUrl,
     terminal: collabTerminal,
@@ -252,6 +267,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         // principal unavailable — pool opens providers with anonymous auth token
       });
 
+    // systemProvider exposure happens in a dedicated effect below because it
+    // depends on `systemProvider` state, not `collabUrl`.
     // Expose pool + test hooks on window for Playwright E2E access. Gated on
     // `import.meta.env.DEV` so production bundles don't ship a sync-promise
     // rejection trigger or a WebSocket close primitive — both useful for E2E,
@@ -305,6 +322,36 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       p.setOnChange(null);
     };
   }, [collabUrl]);
+
+  // DEV-only: expose a pin-setter hook for Playwright E2E — keeps tests
+  // off the private `ok-pin-v1` localStorage key + reload dance, so
+  // storage-key renames or versioning changes don't silently break E2E
+  // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
+  // UX via `pin()` button) + `persistPinToStorage` so post-reload
+  // behavior also matches. See review pass 0 finding #8.
+  //
+  // STOP — empty deps is intentional and must stay empty:
+  //   - `setPinnedDoc` is a stable React state setter (guaranteed by
+  //     React's useState contract).
+  //   - `persistPinToStorage` is module-scope (not a closure over render).
+  //   - Widening the deps would cause this effect to re-register on
+  //     every render, tearing down + re-installing `window.__test_setPin`
+  //     mid-test and racing Playwright's `page.evaluate`.
+  // A biome-ignore pragma would fail lint ("suppression has no effect")
+  // because the current Biome version does not flag this effect — see
+  // review pass 1 finding #2 Declined section in the iteration log.
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (
+      docName: string | null,
+    ) => {
+      setPinnedDoc(docName);
+      persistPinToStorage(docName);
+    };
+    return () => {
+      delete (window as { __test_setPin?: unknown }).__test_setPin;
+    };
+  }, []);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {
@@ -397,6 +444,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setPinnedDoc(null);
       persistPinToStorage(null);
     },
+    systemProvider,
+    setSystemProvider,
     collabUrl,
     collabTerminal,
     collabLastError,

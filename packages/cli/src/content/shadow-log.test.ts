@@ -180,3 +180,64 @@ describe('readShadowLog — upstream and empty cases', () => {
     expect(commits).toEqual([]);
   });
 });
+
+describe('readShadowLog — FR14 summaries carry through (US-007)', () => {
+  // This test fabricates a shadow commit with a hand-written `ok-contributors:`
+  // body line in the new shape (with `summaries`), then asserts that
+  // `readShadowLog` surfaces the summaries on `commits[i].contributors[*]`
+  // WITHOUT any CLI-side code change. The enrichment path flows through the
+  // existing `parseContributors` call at line 120 — once the parser accepts
+  // the field (US-001), exec/read_document see it for free.
+  test('summaries on the body line surface in commit.contributors[*].summaries', async () => {
+    const project = await bootstrapProject();
+    const shadow = await initShadowRepo(project);
+    const contentDir = resolve(project, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const authPath = resolve(contentDir, 'auth.md');
+    writeFileSync(authPath, '# auth v1\n');
+    const writer: WriterIdentity = { id: 'agent-c', name: 'Claude', email: 'c@t.test' };
+    const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
+
+    // Commit message body that mimics what `formatContributorsFrom` emits once
+    // US-002 populates the summaries field.
+    const body = [
+      'WIP auto-save 2026-04-21T00:00:00.000Z',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-c","name":"Claude","colorSeed":"seed","docs":["content/auth"],"summaries":["Fixed token-refresh race","Added unit test"]}',
+    ].join('\n');
+
+    await commitWip(shadow, writer, contentDir, body, branch);
+
+    const { commits } = await readShadowLog(project, 'content/auth.md', 5);
+    expect(commits).toHaveLength(1);
+    expect(commits[0].contributors).toHaveLength(1);
+    expect(commits[0].contributors[0].summaries).toEqual([
+      'Fixed token-refresh race',
+      'Added unit test',
+    ]);
+  });
+
+  test('legacy body without summaries field → contributors[*].summaries is undefined', async () => {
+    const project = await bootstrapProject();
+    const shadow = await initShadowRepo(project);
+    const contentDir = resolve(project, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const authPath = resolve(contentDir, 'auth.md');
+    writeFileSync(authPath, '# v1\n');
+    const writer: WriterIdentity = { id: 'agent-legacy', name: 'Legacy', email: 'l@t.test' };
+    const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
+
+    // Legacy body (no `summaries` key) — identical to what shipped commits contain today.
+    const body = [
+      'WIP auto-save 2026-04-10T00:00:00.000Z',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-legacy","name":"Legacy","colorSeed":"x","docs":["content/auth"]}',
+    ].join('\n');
+
+    await commitWip(shadow, writer, contentDir, body, branch);
+
+    const { commits } = await readShadowLog(project, 'content/auth.md', 5);
+    expect(commits).toHaveLength(1);
+    expect(commits[0].contributors[0].summaries).toBeUndefined();
+  });
+});

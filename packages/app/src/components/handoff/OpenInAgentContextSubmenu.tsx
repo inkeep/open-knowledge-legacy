@@ -57,7 +57,7 @@ export function contextRowHint(
   return null;
 }
 
-export interface OpenInAgentContextSubmenuProps {
+interface OpenInAgentContextSubmenuProps {
   /** Handoff input for the right-clicked node. `null` means the row's dispatch
    *  is not actionable (no workspace metadata yet). Every row still renders
    *  disabled with a "No workspace" hint so the UX doesn't flicker. */

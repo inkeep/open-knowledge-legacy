@@ -464,10 +464,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
   });
 
-  test('F6: error boundary "Back to previous document" navigates to prior doc', async ({
-    page,
-    api,
-  }) => {
+  test('F6: error boundary "Go back" navigates to prior doc', async ({ page, api }) => {
     await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
@@ -490,9 +487,9 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
     await expect(errorAlert).toContainText('Connection dropped');
 
-    // "Back to previous document" is present when previousDocName is set
+    // "Go back" is present when previousDocName is set
     // (it was — doc A was last successfully opened before the error on B).
-    const backButton = errorAlert.getByRole('button', { name: 'Back to previous document' });
+    const backButton = errorAlert.getByRole('button', { name: 'Go back' });
     await expect(backButton).toBeVisible();
     await backButton.click();
 
@@ -1101,11 +1098,11 @@ test.describe('docs-open — WS-interception scenarios', () => {
   });
 
   // ── QA-010: Agent-driven nav via awareness injection ──
-  // Validates that injecting a fake agent-focus awareness state on the
+  // Validates that injecting a fake agent-presence awareness state on the
   // __system__ provider triggers SystemDocSubscriber's nav check and
   // changes the URL hash to the agent's focus doc. No second browser tab
-  // or agent-sim process needed — the __test_injectAgentFocus hook pokes
-  // the __system__ awareness directly from page.evaluate().
+  // or agent-sim process needed — the __test_injectAgentPresence hook
+  // pokes the __system__ awareness directly from page.evaluate().
   test('QA-010: agent focus injection → hash changes to agent focus doc', async ({
     context,
     api,
@@ -1128,13 +1125,15 @@ test.describe('docs-open — WS-interception scenarios', () => {
 
     // Wait for SystemDocSubscriber's __system__ provider to sync.
     // The hook is registered inside the useEffect after sync.
-    await page.waitForFunction(() => typeof window.__test_injectAgentFocus === 'function', null, {
-      timeout: 10_000,
-    });
+    await page.waitForFunction(
+      () => typeof window.__test_injectAgentPresence === 'function',
+      null,
+      { timeout: 10_000 },
+    );
 
-    // Inject fake agent focus on doc-b.
+    // Inject fake agent presence on doc-b.
     const injected = await page.evaluate(() => {
-      return window.__test_injectAgentFocus?.('doc-b') ?? false;
+      return window.__test_injectAgentPresence?.('doc-b') ?? false;
     });
     expect(injected).toBe(true);
 

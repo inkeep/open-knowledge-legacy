@@ -25,8 +25,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  colorFromSeed,
   createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
@@ -46,11 +48,14 @@ import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
+import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
   type AgentSessionManager,
   applyAgentMarkdownWrite,
   applyAgentUndo,
+  iconFromClientName,
 } from './agent-sessions.ts';
+import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -70,6 +75,7 @@ import { readUiLock } from './ui-lock.ts';
 export { extractPageTitle } from './page-identity.ts';
 
 import simpleGit from 'simple-git';
+import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -106,7 +112,12 @@ import {
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { getMetrics } from './metrics.ts';
+import {
+  getMetrics,
+  incrementAgentWriteCalls,
+  incrementSummariesProvided,
+  incrementSummariesTruncated,
+} from './metrics.ts';
 import {
   deleteReconciledBase,
   isWithinContentDir,
@@ -499,11 +510,20 @@ export interface ApiExtensionOptions {
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   /**
-   * Optional. When present, agent write handlers publish the active doc on
-   * `__system__` awareness so clients can push-navigate to follow the agent.
-   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   * Optional. When present, agent write handlers publish per-write attribution
+   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
+   * currentDoc — the signal that drives browser push-navigation to the doc the
+   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
+   * publishes sustained session state.
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. When present, agent write handlers publish presence entries on
+   * `__system__` awareness (`agentPresence` map) so clients can render the
+   * multi-agent presence bar and follow the active agent. Omit to disable
+   * presence broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   /**
    * Optional. Called after every successful agent write (write_document /
    * edit_document). The handler is expected to be cheap and idempotent —
@@ -653,6 +673,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     onAgentWrite,
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
@@ -1121,7 +1142,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
   /**
@@ -1142,7 +1162,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
       rawAgentId = undefined;
     }
-    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
     const agentName =
       typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
@@ -1209,6 +1229,75 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
+  /**
+   * Shape of the `summary` field appended to a handler's success JSON response
+   * when the caller provided a summary (spec FR8). Absent from the response
+   * entirely when the caller did not supply a summary (including empty string,
+   * which is treated as absent per `normalizeSummary`).
+   *
+   * `hint` is nested inside `summary` (not a sibling top-level key) so the
+   * truncation message always travels with the field it explains — this
+   * prevents naming collisions at the response root and tightens the coupling
+   * between `truncatedFrom` and the human-readable explanation.
+   */
+  type SummaryResponse = { value: string; truncatedFrom?: number; hint?: string };
+
+  /**
+   * Pure response-shape derivation from a normalized summary — NO side effects.
+   * Returns the fields the handler appends to its success JSON when the caller
+   * supplied a summary (FR8/FR12). `undefined` return values mean "omit the
+   * corresponding response key entirely."
+   *
+   * The hint is nested inside `response.hint` when truncation fires — callers
+   * that want the top-level text line read the value via `response?.hint`.
+   */
+  function summaryResponseFields(normalized: NormalizedSummary): {
+    response?: SummaryResponse;
+    stored: string | undefined;
+  } {
+    if (normalized.kind !== 'value') return { stored: undefined };
+    if (normalized.truncatedFrom !== undefined) {
+      return {
+        response: {
+          value: normalized.value,
+          truncatedFrom: normalized.truncatedFrom,
+          hint: `Summary truncated from ${normalized.truncatedFrom} chars to 80 (max 80).`,
+        },
+        stored: normalized.value,
+      };
+    }
+    return { response: { value: normalized.value }, stored: normalized.value };
+  }
+
+  /**
+   * Strip truncation-specific fields from a `SummaryResponse`. Used by the
+   * rename / rollback default-substitution path: when the server generates a
+   * default like "Renamed X → Y" and that default itself overflows the cap,
+   * the agent did not submit the long string — so `truncatedFrom` and the
+   * "Summary truncated from ..." hint would misattribute blame to the caller.
+   * The stored value is still the truncated form (so the timeline bullet fits),
+   * but the diagnostic metadata is silenced in the response.
+   */
+  function stripDefaultPathTruncation(response: SummaryResponse): SummaryResponse {
+    return { value: response.value };
+  }
+
+  /**
+   * Fire the M1/M2 counters for a summary that is about to be persisted.
+   * Call AFTER the contribution is guaranteed to land (i.e. not on 404/409
+   * early-returns) so adoption rate reflects successful writes.
+   *
+   * `fromDefault` suppresses the `summariesTruncated` increment when the
+   * truncation came from a server-generated default (rename / rollback default
+   * substitution). The agent had no control over those strings, so counting
+   * them toward M2 would muddy the "agent behavior" signal per spec §7 M2.
+   */
+  function countNormalizedSummary(normalized: NormalizedSummary, fromDefault = false): void {
+    if (normalized.kind !== 'value') return;
+    incrementSummariesProvided();
+    if (normalized.truncatedFrom !== undefined && !fromDefault) incrementSummariesTruncated();
+  }
+
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -1245,6 +1334,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body);
+      const normalizedSummary = normalizeSummary(body.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1253,9 +1347,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1277,14 +1386,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
         );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
+      onAgentWrite?.();
 
-      json(res, 200, { ok: true, timestamp });
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1341,6 +1458,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
       const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1348,8 +1472,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1371,16 +1508,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           colorSeed,
           undefined,
           buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
         );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus on __system__ awareness so browser clients can
-      // push-navigate to the doc just written. Uses per-write agentId from
-      // attribution (PR #134).
+      // Focus (attribution) on __system__ awareness. Focus drives browser
+      // push-navigation to the doc the agent just wrote (writeKind); presence
+      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -1401,6 +1541,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         timestamp,
         subscriberCount,
         ...(hints ? { hints } : {}),
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
@@ -1854,6 +1995,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -1863,8 +2009,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
@@ -1920,7 +2079,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget)
+        if (!notFound && !staleTarget) {
+          // Only count + record when the patch actually applied. The M1
+          // denominator excludes 404/409 so adoption rate reflects successful
+          // writes, not total attempts.
+          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
             agentId,
@@ -1928,9 +2091,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             colorSeed,
             undefined,
             buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
           );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        }
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (staleTarget) {
@@ -1947,6 +2114,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
+      // Focus (attribution) on __system__ awareness. Presence is separately
+      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -1957,7 +2126,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const subscriberCount = getSubscriberCount(docName);
 
-      json(res, 200, { ok: true, timestamp, subscriberCount });
+      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -2000,7 +2176,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // FR-5, D42: extract identity from body so shadow-repo attribution threads through
       // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
       // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      const { agentName, colorSeed, clientName, clientVersion, label } = extractAgentIdentity(body);
+      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
+      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
 
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
@@ -2030,9 +2209,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const session = await sessionManager.getSession(docName, connectionId);
 
-      session.dc.document.awareness.setLocalStateField('mode', 'editing');
+      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+      // instead of the per-doc awareness — the per-doc awareness has ONE
+      // shared clientID across N concurrent agents and would stomp. The
+      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
+      // so the keepalive-WS close handler's cleanup path finds the entry.
+      //
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and the undo
+      // transact flips the badge back to idle rather than wedging it on 'writing'.
       let undone = false;
       try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
@@ -2051,7 +2248,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
         }
       } finally {
-        session.dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (undone) {
@@ -2641,6 +2838,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
+    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
+    // defaults would attribute every human Restore to Claude. Only when the
+    // caller explicitly sends `agentId` do we attribute + record a summary.
+    //
+    // Validation runs unconditionally (independent of `hasAgentId`) so a
+    // malformed `summary: 42` returns 400 even when identity is absent — this
+    // surfaces MCP-client identity-passthrough regressions loudly instead of
+    // silently dropping the summary on the floor. The attribution semantics
+    // (D22) are unchanged: `recordContributor` still only fires when
+    // `hasAgentId` is true.
+    const bodyObj = body as Record<string, unknown>;
+    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+    const normalizedSummary = normalizeSummary(bodyObj.summary);
+    if (normalizedSummary.kind === 'invalid') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
+
     const resolvedContentRoot = contentRoot ?? 'content';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
@@ -2701,27 +2917,66 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
-      recordContributor(
-        docName,
-        rollbackAgentId,
-        rollbackAgentName,
-        rollbackColorSeed,
-        formatRollbackSubject(docName, commitSha),
-        buildAgentActor({
-          clientName: rollbackClientName,
-          clientVersion: rollbackClientVersion,
-          label: rollbackLabel,
-        }),
-      );
-      setReconciledBase(docName, markdown);
+      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
+      // here. Setting the base before `onStoreDocument` has fired would trip the
+      // "skip write when serialized === currentBase" guard at
+      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
+      // — which also skips the following `scheduleGitCommit()`, orphaning any
+      // `recordContributor(...)` entry we add below into the next unrelated
+      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
+      // Letting `onStoreDocument` fire naturally writes disk AND updates the
+      // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // Force-flush L2 git commit so the restored version appears in the
-      // timeline immediately, rather than waiting for the 30s debounce.
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          console.warn('[rollback] flush git commit failed:', e);
-        });
+      // D22 LOCKED: attribute + record summary ONLY when caller supplied
+      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
+      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
+      // applies when agent-supplied summary was absent; the default goes through
+      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
+      //
+      // When the default is used and it happens to truncate (rare for rollback
+      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
+      // path symmetric with `handleRename` where defaults frequently overflow
+      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
+      // the response: the agent never submitted the long string, so the
+      // "Summary truncated from N chars to 80" message would misattribute
+      // blame to the caller. `summariesTruncated` is also suppressed for
+      // server-generated defaults so the M2 metric reflects agent behavior.
+      let summaryResponse: SummaryResponse | undefined;
+      if (hasAgentId) {
+        const shaShort = commitSha.slice(0, 8);
+        const agentProvidedSummary = normalizedSummary.kind === 'value';
+        const effectiveNormalized = agentProvidedSummary
+          ? normalizedSummary
+          : normalizeSummary(`Restored to ${shaShort}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse =
+          agentProvidedSummary || !fields.response
+            ? fields.response
+            : stripDefaultPathTruncation(fields.response);
+        recordContributor(
+          docName,
+          rollbackAgentId,
+          rollbackAgentName,
+          rollbackColorSeed,
+          formatRollbackSubject(docName, commitSha),
+          buildAgentActor({
+            clientName: rollbackClientName,
+            clientVersion: rollbackClientVersion,
+            label: rollbackLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
       }
+
+      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
+      // restored version + attribution appear in the timeline within ~100ms
+      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
+      // the shared `flushDocToGit` helper (same pattern as the three
+      // agent-write handlers) rather than a raw `flushGitCommit()` which
+      // no-ops when no L2 timer is set yet.
+      flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
       console.log(
@@ -2744,14 +2999,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-        agentName: rollbackAgentName,
-        currentDoc: docName,
-        writeKind: 'rollback-apply',
-        ts: Date.now(),
-      });
+      // D22: only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (no agentId) must not
+      // trigger a cross-client push-nav as if Claude-1 did the rollback.
+      if (hasAgentId) {
+        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
+          agentName: rollbackAgentName,
+          currentDoc: docName,
+          writeKind: 'rollback-apply',
+          ts: Date.now(),
+        });
+      }
 
-      json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
+      json(res, 200, {
+        ok: true,
+        restoredFrom: commitSha,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rollback]', e);
       const message = e instanceof Error ? e.message : String(e);
@@ -2795,6 +3060,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, principal);
+  }
+
+  async function handleMetricsAgentPresence(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + Host-header gate — matches /api/workspace. The presence map
+    // exposes per-agent identity (`displayName` — operator-configured AGENT
+    // label) and the workspace-relative path each agent is currently writing
+    // to (`currentDoc`). Those are local-editing-only signals; if a user
+    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
+    // LAN peers MUST NOT be able to read the map. Authorization runs before
+    // method dispatch so a bad Host never leaks "verb the endpoint expects"
+    // via 405 (same pattern + rationale as handleWorkspace — see its
+    // comment block for the ASVS / DNS-rebinding background).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // Pre-filter stale entries using the same threshold the broadcaster
+    // uses for opportunistic eviction (runs inside setPresence). Eviction
+    // is write-triggered — if the last agent disconnects without the
+    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+    // agent writes after, the raw map keeps the zombie entry. Clients
+    // already filter with their own 5s TTL so this is invisible to the
+    // bar, but `/api/metrics/agent-presence` would otherwise lie to
+    // operators. Filtering here matches what a "live" read returns
+    // without paying for a sparse timer.
+    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    const now = Date.now();
+    const presence: typeof rawPresence = {};
+    for (const [agentId, entry] of Object.entries(rawPresence)) {
+      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+        presence[agentId] = entry;
+      }
+    }
+    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -3227,6 +3538,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      // D22 LOCKED 1-way door: only attribute when the caller explicitly
+      // supplies agentId. Any future UI-driven rename (no agentId) stays
+      // anonymous as today — even though the rename handler has no existing
+      // UI call site, adding the guard up front keeps the pattern uniform
+      // with `handleRollback` and prevents `extractAgentIdentity` defaults
+      // from silently attributing future UI paths to Claude.
+      //
+      // Validation runs unconditionally (independent of `hasAgentId`) so a
+      // malformed `summary: 42` returns 400 even when identity is absent —
+      // this surfaces MCP-client identity-passthrough regressions loudly
+      // instead of silently dropping the summary on the floor. The
+      // attribution semantics (D22) are unchanged.
+      const bodyObj = body as Record<string, unknown>;
+      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+      const normalizedSummary = normalizeSummary(bodyObj.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
       if (!existsSync(sourcePath)) {
@@ -3239,19 +3570,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
-      recordContributor(
-        docName as string,
-        renameAgentId,
-        renameAgentName,
-        renameColorSeed,
-        formatRenameSubject(docName as string, newDocName as string),
-        buildAgentActor({
-          clientName: renameClientName,
-          clientVersion: renameClientVersion,
-          label: renameLabel,
-        }),
-      );
-      json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
+
+      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
+      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
+      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
+      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
+      // avoid "Claude renamed X → Y" noise on every inbound doc.
+      //
+      // When the default "Renamed X → Y" template overflows the 80-char cap
+      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
+      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
+      // response: the agent never submitted the long string, so the
+      // "Summary truncated from N chars to 80" hint would misattribute blame
+      // to the caller. `summariesTruncated` is also suppressed for
+      // server-generated defaults so the M2 metric reflects agent behavior,
+      // not server-template width.
+      let summaryResponse: SummaryResponse | undefined;
+      if (hasAgentId) {
+        const agentProvidedSummary = normalizedSummary.kind === 'value';
+        const effectiveNormalized = agentProvidedSummary
+          ? normalizedSummary
+          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse =
+          agentProvidedSummary || !fields.response
+            ? fields.response
+            : stripDefaultPathTruncation(fields.response);
+        recordContributor(
+          newDocName as string,
+          renameAgentId,
+          renameAgentName,
+          renameColorSeed,
+          formatRenameSubject(docName as string, newDocName as string),
+          buildAgentActor({
+            clientName: renameClientName,
+            clientVersion: renameClientVersion,
+            label: renameLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
+        // pendingContributors entry into its own L2 shadow commit. Parallels
+        // the `flushDocToGit(...)` call in `handleRollback` above; uses
+        // `flushDocToGit(newDocName, ...)` because the source doc may no
+        // longer be open after `_performManagedRename` closed it.
+        flushDocToGit(newDocName as string, 'rename');
+      }
+
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rename]', e);
       json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
@@ -4820,6 +5193,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/metrics/agent-presence': handleMetricsAgentPresence,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,

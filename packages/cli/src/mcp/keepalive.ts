@@ -55,9 +55,11 @@ interface KeepaliveOptions {
    */
   resolveWsUrl: () => Promise<string | undefined>;
   /**
-   * D27 — connectionId to include in the keepalive URL query so the server
-   * can correlate this WS with agent sessions and clean them up on close.
-   * Typically a UUID generated once per MCP subprocess lifetime.
+   * Stable per-MCP-process identity (D27 / multi-agent-presence SPEC §6.4 D13).
+   * Included in the keepalive URL query so the server can (a) correlate this
+   * WS with the agent's DirectConnection sessions and (b) deterministically
+   * clear the agent's presence entry on WS close. Typically a UUID generated
+   * once per MCP subprocess lifetime.
    */
   connectionId?: string;
   /**

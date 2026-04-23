@@ -48,6 +48,13 @@ export interface ContributorEntry {
    * Last non-undefined value wins within a drain cycle.
    */
   actor?: ActorMetadata;
+  /**
+   * Flat array of agent-provided summaries, oldest first. Populated by the
+   * optional 7th arg of `recordContributor`. Emitted on the `ok-contributors:`
+   * line only when non-empty (spec D23 / FR4) — legacy byte-identity is
+   * preserved for summary-less writes.
+   */
+  summaries: string[];
 }
 
 /** Module-level accumulator — shared between api-extension and persistence. */
@@ -64,6 +71,10 @@ let pendingContributors = new Map<string, ContributorEntry>();
  * @param actor - Optional actor-tuple metadata (FR-8). Populated for agent/principal
  *   writers by the api-extension.ts boundary; left undefined for classified writers.
  *   Last non-undefined values (per field) win within a drain cycle.
+ * @param summary - Optional per-tool-call change-note (agent-write-summaries FR-4).
+ *   Appended to the writer's `summaries[]` in call order. Empty / non-string values
+ *   are dropped here (the `normalizeSummary` helper at the API boundary is the
+ *   single truncation point per D24; this function is the ingress-idempotent guard).
  */
 export function recordContributor(
   docName: string,
@@ -72,6 +83,7 @@ export function recordContributor(
   colorSeed?: string,
   subjectOverride?: string,
   actor?: ActorMetadata,
+  summary?: string,
 ): void {
   let entry = pendingContributors.get(writerId);
   if (!entry) {
@@ -82,6 +94,7 @@ export function recordContributor(
       docs: new Set(),
       subjectOverride,
       actor,
+      summaries: [],
     };
     pendingContributors.set(writerId, entry);
   }
@@ -100,6 +113,9 @@ export function recordContributor(
     if (actor.clientVersion !== undefined) merged.clientVersion = actor.clientVersion;
     if (actor.label !== undefined) merged.label = actor.label;
     entry.actor = merged;
+  }
+  if (typeof summary === 'string' && summary.length > 0) {
+    entry.summaries.push(summary);
   }
 }
 
@@ -130,10 +146,18 @@ export function restoreContributors(snapshot: Map<string, ContributorEntry>): vo
         colorSeed: entry.colorSeed,
         docs: new Set(),
         actor: entry.actor,
+        summaries: [],
       };
       pendingContributors.set(writerId, live);
     }
     for (const doc of entry.docs) live.docs.add(doc);
+    // Preserve snapshot summaries in front of any live arrivals so the
+    // final order is snapshot-first (the historically earlier batch) then
+    // live (anything that arrived during the failed commit). No dedup:
+    // an agent may legitimately log the same summary twice.
+    if (entry.summaries.length > 0) {
+      live.summaries = [...entry.summaries, ...live.summaries];
+    }
   }
 }
 
@@ -147,15 +171,22 @@ export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>):
   if (snapshot.size === 0) return '';
   const lines: string[] = [''];
   for (const entry of snapshot.values()) {
-    lines.push(
-      `ok-contributors: ${JSON.stringify({
-        v: 1,
-        id: entry.writerId,
-        name: entry.displayName,
-        colorSeed: entry.colorSeed,
-        docs: [...entry.docs],
-      })}`,
-    );
+    const payload: {
+      v: 1;
+      id: string;
+      name: string;
+      colorSeed: string;
+      docs: string[];
+      summaries?: string[];
+    } = {
+      v: 1,
+      id: entry.writerId,
+      name: entry.displayName,
+      colorSeed: entry.colorSeed,
+      docs: [...entry.docs],
+    };
+    if (entry.summaries.length > 0) payload.summaries = [...entry.summaries];
+    lines.push(`ok-contributors: ${JSON.stringify(payload)}`);
   }
   return lines.join('\n');
 }
@@ -182,10 +213,14 @@ export function restoreContributorEntry(writerId: string, entry: ContributorEntr
       colorSeed: entry.colorSeed,
       docs: new Set(),
       actor: entry.actor,
+      summaries: [],
     };
     pendingContributors.set(writerId, live);
   }
   for (const doc of entry.docs) live.docs.add(doc);
+  if (entry.summaries.length > 0) {
+    live.summaries = [...entry.summaries, ...live.summaries];
+  }
 }
 
 /**
