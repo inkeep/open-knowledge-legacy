@@ -33,6 +33,7 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
@@ -52,6 +53,26 @@ export interface MenuDeps {
   clearRecentProjects(): void;
   /** Open an external URL (Help menu). Injected so the `shell` runtime value doesn't cross the module boundary. */
   openExternalUrl(url: string): void;
+  /**
+   * Current CLI-on-PATH install status (M6a, D52). Returning `null` hides
+   * the File → Install/Uninstall Command-Line Tools menu item entirely —
+   * used for non-darwin platforms (NG4 defers Windows/Linux) and for unit
+   * tests that don't exercise the M6a feature.
+   *
+   * A function (not a value) so re-calling `installApplicationMenu` after a
+   * toggle re-reads `getInstallStatus(app.getPath('exe'))` afresh without
+   * needing to thread a state snapshot through the click handler — same
+   * shape as `getRecentProjects`.
+   */
+  cliInstallStatus?(): CliInstallStatus | null;
+  /**
+   * Run the install-or-uninstall flow for the Command-Line Tools menu item.
+   * Wired in `index.ts` to dispatch `installCli` / `uninstallCli` based on
+   * the current status, then call `refreshApplicationMenu()` — same
+   * side-effect pattern as `clearRecentProjects`. Rejection semantics live
+   * in the CLI-install layer (translocation warning, admin-cancel fallback).
+   */
+  toggleCliInstall?(): Promise<void> | void;
 }
 
 /**
@@ -69,6 +90,13 @@ export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
 export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] {
   const isMac = process.platform === 'darwin';
   const recents = deps.getRecentProjects();
+  // D52 / M6a menu item — shown only on darwin and only when the runtime
+  // provides a status probe. `'installed'` flips the label to "Uninstall…";
+  // `'not-installed'` and `'broken'` both render "Install…" (broken is
+  // primarily surfaced by the launch-time repair dialog in `index.ts`, but
+  // clicking the menu item while broken re-runs the install flow which
+  // overwrites the dangling symlink — same end state).
+  const cliStatus = isMac ? (deps.cliInstallStatus?.() ?? null) : null;
 
   const recentSubmenu: MenuItemConstructorOptions[] =
     recents.length === 0
@@ -135,6 +163,20 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           submenu: recentSubmenu,
         },
         { type: 'separator' },
+        ...(cliStatus
+          ? ([
+              {
+                label:
+                  cliStatus === 'installed'
+                    ? 'Uninstall Command-Line Tools'
+                    : 'Install Command-Line Tools…',
+                click: () => {
+                  void deps.toggleCliInstall?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },

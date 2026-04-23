@@ -41,6 +41,7 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import { getInstallStatus, installCli, uninstallCli } from './cli-install.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
@@ -384,9 +385,73 @@ function refreshApplicationMenu() {
     openExternalUrl: (url: string) => {
       void shell.openExternal(url);
     },
+    // M6a (D52) CLI-on-PATH menu item. Probe returns `null` on non-darwin so
+    // the menu item is hidden; otherwise returns 'installed' / 'not-installed'
+    // / 'broken' per `getInstallStatus`. The exe path probed is `app.getPath('exe')`
+    // which in dev mode is the electron binary, not a packaged bundle — `wrapperPathInBundle`
+    // returns a path that doesn't exist, so `getInstallStatus` reports 'not-installed'
+    // and clicking the menu item fires the "wrapper-missing" dialog (AC1.3 self-protective).
+    cliInstallStatus: () =>
+      process.platform === 'darwin' ? getInstallStatus(app.getPath('exe')) : null,
+    // Toggle dispatches the install / uninstall flow then rebuilds the menu
+    // so the label flip takes effect. Mirrors the `clearRecentProjects`
+    // pattern at line 376: the deps function owns its own follow-up refresh.
+    toggleCliInstall: async () => {
+      const executablePath = app.getPath('exe');
+      const status = getInstallStatus(executablePath);
+      const deps = { executablePath, dialog };
+      try {
+        if (status === 'installed') {
+          await uninstallCli(deps);
+        } else {
+          await installCli(deps);
+        }
+      } catch (err) {
+        // installCli/uninstallCli handle their own admin-cancel + failure
+        // dialogs internally (see cli-install.ts); any uncaught throw here
+        // is a programmer error (bad deps / unexpected fs state) that
+        // should surface to operations rather than crash the menu.
+        console.error('[main] toggleCliInstall failed', {
+          err: (err as Error).message,
+        });
+      }
+      refreshApplicationMenu();
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
+}
+
+/**
+ * One-time-per-session launch-time broken-symlink repair prompt (G5 / AC1.6).
+ *
+ * Fires when `getInstallStatus` reports 'broken' — the drag-to-Trash-then-
+ * reinstall case where `/usr/local/bin/ok` points at a bundle path that no
+ * longer exists, OR a foreign file stomped our symlink after install. Dev
+ * mode is gated out because `app.getPath('exe')` in dev resolves to the
+ * electron binary (not a packaged bundle), so a symlink from a prior DMG
+ * install would always classify as 'broken' relative to the dev exe —
+ * triggering the repair in dev would install a dev-path symlink into the
+ * user's system (STOP_IF (e) analogue for M6a).
+ */
+async function maybeOfferBrokenSymlinkRepair(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (!app.isPackaged) return;
+  const executablePath = app.getPath('exe');
+  if (getInstallStatus(executablePath) !== 'broken') return;
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    message: 'Command-Line Tools are broken — repair?',
+    detail:
+      "The Command-Line Tools for Open Knowledge point at a path that's no longer valid. This happens if the app was moved or reinstalled from a new DMG. Repair to re-link them at this bundle, or skip to dismiss.",
+    buttons: ['Skip', 'Repair'],
+    cancelId: 0,
+    defaultId: 1,
+  });
+  if (response === 1) {
+    await installCli({ executablePath, dialog });
+    refreshApplicationMenu();
+  }
 }
 
 function registerIpcHandlers() {
@@ -699,6 +764,17 @@ function bootPrimaryInstance(): void {
     registerIpcHandlers();
     refreshApplicationMenu();
     installDockIcon();
+
+    // M6a launch-time repair hook (G5 / AC1.6). Fires once per boot; dev-
+    // mode + non-darwin short-circuit inside `maybeOfferBrokenSymlinkRepair`.
+    // Dispatched fire-and-forget so a pending dialog doesn't hold up window
+    // open — the dialog is parentless and can stack over the Navigator or
+    // editor window that opens a few lines below.
+    void maybeOfferBrokenSymlinkRepair().catch((err) => {
+      console.error('[main] broken-symlink repair prompt failed', {
+        err: (err as Error).message,
+      });
+    });
 
     // D3 revised: every project open spawns a NEW editor window. App boot
     // restores the last-opened project (if any) into a fresh editor window OR

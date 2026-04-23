@@ -39,8 +39,9 @@ import type { Dialog } from 'electron';
  */
 export const SYMLINK_PATHS = ['/usr/local/bin/ok', '/usr/local/bin/open-knowledge'] as const;
 
-/** Classifier result for `getInstallStatus`. */
-type CliInstallStatus = 'installed' | 'not-installed' | 'broken';
+/** Classifier result for `getInstallStatus`. Exported so `menu.ts` can type
+ *  the `cliInstallStatus` dependency it consumes from the runtime wiring. */
+export type CliInstallStatus = 'installed' | 'not-installed' | 'broken';
 
 /**
  * Minimal `fs` surface the classifier needs. Tests inject a mock; runtime
