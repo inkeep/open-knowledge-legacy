@@ -396,6 +396,7 @@ Audit pass by `/audit` + challenger subprocesses surfaced 11 + 7 findings. Mecha
 - **Opt-out env var for Playwright shadow** — if a future Playwright test genuinely needs shadow off, add `OK_TEST_SKIP_SHADOW=1` env. YAGNI today.
 - **Shadow repo GC under short-lived workers** — `gcShadowBranches()` is a nightly-ish concept; Playwright workers live seconds. Not a concern today; flag if a test ever needs GC assertions.
 - **Multi-tier test for writer-lock contention** — one test that spawns N concurrent agents hitting the same doc and asserts N distinct `refs/wip/<branch>/agent-*` refs. Worth adding to FR8's smoke set if T1 alone doesn't feel like enough proof; defer to iterate post-ship.
+- **Per-server-instance contributor-tracker** (replaces module-state `swap`/`clear`) — would make `test.concurrent()` + `withShadow: true` safe by eliminating the shared `pendingContributors` Map currently at module scope in `packages/server/src/contributor-tracker.ts`. The current constraint (serial execution per file, enforced by the STOP rule in `test-harness.ts:124-133`) is the convention-only enforcement until this lands. Natural convergence seam for the `dev-plugin ↔ createServer()` unification above — the unification wraps `createServer` at a single call site, which is the right place to hang per-instance tracker ownership. Also unblocks migrating the remaining `clearContributors` consumer at `packages/app/tests/integration/session-cleanup.test.ts:144`.
 
 ## 16) Agent constraints
 

@@ -72,9 +72,13 @@ describe('shadow harness — history read round-trip acceptance', () => {
       expect(writtenSha).toMatch(/^[0-9a-f]{40}$/);
 
       // Now read via /api/history and assert the commit appears. This is
-      // the regression guard: under the sealed L245 leak (pre-D12) the
-      // read path could silently read from a different branch's ref
-      // namespace and return empty.
+      // the consistency guard for the harness's createServer topology —
+      // both the write path (persistence L2 commit) and the /api/history
+      // read path must use the same `getCurrentBranch` source. The L267
+      // (post-D12) dev-plugin leak class is guarded by T2's
+      // `ok/v<N>`-tag-lands-in-tmpdir assertion + the `AGENTS.md` STOP
+      // rule on new `projectRoot` consumers, not here (see the Scope
+      // note in this file's header).
       const historyRes = await fetch(
         `http://localhost:${server.port}/api/history?docName=${encodeURIComponent(docName)}`,
       );

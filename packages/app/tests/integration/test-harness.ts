@@ -128,9 +128,10 @@ export interface CreateTestServerOptions {
    * execution per file is the durable design contract for any test that
    * opts into shadow; do not relax this by adding locking or a flag. If a
    * future refactor wants concurrent-safe shadow tests, it would need to
-   * move contributor-tracker state to per-server-instance ownership, which
-   * is noted in SPEC §15 Future Work as a convergence seam for PR #270's
-   * dev-plugin / createServer unification.
+   * move contributor-tracker state to per-server-instance ownership — noted
+   * in SPEC 2026-04-22-per-worker-shadow-repo-test-harness §15 Future Work
+   * (Noted) as a convergence seam for the `dev-plugin ↔ createServer()`
+   * unification (Identified in the same section; owner: Andrew).
    */
   withShadow?: boolean;
 }
