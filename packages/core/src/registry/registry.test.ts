@@ -3,12 +3,13 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the partial 5-pack (4 registered + wildcard) after US-007 adds Video', () => {
+  test('returns the complete 5-pack (5 registered + wildcard) after US-009 adds Accordion', () => {
     // US-003 cut 14 fumadocs descriptors; US-005/US-006 widened Callout/Image;
-    // US-007 adds Video. Accordion lands in US-009 to complete the 5-pack.
+    // US-007 added Video; US-008 widened Audio + flipped hasChildren;
+    // US-009 adds Accordion — 5-pack foundation complete.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(5);
+    expect(entries.length).toBe(6);
   });
 
   test('get returns registered component by name', () => {
@@ -73,6 +74,7 @@ describe('createRegistry', () => {
     expect(registry.has('Image')).toBe(true);
     expect(registry.has('Video')).toBe(true);
     expect(registry.has('Audio')).toBe(true);
+    expect(registry.has('Accordion')).toBe(true);
     expect(registry.has('*')).toBe(true);
     // Cut-in-US-003 descriptors (Steps, Cards, Tabs, etc.) are no longer registered —
     // user content using those names falls through to wildcard via `getOrWildcard`.
@@ -82,8 +84,8 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains exactly 4 entries (partial 5-pack — Accordion in US-009)', () => {
-    expect(builtInComponents.length).toBe(4);
+  test('contains exactly 5 entries (complete 5-pack foundation after US-009)', () => {
+    expect(builtInComponents.length).toBe(5);
   });
 
   test('all entries have required fields', () => {
@@ -307,6 +309,69 @@ describe('builtInComponents manifest', () => {
     const audio = builtInComponents.find((m) => m.name === 'Audio');
     const controls = audio?.props.find((p) => p.name === 'controls');
     expect(controls).toBeUndefined();
+  });
+
+  test('Accordion exposes the 6-prop FR-5 surface', () => {
+    // US-009 adds Accordion with the FR-5 6-prop shape — standalone per
+    // D-MF14/D-MF16 (no `variant`; renamed from Toggle). Order-insensitive.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    expect(accordion).toBeDefined();
+    if (!accordion) return;
+    const propNames = accordion.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['title', 'defaultOpen', 'icon', 'description', 'id', 'name'].sort());
+  });
+
+  test('Accordion has `title` as a required string', () => {
+    // `title` is the only required prop — ensures a freshly-inserted Accordion
+    // always has a visible affordance in the summary.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    const title = accordion?.props.find((p) => p.name === 'title');
+    expect(title).toBeDefined();
+    expect(title?.type).toBe('string');
+    expect(title?.required).toBe(true);
+  });
+
+  test('Accordion has `defaultOpen` as a boolean with `false` default', () => {
+    // Defaults to closed so slash-menu insertions don't immediately dominate
+    // page layout. Authors flip true for sections they want expanded up front.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    const defaultOpen = accordion?.props.find((p) => p.name === 'defaultOpen');
+    expect(defaultOpen).toBeDefined();
+    if (defaultOpen?.type === 'boolean') {
+      expect(defaultOpen.defaultValue).toBe(false);
+    } else {
+      throw new Error('Accordion.defaultOpen must be a boolean');
+    }
+  });
+
+  test('Accordion has `hasChildren: true` and no `isSelfClosing` (FR-5)', () => {
+    // Per FR-5: Accordion body is a content hole — the descriptor MUST
+    // declare hasChildren: true so the NodeView mounts a NodeViewContent
+    // slot. Flipping to self-closing would strip the body on re-serialize.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    expect(accordion?.hasChildren).toBe(true);
+    expect(accordion?.isSelfClosing).toBeUndefined();
+  });
+
+  test('Accordion has no `variant` prop (D-MF14 — NG30 preserves Notion color-map path)', () => {
+    // D-MF14: the research-recommended 7-prop descriptor included a `variant`
+    // enum absorbing Notion's color map (default/gray/brown/_background) —
+    // those come from the de-prioritized Notion audience. Dropping now (when
+    // nothing consumes it) avoids permanent lock-in under precedent #9; NG30
+    // preserves the Notion color-map absorption path. Schema-add-only makes
+    // extension free later.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    const variant = accordion?.props.find((p) => p.name === 'variant');
+    expect(variant).toBeUndefined();
+  });
+
+  test('Accordion has no `emptyChildName` (D-MF16 — ships standalone, not compound)', () => {
+    // D-MF16: Accordion ships standalone, not as a compound parent. The
+    // foundation does NOT require an `<Accordions>` parent wrapper —
+    // diverges from Fumadocs's Radix-requires-parent pattern. NG19 revives
+    // the compound tier for grouped-UX demand; standalone stays first.
+    const accordion = builtInComponents.find((m) => m.name === 'Accordion');
+    expect(accordion?.emptyChildName).toBeUndefined();
   });
 
   test('each name is unique', () => {

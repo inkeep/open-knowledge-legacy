@@ -1,16 +1,19 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * Transitional state (US-003/US-005/US-006/US-007/US-008 shipped, US-009 in flight):
- * the registry manifest is the 5-pack foundation (Callout + Image + Video +
- * Audio registered today; Accordion in US-009). Callout is a DIY renderer
- * (US-005, 7-prop GFM shape at `./Callout`). Image is a DIY renderer wrapping
+ * Final 5-pack state (US-003/US-005/US-006/US-007/US-008/US-009 shipped):
+ * the registry manifest is the complete 5-pack foundation (Callout + Image +
+ * Video + Audio + Accordion registered). Callout is a DIY renderer (US-005,
+ * 7-prop GFM shape at `./Callout`). Image is a DIY renderer wrapping
  * `react-medium-image-zoom` (US-006, 8-prop shape at `./Image`). Video is a
  * DIY pure HTML5 `<video>` wrapper (US-007, 9-prop shape at `./Video` per
  * D-MF12 — no URL sniffing, no iframe emission). Audio is a DIY pure HTML5
  * `<audio>` wrapper (US-008, 7-prop shape at `./Audio` — extracted from the
  * pre-US-008 inline function; widened per FR-4; `hasChildren: true` for
- * `<source>` / `<track>` passthrough).
+ * `<source>` / `<track>` passthrough). Accordion is a DIY standalone HTML5
+ * `<details>`/`<summary>` wrapper (US-009, 6-prop shape at `./Accordion` per
+ * D-MF14/D-MF16 — no `variant`, no `<Accordions>` parent wrapper;
+ * cross-browser exclusive grouping via HTML5 `<details name>`).
  *
  * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
  * US-002 along with the Context Bridge Registry (precedent #27 / PRECEDENTS.md
@@ -18,7 +21,7 @@
  * future compound-tier revival per NG19).
  *
  * Descriptor names no longer in `componentMap` — Banner, Card, Cards, Step,
- * Steps, Tab, Tabs, Accordion (fumadocs shape), Accordions, File, Files,
+ * Steps, Tab, Tabs, Accordions (fumadocs compound parent), File, Files,
  * Folder, TypeTable, InlineTOC — fall through to the `'*'` wildcard per
  * `registry/index.ts:getDescriptor`. Per-Precedent #28 the children of those
  * unregistered components stay editable (wildcard `hasChildren: true`).
@@ -27,6 +30,7 @@
  *
  * '*' maps to UnregisteredBadgeRender for the wildcard fallback.
  */
+import { Accordion } from './Accordion.tsx';
 import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
 import { Image } from './Image.tsx';
@@ -42,5 +46,6 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   Image,
   Video,
   Audio,
+  Accordion,
   '*': UnregisteredBadgeRender,
 };

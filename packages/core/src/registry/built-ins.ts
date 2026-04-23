@@ -1,10 +1,10 @@
 /**
- * Built-ins manifest — 5-pack foundation (Callout + Image + Video + Audio
- * slotted here, Accordion in US-009).
+ * Built-ins manifest — 5-pack foundation (Callout + Image + Video + Audio +
+ * Accordion).
  *
- * Scope contract for this file after US-003 (`specs/2026-04-23-cb-v2-md-foundation/`):
- * four registered descriptors after US-008 (+ wildcard `'*'` injected by the
- * registry factory); Accordion in US-009 brings the count to 5 + wildcard.
+ * Scope contract for this file after US-009 (`specs/2026-04-23-cb-v2-md-foundation/`):
+ * five registered descriptors (+ wildcard `'*'` injected by the registry
+ * factory) — the 5-pack foundation is complete at this count.
  * Cut in US-003: Banner, Card, Cards, Step, Steps, Tab, Tabs, Accordion
  * (fumadocs shape), Accordions, File, Files, Folder, TypeTable, InlineTOC —
  * 14 fumadocs descriptors retired because the 5-pack has no compound-wrapper
@@ -25,7 +25,12 @@
  * + children for `<source>`/`<track>` passthrough) and flips `hasChildren:
  * false → true` (drops `isSelfClosing`) — the pre-US-008 state was a bug: the
  * inline renderer in `componentMap` passed children but the descriptor
- * declared none.
+ * declared none. US-009 adds Accordion with the FR-5 6-prop shape (title
+ * required + defaultOpen + icon + description + id + name + children) —
+ * standalone per D-MF16 (renamed from Toggle; no `<Accordions>` parent
+ * wrapper required; HTML5 `<details>`/`<summary>` substrate; cross-browser
+ * exclusive-accordion grouping via HTML5 `<details name>`; no `variant` prop
+ * per D-MF14 — NG30 preserves the Notion color-map absorption path).
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
@@ -323,6 +328,88 @@ const audioProps: PropDef[] = [
   },
 ];
 
+// ── Accordion (US-009) ───────────────────────────────────────────────────────
+//
+// FR-5 (SPEC 2026-04-23-cb-v2-md-foundation): 6-prop standalone accordion
+// matching Mintlify Accordion's surface + HTML5 `name` attr per D-MF14 +
+// D-MF16. Renamed from Toggle (pre-spec draft) — the prop surface already
+// matched Mintlify Accordion 1:1; `Toggle` was Notion-aligned naming drift.
+//
+// ── D-MF14 / D-MF16 constraints (load-bearing) ───────────────────────────────
+//
+//   - NO `variant` prop → Notion color-map absorption (default/gray/brown/
+//     _background) is de-prioritized per user directive. NG30 preserves the
+//     path when Notion-style demand surfaces; precedent #9 schema-add-only
+//     makes adding `variant` later free, but dropping now when nothing
+//     consumes it is permanent lock-in avoidance.
+//   - STANDALONE → ships without `<Accordions>` / `<AccordionGroup>` parent
+//     wrapper. Matches Mintlify's standalone-Accordion stance; diverges from
+//     Fumadocs's Radix-requires-parent pattern. Cross-browser exclusive-
+//     accordion grouping via HTML5 `<details name="...">` (Chrome 120+,
+//     Safari 17.2+, Firefox 130+) — no wrapper component needed. NG19
+//     preserves the compound-tier revival path via PR #165 branch for when
+//     grouped-UX demand surfaces.
+//   - HTML5 `<details>` SUBSTRATE → native browser collapse/expand (no JS
+//     toggle handler, no Radix-style animation state machine). Rotation on
+//     open/close via CSS transform keyed on the `[open]` attribute; styling
+//     flows through OK shadcn tokens in globals.css (no `--color-fd-*`).
+//
+// ── Namespace collision ──────────────────────────────────────────────────────
+//
+// Fumadocs `Accordion` + `Accordions` descriptors were cut in US-003; the
+// new foundation `Accordion` is a full replacement. Clean cut, not a schema
+// extension — both shapes have zero attr overlap beyond `title` (fumadocs
+// required an `<Accordions>` parent; ours is standalone). PR #165 branch
+// preserves the fumadocs compound pair verbatim for future compound tier.
+//
+// ── `children` semantics ─────────────────────────────────────────────────────
+//
+// `hasChildren: true`. The summary (title/icon/description) is rendered as
+// non-editable chrome inside `<summary>`; children render inside the body
+// region under the fold. Precedent #26 (all user content visible): the body
+// DOM is retained even when collapsed — browsers display:none inside the
+// closed `<details>`, but PM children stay live so editing doesn't lose state.
+
+const accordionProps: PropDef[] = [
+  {
+    name: 'title',
+    type: 'string',
+    required: true,
+    description: 'Accordion heading shown inside the <summary>',
+  },
+  {
+    name: 'defaultOpen',
+    type: 'boolean',
+    required: false,
+    defaultValue: false,
+    description: 'When true, the accordion renders expanded on initial load',
+  },
+  {
+    name: 'icon',
+    type: 'string',
+    required: false,
+    description: 'Custom lucide icon override (e.g. `lucide:Rocket`)',
+  },
+  {
+    name: 'description',
+    type: 'string',
+    required: false,
+    description: 'Optional subtitle rendered below the title inside <summary>',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    description: 'HTML id attribute for deep-linking (e.g. `#advanced-options`)',
+  },
+  {
+    name: 'name',
+    type: 'string',
+    required: false,
+    description: 'HTML5 <details name=> group — siblings with the same name are mutually exclusive',
+  },
+];
+
 // ── Manifest ─────────────────────────────────────────────────────────────────
 
 export const builtInComponents: JsxComponentMeta[] = [
@@ -370,5 +457,18 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls (source/track passthrough via children)',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
+  },
+
+  // Content
+  {
+    name: 'Accordion',
+    hasChildren: true,
+    props: accordionProps,
+    icon: 'ChevronRight',
+    category: 'content',
+    displayName: 'Accordion',
+    description:
+      'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
+    searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
   },
 ];

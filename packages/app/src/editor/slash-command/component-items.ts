@@ -12,6 +12,7 @@ import type { Editor } from '@tiptap/react';
 import {
   Box,
   ChevronDown,
+  ChevronRight,
   ChevronsUpDown,
   FileText,
   Film,
@@ -46,6 +47,7 @@ import type { SlashCommandItem } from './items';
  */
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronDown,
+  ChevronRight,
   ChevronsUpDown,
   FileText,
   Film,
