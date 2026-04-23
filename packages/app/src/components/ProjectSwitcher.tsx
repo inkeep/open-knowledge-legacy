@@ -99,7 +99,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
           title="Switch project"
         >
           <span className="truncate">{bridge.config.projectName}</span>
-          <ChevronsUpDown className="opacity-60" />
+          <ChevronsUpDown aria-hidden="true" className="opacity-60" />
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
