@@ -121,7 +121,7 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       description="Switch projects, open folders, or start a new project."
     >
       <CommandInput placeholder="Type a command or search recent projects…" />
-      <CommandList>
+      <CommandList className="subtle-scrollbar">
         <CommandEmpty>No matching commands.</CommandEmpty>
 
         <CommandGroup heading="Project">
