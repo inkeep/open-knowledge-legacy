@@ -1,0 +1,14 @@
+.DS_Store
+.git
+.github
+.idea
+.turbo
+.open-knowledge/principal.json
+.open-knowledge/sync-state.json
+node_modules
+**/node_modules
+**/dist
+docs/.next
+reports
+tmp
+compinit.dump.device-92.home.*
