@@ -26,8 +26,10 @@ import {
   registerDocExtension,
   stripDocExtension,
 } from './doc-extensions.ts';
+import { getLogger } from './logger.ts';
 import { isWithinContentDir } from './persistence.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
+import { getMeter, withSpan } from './telemetry.ts';
 
 /** Subscription handle compatible with both @parcel/watcher and chokidar backends. */
 export interface AsyncSubscription {
@@ -684,17 +686,47 @@ async function handleRawEvents(
     }
 
     if (isSelf) {
-      console.log(
-        `[file-watcher] Skipped self-write: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+      getLogger('file-watcher').debug(
+        {
+          kind: event.kind,
+          path: event.kind === 'rename' ? event.newPath : event.path,
+          self: true,
+        },
+        `[file-watcher] Skipped self-write: ${event.kind}`,
       );
+      _fileWatcherEventsCounter().add(1, { 'disk.kind': event.kind, self: true });
       continue;
     }
 
-    console.log(
-      `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+    getLogger('file-watcher').debug(
+      {
+        kind: event.kind,
+        path: event.kind === 'rename' ? event.newPath : event.path,
+      },
+      `[file-watcher] Dispatching: ${event.kind}`,
     );
-    await onDiskEvent(event);
+    _fileWatcherEventsCounter().add(1, { 'disk.kind': event.kind, self: false });
+    await withSpan(
+      'file_watcher.process_event',
+      {
+        attributes: {
+          'disk.kind': event.kind,
+          'disk.path': event.kind === 'rename' ? event.newPath : event.path,
+        },
+      },
+      async () => onDiskEvent(event),
+    );
   }
+}
+
+let _fwEventsCounterCache: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
+function _fileWatcherEventsCounter() {
+  if (!_fwEventsCounterCache) {
+    _fwEventsCounterCache = getMeter().createCounter('ok.file_watcher.events', {
+      description: 'Number of file-watcher events classified by kind',
+    });
+  }
+  return _fwEventsCounterCache;
 }
 
 // ─── Backend: @parcel/watcher ───────────────────────────────────────────────

@@ -74,6 +74,7 @@ import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
+import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import simpleGit from 'simple-git';
 import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
@@ -137,6 +138,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
+import { getMeter, getTracer } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
@@ -5258,7 +5260,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             response.setHeader('Vary', 'Origin');
           }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          // Allow OTel W3C trace-context propagation from the browser SDK.
+          response.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, traceparent, tracestate, baggage',
+          );
         }
         // OPTIONS preflight — short-circuit with 204 + the headers above.
         if (request.method === 'OPTIONS') {
@@ -5268,29 +5274,84 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Static routes
-      const handler = routes[url];
-      if (handler) {
-        await handler(request, response);
-        return;
-      }
+      // Only /api/* gets a server span. Non-API routes (static file serving,
+      // Hocuspocus's own paths) fall through silently.
+      if (!url.startsWith('/api/')) return;
 
-      // Dynamic routes
-      if (url.startsWith('/api/rescue/')) {
-        const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
-        if (docName) {
-          await handleRescueGet(request, response, docName);
-        }
-        return;
-      }
+      // Extract incoming trace context (W3C traceparent header) so this server
+      // span attaches as a child of the browser-initiated trace.
+      const extractedCtx = propagation.extract(context.active(), request.headers);
+      const method = request.method ?? 'GET';
+      // Normalize route for low-cardinality metric labels. `:id` placeholders
+      // replace dynamic segments; anything else collapses to the URL prefix.
+      let routeTemplate = url;
+      if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
+      else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
 
-      if (url.startsWith('/api/history/')) {
-        const sha = decodeURIComponent(url.slice('/api/history/'.length));
-        if (sha) {
-          await handleHistoryVersion(request, response, sha);
-        }
-        return;
-      }
+      const tracer = getTracer();
+      const started = Date.now();
+      await context.with(extractedCtx, () =>
+        tracer.startActiveSpan(
+          `HTTP ${method} ${routeTemplate}`,
+          {
+            kind: SpanKind.SERVER,
+            attributes: {
+              'http.request.method': method,
+              'http.route': routeTemplate,
+              'url.path': url,
+              'url.scheme': 'http',
+              'user_agent.original': request.headers['user-agent'] ?? '',
+            },
+          },
+          async (span) => {
+            try {
+              // Static routes
+              const handler = routes[url];
+              if (handler) {
+                await handler(request, response);
+              } else if (url.startsWith('/api/rescue/')) {
+                const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
+                if (docName) await handleRescueGet(request, response, docName);
+              } else if (url.startsWith('/api/history/')) {
+                const sha = decodeURIComponent(url.slice('/api/history/'.length));
+                if (sha) await handleHistoryVersion(request, response, sha);
+              }
+
+              const status = response.statusCode;
+              span.setAttribute('http.response.status_code', status);
+              if (status >= 500) {
+                span.setStatus({ code: SpanStatusCode.ERROR, message: `status ${status}` });
+              }
+            } catch (err) {
+              span.recordException(err as Error);
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: err instanceof Error ? err.message : String(err),
+              });
+              throw err;
+            } finally {
+              span.end();
+              const durSec = (Date.now() - started) / 1000;
+              getMeter()
+                .createHistogram('http.server.request.duration', {
+                  description: 'HTTP server request duration in seconds',
+                  unit: 's',
+                })
+                .record(durSec, {
+                  'http.request.method': method,
+                  'http.route': routeTemplate,
+                  'http.response.status_code': response.statusCode,
+                });
+            }
+          },
+        ),
+      );
     },
   };
 }
+
+/**
+ * Lazy accessor for the trace context API — used by tests that want to assert
+ * the server extracts incoming `traceparent` headers.
+ */
+const _otelInternals = { trace, context, propagation };
