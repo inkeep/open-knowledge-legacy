@@ -60,7 +60,7 @@ Knowledge-base docs are factual artifacts. Every claim must be traceable to a so
   2. Mark inline `(TODO: needs source)` so a human can verify, OR
   3. Don't write the claim. Do NOT fabricate.
 - Unsourced speculation looks authoritative but rots into tribal knowledge that can't be audited. The knowledge base loses its value if readers can't trust it.
-- This rule mirrors the `eng:research` skill discipline. If a fact is in the knowledge base, a reader must be able to trace it to its origin.
+- If a fact is in the knowledge base, a reader must be able to trace it to its origin. Grounded evidence is the knowledge base's core contract.
 
 ## Linking — use standard markdown links
 
@@ -196,7 +196,7 @@ Three MCP tools build on the primitives above and correspond to [Karpathy's thre
 | Tool | Layer | When to invoke |
 | --- | --- | --- |
 | `ingest` | Raw sources (immutable) | User shares a URL, PDF, or file to preserve verbatim. No analysis in the file itself — takeaways go back to the user in chat. |
-| `research` | Wiki, provisional | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Mirrors the `eng:research` skill discipline (scan-first routing, STOP scoping gate, 3P-external framing, validate checklist). |
+| `research` | Wiki, provisional | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
 | `consolidate` | Wiki, canonical | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain. |
 
 Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
