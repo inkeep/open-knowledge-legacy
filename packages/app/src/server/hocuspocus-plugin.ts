@@ -140,6 +140,19 @@ const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 // (matches boot.ts's bootServer closure shape).
 const KEEPALIVE_GRACE_MS = 10_000;
 
+// Single module-scope flag for the process-exit fallback handler. Without
+// gating, registering inside `configureServer` would attach a fresh listener
+// per Vite restart — Node's `process` emitter caps `'exit'` listeners at the
+// default MaxListenersExceededWarning threshold (10). One handler is enough:
+// it fires on graceful exit and does best-effort `releaseServerLock`. The
+// happy-path cleanup runs through each `configureServer`'s close handler;
+// this sync handler only matters for non-graceful exits where the close
+// handler never fires (uncaught throw, SIGKILL). Lock dir is constant across
+// invocations (CONTENT_DIR doesn't change), so capturing the first lockDir
+// is sufficient. Stale lock files left after a crash are auto-replaced by
+// the next startup's `acquireServerLock` (process-lock.ts dead-pid path).
+let exitHandlerRegistered = false;
+
 export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
@@ -186,16 +199,22 @@ export function hocuspocusPlugin(): Plugin {
       // `/api/*` middleware, and presence broadcasters operating against
       // dead Hocuspocus + watcher state (silent loss of persistence /
       // reconciliation / presence post-restart). Same-pid acquireServerLock
-      // is idempotent (process-lock.ts:138-143); same-pid shadow lock is
-      // idempotent (shadow-lock.ts:42-43); brief resource duplication
-      // during the restart window is bounded by the previous srv's
-      // destroy phase. Replaces ~11 primitives worth of hand-rolled
-      // wiring — session manager, focus/presence/CC1 broadcasters,
-      // backlink index, content filter, persistence/API/observer/
-      // live-derived-index extensions, file watcher — plus four
-      // subsystems the old plugin was missing entirely (principal auth,
-      // HEAD watcher, managed-rename recovery, SyncEngine). See SPEC §1
-      // for the full enumeration.
+      // is idempotent + refcounted (process-lock.ts `activeLockRefs`) so
+      // pass-1's destroy doesn't unlink the lock file out from under
+      // pass-2; same-pid shadow lock is idempotent
+      // (shadow-lock.ts:42-43). Brief resource duplication during the
+      // restart window is bounded by the previous srv's destroy phase:
+      // expect a few `[reconcile]` log lines per restart while two
+      // `startWatcher` instances + two `writeTracker` sets briefly co-
+      // exist on the same contentDir — `reconcile()` is convergent
+      // (three-way merge), so this is loud but not data-corrupting.
+      // Replaces ~11 primitives worth of hand-rolled wiring — session
+      // manager, focus/presence/CC1 broadcasters, backlink index,
+      // content filter, persistence/API/observer/live-derived-index
+      // extensions, file watcher — plus four subsystems the old plugin
+      // was missing entirely (principal auth, HEAD watcher,
+      // managed-rename recovery, SyncEngine). See SPEC §1 for the full
+      // enumeration.
       const currentSrv = createServer({
         contentDir: CONTENT_DIR,
         projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
@@ -210,19 +229,30 @@ export function hocuspocusPlugin(): Plugin {
       // SPEC D9 defense-in-depth: release the server lock on process exit
       // even if graceful `httpServer.close` never fires (crash, SIGKILL).
       // `currentSrv.destroy()` releases the lock in its Phase 6; this sync
-      // handler covers non-graceful exits. `releaseServerLock` is
-      // ownership-guarded + idempotent so multiple registrations across
-      // configureServer invocations are safe (each holds the same lockDir
-      // for the same pid).
-      const lockDir = currentSrv.lockDir;
-      process.once('exit', () => {
-        try {
-          releaseServerLock(lockDir);
-        } catch {
-          // best-effort — most common cause is lock already released by
-          // currentSrv.destroy()
-        }
-      });
+      // handler covers non-graceful exits. Registered ONCE (gated by
+      // `exitHandlerRegistered`) so Vite restarts don't accumulate listeners
+      // — the previous per-invocation registration tripped Node's
+      // MaxListenersExceededWarning after ~10 vite.config.ts edits. Lock
+      // dir is captured from the first `currentSrv.lockDir`; subsequent
+      // `configureServer` invocations resolve to the same lockDir
+      // (CONTENT_DIR is module-constant), so a single capture is sound.
+      // `releaseServerLock` is ownership-guarded and refcount-aware
+      // (process-lock.ts) — a release here when refcount > 0 (multi-srv
+      // crash mid-restart) decrements but doesn't unlink; the residual
+      // stale lock auto-clears on the next startup via the dead-pid
+      // detection path.
+      if (!exitHandlerRegistered) {
+        exitHandlerRegistered = true;
+        const lockDir = currentSrv.lockDir;
+        process.once('exit', () => {
+          try {
+            releaseServerLock(lockDir);
+          } catch {
+            // best-effort — most common cause is lock already released by
+            // close-handler's currentSrv.destroy()
+          }
+        });
+      }
 
       if (configureServerInvocations === 1) {
         console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
