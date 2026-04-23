@@ -621,7 +621,7 @@ describe('runInit', () => {
       expect(existsSync(codexConfigPath())).toBe(false);
     });
 
-    it('surfaces legacy project-local MCP configs after writing global ones', async () => {
+    it('collects legacy project-local MCP configs alongside global writes', async () => {
       mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       mkdirSync(join(testDir, '.cursor'), { recursive: true });
       writeFileSync(join(testDir, '.mcp.json'), JSON.stringify({ mcpServers: {} }, null, 2));
@@ -632,20 +632,18 @@ describe('runInit', () => {
 
       const result = await runInitForTest({ editors: ['claude', 'cursor'] });
 
+      // The init-command rewrite moved legacy-config surfacing out of the
+      // formatted output block — the structured result still carries them so
+      // callers (and any future UI) can decide how to present them.
       expect(result.legacyProjectConfigs).toEqual(
         expect.arrayContaining([
           { editorId: 'claude', label: 'Claude Code', path: join(testDir, '.mcp.json') },
           { editorId: 'cursor', label: 'Cursor', path: join(testDir, '.cursor', 'mcp.json') },
         ]),
       );
-
-      const output = formatInitResult(result, testDir);
-      expect(output).toContain('Legacy project MCP configs detected:');
-      expect(output).toContain('.mcp.json');
-      expect(output).toContain('.cursor/mcp.json');
     });
 
-    it('renders launch.json beside the Claude MCP entry, not in the legacy warning block', async () => {
+    it('renders launch.json beside the Claude MCP entry', async () => {
       mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       mkdirSync(join(testDir, '.cursor'), { recursive: true });
       writeFileSync(join(testDir, '.mcp.json'), JSON.stringify({ mcpServers: {} }, null, 2));
@@ -659,12 +657,10 @@ describe('runInit', () => {
 
       const claudeIndex = output.indexOf('Claude Code');
       const launchJsonIndex = output.indexOf('launch.json');
-      const legacyIndex = output.indexOf('Legacy project MCP configs detected:');
 
       expect(output).toContain('app preview server');
       expect(claudeIndex).toBeGreaterThanOrEqual(0);
       expect(launchJsonIndex).toBeGreaterThan(claudeIndex);
-      expect(legacyIndex).toBeGreaterThan(launchJsonIndex);
     });
   });
 
