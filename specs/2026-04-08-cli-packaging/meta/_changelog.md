@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-15 — Non-goal reclassification (cross-spec edit)
+
+- **NG (§3) updated per D1 of `specs/2026-04-11-electron-desktop-app/SPEC.md`:** the compound non-goal `[NEVER] GUI/Electron packaging, Docker distribution` was split into two entries: `[NOT NOW] GUI/Electron packaging` (with back-reference to the Electron spec) and `[NEVER] Docker distribution` (unchanged). The original `[NEVER]` was a phasing call ("ship CLI first"), not a permanent rejection — the artifact now matches the intent.
+
 ## 2026-04-08 — Spec created and iterated
 
 - Intake complete: SCR drafted, stress-tested, personas identified

@@ -31,7 +31,6 @@ import {
   type Stage,
   serializeStages,
 } from '../../bash/parse-command.ts';
-import type { Config } from '../../config/schema.ts';
 import {
   type DirectoryMeta,
   type EnrichedEntry,
@@ -47,8 +46,8 @@ import {
   type PreviewUrlSource,
   type UiInfo,
 } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { resolveServerUrl, textPlusStructured } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { resolveProjectServerContext, textPlusStructured } from './shared.ts';
 
 /** Soft output cap: lines. */
 const SOFT_CAP_LINES = 500;
@@ -63,7 +62,7 @@ export const DESCRIPTION = [
   '',
   'Allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut. Pipes (|) work between stages. Redirections, subshells, and writes are rejected.',
   '',
-  "cwd: the command runs in the MCP client's first advertised root (the project the user is working in). Pass an explicit absolute `cwd` to run against a different directory. Paths inside the command resolve relative to that cwd; traversal above it is rejected.",
+  "cwd: the command runs in the explicit absolute `cwd` you pass, or in the MCP client's only advertised root when there is exactly one. If the client has zero or multiple roots, pass `cwd` explicitly. Paths inside the command resolve relative to that cwd; traversal above it is rejected.",
   '',
   'Stdout provenance headers (GNU-style): `ls <dir>/` prepends `<dir>/:`, single-file `cat`/`head`/`tail` prepends `==> <path> <==`, so the subject of the command is visible in raw output. Multi-file `cat a b` emits no header — the `enrichedPaths` array still lists every file. `head`/`tail` used as pipe trimmers (no file arg) defer to the upstream producer.',
   '',
@@ -91,7 +90,7 @@ interface ExecDeps {
    *     `ui.lock.port` for per-row `previewUrl` and the top-level `ui` block.
    * Required — every registration site in `tools/index.ts` passes config.
    */
-  config: Config;
+  config: ConfigOrResolver;
 }
 
 export type ExecEnrichedEntry = EnrichedEntry & {
@@ -106,6 +105,8 @@ export interface ExecStructuredResult {
    * UI lock is absent. Omitted only when config is not supplied.
    */
   ui?: UiInfo;
+  /** Resolved project directory for this call — useful for verifying routing. */
+  cwd?: string;
   /**
    * Raw stdout (after soft-cap truncation). Duplicated from the `text` content
    * stream into `structuredContent` because some MCP clients (notably Claude
@@ -282,7 +283,7 @@ function formatFileEntry(m: EnrichedMeta): string {
       const who =
         h.writerClassification === 'agent'
           ? `agent: ${h.writerName}`
-          : h.writerClassification === 'human'
+          : h.writerClassification === 'principal'
             ? `human: ${h.writerName}`
             : `${h.writerClassification}: ${h.writerName}`;
       return `${h.hash.slice(0, 7)} [${who}] ${h.message}`;
@@ -425,10 +426,17 @@ export async function buildExecResult(
   args: { command: string; cwd?: string },
   deps: ExecDeps,
 ): Promise<ReturnType<typeof textPlusStructured>> {
-  // 0. Resolve effective cwd (explicit arg → client root → startup fallback).
-  const cwd = await deps.resolveCwd(args.cwd);
-  // Resolve the Hocuspocus URL once per call; enrichers accept a plain string.
-  const resolvedServerUrl = await resolveServerUrl(deps.serverUrl);
+  const context = await resolveProjectServerContext(
+    deps.resolveCwd,
+    deps.config,
+    deps.serverUrl,
+    args.cwd,
+  );
+  if (!context.ok) {
+    return errorCategoryResult('shell_construct_blocked', `exec failed: ${context.error}`);
+  }
+  // 0. Resolve effective cwd (explicit arg → single client root → error).
+  const { cwd, config, url: resolvedServerUrl } = context;
 
   // 1. Parse + validate
   const parsed = parseCommand(args.command);
@@ -483,7 +491,7 @@ export async function buildExecResult(
   const { files, dirs } = await classifyPaths(cwd, paths);
   // Single-path cat enrichment gets rich fields; all others get slim.
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
-  const folderRules = deps.config.folders;
+  const folderRules = config.folders;
   const fileEnriched: EnrichedMeta[] = await Promise.all(
     files.map((p) =>
       enrichPath(
@@ -571,23 +579,13 @@ export async function buildExecResult(
   const enrichmentBlock = formatEnrichedBlock(enriched);
   const content = `${bannerText}${stdoutText}${enrichmentBlock}`;
 
-  // Attach per-row previewUrl (FR-2.2) + top-level `ui` block (FR-2.6). When
-  // no config is supplied (older callers / test fixtures), previewUrls are
-  // null across the board and `ui` is omitted.
-  let enrichedWithPreview: ExecEnrichedEntry[];
-  let uiBlock: UiInfo | undefined;
-  if (deps.config) {
-    const { resolve, ui } = await buildListResolver({
-      config: deps.config,
-      resolveCwd: async () => cwd,
-    });
-    enrichedWithPreview = withPreviewUrls(enriched, resolve);
-    uiBlock = ui;
-  } else {
-    enrichedWithPreview = enriched.map(
-      (entry) => ({ ...entry, previewUrl: null }) as ExecEnrichedEntry,
-    );
-  }
+  // Attach per-row previewUrl (FR-2.2) + top-level `ui` block (FR-2.6).
+  const { resolve, ui } = await buildListResolver({
+    config,
+    resolveCwd: async () => cwd,
+  });
+  const enrichedWithPreview: ExecEnrichedEntry[] = withPreviewUrls(enriched, resolve);
+  const uiBlock: UiInfo | undefined = ui;
 
   // Duplicate stdout + banners into structuredContent. Claude Desktop and some
   // other MCP clients hide the text content stream when structuredContent is
@@ -597,6 +595,7 @@ export async function buildExecResult(
     enrichedPaths: enrichedWithPreview,
     stdout: stdoutText,
     stdoutTruncated: capped.truncated,
+    cwd,
     ...(uiBlock ? { ui: uiBlock } : {}),
     ...(banners.length > 0 ? { warnings: banners } : {}),
   };
@@ -617,7 +616,7 @@ export function register(server: ServerInstance, deps: ExecDeps): void {
         .string()
         .optional()
         .describe(
-          "Absolute host path to run the command from. Defaults to the MCP client's first advertised root, then the server startup cwd.",
+          'Absolute host path to run the command from. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
         ),
     },
     async (args: { command: string; cwd?: string }) => {

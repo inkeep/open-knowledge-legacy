@@ -1,26 +1,37 @@
 /**
  * Resolve a browser-reachable URL for a given wiki docName, priority:
- *   env (OPEN_KNOWLEDGE_PREVIEW_BASE_URL) → lock (ui.lock) → config (preview.baseUrl)
+ *   electron-protocol (OK_ELECTRON_PROTOCOL_HOST=1 + resolvable contentDir)
+ *     → env (OPEN_KNOWLEDGE_PREVIEW_BASE_URL) → lock (ui.lock) → config (preview.baseUrl)
  *
- * Env wins so per-shell overrides (tunnels, CI) are explicit. Lock wins over
- * config so a local checkout of a cloud-deployed repo resolves to the running
- * local UI, not the prod URL checked into `.open-knowledge/config.yml`.
+ * `electron-protocol` wins when set because the MCP client is explicitly
+ * talking to an Electron host (the desktop main process sets the flag at
+ * utilityProcess.fork time — M4 SPEC 2026-04-21-m4-url-scheme AC8), and
+ * `openknowledge://` routes deep-links through the main-process URL scheme
+ * handler to the correct BrowserWindow. CLI / bunx servers never set the
+ * flag, so they keep the `http://localhost:...` behavior.
+ *
+ * Env wins over lock+config so per-shell overrides (tunnels, CI) are explicit.
+ * Lock wins over config so a local checkout of a cloud-deployed repo resolves
+ * to the running local UI, not the prod URL checked into `.open-knowledge/config.yml`.
  *
  * The lock branch reads `ui.lock` (the `ok ui` process), not `server.lock`
  * (the `ok start` collab process), because preview URLs must point at the
  * React app — that's what the preview pane renders. See SPEC.md FR-2.4, D-015.
  *
- * URL shape: `{baseUrl}/#/{docName}` with per-segment encodeURIComponent.
+ * URL shape (http-based sources): `{baseUrl}/#/{docName}` with per-segment encodeURIComponent.
+ * URL shape (electron-protocol): `openknowledge://open?project=<realpath>&doc=<docName>` with encodeURIComponent.
  * Matches the hash-route parser in `packages/app/src/lib/doc-hash.ts`.
  *
  * Returns null (never throws) when no source resolves. Malformed env/config
  * URLs fall through to the next source.
  */
+import { realpathSync } from 'node:fs';
 import { readUiLock } from '@inkeep/open-knowledge-server';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { Config } from '../../config/schema.ts';
+import { type ConfigOrResolver, resolveConfig } from './shared.ts';
 
-export type PreviewUrlSource = 'env' | 'lock' | 'config';
+export type PreviewUrlSource = 'electron-protocol' | 'env' | 'lock' | 'config';
 
 interface PreviewUrlResult {
   url: string;
@@ -30,7 +41,16 @@ interface PreviewUrlResult {
 interface PreviewUrlContext {
   config: Config;
   lockDir: string;
+  /**
+   * Absolute path to the project's content directory. Required for the
+   * `electron-protocol` source branch (M4 AC8) — populated by
+   * `resolvePreviewUrlForTool` / `buildListResolver` since they already
+   * compute it for `lockDir`. Without it the Electron branch falls through.
+   */
+  contentDir?: string;
 }
+
+const ELECTRON_PROTOCOL_ENV_VAR = 'OK_ELECTRON_PROTOCOL_HOST';
 
 /**
  * Common deps shape for MCP tool handlers that need to resolve preview URLs.
@@ -39,7 +59,7 @@ interface PreviewUrlContext {
  * fallback.
  */
 export interface PreviewUrlDeps {
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
 }
 
@@ -74,10 +94,13 @@ function isValidUrl(candidate: string): boolean {
 export async function resolvePreviewUrlForTool(
   docName: string,
   deps: PreviewUrlDeps,
+  cwd?: string,
 ): Promise<PreviewUrlResult | null> {
-  const cwd = await deps.resolveCwd();
-  const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-  return resolvePreviewUrl(docName, { config: deps.config, lockDir });
+  const effectiveCwd = cwd ?? (await deps.resolveCwd());
+  const config = await resolveConfig(deps.config, effectiveCwd);
+  const contentDir = resolveContentDir(config, effectiveCwd);
+  const lockDir = resolveLockDir(contentDir);
+  return resolvePreviewUrl(docName, { config, lockDir, contentDir });
 }
 
 /**
@@ -120,10 +143,13 @@ export function resolveUiInfo(ctx: PreviewUrlContext): UiInfo {
  */
 export async function buildListResolver(
   deps: PreviewUrlDeps,
+  cwd?: string,
 ): Promise<{ resolve(docName: string): PreviewUrlResult | null; ui: UiInfo }> {
-  const cwd = await deps.resolveCwd();
-  const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-  const ctx: PreviewUrlContext = { config: deps.config, lockDir };
+  const effectiveCwd = cwd ?? (await deps.resolveCwd());
+  const config = await resolveConfig(deps.config, effectiveCwd);
+  const contentDir = resolveContentDir(config, effectiveCwd);
+  const lockDir = resolveLockDir(contentDir);
+  const ctx: PreviewUrlContext = { config, lockDir, contentDir };
   return {
     resolve: (docName: string) => resolvePreviewUrl(docName, ctx),
     ui: resolveUiInfo(ctx),
@@ -147,6 +173,23 @@ export function resolvePreviewUrl(
   ctx: PreviewUrlContext,
 ): PreviewUrlResult | null {
   const hash = `/#/${encodeDocName(docName)}`;
+
+  // 0. electron-protocol (M4 AC8) — desktop main sets OK_ELECTRON_PROTOCOL_HOST
+  // at utility fork time. Emit an `openknowledge://` deep-link so MCP clients
+  // route deep-links through the main-process URL scheme handler.
+  if (process.env[ELECTRON_PROTOCOL_ENV_VAR] === '1' && ctx.contentDir) {
+    try {
+      const projectRealpath = realpathSync(ctx.contentDir);
+      const url = `openknowledge://open?project=${encodeURIComponent(projectRealpath)}&doc=${encodeURIComponent(docName)}`;
+      return { url, source: 'electron-protocol' };
+    } catch (err) {
+      // contentDir doesn't exist on disk — fall through to the http-based
+      // chain so the MCP client still gets a URL it can open in a browser.
+      process.stderr.write(
+        `[preview-url] realpathSync failed for ${ctx.contentDir}, falling through to http sources: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
 
   // 1. env
   const envBase = process.env[ENV_VAR];

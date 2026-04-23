@@ -1,12 +1,13 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
+import { mark } from '@/lib/perf';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
-import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
+import { tabSessionId } from './tab-identity';
 
 /**
  * Read-only projection of a `PoolEntry` — exposes the fields downstream React
@@ -34,12 +35,17 @@ interface DocumentContextValue {
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
   openDocument: (docName: string) => void;
   /**
-   * Same as `openDocument` but wrapped in React's `startTransition`. Use this
-   * for navigation flows that should (a) preserve previously-revealed content
-   * during the suspending re-render (SPEC G2) and (b) surface progress via
-   * `isPending` (SPEC G3 — consumed by `NavigationPendingBar`). All
-   * user-initiated and agent-initiated navigation should flow through here;
-   * `openDocument` is retained for non-transition callers (e.g. test setup).
+   * Navigation entry — kept for API symmetry with `openTargetTransition`.
+   * Previously wrapped in `startTransition`; the wrapper was removed because
+   * deferring shell state (`activeDocName`, `activeTarget`) made the sidebar
+   * highlight and header title lag the click. React's default Suspense
+   * behavior already handles both paths: cold nav suspends →
+   * `<EditorSkeleton />` fallback paints immediately; warm nav doesn't
+   * suspend (`syncPromise` is pre-resolved for `hasSynced=true` providers)
+   * so the commit lands in a single synchronous paint. The name is
+   * preserved to keep the migration path to a future per-subtree transition
+   * open — callers shouldn't need to choose between transition and
+   * non-transition APIs.
    */
   openDocumentTransition: (docName: string) => void;
   /**
@@ -51,24 +57,15 @@ interface DocumentContextValue {
    */
   openTarget: (target: ResolvedNavigationTarget) => void;
   /**
-   * Same as `openTarget` but wrapped in React's `startTransition`. This is
-   * the canonical hash-driven nav path (`NavigationHandler` in `App.tsx`)
-   * so the transition surfaces the `isPending` state that drives
-   * `NavigationPendingBar` AND keeps the previously-revealed subtree visible
-   * during the suspending re-render (SPEC G2+G3). `openTarget` is retained
-   * for non-transition callers (tests, direct agent actions).
+   * Hash-driven navigation entry (`NavigationHandler` in `App.tsx`). Kept
+   * alongside `openTarget` for API symmetry with `openDocumentTransition`
+   * — both names historically wrapped the underlying call in
+   * `startTransition`. Transitions were removed; see `openDocumentTransition`
+   * for rationale. `openTarget` is retained for non-transition callers
+   * (tests, direct agent actions).
    */
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
   clearTarget: () => void;
-  /**
-   * True while a transition-wrapped navigation is mid-flight, including the
-   * time spent suspending on `syncPromise` inside `DocumentBoundary`. Shared
-   * across `openDocumentTransition` and `openTargetTransition` — a single
-   * `useTransition()` at the provider level, so every consumer of
-   * `useDocumentTransition()` sees the same pending state. Drives
-   * `NavigationPendingBar`'s 4-tier escalation.
-   */
-  isPending: boolean;
   closeDocument: (docName: string) => void;
   /**
    * Destroy and recreate the pool entry for `docName` while preserving
@@ -79,6 +76,13 @@ interface DocumentContextValue {
    */
   recycleDocument: (docName: string) => void;
   /**
+   * Pre-warm a provider for `docName` without promoting it to active
+   * (review Major #7 / V2 SPEC FR12 Option G). Used by the sidebar's
+   * hover-intent handler to shave the Hocuspocus sync cost off the
+   * eventual click. Idempotent + no-op for system docs.
+   */
+  prewarm: (docName: string) => void;
+  /**
    * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
    * does not change the URL even when agent focus moves elsewhere. Persisted
    * per-tab via localStorage `ok-pin-v1`. Null = not pinned = follow agent.
@@ -88,6 +92,20 @@ interface DocumentContextValue {
   pin: (docName: string) => void;
   /** Unpin — resume agent nav on the next focus change. */
   unpin: () => void;
+  /**
+   * The `__system__` HocuspocusProvider, lifted from `SystemDocSubscriber`
+   * so presence-bar consumers (`usePresence` in US-006) can read agent
+   * presence from `__system__.awareness` without re-materializing a second
+   * provider. `null` while the subscriber is mounting or between collabUrl
+   * resets. Set via `setSystemProvider` — do NOT assign directly.
+   */
+  systemProvider: HocuspocusProvider | null;
+  /**
+   * Provider-registration callback used by `SystemDocSubscriber` to publish
+   * its `__system__` provider (and null on unmount). Single-writer by
+   * convention — only one SystemDocSubscriber should mount at a time.
+   */
+  setSystemProvider: (provider: HocuspocusProvider | null) => void;
   /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
@@ -210,19 +228,13 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
   const {
     collabUrl,
     terminal: collabTerminal,
     lastError: collabLastError,
     retry: retryCollab,
   } = useCollabUrl();
-  // `useTransition` (rather than the module-level `startTransition`) is
-  // required so `isPending` is observable to context consumers. The
-  // transition stays "pending" through any suspending re-renders triggered
-  // by the wrapped state updates — exactly what keeps the
-  // `NavigationPendingBar` visible until `syncPromise` resolves.
-  const [isPending, startTransition] = useTransition();
-
   useEffect(() => {
     if (collabUrl === null) return;
     const p = getPool(collabUrl);
@@ -237,6 +249,26 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const persisted = loadPinFromStorage();
     if (persisted !== null) setPinnedDoc(persisted);
 
+    // D50 / US-024: fetch principal and wire tab identity so HocuspocusProvider
+    // includes {principalId, tabSessionId} in its auth token. The server's
+    // onAuthenticate hook reads this to set connection.context.principalId for
+    // correct writer attribution. Silent on failure — pool uses anonymous token.
+    fetch('/api/principal')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((principal: unknown) => {
+        if (principal && typeof (principal as { id?: unknown }).id === 'string') {
+          p.setTabIdentity({
+            principalId: (principal as { id: string }).id,
+            tabSessionId,
+          });
+        }
+      })
+      .catch(() => {
+        // principal unavailable — pool opens providers with anonymous auth token
+      });
+
+    // systemProvider exposure happens in a dedicated effect below because it
+    // depends on `systemProvider` state, not `collabUrl`.
     // Expose pool + test hooks on window for Playwright E2E access. Gated on
     // `import.meta.env.DEV` so production bundles don't ship a sync-promise
     // rejection trigger or a WebSocket close primitive — both useful for E2E,
@@ -291,8 +323,39 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     };
   }, [collabUrl]);
 
+  // DEV-only: expose a pin-setter hook for Playwright E2E — keeps tests
+  // off the private `ok-pin-v1` localStorage key + reload dance, so
+  // storage-key renames or versioning changes don't silently break E2E
+  // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
+  // UX via `pin()` button) + `persistPinToStorage` so post-reload
+  // behavior also matches. See review pass 0 finding #8.
+  //
+  // STOP — empty deps is intentional and must stay empty:
+  //   - `setPinnedDoc` is a stable React state setter (guaranteed by
+  //     React's useState contract).
+  //   - `persistPinToStorage` is module-scope (not a closure over render).
+  //   - Widening the deps would cause this effect to re-register on
+  //     every render, tearing down + re-installing `window.__test_setPin`
+  //     mid-test and racing Playwright's `page.evaluate`.
+  // A biome-ignore pragma would fail lint ("suppression has no effect")
+  // because the current Biome version does not flag this effect — see
+  // review pass 1 finding #2 Declined section in the iteration log.
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (
+      docName: string | null,
+    ) => {
+      setPinnedDoc(docName);
+      persistPinToStorage(docName);
+    };
+    return () => {
+      delete (window as { __test_setPin?: unknown }).__test_setPin;
+    };
+  }, []);
+
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {
+    mark('ok/nav/open-document', { docName, transition: false });
     if (collabUrl === null) return;
     const p = getPool(collabUrl);
     const entry = p.open(docName);
@@ -304,7 +367,17 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // stays as a direct-doc affordance for non-resolver callers (tests, etc.).
     setActiveTarget({ kind: 'doc', target: docName, docName });
   };
-  const openDocumentTransition = createOpenDocumentTransition(openDocument, startTransition);
+  // Historical note: this wrapper used to call `startTransition(() =>
+  // openDocument(docName))` and later a fast/slow split keyed on the
+  // provider's `hasSynced`. Both approaches held shell state (activeDocName
+  // driving the sidebar highlight + header title) for the full editor-mount
+  // window, making the click feel laggy. Now it's a pass-through — React's
+  // default Suspense behavior handles cold (skeleton) and warm (no
+  // suspension → fast commit) without deferring the shell.
+  const openDocumentTransition = (docName: string) => {
+    mark('ok/nav/open-document', { docName, transition: false });
+    openDocument(docName);
+  };
 
   const openTarget = (target: ResolvedNavigationTarget) => {
     if (collabUrl === null) return;
@@ -319,7 +392,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     setActiveTarget(target);
   };
   const openTargetTransition = (target: ResolvedNavigationTarget) => {
-    startTransition(() => openTarget(target));
+    const docName = docNameForNavigationTarget(target);
+    mark('ok/nav/open-target', { docName, kind: target.kind, transition: false });
+    openTarget(target);
   };
 
   const value: DocumentContextValue = {
@@ -341,7 +416,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       p.clearActive();
       setActiveTarget(null);
     },
-    isPending,
     closeDocument: (docName: string) => {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
@@ -356,6 +430,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       const p = getPool(collabUrl);
       p.recycle(docName);
     },
+    prewarm: (docName: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.prewarm(docName);
+    },
     pinnedDoc,
     pin: (docName: string) => {
       setPinnedDoc(docName);
@@ -365,6 +444,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setPinnedDoc(null);
       persistPinToStorage(null);
     },
+    systemProvider,
+    setSystemProvider,
     collabUrl,
     collabTerminal,
     collabLastError,
@@ -385,20 +466,18 @@ export function useDocumentContext(): DocumentContextValue {
 /**
  * Convenience hook for navigation consumers (`NavigationHandler`,
  * `DocumentErrorBoundary` retry, sidebar click handlers) that only need the
- * transition surface and don't care about the rest of the document context.
- * Returns `{ openDocumentTransition, openTargetTransition, isPending }` — all
- * three come from the parent `DocumentProvider`'s single `useTransition()`
- * call, so every consumer sees the same pending state. `openDocumentTransition`
- * is the doc-by-name path; `openTargetTransition` is the folder-aware resolver
- * path (hash-driven nav via `NavigationHandler`).
+ * nav surface and don't care about the rest of the document context.
+ * `openDocumentTransition` is the doc-by-name path; `openTargetTransition`
+ * is the folder-aware resolver path (hash-driven nav via `NavigationHandler`).
+ * The `*Transition` suffix is a historical name — see the context values'
+ * docstrings for why there is no longer a React transition behind it.
  */
 export function useDocumentTransition(): {
   openDocumentTransition: (docName: string) => void;
   openTargetTransition: (target: ResolvedNavigationTarget) => void;
-  isPending: boolean;
 } {
-  const { openDocumentTransition, openTargetTransition, isPending } = useDocumentContext();
-  return { openDocumentTransition, openTargetTransition, isPending };
+  const { openDocumentTransition, openTargetTransition } = useDocumentContext();
+  return { openDocumentTransition, openTargetTransition };
 }
 
 // Vite HMR dispose — when this module is hot-replaced in dev, tear down the

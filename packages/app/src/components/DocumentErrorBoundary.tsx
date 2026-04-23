@@ -37,6 +37,7 @@
 
 import { useEffect, useRef } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
+import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
 import {
   BridgeSetupError,
@@ -83,33 +84,31 @@ function errorDocName(error: unknown): string | null {
  * Copy discipline: the user-facing vocabulary is "load"/"loading", not
  * "sync"/"syncing". "Sync" is internal jargon (Y.js/Hocuspocus); the product
  * is a document editor where the user mental model is always "opening a
- * document." NavigationPendingBar uses the same vocabulary ("Loading…" /
- * "Still loading…") so the progression from pending-bar to error-boundary
- * stays in one voice.
+ * document."
  */
 export function errorCopy(error: unknown): ErrorCopy {
   if (error instanceof SyncTimeoutError) {
     return {
       title: "Couldn't load document",
-      summary: `"${error.docName}" took too long to load. Check your connection and try again.`,
+      summary: `"${error.docName}" took too long. Check your connection.`,
     };
   }
   if (error instanceof PreSyncDisconnectError) {
     return {
       title: 'Connection dropped',
-      summary: `Lost connection while loading "${error.docName}".`,
+      summary: `Lost connection to "${error.docName}".`,
     };
   }
   if (error instanceof DocumentNotFoundError) {
     return {
       title: 'Document not found',
-      summary: `"${error.docName}" could not be found.`,
+      summary: `"${error.docName}" doesn't exist.`,
     };
   }
   if (error instanceof BridgeSetupError) {
     return {
       title: "Couldn't open document",
-      summary: `Failed to set up the editor for "${error.docName}". Try again or reopen.`,
+      summary: `Something went wrong opening "${error.docName}".`,
     };
   }
   const message =
@@ -151,20 +150,23 @@ function DocumentErrorFallback({
       role="alert"
       aria-labelledby="document-error-title"
       data-slot="document-error-boundary"
-      className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center"
+      className="flex h-full flex-col items-center justify-center gap-8 p-8 text-center"
     >
-      <p className="text-xs font-mono text-muted-foreground">{activeDocName}</p>
-      <h2 id="document-error-title" className="text-lg font-semibold">
-        {title}
-      </h2>
-      <p className="max-w-md text-sm text-muted-foreground">{summary}</p>
-      <div className="mt-2 flex gap-2">
+      <OkBlob size={80} variant="sleeping" />
+      <div className="flex flex-col items-center gap-1">
+        <h2 id="document-error-title" className="text-lg font-medium">
+          {title}
+        </h2>
+        <p className="max-w-sm text-sm text-muted-foreground">{summary}</p>
+      </div>
+      <div className="mt-1 flex gap-2">
         <Button ref={retryRef} variant="default" onClick={resetErrorBoundary}>
           Try again
         </Button>
         {canGoBack ? (
           <Button
             variant="ghost"
+            className="font-mono uppercase"
             onClick={() => {
               if (!previousDocName || !onNavigateBack) return;
               // Invalidate the errored doc's cached sync promise BEFORE
@@ -189,7 +191,7 @@ function DocumentErrorFallback({
               resetErrorBoundary(BACK_NAV_RESET_SENTINEL);
             }}
           >
-            Back to previous document
+            Go back
           </Button>
         ) : null}
       </div>

@@ -1,3 +1,7 @@
+export type { Principal } from '@inkeep/open-knowledge-core';
+export { AgentFocusBroadcaster } from './agent-focus.ts';
+export { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+export { AgentPresenceBroadcaster } from './agent-presence.ts';
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
@@ -24,6 +28,7 @@ export {
   ORPHAN_MODES,
   type OrphanMode,
 } from './backlink-index.ts';
+export { type BootedServer, type BootServerOptions, bootServer } from './boot.ts';
 export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
@@ -103,6 +108,7 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { loadPrincipal } from './principal.ts';
 export { isProcessAlive } from './process-alive.ts';
 export {
   acquireProcessLock,
@@ -115,6 +121,11 @@ export {
   releaseProcessLock,
   updateProcessLockPort,
 } from './process-lock.ts';
+export {
+  type EnsureProjectGitResult,
+  ensureProjectGit,
+  ProjectGitInitError,
+} from './project-git.ts';
 export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
@@ -136,19 +147,28 @@ export {
   createServerObserverExtension,
   type ServerObserverExtensionOptions,
 } from './server-observer-extension.ts';
-export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 export {
+  isPairedWriteOrigin,
+  OBSERVER_SYNC_ORIGIN,
+  type PairedWriteOrigin,
+} from './server-observers.ts';
+export {
+  buildWipTree,
   type CheckpointGcResult,
   type CheckpointRetentionPolicy,
   commitUpstreamImport,
   commitWip,
+  commitWipFromTree,
   DEFAULT_CHECKPOINT_RETENTION,
+  FILE_SYSTEM_WRITER,
+  GIT_UPSTREAM_WRITER,
   gcCheckpointRefs,
   type InMemoryCheckpointParams,
   initShadowRepo,
   listRescueCheckpoints,
   type SafetyCheckpointParams,
   type SaveVersionResult,
+  SERVICE_WRITER,
   type ShadowHandle,
   type ShadowRef,
   safetyCheckpoint,

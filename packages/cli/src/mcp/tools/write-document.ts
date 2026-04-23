@@ -6,15 +6,16 @@
  */
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
+  summaryArgSchema,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -31,11 +32,12 @@ export const DESCRIPTION = [
   '- `docName` — Document name, typically without extension (e.g., "my-doc" or "notes/meeting"). A trailing `.md` or `.mdx` is stripped automatically. New documents are created as `.md` by default; to create a `.mdx` file, first place it on disk, then use this tool for edits.',
   '- `markdown` — Markdown content to write',
   '- `position` — Where to insert: "append", "prepend", or "replace"',
+  '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Added 3 lines"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 interface WriteDocumentDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
   identityRef?: { current: AgentIdentity };
 }
@@ -48,9 +50,24 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       docName: z.string().describe('Document name to write to'),
       markdown: z.string().describe('Markdown content to write'),
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+      summary: summaryArgSchema,
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; markdown: string; position: string }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: {
+      docName: string;
+      markdown: string;
+      position: string;
+      summary?: string;
+      cwd?: string;
+    }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, config, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -59,6 +76,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -70,14 +88,19 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const cwd = await deps.resolveCwd();
-      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const noPreviewAttached = subscriberCount === 0;
 
       const hints = Array.isArray(result.hints) ? result.hints : undefined;
+
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
+          : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
 
       const lines: string[] = [`Written successfully (${args.position}).`];
       if (preview) lines.push(`Preview: ${preview.url}`);
@@ -88,6 +111,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
             : `Warning: no preview is currently attached to "${normalized.docName}".`,
         );
       }
+      if (summaryHint) lines.push(summaryHint);
       if (hints) {
         for (const hint of hints) {
           if (hint.message) lines.push(hint.message);
@@ -95,7 +119,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       }
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached && !hints) {
+      if (!preview && !noPreviewAttached && !hints && !summaryResult) {
         return textResult(text);
       }
 
@@ -112,6 +136,9 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       }
       if (hints) {
         structured.hints = hints;
+      }
+      if (summaryResult) {
+        structured.summary = summaryResult;
       }
       return textPlusStructured(text, structured);
     },

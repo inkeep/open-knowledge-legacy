@@ -1,9 +1,10 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
-import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
-import { createNavigationRetryHandler } from '@/editor/navigation-retry';
+import { useDocumentContext } from '@/editor/DocumentContext';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
+import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
+import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
@@ -12,18 +13,27 @@ import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import { NavigationPendingBar } from './NavigationPendingBar';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
 /**
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
  * Replaces the prior `isSourceMode: boolean` + `previewEntry: TimelineEntry | null`
  * two-boolean encoding. Booleans don't scale past 2 states.
+ *
+ * Derives from `EditorModeValue` (the persistable subset) + `'diff'` — so the
+ * "diff is the only non-persistable mode" invariant is enforced structurally
+ * by the compiler. Adding a new persistable mode updates `EDITOR_MODE_VALUES`
+ * in `use-editor-mode.ts` and this type follows automatically.
  */
-export type EditorMode = 'wysiwyg' | 'source' | 'diff';
+export type EditorMode = EditorModeValue | 'diff';
 
 export function EditorPane() {
-  const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
+  // Persisted preference (localStorage). Read once at mount via
+  // `useEditorMode`'s `useState` initializer and seeded into session-local
+  // `editorMode`. Open tabs are independent for their lifetime (SPEC D9);
+  // the persisted value applies at load (refresh / new tab / new window).
+  const [persistedMode, setPersistedMode] = useEditorMode();
+  const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
@@ -37,7 +47,7 @@ export function EditorPane() {
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
-  const modeBeforeDiffRef = useRef<'wysiwyg' | 'source'>('wysiwyg');
+  const modeBeforeDiffRef = useRef<EditorModeValue>('wysiwyg');
 
   const syncStatus = useGitSyncStatus();
 
@@ -47,19 +57,7 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName, recycleDocument } = useDocumentContext();
-  const { openDocumentTransition, isPending } = useDocumentTransition();
-
-  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
-  // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
-  // handler always targets the currently-displayed doc, not a stale capture.
-  // `recycleDocument` is the one-shot reset — destroys the broken provider
-  // and recreates it before the new transition re-suspends DocumentBoundary.
-  const handleRetry = createNavigationRetryHandler({
-    recycleDocument,
-    openDocumentTransition,
-    getActiveDocName: () => activeDocName,
-  });
+  const { activeDocName } = useDocumentContext();
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -68,7 +66,10 @@ export function EditorPane() {
       setEditorMode(modeBeforeDiffRef.current);
     } else {
       if (editorMode !== 'diff') {
-        modeBeforeDiffRef.current = editorMode === 'source' ? 'source' : 'wysiwyg';
+        // editorMode is narrowed to EditorModeValue here (the 'diff' branch
+        // excluded); direct assignment works since modeBeforeDiffRef is typed
+        // as EditorModeValue too.
+        modeBeforeDiffRef.current = editorMode;
       }
       setPreviewEntry(entry);
       setEditorMode('diff');
@@ -88,14 +89,19 @@ export function EditorPane() {
   }
 
   // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
-  // SourceEditor separately listens for the same event to scroll to the offset.
+  // The pending navigation store preserves the target offset until the source
+  // chunk finishes loading for the active doc.
   useEffect(() => {
-    function onRawMdxNav() {
+    function onRawMdxNav(e: Event) {
+      const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
+      if (detail && activeDocName) {
+        rememberPendingSourceNavigation(activeDocName, { kind: 'raw-mdx', detail });
+      }
       setEditorMode('source');
     }
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-  }, []);
+  }, [activeDocName]);
 
   // Clear stale diff state when the active document changes (spec D3 / FR-3).
   // Uses a ref to detect doc changes in an effect that reads activeDocName,
@@ -127,8 +133,12 @@ export function EditorPane() {
     }
   }, [syncStatus?.state, syncStatus?.hasRemote]);
 
-  function handleModeChange(mode: 'wysiwyg' | 'source') {
+  function handleModeChange(mode: EditorModeValue) {
     setEditorMode(mode);
+    // User-initiated change — persist globally. Tool-driven flips (e.g.
+    // RAW_MDX_NAV_EVENT → source) are session-only and deliberately do NOT
+    // call setPersistedMode (see §7.5).
+    setPersistedMode(mode);
   }
 
   async function handleSaveVersion() {
@@ -211,7 +221,6 @@ export function EditorPane() {
           </span>
         </div>
       )}
-      <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
         editorMode={editorMode}
         previewEntry={previewEntry}

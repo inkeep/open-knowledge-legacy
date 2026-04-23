@@ -2,17 +2,25 @@
  * Shadow-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The shadow repo at `.git/openknowledge/` (integrated mode, when the project
- * has its own `.git/`) or `.openknowledge/` (standalone mode) is OK's
- * attribution journal. Its on-disk layout is a documented invariant:
+ * The shadow repo lives at `<projectRoot>/.git/open-knowledge/` (SPEC
+ * 2026-04-21-shadow-repo-single-mode). Pre-spec integrated shadows at
+ * `.git/openknowledge/` (legacy path) are silently rename-migrated in-place
+ * once per repo via `initShadowRepo()`. Its on-disk layout is a documented
+ * invariant:
  *
  *   refs/wip/<project-branch>/<writer-id>
  *
- * where `<writer-id>` has one of four recognized prefixes:
- *   - `agent-<opaque-id>`   — an agent wrote the commit
- *   - `human-<opaque-id>`   — a human wrote the commit
- *   - `upstream`            — imported from `git pull`
- *   - `server`              — internal bookkeeping
+ * where `<writer-id>` is one of the five recognized forms in the D34/D52 taxonomy
+ * (dropping the legacy `human-` prefix and the opaque `server` writer):
+ *   - `agent-<connectionId>`     — an MCP agent session wrote the commit
+ *   - `principal-<UUID>`         — a browser-tab principal wrote the commit
+ *   - `file-system`              — classified: disk reconcile (file-watcher)
+ *   - `git-upstream`             — classified: HEAD-move commit import
+ *   - `openknowledge-service`    — classified: service-level fallback (park, etc.)
+ *
+ * Legacy ref names (`server`, `human-<*>`, `upstream`) classify as `'unknown'`
+ * so the D35 allowlist sweep in `initShadowRepo()` can safely delete them on
+ * first run without deleting legitimate new-taxonomy refs.
  *
  * Centralizing this layout knowledge prevents CLI/server drift: the CLI
  * consumes these utilities to parse writer IDs and resolve shadow-dir paths
@@ -21,24 +29,43 @@
  * This file uses only `node:fs` (no other server/runtime deps) so it is safe
  * to include from any workspace package.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export type WriterClassification = 'agent' | 'human' | 'upstream' | 'server' | 'unknown';
+/**
+ * D34 taxonomy (US-006, precedent #25). Classified system writers are non-attributable
+ * actions written under a fixed writer-id. Legacy values ('human-', 'upstream',
+ * 'server') are classified 'unknown' so the US-018 allowlist sweep can
+ * identify and GC them without confusing them with valid attributed refs.
+ *
+ * Full writer-ID table:
+ *   agent-<connectionId>       → 'agent'                           (MCP session)
+ *   principal-<UUID>           → 'principal'                        (browser tab)
+ *   file-system                → 'classified-file-system'           (disk reconcile)
+ *   git-upstream               → 'classified-git-upstream'          (HEAD-move import)
+ *   openknowledge-service      → 'classified-openknowledge-service' (park / service)
+ *   server, human-*, upstream  → 'unknown'                          (legacy, swept by US-018)
+ */
+export type WriterClassification =
+  | 'agent'
+  | 'principal'
+  | 'classified-file-system'
+  | 'classified-git-upstream'
+  | 'classified-openknowledge-service'
+  | 'unknown';
 
 export interface ParsedWriter {
-  /** The full writer id as stored in the ref (e.g., "agent-abc123"). */
+  /** The full writer id as stored in the ref (e.g., "agent-<uuid>"). */
   id: string;
   classification: WriterClassification;
   /**
    * Convenience derived from `classification`:
    *   - `true`  when classification === 'agent'
-   *   - `false` when classification === 'human'
-   *   - `null`  when 'upstream' | 'server' | 'unknown' (indeterminate for
+   *   - `false` when classification === 'principal'
+   *   - `null`  for system writers and unknown (indeterminate for
    *     "who edited this?" attribution)
    *
-   * Agents reasoning about agent-vs-human authorship should prefer
-   * `classification` over this boolean — see SPEC.md R3 on disambiguation.
+   * Prefer `classification` when reasoning about attribution.
    */
   isAgent: boolean | null;
 }
@@ -47,39 +74,26 @@ export interface ParsedWriter {
  * Canonical regex matching the writer-id portion at the end of a ref.
  * Single source of truth for the layout; any ref-parsing code in the repo
  * should flow through `parseWriterId`.
+ *
+ * D34: recognized ids — `agent-<uuid>`, `principal-<uuid>`,
+ * `file-system`, `git-upstream`, `openknowledge-service`.
+ * Legacy ids (`human-*`, `upstream`, `server`) do NOT match → 'unknown',
+ * so they are eligible for GC by the US-018 allowlist sweep.
  */
-const WRITER_ID_RE = /^(human-[^/]+|agent-[^/]+|upstream|server)$/;
-
-/** Mode of the shadow-repo location; determined by whether the project has its own `.git/`. */
-export type ShadowRepoMode = 'integrated' | 'standalone';
-
-export interface ResolvedShadowDir {
-  /** Absolute path where the shadow repo lives (or would live, if not yet initialized). */
-  path: string;
-  mode: ShadowRepoMode;
-}
+const WRITER_ID_RE =
+  /^(agent-[^/]+|principal-[^/]+|file-system|git-upstream|openknowledge-service)$/;
 
 /**
  * Resolve the shadow-repo bare git dir's target path for a project — WITHOUT
  * checking whether it exists yet. Used by init (`packages/server/src/shadow-repo.ts`)
  * to pick where to create the repo, and internally by `getShadowRepoPath`.
  *
- * Rule matches server's historical `initShadowRepo` logic:
- *   - Integrated mode (`<projectRoot>/.git/openknowledge/`) when the project
- *     has its own `.git/` directory
- *   - Standalone mode (`<projectRoot>/.openknowledge/`) otherwise
+ * Single-mode layout: the shadow always lives at `<projectRoot>/.git/open-knowledge/`.
+ * Projects without `.git/` get auto-init'd via `ensureProjectGit` before this
+ * function is consulted (SPEC 2026-04-21-shadow-repo-single-mode D12/R2).
  */
-export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
-  const abs = resolve(projectRoot);
-  const projectGit = resolve(abs, '.git');
-  try {
-    if (statSync(projectGit).isDirectory()) {
-      return { path: resolve(projectGit, 'openknowledge'), mode: 'integrated' };
-    }
-  } catch {
-    // no project .git/ — fall through to standalone
-  }
-  return { path: resolve(abs, '.openknowledge'), mode: 'standalone' };
+export function resolveShadowDir(projectRoot: string): string {
+  return resolve(projectRoot, '.git/open-knowledge');
 }
 
 /**
@@ -90,7 +104,7 @@ export function resolveShadowDir(projectRoot: string): ResolvedShadowDir {
  * `resolveShadowDir` directly.
  */
 export function getShadowRepoPath(projectRoot: string): string | null {
-  const { path } = resolveShadowDir(projectRoot);
+  const path = resolveShadowDir(projectRoot);
   return existsSync(resolve(path, 'HEAD')) ? path : null;
 }
 
@@ -115,6 +129,16 @@ export interface ShadowContributor {
   /** Color seed for deterministic color assignment — matches presence bar color. */
   colorSeed?: string;
   docs: string[];
+  /**
+   * Flat per-contributor array of agent-provided summaries, oldest first.
+   * Additive field (spec D9/D23) — legacy commits lack it entirely and parse
+   * with `summaries: undefined`. Per D27, malformed values (non-array, or
+   * array with non-string elements) drop just this field and leave the rest
+   * of the contributor entry intact — a deliberate divergence from the
+   * whole-entry-skip convention used for other optional fields, because
+   * decorative loss (no bullets) is preferable to attribution loss.
+   */
+  summaries?: string[];
 }
 
 const OK_CONTRIBUTORS_PREFIX = 'ok-contributors: ';
@@ -147,6 +171,17 @@ export function parseContributors(body: string): ShadowContributor[] {
         (!('colorSeed' in parsed) ||
           typeof (parsed as Record<string, unknown>).colorSeed === 'string')
       ) {
+        // D27: malformed `summaries` drops just the field; the contributor
+        // entry still parses. Decorative loss (no bullets) beats attribution
+        // loss (missing contributor). Deliberate divergence from the
+        // whole-entry-skip convention applied to other optional fields.
+        const raw = parsed as Record<string, unknown>;
+        if ('summaries' in raw) {
+          const s = raw.summaries;
+          if (!Array.isArray(s) || !s.every((x) => typeof x === 'string')) {
+            delete raw.summaries;
+          }
+        }
         contributors.push(parsed as ShadowContributor);
       }
     } catch {
@@ -272,6 +307,316 @@ export function formatCheckpointBodyLine(parsed: ParsedCheckpoint): string {
   return `${OK_CHECKPOINT_PREFIX}${JSON.stringify(payload)}`;
 }
 
+// ─── ok-actor: body line (US-015, FR-8, D13) ─────────────────────────────────
+
+/**
+ * Structured actor tuple written as `ok-actor:` JSON body line in every
+ * shadow-repo commit. Makes the repo queryable without a session registry.
+ * v:1 is the sole schema version; bump v to introduce breaking changes.
+ */
+export interface OkActorEntry {
+  v: 1;
+  /**
+   * The writer id — the ref-name this commit was authored under:
+   *   - `agent-<connectionId>`    — MCP agent session
+   *   - `principal-<UUID>`        — browser-tab principal
+   *   - `file-system` | `git-upstream` | `openknowledge-service` — classified
+   *
+   * Carries the identity that `ok-contributors.id` used to carry pre-consolidation,
+   * so a commit body is self-describing (`git show -s <sha>` → full attribution
+   * without needing to join against `git for-each-ref`). Also disambiguates
+   * classified writers, which otherwise share `{principal: null, agent_session: null}`.
+   */
+  writer_id: string;
+  /** Long-lived principal id (US-024 stub — null until human-browser auth wired). */
+  principal: string | null;
+  /** Per-session agent connection id, e.g. "conn-abc123". Null for classified writers. */
+  agent_session: string | null;
+  /** Claude model family, e.g. "claude-3-5-sonnet". Null when not known. */
+  agent_type: string | null;
+  /** MCP client name (e.g. "claude-code"). Null when not known. */
+  client_name: string | null;
+  /** MCP client version. Null when not known. */
+  client_version: string | null;
+  /** User-supplied label for this session. Null when absent. */
+  label: string | null;
+  /** Human-readable display name shown in attribution UI. */
+  display_name: string;
+  /** Color seed for deterministic color assignment — matches presence bar. */
+  color_seed: string;
+  /** Documents touched in this drain cycle. */
+  docs: string[];
+  /**
+   * Flat per-contributor array of agent-provided summaries, oldest first.
+   * Elided when empty so summary-less writes stay byte-identical to legacy.
+   * Malformed values (non-array, array-with-non-string) drop JUST this field
+   * at parse time — decorative loss (no bullets) beats attribution loss.
+   * Agent-write-summaries spec D23/D27 + FR4, consolidated onto ok-actor:
+   * as the foundation's deferred read-path migration (formerly lived on
+   * ok-contributors:).
+   */
+  summaries?: string[];
+}
+
+const OK_ACTOR_PREFIX = 'ok-actor: ';
+
+/**
+ * Format an `ok-actor:` JSON body line. Produces exactly one line (no trailing newline).
+ * Pair with `parseOkActor` / `parseOkActors` at the read path. Elides `summaries`
+ * when empty/absent so summary-less writes stay byte-identical to pre-consolidation
+ * ok-actor commits.
+ */
+export function formatOkActor(entry: OkActorEntry): string {
+  const { summaries, ...rest } = entry;
+  const payload: Record<string, unknown> =
+    summaries && summaries.length > 0 ? { ...rest, summaries } : rest;
+  return `${OK_ACTOR_PREFIX}${JSON.stringify(payload)}`;
+}
+
+/**
+ * Parse a single JSON object into an `OkActorEntry`, or `null` on schema violation.
+ * Extracted so `parseOkActor` (first-match) and `parseOkActors` (all-matches)
+ * share one validation pass.
+ *
+ * Back-compat note: pre-consolidation `ok-actor:` lines (shipped before this
+ * unification) lacked `writer_id`. When missing, derive it:
+ *   - `agent_session` set → `agent-<agent_session>`
+ *   - `principal` set → `<principal>`  (principal ids already include the
+ *     `principal-` prefix per D34)
+ *   - otherwise → derive from `display_name` for the three classified writers;
+ *     fall back to `'openknowledge-service'` as the safest non-attributed
+ *     classified writer if display_name doesn't match.
+ */
+function parseOkActorObject(obj: Record<string, unknown>): OkActorEntry | null {
+  if (obj.v !== 1) return null;
+  if (!('display_name' in obj) || typeof obj.display_name !== 'string') return null;
+  if (!('docs' in obj) || !Array.isArray(obj.docs)) return null;
+  const principal = typeof obj.principal === 'string' ? obj.principal : null;
+  const agent_session = typeof obj.agent_session === 'string' ? obj.agent_session : null;
+  let writer_id: string;
+  if (typeof obj.writer_id === 'string' && obj.writer_id.length > 0) {
+    writer_id = obj.writer_id;
+  } else if (agent_session) {
+    writer_id = `agent-${agent_session}`;
+  } else if (principal) {
+    writer_id = principal;
+  } else {
+    // Classified writers — derive from display_name. The three recognized values
+    // are stable display strings in shadow-repo.ts (FILE_SYSTEM_WRITER etc.).
+    switch (obj.display_name) {
+      case 'File System':
+        writer_id = 'file-system';
+        break;
+      case 'Git (upstream)':
+        writer_id = 'git-upstream';
+        break;
+      default:
+        writer_id = 'openknowledge-service';
+    }
+  }
+  const summaries =
+    'summaries' in obj && Array.isArray(obj.summaries)
+      ? (obj.summaries as unknown[]).every((s) => typeof s === 'string')
+        ? (obj.summaries as string[])
+        : undefined // D27 divergence: drop field on malformed, keep entry
+      : undefined;
+  return {
+    v: 1,
+    writer_id,
+    principal,
+    agent_session,
+    agent_type: typeof obj.agent_type === 'string' ? obj.agent_type : null,
+    client_name: typeof obj.client_name === 'string' ? obj.client_name : null,
+    client_version: typeof obj.client_version === 'string' ? obj.client_version : null,
+    label: typeof obj.label === 'string' ? obj.label : null,
+    display_name: obj.display_name,
+    color_seed: typeof obj.color_seed === 'string' ? obj.color_seed : 'unknown',
+    docs: (obj.docs as unknown[]).filter((d): d is string => typeof d === 'string'),
+    ...(summaries && summaries.length > 0 ? { summaries } : {}),
+  };
+}
+
+/**
+ * Parse the first `ok-actor:` JSON body line from a commit message body.
+ * Returns `null` when the line is absent, malformed, or fails schema validation
+ * (v must be 1; display_name and docs must be present).
+ *
+ * Use `parseOkActors` (plural) when the body may contain multiple writers
+ * (multi-contributor L2 drain); pre-unification commits used one ok-actor
+ * per commit, but the consolidated write path emits one per writer.
+ */
+export function parseOkActor(body: string): OkActorEntry | null {
+  if (!body) return null;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_ACTOR_PREFIX)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed.slice(OK_ACTOR_PREFIX.length));
+    } catch {
+      return null;
+    }
+    if (parsed === null || typeof parsed !== 'object') return null;
+    return parseOkActorObject(parsed as Record<string, unknown>);
+  }
+  return null;
+}
+
+/**
+ * Parse every `ok-actor:` JSON body line from a commit message body.
+ * Returns an empty array when the body contains no valid ok-actor lines.
+ * Malformed lines are skipped silently (mirrors `parseContributors` convention).
+ *
+ * The consolidated L2 drain emits one `ok-actor:` per writer per commit
+ * (FR-7 fan-out), so this is the right reader for post-consolidation commits.
+ */
+export function parseOkActors(body: string): OkActorEntry[] {
+  if (!body) return [];
+  const out: OkActorEntry[] = [];
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_ACTOR_PREFIX)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed.slice(OK_ACTOR_PREFIX.length));
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== 'object') continue;
+    const entry = parseOkActorObject(parsed as Record<string, unknown>);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Project an `OkActorEntry` onto the legacy `ShadowContributor` DTO that
+ * Timeline + CLI render paths consume. Kept deliberately thin — the renderers
+ * haven't been migrated to consume `OkActorEntry` fields directly (rich actor
+ * data like `agent_type`, `client_name` is available for them to adopt later).
+ */
+export function okActorToShadowContributor(a: OkActorEntry): ShadowContributor {
+  const shadow: ShadowContributor = {
+    v: 1,
+    id: a.writer_id,
+    name: a.display_name,
+    colorSeed: a.color_seed,
+    docs: a.docs,
+  };
+  if (a.summaries && a.summaries.length > 0) shadow.summaries = a.summaries;
+  return shadow;
+}
+
+/**
+ * Read contributors from a commit message body, preferring the consolidated
+ * `ok-actor:` body lines and falling back to legacy `ok-contributors:` lines
+ * when no `ok-actor:` is present.
+ *
+ * This is the single entry point the Timeline API (`timeline-query.ts`) and
+ * the CLI enrichment path (`shadow-log.ts`) should call. Callers that need
+ * the full actor tuple (e.g., a future on-behalf-of render) should consume
+ * `parseOkActors` directly.
+ *
+ * Back-compat contract: commits written before the ok-actor consolidation
+ * (on disk from pre-unification sessions) have only `ok-contributors:` lines
+ * and continue to render identically. Commits written post-consolidation
+ * have only `ok-actor:` lines. Transitional commits with both are possible
+ * during rollout and prefer `ok-actor:` — `ok-contributors:` is ignored when
+ * at least one ok-actor is present to avoid double-counting.
+ */
+export function readContributors(body: string): ShadowContributor[] {
+  const actors = parseOkActors(body);
+  if (actors.length > 0) return actors.map(okActorToShadowContributor);
+  return parseContributors(body);
+}
+
+// ─── Subject-prefix scheme (D53, FR-13) ──────────────────────────────────────
+
+/** Format a `wip:` subject from docs touched in the drain cycle. */
+export function formatWipSubject(docs: string[]): string {
+  if (docs.length === 0) return 'wip: auto-save';
+  if (docs.length === 1) return `wip: ${docs[0]}`;
+  return `wip: ${docs.length} docs`;
+}
+
+/** Format a `reconcile:` subject for file-watcher-triggered reconcile writes (D53). */
+export function formatReconcileSubject(docName: string): string {
+  return `reconcile: ${docName}`;
+}
+
+/** Format a `rollback:` subject for rollback-to-version writes (D53). */
+export function formatRollbackSubject(docName: string, sha: string): string {
+  return `rollback: ${docName} to ${sha.slice(0, 7)}`;
+}
+
+/** Format a `park:` subject for branch-switch park commits (D53). */
+export function formatParkSubject(oldBranch: string, newBranch: string): string {
+  return `park: ${oldBranch} -> ${newBranch}`;
+}
+
+/** Format a `rename:` subject for managed-rename writes (D53). */
+export function formatRenameSubject(oldName: string, newName: string): string {
+  return `rename: ${oldName} -> ${newName}`;
+}
+
+/** Format a `checkpoint:` subject for save-version and safety-checkpoint commits (D53). */
+export function formatCheckpointSubject(message: string): string {
+  return `checkpoint: ${message}`;
+}
+
+/** Format an `import:` subject for upstream-import commits (D53). */
+export function formatImportSubject(oldHead: string | null, newHead: string): string {
+  return oldHead
+    ? `import: from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
+    : `import: initial at ${newHead.slice(0, 8)}`;
+}
+
+// ─── Change-note subject composition (FR14 + D53 addendum) ───────────────────
+//
+// Landing per-writer summaries on the COMMIT SUBJECT line (not just the
+// `ok-contributors:` body) is what turns `git log --oneline refs/wip/main/agent-*`
+// from a wall of `wip: notes.md` duplicates into a scannable team-history feed.
+// The body still carries the full summary array for the TimelinePanel render —
+// this helper is the git-log-shaped projection.
+
+/**
+ * Upper bound on the length of the rendered commit subject line.
+ * Matches the CommonMark / git subject-line convention so `git log --oneline`
+ * stays legible without wrapping.
+ */
+export const COMMIT_SUBJECT_MAX_LEN = 72;
+
+/**
+ * Combine a base subject (from `formatWipSubject` / `formatReconcileSubject` / etc.
+ * or a `ContributorEntry.subjectOverride`) with agent-supplied change-notes,
+ * producing a single subject line capped at `COMMIT_SUBJECT_MAX_LEN`.
+ *
+ * Rules:
+ *  - 0 summaries → base subject unchanged (pre-feature byte-identity).
+ *  - 1 summary → `<base> — <summary>` truncated with a trailing U+2026
+ *    ellipsis when over budget; the `<base>` portion is never truncated.
+ *  - ≥2 summaries → `<base> (N edits)`. The bullets live in the body
+ *    (`ok-contributors.summaries`) and in the TimelinePanel UI — the
+ *    subject only carries the count so `git log --oneline` stays one line.
+ *
+ * Truncation preserves the base, separator, and suffix so the `grep`-friendly
+ * target stays intact even for very short terminal widths. Matches the
+ * `normalizeSummary` API-boundary truncation in `agent-write-summary.ts` by
+ * using the same single-codepoint `…` rather than three ASCII dots.
+ */
+export function composeCommitSubject(base: string, summaries: readonly string[]): string {
+  if (summaries.length === 0) return base;
+  if (summaries.length >= 2) return `${base} (${summaries.length} edits)`;
+  const [summary] = summaries;
+  if (summary === undefined) return base; // defensive; length-1 branch guards against this
+  const full = `${base} — ${summary}`;
+  if (full.length <= COMMIT_SUBJECT_MAX_LEN) return full;
+  const prefix = `${base} — `;
+  const budget = COMMIT_SUBJECT_MAX_LEN - prefix.length - 1; // reserve one char for the ellipsis
+  if (budget <= 0) return full.slice(0, COMMIT_SUBJECT_MAX_LEN); // base already over budget — defensive slice
+  return `${prefix}${summary.slice(0, budget)}…`;
+}
+
 /**
  * Classify a writer id using the documented prefix convention. Unknown
  * prefixes (legacy commits, external git operations) classify as 'unknown'
@@ -283,9 +628,12 @@ export function parseWriterId(id: string): ParsedWriter {
     return { id, classification: 'unknown', isAgent: null };
   }
   if (id.startsWith('agent-')) return { id, classification: 'agent', isAgent: true };
-  if (id.startsWith('human-')) return { id, classification: 'human', isAgent: false };
-  if (id === 'upstream') return { id, classification: 'upstream', isAgent: null };
-  if (id === 'server') return { id, classification: 'server', isAgent: null };
+  if (id.startsWith('principal-')) return { id, classification: 'principal', isAgent: false };
+  if (id === 'file-system') return { id, classification: 'classified-file-system', isAgent: null };
+  if (id === 'git-upstream')
+    return { id, classification: 'classified-git-upstream', isAgent: null };
+  if (id === 'openknowledge-service')
+    return { id, classification: 'classified-openknowledge-service', isAgent: null };
   // Unreachable given the regex, but keeps the type narrowing honest.
   return { id, classification: 'unknown', isAgent: null };
 }

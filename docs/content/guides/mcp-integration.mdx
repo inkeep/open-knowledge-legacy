@@ -23,6 +23,7 @@ Active when no live `server.lock` is present and auto-start is **not** opted out
 - Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
 - Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) in the first tool-result error rather than silently dropping to disk-only
 - Once the poll succeeds, subsequent behavior is identical to Connected mode
+- **Transitive auto-git-init:** the spawned `ok start` runs `ensureProjectGit` on the project directory, so if there is no parent `.git/` present it will be created (default branch `main`) before the collab server binds. Running `ok mcp` against a directory without `.git/` therefore creates one transitively — the disclosure line appears in the spawned server's stderr log. To suppress both the auto-spawn and the transitive git-init together, opt out with `OK_MCP_AUTOSTART=0` (env) or `mcp.autoStart: false` (config) to fall into Disk-only mode.
 </Tab>
 <Tab value="Disk-only mode">
 Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.
@@ -73,15 +74,25 @@ All 21 docName-producing tools emit `previewUrl` in their result (single-doc too
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
 
+### `summary` on write tools
+
+The four write tools — `write_document`, `edit_document`, `rename_document`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
+
+- **Cap.** 80 characters at the API boundary (49 visible + `…` suffix when truncated). The Zod schema caps input at 200 characters as a transport-safety bound; summaries longer than 80 are truncated server-side and the tool response includes `truncatedFrom: <original-length>` so the agent can adjust.
+- **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document` and `edit_document` produce a bulletless row in that case.
+- **Attribution.** Only MCP-driven calls (i.e. those that pass through agent identity) attach a contributor entry. Human Restore actions taken in the React editor stay anonymous on the timeline as they always have.
+- **Privacy.** Avoid secrets or PII in summaries — they are persisted to git history.
+
 ## previewUrl in tool results
 
 Every docName-producing MCP tool emits a `previewUrl` in its `structuredContent` so you can click straight from the agent's response into the React editor at the exact doc it just touched. Single-doc tools emit a top-level `previewUrl`; list-producing tools emit one per row alongside a top-level `ui` block. When neither a UI nor a configured base URL is reachable, `previewUrl` is `null` and tools still return their primary data — it's an affordance, not a blocker.
 
 Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for details):
 
-1. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
-2. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
-3. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+1. `openknowledge://` URL scheme — emitted when the server detects it is running inside the Open Knowledge desktop app (via `OK_ELECTRON_PROTOCOL_HOST=1`, which the desktop main process injects at utility-fork time). The resulting URL is `openknowledge://open?project=<realpath>&doc=<docName>` and routes through the desktop's main-process URL handler to the correct project window. CLI / `bunx` servers never set the flag, so they fall through to the HTTP sources below.
+2. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
+3. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
+4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 

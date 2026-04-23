@@ -13,10 +13,15 @@
  *   - `consolidate` — promotes research + sources into canonical articles (analysis, decided)
  */
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
-import { textPlusStructured } from './shared.ts';
+import {
+  type ConfigOrResolver,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
   return `Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
@@ -178,7 +183,12 @@ export const DESCRIPTION = [
   '- Research has stabilized and a destination article is needed',
 ].join('\n');
 
-export function register(server: ServerInstance, config: Config): void {
+interface ConsolidateDeps {
+  config: ConfigOrResolver;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: ConsolidateDeps): void {
   // previewUrl is null per FR-2.1: consolidate is a workflow primer keyed on a
   // `topic` — the target canonical article's path is chosen by the agent during
   // the prompt's Step 3. There is no single canonical document to preview at
@@ -186,8 +196,16 @@ export function register(server: ServerInstance, config: Config): void {
   server.tool(
     'consolidate',
     DESCRIPTION,
-    { topic: z.string().describe('The topic to consolidate into a canonical article') },
-    (args: { topic: string }) =>
-      textPlusStructured(buildBody(args.topic, config.content.dir), { previewUrl: null }),
+    {
+      topic: z.string().describe('The topic to consolidate into a canonical article'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { topic: string; cwd?: string }) => {
+      const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      return textPlusStructured(buildBody(args.topic, context.config.content.dir), {
+        previewUrl: null,
+      });
+    },
   );
 }

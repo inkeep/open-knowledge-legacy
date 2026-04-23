@@ -1,9 +1,10 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
+import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
-import { hashFromDocName } from '@/lib/doc-hash';
+import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
+import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
@@ -27,7 +29,15 @@ interface EditorAreaProps {
   selectedSha?: string;
 }
 
-export function EditorArea({
+export function EditorArea(props: EditorAreaProps) {
+  return (
+    <ProfilerBoundary name="editor-area">
+      <EditorAreaInner {...props} />
+    </ProfilerBoundary>
+  );
+}
+
+function EditorAreaInner({
   editorMode,
   previewEntry,
   diffLayout,
@@ -37,6 +47,20 @@ export function EditorArea({
 }: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  // Shell-snap decoupling: `activeDocName` updates urgently across the tree
+  // (sidebar aria-current, header title, tab panels — all read the urgent
+  // value via `useDocumentContext`). The editor subtree, however, pays a
+  // heavy render cost on nav to mark-heavy / oversize docs — TipTap's
+  // create-view + per-mark reconciliation can block the main thread for
+  // 1-3s on docs above `BYTES_CACHE_THRESHOLD` (which refuse V2 cache
+  // admission, forcing a fresh `new Editor()` on every warm visit).
+  // Wrapping with `useDeferredValue` lets React commit the shell render
+  // first (aria-current + header snap to the new doc) and defer the
+  // editor-subtree re-render to a low-priority pass, letting the browser
+  // paint the updated shell before the editor mount cost begins. See
+  // `docs-open.e2e.ts` F0 for the regression test that pinned the budget
+  // at 250ms shell-snap.
+  const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
@@ -155,6 +179,17 @@ export function EditorArea({
   }
 
   if (!activeProvider || !activeDocName) {
+    // On initial page load, the URL hash tells us a doc is about to open —
+    // render the skeleton instead of the "Select a document" empty state so
+    // the user doesn't see a flash of the OkBlob screen before
+    // `NavigationHandler`'s effect wires up the hash-driven nav. Once the
+    // provider lands, the normal editor tree below takes over. Guarded on
+    // `typeof window` so SSR / the DocumentContext bootstrap path doesn't
+    // reach the `window` reference.
+    const hashDoc = typeof window !== 'undefined' ? docNameFromHash(window.location.hash) : null;
+    if (hashDoc !== null) {
+      return <EditorSkeleton />;
+    }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4">
         <OkBlob size={80} />
@@ -227,20 +262,26 @@ export function EditorArea({
 
       {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
           Outer display:none keeps the editor DOM alive when in diff mode.
-          Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
-          inner display:none toggle) is preserved inside EditorActivityPool
-          per spec §9 + audit A2. Each Activity entry owns its own scroll
-          container so scroll position is DOM-local to that doc's subtree
-          and survives the Activity hidden-mode mount/unmount cycle.
+          EditorActivityPool keeps Tiptap eager and lazy-loads SourceEditor on
+          the first source-mode visit for each doc, then preserves the per-doc
+          display:none toggle after that initial load. Each Activity entry owns
+          its own scroll container so scroll position is DOM-local to that
+          doc's subtree and survives the Activity hidden-mode mount/unmount cycle.
 
           Error + Suspense scoping lives INSIDE EditorActivityPool — each
           Activity wraps its own DocumentErrorBoundary + Suspense so a
           hidden doc's cached rejected syncPromise cannot re-throw into
           the visible UI (QA-023/024). See EditorActivityPool.tsx file
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-      <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+      <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
         <EditorActivityPool
-          activeDocName={activeDocName}
+          // Fall back to the urgent `activeDocName` when the deferred
+          // value is still null (initial load, before the first
+          // deferred-commit pass populates it). The outer guard at
+          // line 173 already short-circuits with skeleton/empty-state
+          // when `activeDocName` itself is null, so we can assert
+          // non-null here.
+          activeDocName={deferredActiveDocName ?? activeDocName}
           isSourceMode={isSourceMode}
           editorPlaceholder={editorPlaceholder}
           previousDocName={previousDocName ?? undefined}
@@ -259,6 +300,25 @@ export function EditorArea({
           }}
           onRecycle={recycleDocument}
         />
+        {/* Nav-pending skeleton overlay. Rendered when the urgent
+            `activeDocName` (shell state — driving sidebar highlight +
+            header title) has moved past `deferredActiveDocName` (editor
+            subtree prop). That delta window is exactly the interval
+            between shell-snap and the editor subtree's deferred commit
+            completing — 1-3s on mark-heavy docs that refuse V2 cache
+            admission. Without this overlay the user sees the PREVIOUS
+            doc's editor linger through the mount window, which looks
+            like a "flash of the old editor" and contradicts the
+            sidebar's now-updated highlight. The overlay is absolute +
+            inset-0 on the positioned parent so it paints over the pool
+            without unmounting it — Activity state (scroll, selection,
+            editor instances) survives underneath. Regression test:
+            docs-open.e2e.ts F0b. */}
+        {activeDocName && activeDocName !== deferredActiveDocName ? (
+          <div className="absolute inset-0 z-10 bg-background">
+            <EditorSkeleton />
+          </div>
+        ) : null}
       </div>
       {toggleButton}
     </div>

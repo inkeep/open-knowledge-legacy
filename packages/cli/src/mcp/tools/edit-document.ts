@@ -6,15 +6,16 @@
  */
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
+  summaryArgSchema,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -33,11 +34,12 @@ export const DESCRIPTION = [
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
+  '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Changed 1 line"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 interface EditDocumentDeps {
   serverUrl: ServerUrlOrResolver;
-  config: Config;
+  config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
   identityRef?: { current: AgentIdentity };
 }
@@ -58,9 +60,25 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         .describe(
           'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
         ),
+      summary: summaryArgSchema,
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; find: string; replace: string; offset?: number }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: {
+      docName: string;
+      find: string;
+      replace: string;
+      offset?: number;
+      summary?: string;
+      cwd?: string;
+    }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, config, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -70,6 +88,7 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         find: args.find,
         replace: args.replace,
         offset: args.offset,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -81,12 +100,17 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      const cwd = await deps.resolveCwd();
-      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
-      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      const lockDir = resolveLockDir(resolveContentDir(config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const noPreviewAttached = subscriberCount === 0;
+
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
+          : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
 
       const lines: string[] = ['Edit applied successfully.'];
       if (preview) lines.push(`Preview: ${preview.url}`);
@@ -97,9 +121,10 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
             : `Warning: no preview is currently attached to "${normalized.docName}".`,
         );
       }
+      if (summaryHint) lines.push(summaryHint);
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached) {
+      if (!preview && !noPreviewAttached && !summaryResult) {
         return textResult(text);
       }
 
@@ -113,6 +138,9 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
           message: `No preview attached to ${normalized.docName}.`,
           previewUrl: preview?.url ?? null,
         };
+      }
+      if (summaryResult) {
+        structured.summary = summaryResult;
       }
       return textPlusStructured(text, structured);
     },

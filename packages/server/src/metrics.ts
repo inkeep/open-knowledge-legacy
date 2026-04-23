@@ -13,6 +13,8 @@ export interface ReconciliationMetrics {
   branchSwitchCount: number;
   parkCount: number;
   gitAutoSaveFailureCount: number;
+  /** Count of per-writer fan-out commitWipFromTree failures (US-014, D38). */
+  gitWriterCommitFailureCount: number;
   cc1BroadcastCount: number;
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
@@ -46,6 +48,32 @@ export interface ReconciliationMetrics {
    *  unclean close (RST). Same precedent §23 filter boundary; same
    *  observability rationale as `collabSocketEpipeCount`. */
   collabSocketEconnresetCount: number;
+  /** Count of legacy WIP refs deleted by the allowlist-based sweep in
+   *  initShadowRepo on first run post-upgrade (US-018, NFR-6, D35). */
+  shadowMigrationLegacyRefsDeleted: number;
+  /** Count of captureEffect failures (US-022, D37). Prod swallows; dev/test throws. */
+  effectDiffCaptureFailures: number;
+  /** Count of awareness-mutation failures in `AgentPresenceBroadcaster`
+   *  (setPresence / clearPresence / touchMode catching a throw from
+   *  `awareness.setLocalState`). Each failure logs at ERROR but the call
+   *  sites (HTTP handlers, keepalive close) swallow the return and move
+   *  on, so the counter is the operator-visible signal that presence is
+   *  silently dropping. A non-zero value means the badge state on clients
+   *  may disagree with what the server thinks it published — investigate
+   *  the correlated `[agent-presence] awareness mutation failed` log line. */
+  agentPresenceMutationErrors: number;
+  /** Successful agent-write API calls that reached recordContributor —
+   *  denominator for the M1 summary-adoption metric in spec §7. Incremented
+   *  by the five agent-write handlers only AFTER a successful recordContributor
+   *  (D22: UI-driven rollback/rename without agentId does NOT increment). */
+  agentWriteCalls: number;
+  /** Agent-write calls that carried a non-empty summary through
+   *  normalizeSummary — numerator for M1. Adoption rate = summariesProvided /
+   *  agentWriteCalls. */
+  summariesProvided: number;
+  /** Agent-write calls whose input summary exceeded the API cap and was
+   *  truncated to 79 visible chars + `…`. Spec M2 steady-state target <10 %. */
+  summariesTruncated: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -57,6 +85,7 @@ const counters: ReconciliationMetrics = {
   branchSwitchCount: 0,
   parkCount: 0,
   gitAutoSaveFailureCount: 0,
+  gitWriterCommitFailureCount: 0,
   cc1BroadcastCount: 0,
   cc1BroadcastDropCount: 0,
   cc1SubscriberCount: 0,
@@ -70,6 +99,12 @@ const counters: ReconciliationMetrics = {
   bridgeMergeCheckpointCreated: 0,
   collabSocketEpipeCount: 0,
   collabSocketEconnresetCount: 0,
+  shadowMigrationLegacyRefsDeleted: 0,
+  effectDiffCaptureFailures: 0,
+  agentPresenceMutationErrors: 0,
+  agentWriteCalls: 0,
+  summariesProvided: 0,
+  summariesTruncated: 0,
 };
 
 export function incrementReconcile(): void {
@@ -104,6 +139,10 @@ export function incrementGitAutoSaveFailure(): void {
   counters.gitAutoSaveFailureCount++;
 }
 
+export function incrementGitWriterCommitFailure(): void {
+  counters.gitWriterCommitFailureCount++;
+}
+
 export function incrementCC1Broadcast(): void {
   counters.cc1BroadcastCount++;
 }
@@ -132,6 +171,18 @@ export function incrementServerObserverError(direction: 'a' | 'b'): void {
 
 export function incrementBridgeMergeContentLoss(): void {
   counters.bridgeMergeContentLoss++;
+}
+
+export function incrementAgentWriteCalls(): void {
+  counters.agentWriteCalls++;
+}
+
+export function incrementSummariesProvided(): void {
+  counters.summariesProvided++;
+}
+
+export function incrementSummariesTruncated(): void {
+  counters.summariesTruncated++;
 }
 
 export function incrementBridgeMergeCheckpointCreated(): void {
@@ -177,6 +228,18 @@ export function incrementCollabSocketFilteredError(code: 'EPIPE' | 'ECONNRESET')
  *     ws.terminate();
  *   });
  */
+export function incrementShadowMigrationLegacyRefsDeleted(count: number): void {
+  counters.shadowMigrationLegacyRefsDeleted += count;
+}
+
+export function incrementEffectDiffCaptureFailures(): void {
+  counters.effectDiffCaptureFailures++;
+}
+
+export function incrementAgentPresenceMutationError(): void {
+  counters.agentPresenceMutationErrors++;
+}
+
 export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
     incrementCollabSocketFilteredError(err.code);
@@ -202,6 +265,7 @@ export function resetMetrics(): void {
   counters.branchSwitchCount = 0;
   counters.parkCount = 0;
   counters.gitAutoSaveFailureCount = 0;
+  counters.gitWriterCommitFailureCount = 0;
   counters.cc1BroadcastCount = 0;
   counters.cc1BroadcastDropCount = 0;
   counters.cc1SubscriberCount = 0;
@@ -215,4 +279,10 @@ export function resetMetrics(): void {
   counters.bridgeMergeCheckpointCreated = 0;
   counters.collabSocketEpipeCount = 0;
   counters.collabSocketEconnresetCount = 0;
+  counters.shadowMigrationLegacyRefsDeleted = 0;
+  counters.effectDiffCaptureFailures = 0;
+  counters.agentPresenceMutationErrors = 0;
+  counters.agentWriteCalls = 0;
+  counters.summariesProvided = 0;
+  counters.summariesTruncated = 0;
 }

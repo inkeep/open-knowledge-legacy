@@ -4,6 +4,14 @@ dist/
 # Per-package lockfiles — only root bun.lock should exist in monorepo
 packages/*/bun.lock
 
+# Electron desktop build output — electron-vite output + electron-builder dist
+packages/desktop/out/
+packages/desktop/dist-desktop/
+# smoke-mock-update.mjs writes this file at keep-alive start and unlinks
+# on Ctrl+C; no one should ever commit it — it pins the updater to a
+# random local port that dies the moment the smoke server exits.
+packages/desktop/dev-app-update.yml
+
 # Turbo cache
 .turbo/
 
@@ -41,27 +49,27 @@ packages/app/test-results/
 playwright-report/
 blob-report/
 
-# Open Knowledge shadow repo — bare git repo at `.openknowledge/` in standalone
-# mode (no project `.git/`) or at `.git/openknowledge/` in integrated mode.
-# Standalone mode MUST be gitignored at the project root: the shadow repo
-# contains binary pack objects, per-writer WIP refs naming pid/hostname/
-# worktreeRoot, and a lock file with the developer's absolute path. Integrated
-# mode is inside `.git/` which git already ignores. See `packages/server/src/
-# shadow-repo.ts` and CLAUDE.md "Shadow repo & branch runtime".
-.openknowledge/
-
 # Editor workspace files
 .vscode/
+.mcp.json
+.cursor/mcp.json
+.claude/launch.json
 
 # Benchmark harness output — per-run artifacts, published as CI artifacts.
 # Baselines live in specs/.../evidence/perf-baseline-measured.md instead.
 packages/core/tests/perf/results.*.json
 
 /test-doc.md
-.openknowledge/
 
 # Open Knowledge per-machine runtime state — tokens never live here, but
 # sync state, server locks, and derived caches are local-only.
 .open-knowledge/sync-state.json
 .open-knowledge/server.lock
 .open-knowledge/cache/
+# Per-machine principal identity (US-005 / D9 / B1) — never commit.
+.open-knowledge/principal.json
+
+# Legacy shadow-repo path (pre-#244 rename to .git/open-knowledge/). Some
+# boot paths still create this directory; it's per-workspace runtime state
+# and must never be committed.
+.openknowledge/

@@ -11,7 +11,7 @@
  * subprocess isolation. Typical overhead for dirs ≤500 files is <10ms.
  *
  * Bounded at `SCAN_CAP` entries; traversal skips hidden OK directories
- * (`.git/`, `.open-knowledge/`, `.openknowledge/`, `node_modules/`).
+ * (`.git/`, `.open-knowledge/`, `node_modules/`).
  *
  * Spec: SPEC.md FR21 + D23.
  */
@@ -26,7 +26,6 @@ const SCAN_CAP = 1000;
 const SKIP_DIRS: ReadonlySet<string> = new Set([
   '.git',
   OK_DIR,
-  '.openknowledge',
   'node_modules',
   '.changeset',
   '.claude',

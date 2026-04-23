@@ -96,9 +96,9 @@ describe('onAgentWrite callback', () => {
     let calls = 0;
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, '# Notes\n\nalpha\n', 'replace');
+      const session = await sessionManager.getSession('test-doc');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, '# Notes\n\nalpha\n', 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const ext = createApiExtension({
@@ -141,9 +141,9 @@ describe('onAgentWrite callback', () => {
     let calls = 0;
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
-      dc.document.transact(() => {
-        applyAgentMarkdownWrite(dc.document, '# Notes\n\nalpha alpha\n', 'replace');
+      const session = await sessionManager.getSession('test-doc');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, '# Notes\n\nalpha alpha\n', 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const ext = createApiExtension({

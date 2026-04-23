@@ -4,8 +4,7 @@
  * Every E2E test that attaches `page.on('console', ...)` + `page.on('pageerror', ...)`
  * accumulates a log array like `{ type, text, url?, line? }[]`. This module
  * isolates the shared "benign noise" filter — dev-server HMR chatter, Vite
- * pre-bundle 404s, the by-design `/api/config` 404 fallthrough — from the
- * per-test critical-error assertion.
+ * pre-bundle 404s — from the per-test critical-error assertion.
  *
  * Consumers pass their `logs` array to {@link filterCriticalErrors}. The
  * returned array contains only errors that are NOT benign dev-server noise;
@@ -66,18 +65,6 @@ const BENIGN_PREDICATES: Array<(e: LogEntry) => boolean> = [
   (e) => !!e.url?.includes('/collab') && e.url.startsWith('ws://'),
   (e) => e.text.includes("can't establish a connection"),
   (e) => e.text.includes('can’t establish a connection'),
-
-  // `/api/config` is intentionally absent in `bun run dev` mode (see
-  // `src/lib/api-config.ts` header). The app classifies the 404 as
-  // `{status: 'absent'}` and falls back to same-origin WebSocket — the
-  // network 404 is a by-design signal, not a failure mode.
-  //
-  // Match the 404 specifically (not every URL-matching entry): a 500 /
-  // CORS / network-level regression from the same endpoint should still
-  // reach the critical-errors set. `LogEntry` has no `status` field, so
-  // we key on the Chrome / WebKit / Firefox error-message shape which all
-  // embed the literal "404".
-  (e) => e.text.includes('404') && !!e.url?.endsWith('/api/config'),
 ];
 
 /**

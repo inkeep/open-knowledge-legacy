@@ -1,14 +1,43 @@
 /**
- * Tests for MCP shared helpers — textResult, httpGet, httpPost.
+ * Tests for MCP shared helpers — textResult, routing helpers, httpGet, httpPost.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import type { Config } from '../../config/schema.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
   httpPost,
   normalizeDocName,
+  resolveProjectConfigContext,
+  resolveProjectServerContext,
   textResult,
 } from './shared.ts';
+
+const TEST_CONFIG: Config = {
+  content: {
+    dir: 'content',
+    include: ['**/*.md', '**/*.mdx'],
+    exclude: [],
+  },
+  server: {
+    port: 0,
+    host: 'localhost',
+    openOnAgentEdit: false,
+  },
+  persistence: {
+    debounceMs: 2000,
+    maxDebounceMs: 10000,
+  },
+  preview: {},
+  folders: [],
+  mcp: {
+    autoStart: true,
+    tools: {
+      read_document: { historyDepth: 5 },
+      search: { maxResults: 50 },
+    },
+  },
+};
 
 describe('textResult', () => {
   test('wraps text in MCP content array', () => {
@@ -92,6 +121,87 @@ describe('HOCUSPOCUS_NOT_RUNNING_ERROR', () => {
   test('contains actionable guidance', () => {
     expect(HOCUSPOCUS_NOT_RUNNING_ERROR).toContain('open-knowledge start');
     expect(HOCUSPOCUS_NOT_RUNNING_ERROR).toContain('native Edit tool');
+  });
+});
+
+describe('resolveProjectConfigContext', () => {
+  test('returns cwd and resolved config on success', async () => {
+    const result = await resolveProjectConfigContext(
+      async () => '/workspace/project',
+      async (cwd) => ({
+        ...TEST_CONFIG,
+        content: { ...TEST_CONFIG.content, dir: cwd ?? 'content' },
+      }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      cwd: '/workspace/project',
+      config: {
+        ...TEST_CONFIG,
+        content: { ...TEST_CONFIG.content, dir: '/workspace/project' },
+      },
+    });
+  });
+
+  test('returns an error when resolveCwd throws', async () => {
+    const result = await resolveProjectConfigContext(async () => {
+      throw new Error('No client roots');
+    }, TEST_CONFIG);
+
+    expect(result).toEqual({ ok: false, error: 'No client roots' });
+  });
+
+  test('returns an error when config resolution throws', async () => {
+    const result = await resolveProjectConfigContext(
+      async () => '/workspace/project',
+      async () => {
+        throw new Error('Config exploded');
+      },
+    );
+
+    expect(result).toEqual({ ok: false, error: 'Config exploded' });
+  });
+});
+
+describe('resolveProjectServerContext', () => {
+  test('returns cwd, config, and server url on success', async () => {
+    const result = await resolveProjectServerContext(
+      async () => '/workspace/project',
+      TEST_CONFIG,
+      async (cwd) => `ws://localhost/${cwd?.split('/').at(-1)}`,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      cwd: '/workspace/project',
+      config: TEST_CONFIG,
+      url: 'ws://localhost/project',
+    });
+  });
+
+  test('propagates config-context failure', async () => {
+    const result = await resolveProjectServerContext(
+      async () => {
+        throw new Error('Explicit cwd required');
+      },
+      TEST_CONFIG,
+      async () => 'ws://localhost/project',
+    );
+
+    expect(result).toEqual({ ok: false, error: 'Explicit cwd required' });
+  });
+
+  test('returns an error when server resolution throws', async () => {
+    const result = await resolveProjectServerContext(
+      async () => '/workspace/project',
+      TEST_CONFIG,
+      async () => {
+        throw new Error('Server lookup failed');
+      },
+    );
+
+    expect(result).toEqual({ ok: false, error: 'Server lookup failed' });
   });
 });
 

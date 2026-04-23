@@ -55,8 +55,20 @@ interface KeepaliveOptions {
    */
   resolveWsUrl: () => Promise<string | undefined>;
   /**
-   * Log callback. In production, wire to the MCP `log(...)` helper so
-   * messages go to stderr (MCP stdio's stdout is reserved for protocol).
+   * Stable per-MCP-process identity (D27 / multi-agent-presence SPEC §6.4 D13).
+   * Included in the keepalive URL query so the server can (a) correlate this
+   * WS with the agent's DirectConnection sessions and (b) deterministically
+   * clear the agent's presence entry on WS close. Typically a UUID generated
+   * once per MCP subprocess lifetime.
+   */
+  connectionId?: string;
+  /**
+   * Structured logger. When provided, lifecycle events emit JSON with
+   * url, backoff, and error context. Falls back to `log` callback.
+   */
+  logger?: import('./logger.ts').McpLogger;
+  /**
+   * Legacy log callback. Used when `logger` is not provided.
    */
   log?: (msg: string) => void;
   /** Injectable scheduler for deterministic tests (precedent #13b). */
@@ -92,18 +104,28 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
 
   const createWebSocket: (url: string) => MinimalWebSocket =
     opts.createWebSocket ?? ((url: string) => new WebSocket(url));
+  const log = opts.logger ?? null;
+  const legacyLog = opts.log;
   let ws: MinimalWebSocket | null = null;
   let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let stopped = false;
   let backoffMs = initialBackoffMs;
 
-  const log = (msg: string): void => {
+  function emit(
+    level: 'info' | 'warn' | 'error' | 'debug',
+    msg: string,
+    ctx?: Record<string, unknown>,
+  ): void {
     try {
-      opts.log?.(msg);
+      if (log) {
+        log[level](msg, ctx);
+      } else {
+        legacyLog?.(msg);
+      }
     } catch {
       // best-effort observer
     }
-  };
+  }
 
   function scheduleReconnect(): void {
     if (stopped) return;
@@ -112,9 +134,10 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
     }
     const wait = backoffMs;
     backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+    emit('debug', 'scheduling reconnect', { backoffMs: wait });
     reconnectTimer = scheduler.setTimeout(() => {
       reconnectTimer = null;
-      connect().catch((err) => log(`keepalive reconnect failed: ${String(err)}`));
+      connect().catch((err) => emit('warn', 'reconnect failed', { error: String(err) }));
     }, wait);
   }
 
@@ -124,49 +147,55 @@ export function startKeepalive(opts: KeepaliveOptions): KeepaliveHandle {
     try {
       baseUrl = await opts.resolveWsUrl();
     } catch (err) {
-      log(`keepalive resolveWsUrl threw: ${String(err)}`);
+      emit('warn', 'resolveWsUrl threw', { error: String(err) });
       scheduleReconnect();
       return;
     }
     if (!baseUrl) {
-      // Server not running yet — retry later.
       scheduleReconnect();
       return;
     }
 
-    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}`;
+    const cidParam = opts.connectionId
+      ? `&connectionId=${encodeURIComponent(opts.connectionId)}`
+      : '';
+    const url = `${baseUrl}/collab/keepalive?pid=${process.pid}${cidParam}`;
     try {
       ws = createWebSocket(url);
     } catch (err) {
-      log(`keepalive ctor failed (${url}): ${String(err)}`);
+      emit('warn', 'WebSocket constructor failed', { url, error: String(err) });
       ws = null;
       scheduleReconnect();
       return;
     }
 
     ws.addEventListener('open', () => {
-      log(`keepalive connected: ${baseUrl}`);
-      // Reset backoff on a confirmed live connection so the NEXT disconnect
-      // starts fresh rather than compounding from a previous failure streak.
+      emit('info', 'connected', { url: baseUrl });
       backoffMs = initialBackoffMs;
     });
 
     ws.addEventListener('close', () => {
       if (stopped) return;
-      log('keepalive disconnected — scheduling reconnect');
+      emit('info', 'disconnected', { url: baseUrl });
       ws = null;
       scheduleReconnect();
     });
 
     ws.addEventListener('error', () => {
       // `close` fires after every error that kills the socket; reconnect
-      // logic lives there. Swallow here to avoid an unhandled-error crash.
+      // logic lives there. Emit a debug breadcrumb first so operators can
+      // correlate the close/retry with the socket that faulted.
+      emit('debug', 'websocket error observed', {
+        url: baseUrl,
+        readyState: ws?.readyState,
+        reason: 'error-event',
+      });
     });
   }
 
   // Fire the first connect on a microtask to let the caller finish wiring.
   queueMicrotask(() => {
-    connect().catch((err) => log(`keepalive initial connect failed: ${String(err)}`));
+    connect().catch((err) => emit('warn', 'initial connect failed', { error: String(err) }));
   });
 
   return {

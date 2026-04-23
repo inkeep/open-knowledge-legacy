@@ -74,8 +74,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function findRepoRoot(): string {
   // this file lives at packages/core/src/ — repo root is two dirs up from package.json
@@ -83,6 +84,71 @@ function findRepoRoot(): string {
 }
 
 const REPO_ROOT = findRepoRoot();
+
+function resolveFileFromSpecifier(specifier: string): string {
+  const resolved = import.meta.resolve(specifier);
+  return resolved.startsWith('file:') ? fileURLToPath(resolved) : resolved;
+}
+
+function resolveInstalledPackageDir(packageName: string): string {
+  let dir = dirname(resolveFileFromSpecifier(packageName));
+
+  while (true) {
+    const pkgJsonPath = join(dir, 'package.json');
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as { name?: string };
+      if (pkg.name === packageName) return dir;
+    } catch {
+      // Keep walking upward until we find the package root.
+    }
+
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  throw new Error(`Could not resolve installed package directory for ${packageName}`);
+}
+
+function walkInstalledPackageDirs(
+  nodeModulesDir: string,
+  visitPackageDir: (pkgDir: string) => void,
+  visited = new Set<string>(),
+) {
+  let entries: string[];
+  try {
+    entries = readdirSync(nodeModulesDir);
+  } catch {
+    return;
+  }
+
+  for (const name of entries) {
+    if (name.startsWith('.')) continue;
+    const full = join(nodeModulesDir, name);
+    let stats: ReturnType<typeof statSync>;
+    try {
+      stats = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!stats.isDirectory()) continue;
+    if (name.startsWith('@')) {
+      walkInstalledPackageDirs(full, visitPackageDir, visited);
+      continue;
+    }
+
+    let pkgDir = full;
+    try {
+      pkgDir = realpathSync(full);
+    } catch {
+      // Fall back to the directory entry itself if realpath fails.
+    }
+    if (visited.has(pkgDir)) continue;
+    visited.add(pkgDir);
+    visitPackageDir(pkgDir);
+    walkInstalledPackageDirs(join(pkgDir, 'node_modules'), visitPackageDir, visited);
+  }
+}
 
 /**
  * Every bundle in our dep tree that ships its own copy of the destructive-
@@ -94,17 +160,24 @@ const REPO_ROOT = findRepoRoot();
 const PATCHED_BUNDLES = [
   {
     label: 'y-prosemirror CJS',
-    path: 'node_modules/y-prosemirror/dist/y-prosemirror.cjs',
+    packageName: 'y-prosemirror',
+    relativePath: ['dist', 'y-prosemirror.cjs'],
   },
   {
     label: '@tiptap/y-tiptap CJS',
-    path: 'node_modules/@tiptap/y-tiptap/dist/y-tiptap.cjs',
+    packageName: '@tiptap/y-tiptap',
+    relativePath: ['dist', 'y-tiptap.cjs'],
   },
   {
     label: '@tiptap/y-tiptap ESM',
-    path: 'node_modules/@tiptap/y-tiptap/dist/y-tiptap.js',
+    packageName: '@tiptap/y-tiptap',
+    relativePath: ['dist', 'y-tiptap.js'],
   },
 ] as const;
+
+function resolvePatchedBundlePath(bundle: (typeof PATCHED_BUNDLES)[number]): string {
+  return join(resolveInstalledPackageDir(bundle.packageName), ...bundle.relativePath);
+}
 
 describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
   test('both patches are registered in root package.json patchedDependencies', () => {
@@ -124,7 +197,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
   for (const bundle of PATCHED_BUNDLES) {
     describe(bundle.label, () => {
       test('contains R13 patch body (not upstream destructive-delete)', () => {
-        const src = readFileSync(join(REPO_ROOT, bundle.path), 'utf8');
+        const src = readFileSync(resolvePatchedBundlePath(bundle), 'utf8');
 
         // Patch markers must be present at BOTH throw sites
         const patchMarkers = src.match(/R13 patch:/g);
@@ -148,7 +221,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
       });
 
       test('patched throw sites do NOT retain upstream destructive _item.delete calls', () => {
-        const src = readFileSync(join(REPO_ROOT, bundle.path), 'utf8');
+        const src = readFileSync(resolvePatchedBundlePath(bundle), 'utf8');
 
         // Split on 'R13 patch:' and for each hunk, verify the patch body does
         // NOT contain `_item.delete(transaction)` — that's the upstream
@@ -205,13 +278,13 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
    * makes it trivially easy to miss the next one; checking the invariant
    * mechanically cannot.
    *
-   * Scoping: skips `.bun-tag-*` and source maps; scans `.js` / `.cjs` under
-   * every direct package's `dist/` to keep runtime bounded. Not recursive into
-   * every transitive package — that would balloon runtime for no added
-   * coverage (y-prosemirror and y-tiptap are both hoisted to top-level).
+   * Scoping: skips dot-prefixed package-manager internals and source maps;
+   * scans `.js` / `.cjs` under each reachable package's `dist/`. The walk
+   * starts at the repo root `node_modules/` and follows nested `node_modules/`
+   * directories with realpath de-dupe, so it works across Bun/npm/pnpm
+   * layouts without assuming a private store path.
    */
   test('dep-tree invariant: no destructive _item.delete(transaction) in any dist bundle', () => {
-    const nodeModules = join(REPO_ROOT, 'node_modules');
     const offending: Array<{ path: string; line: number }> = [];
 
     function scanDistDir(distDir: string) {
@@ -242,33 +315,7 @@ describe('R13 patch verification (y-prosemirror + @tiptap/y-tiptap)', () => {
       scanDistDir(join(pkgDir, 'dist'));
     }
 
-    function walkTopLevel(dir: string) {
-      let entries: string[];
-      try {
-        entries = readdirSync(dir);
-      } catch {
-        return;
-      }
-      for (const name of entries) {
-        if (name.startsWith('.')) continue; // skip .bin, .cache, etc.
-        const full = join(dir, name);
-        let stats: ReturnType<typeof statSync>;
-        try {
-          stats = statSync(full);
-        } catch {
-          continue;
-        }
-        if (!stats.isDirectory()) continue;
-        if (name.startsWith('@')) {
-          // Scoped packages — walk one level deeper.
-          walkTopLevel(full);
-          continue;
-        }
-        scanPackageDir(full);
-      }
-    }
-
-    walkTopLevel(nodeModules);
+    walkInstalledPackageDirs(join(REPO_ROOT, 'node_modules'), scanPackageDir);
 
     if (offending.length > 0) {
       const details = offending.map(({ path, line }) => `  ${path}:${line}`).join('\n');

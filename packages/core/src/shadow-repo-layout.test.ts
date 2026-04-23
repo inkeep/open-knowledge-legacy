@@ -4,12 +4,26 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  COMMIT_SUBJECT_MAX_LEN,
+  composeCommitSubject,
   formatCheckpointBodyLine,
+  formatCheckpointSubject,
+  formatImportSubject,
+  formatOkActor,
+  formatParkSubject,
+  formatReconcileSubject,
+  formatRenameSubject,
+  formatRollbackSubject,
+  formatWipSubject,
   getShadowRepoPath,
   getWipRefPattern,
+  type OkActorEntry,
   parseCheckpoint,
   parseContributors,
+  parseOkActor,
+  parseOkActors,
   parseWriterId,
+  readContributors,
 } from './shadow-repo-layout.ts';
 
 let tmp: string;
@@ -110,31 +124,101 @@ describe('parseContributors', () => {
     const body = '\nok-contributors: {"id":"agent-a","name":"A","docs":["a",1,"b"]}';
     expect(parseContributors(body)).toEqual([]);
   });
+
+  // D23/D27 coverage — `summaries?: string[]` is additive; malformed values
+  // drop JUST the field (deliberate divergence from whole-entry-skip).
+  test('legacy commit (no summaries field) parses with summaries undefined', () => {
+    const body = '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toBeUndefined();
+  });
+
+  test('parses summaries when present as empty array', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":[]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toEqual([]);
+  });
+
+  test('parses summaries when present as populated array', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":["Fixed typo","Added example"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.summaries).toEqual(['Fixed typo', 'Added example']);
+  });
+
+  test('D27 divergence: summaries not an array → drop field, contributor still parses', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":"not-an-array"}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('agent-a');
+    expect(result[0]?.name).toBe('Claude');
+    expect(result[0]?.docs).toEqual(['foo.md']);
+    expect(result[0]?.summaries).toBeUndefined();
+  });
+
+  test('D27 divergence: summaries contains non-string element → drop field, contributor still parses', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"Claude","docs":["foo.md"],"summaries":["ok",42,"also-ok"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('agent-a');
+    expect(result[0]?.summaries).toBeUndefined();
+  });
 });
 
-describe('parseWriterId', () => {
-  test('agent-<id> → agent classification', () => {
+describe('parseWriterId (D34 taxonomy)', () => {
+  test('agent-<id> → agent classification, isAgent true', () => {
     const p = parseWriterId('agent-claude-code-7x');
     expect(p.classification).toBe('agent');
     expect(p.isAgent).toBe(true);
     expect(p.id).toBe('agent-claude-code-7x');
   });
 
-  test('human-<id> → human classification', () => {
-    const p = parseWriterId('human-tim');
-    expect(p.classification).toBe('human');
+  test('principal-<id> → principal classification, isAgent false', () => {
+    const p = parseWriterId('principal-tim');
+    expect(p.classification).toBe('principal');
     expect(p.isAgent).toBe(false);
   });
 
-  test('"upstream" → upstream classification, isAgent null', () => {
-    const p = parseWriterId('upstream');
-    expect(p.classification).toBe('upstream');
+  test('"file-system" → classified-file-system, isAgent null', () => {
+    const p = parseWriterId('file-system');
+    expect(p.classification).toBe('classified-file-system');
     expect(p.isAgent).toBe(null);
   });
 
-  test('"server" → server classification, isAgent null', () => {
+  test('"git-upstream" → classified-git-upstream, isAgent null', () => {
+    const p = parseWriterId('git-upstream');
+    expect(p.classification).toBe('classified-git-upstream');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('"openknowledge-service" → classified-openknowledge-service, isAgent null', () => {
+    const p = parseWriterId('openknowledge-service');
+    expect(p.classification).toBe('classified-openknowledge-service');
+    expect(p.isAgent).toBe(null);
+  });
+
+  // Legacy ids → unknown (eligible for GC by US-018 allowlist sweep)
+  test('legacy "human-<id>" → unknown (D34: human- prefix dropped)', () => {
+    const p = parseWriterId('human-tim');
+    expect(p.classification).toBe('unknown');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('legacy "upstream" → unknown (D34: replaced by git-upstream)', () => {
+    const p = parseWriterId('upstream');
+    expect(p.classification).toBe('unknown');
+    expect(p.isAgent).toBe(null);
+  });
+
+  test('legacy "server" → unknown (D34: replaced by openknowledge-service)', () => {
     const p = parseWriterId('server');
-    expect(p.classification).toBe('server');
+    expect(p.classification).toBe('unknown');
     expect(p.isAgent).toBe(null);
   });
 
@@ -177,40 +261,34 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(tmp)).toBe(null);
   });
 
-  test('prefers integrated mode when project has its own .git/', () => {
+  test('always resolves to <projectRoot>/.git/open-knowledge/', () => {
     const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.git/open-knowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/open-knowledge'));
+  });
+
+  test('never returns legacy .git/openknowledge/ path (single-mode layout)', () => {
+    const project = resolve(tmp, 'project');
+    // Simulate old integrated-mode location — layout helper does NOT see it
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('falls back to standalone mode when no project .git/ exists', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.openknowledge'));
-  });
-
-  test('prefers integrated over standalone when both exist', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
-    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
-    expect(getShadowRepoPath(project)).toBe(resolve(project, '.git/openknowledge'));
-  });
-
-  test('returns null when .git/openknowledge exists but HEAD is missing', () => {
-    const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
+    // Legacy path is ignored — getShadowRepoPath reads through resolveShadowDir
+    // which always returns .git/open-knowledge/. The R9 rename shim in
+    // initShadowRepo handles the on-disk migration at server start.
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
-  test('returns null when the shadow dir is a file (not a directory)', () => {
+  test('never returns .openknowledge/ (standalone path deleted)', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(project, { recursive: true });
-    writeFileSync(resolve(project, '.git'), 'not a dir');
-    // Neither integrated nor standalone exists
+    mkdirSync(resolve(project, '.openknowledge'), { recursive: true });
+    writeFileSync(resolve(project, '.openknowledge/HEAD'), 'ref: refs/heads/main\n');
+    expect(getShadowRepoPath(project)).toBe(null);
+  });
+
+  test('returns null when .git/open-knowledge exists but HEAD is missing', () => {
+    const project = resolve(tmp, 'project');
+    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
   });
 });
@@ -304,5 +382,496 @@ describe('parseCheckpoint / formatCheckpointBodyLine (bridge-correctness SPEC §
 
     const checkpoint = parseCheckpoint(body);
     expect(checkpoint?.kind).toBe('bridge-merge-loss');
+  });
+});
+
+// ─── US-015: parseOkActor / formatOkActor / formatWipSubject ─────────────────
+
+describe('formatWipSubject', () => {
+  test('empty docs → wip: auto-save', () => {
+    expect(formatWipSubject([])).toBe('wip: auto-save');
+  });
+
+  test('one doc → wip: <docName>', () => {
+    expect(formatWipSubject(['notes/ideas.md'])).toBe('wip: notes/ideas.md');
+  });
+
+  test('two docs → wip: 2 docs', () => {
+    expect(formatWipSubject(['a.md', 'b.md'])).toBe('wip: 2 docs');
+  });
+
+  test('five docs → wip: 5 docs', () => {
+    const docs = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'];
+    expect(formatWipSubject(docs)).toBe('wip: 5 docs');
+  });
+});
+
+describe('parseOkActor / formatOkActor (US-015, FR-8, D13)', () => {
+  const baseEntry: OkActorEntry = {
+    v: 1,
+    writer_id: 'agent-conn-abc123',
+    principal: null,
+    agent_session: 'conn-abc123',
+    agent_type: 'claude-3-5-sonnet',
+    client_name: 'claude-code',
+    client_version: '1.0.0',
+    label: 'My agent',
+    display_name: 'Claude (abc1)',
+    color_seed: 'conn-abc123',
+    docs: ['notes.md', 'ideas.md'],
+  };
+
+  test('round-trips a full OkActorEntry', () => {
+    const line = formatOkActor(baseEntry);
+    const body = `wip: notes.md\n\n${line}`;
+    const parsed = parseOkActor(body);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.v).toBe(1);
+    expect(parsed?.agent_session).toBe('conn-abc123');
+    expect(parsed?.agent_type).toBe('claude-3-5-sonnet');
+    expect(parsed?.client_name).toBe('claude-code');
+    expect(parsed?.display_name).toBe('Claude (abc1)');
+    expect(parsed?.color_seed).toBe('conn-abc123');
+    expect(parsed?.docs).toEqual(['notes.md', 'ideas.md']);
+    expect(parsed?.principal).toBeNull();
+    expect(parsed?.label).toBe('My agent');
+  });
+
+  test('round-trips an entry with all nullable fields null', () => {
+    const sparse: OkActorEntry = {
+      v: 1,
+      writer_id: 'openknowledge-service',
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Open Knowledge (service)',
+      color_seed: 'openknowledge-service',
+      docs: [],
+    };
+    const line = formatOkActor(sparse);
+    const parsed = parseOkActor(`wip: auto-save\n\n${line}`);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.writer_id).toBe('openknowledge-service');
+    expect(parsed?.agent_session).toBeNull();
+    expect(parsed?.docs).toEqual([]);
+  });
+
+  test('returns null for empty body', () => {
+    expect(parseOkActor('')).toBeNull();
+  });
+
+  test('returns null when ok-actor: line is absent', () => {
+    expect(parseOkActor('wip: auto-save\n\nok-contributors: {...}')).toBeNull();
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseOkActor('ok-actor: {not json')).toBeNull();
+  });
+
+  test('rejects v:0 (schema version must be 1)', () => {
+    const line = 'ok-actor: {"v":0,"display_name":"X","docs":[]}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('rejects missing display_name', () => {
+    const line = 'ok-actor: {"v":1,"docs":[]}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('rejects missing docs array', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"X"}';
+    expect(parseOkActor(line)).toBeNull();
+  });
+
+  test('tolerates sibling ok-contributors: and ok-checkpoint-v1: lines (coexistence)', () => {
+    const actorLine = formatOkActor(baseEntry);
+    const body = [
+      'wip: notes.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","docs":["notes.md"]}',
+      actorLine,
+    ].join('\n');
+    const parsed = parseOkActor(body);
+    expect(parsed?.display_name).toBe('Claude (abc1)');
+    // contributor parsing is unaffected
+    const contributors = parseContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-abc');
+  });
+
+  test('color_seed defaults to "unknown" when missing in stored JSON', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"X","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.color_seed).toBe('unknown');
+  });
+});
+
+// ─── writer_id + summaries consolidation (ok-contributors retirement) ────────
+
+describe('OkActorEntry writer_id field + derivation back-compat', () => {
+  test('formatOkActor emits writer_id inline', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-abc123',
+      principal: null,
+      agent_session: 'abc123',
+      agent_type: 'claude',
+      client_name: 'claude-code',
+      client_version: null,
+      label: null,
+      display_name: 'Claude (abc1)',
+      color_seed: 'claude-code',
+      docs: ['a.md'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"writer_id":"agent-abc123"');
+  });
+
+  test('parseOkActor derives writer_id from agent_session when missing (pre-consolidation commit back-compat)', () => {
+    const line =
+      'ok-actor: {"v":1,"principal":null,"agent_session":"old-conn","display_name":"Claude","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('agent-old-conn');
+  });
+
+  test('parseOkActor derives writer_id from principal when agent_session is null', () => {
+    const line =
+      'ok-actor: {"v":1,"principal":"principal-alice-uuid","agent_session":null,"display_name":"Alice","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('principal-alice-uuid');
+  });
+
+  test('parseOkActor derives writer_id from display_name for classified writers (file-system)', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"File System","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('file-system');
+  });
+
+  test('parseOkActor derives writer_id from display_name for classified writers (git-upstream)', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"Git (upstream)","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('git-upstream');
+  });
+
+  test('parseOkActor falls back to openknowledge-service for unknown classified display_name', () => {
+    const line = 'ok-actor: {"v":1,"display_name":"Open Knowledge (service)","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('openknowledge-service');
+  });
+
+  test('explicit writer_id in stored JSON wins over any derivation', () => {
+    // Even if fields look principal-shaped, explicit writer_id is authoritative.
+    const line =
+      'ok-actor: {"v":1,"writer_id":"custom-writer","principal":"principal-ignored","display_name":"X","docs":[]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.writer_id).toBe('custom-writer');
+  });
+});
+
+describe('OkActorEntry summaries field (consolidated from ok-contributors:)', () => {
+  test('formatOkActor elides summaries when empty/absent (legacy byte-identity)', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+    };
+    expect(formatOkActor(entry)).not.toContain('summaries');
+  });
+
+  test('formatOkActor elides summaries when explicitly empty array', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: [],
+    };
+    expect(formatOkActor(entry)).not.toContain('summaries');
+  });
+
+  test('formatOkActor includes summaries when populated', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: ['Added auth design', 'Fixed typo'],
+    };
+    const line = formatOkActor(entry);
+    expect(line).toContain('"summaries":["Added auth design","Fixed typo"]');
+  });
+
+  test('parseOkActor round-trips summaries', () => {
+    const entry: OkActorEntry = {
+      v: 1,
+      writer_id: 'agent-a',
+      principal: null,
+      agent_session: 'a',
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: 'Claude',
+      color_seed: 'claude',
+      docs: ['a.md'],
+      summaries: ['one', 'two'],
+    };
+    const parsed = parseOkActor(formatOkActor(entry));
+    expect(parsed?.summaries).toEqual(['one', 'two']);
+  });
+
+  test('parseOkActor drops summaries field when malformed (D27 divergence — keep entry)', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"summaries":"not-an-array"}';
+    const parsed = parseOkActor(line);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.writer_id).toBe('agent-a');
+    expect(parsed?.summaries).toBeUndefined();
+  });
+
+  test('parseOkActor drops summaries field when array has non-string element', () => {
+    const line =
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"Claude","docs":["a.md"],"summaries":["ok",42,"also-ok"]}';
+    const parsed = parseOkActor(line);
+    expect(parsed?.summaries).toBeUndefined();
+  });
+});
+
+describe('parseOkActors (plural — multi-writer L2 drain)', () => {
+  test('empty body → []', () => {
+    expect(parseOkActors('')).toEqual([]);
+  });
+
+  test('returns every ok-actor line, in file order', () => {
+    const body = [
+      'wip: notes.md (2 edits)',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-alice","display_name":"Alice","docs":["a.md"],"summaries":["Alice note"]}',
+      'ok-actor: {"v":1,"writer_id":"agent-bob","display_name":"Bob","docs":["b.md"],"summaries":["Bob note"]}',
+    ].join('\n');
+    const actors = parseOkActors(body);
+    expect(actors).toHaveLength(2);
+    expect(actors[0]?.writer_id).toBe('agent-alice');
+    expect(actors[1]?.writer_id).toBe('agent-bob');
+  });
+
+  test('skips malformed lines silently, keeps valid ones', () => {
+    const body = [
+      'ok-actor: {not json}',
+      'ok-actor: {"v":1,"writer_id":"agent-ok","display_name":"Good","docs":[]}',
+      'ok-actor: {"v":0,"display_name":"wrong-version","docs":[]}',
+    ].join('\n');
+    const actors = parseOkActors(body);
+    expect(actors).toHaveLength(1);
+    expect(actors[0]?.writer_id).toBe('agent-ok');
+  });
+
+  test('no ok-actor lines → []', () => {
+    const body = 'wip: foo\n\nok-contributors: {"id":"x","name":"X","docs":[]}';
+    expect(parseOkActors(body)).toEqual([]);
+  });
+});
+
+describe('readContributors (dispatcher: prefers ok-actor, falls back to ok-contributors)', () => {
+  test('modern commit with only ok-actor: → projects to ShadowContributor[]', () => {
+    const body = [
+      'wip: a.md — added design',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-claude","principal":null,"agent_session":"claude","agent_type":"claude","display_name":"Claude","color_seed":"claude","docs":["a.md"],"summaries":["added design"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-claude');
+    expect(contributors[0]?.name).toBe('Claude');
+    expect(contributors[0]?.colorSeed).toBe('claude');
+    expect(contributors[0]?.docs).toEqual(['a.md']);
+    expect(contributors[0]?.summaries).toEqual(['added design']);
+  });
+
+  test('legacy commit with only ok-contributors: → falls back to parseContributors', () => {
+    const body = [
+      'wip: legacy.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-legacy","name":"Legacy","colorSeed":"seed","docs":["legacy.md"],"summaries":["pre-consolidation note"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-legacy');
+    expect(contributors[0]?.summaries).toEqual(['pre-consolidation note']);
+  });
+
+  test('transitional commit with BOTH lines → ok-actor wins (no double-counting)', () => {
+    const body = [
+      'wip: both.md',
+      '',
+      'ok-contributors: {"v":1,"id":"agent-stale","name":"Stale","colorSeed":"x","docs":["both.md"]}',
+      'ok-actor: {"v":1,"writer_id":"agent-fresh","display_name":"Fresh","color_seed":"y","docs":["both.md"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('agent-fresh'); // ok-actor, not ok-contributors
+  });
+
+  test('multi-writer modern commit → one ShadowContributor per ok-actor line', () => {
+    const body = [
+      'wip: shared.md',
+      '',
+      'ok-actor: {"v":1,"writer_id":"agent-a","display_name":"A","docs":["x.md"]}',
+      'ok-actor: {"v":1,"writer_id":"file-system","display_name":"File System","docs":["y.md"]}',
+    ].join('\n');
+    const contributors = readContributors(body);
+    expect(contributors).toHaveLength(2);
+    expect(contributors.map((c) => c.id).sort()).toEqual(['agent-a', 'file-system']);
+  });
+
+  test('empty body → []', () => {
+    expect(readContributors('')).toEqual([]);
+  });
+
+  test('body with neither prefix → []', () => {
+    expect(readContributors('wip: test\n\njust a plain body')).toEqual([]);
+  });
+});
+
+// ─── US-015: Subject-prefix format helpers (D53, FR-13) ──────────────────────
+
+describe('Subject-prefix format helpers (D53, FR-13)', () => {
+  test('formatReconcileSubject', () => {
+    expect(formatReconcileSubject('notes.md')).toBe('reconcile: notes.md');
+    expect(formatReconcileSubject('docs/guide.md')).toBe('reconcile: docs/guide.md');
+  });
+
+  test('formatRollbackSubject trims sha to 7 chars', () => {
+    expect(formatRollbackSubject('notes.md', 'abcdef1234567890')).toBe(
+      'rollback: notes.md to abcdef1',
+    );
+  });
+
+  test('formatRollbackSubject with short sha (already <= 7)', () => {
+    expect(formatRollbackSubject('plan.md', 'abc1234')).toBe('rollback: plan.md to abc1234');
+  });
+
+  test('formatParkSubject', () => {
+    expect(formatParkSubject('main', 'feat/new-ui')).toBe('park: main -> feat/new-ui');
+    expect(formatParkSubject('feat/old', 'main')).toBe('park: feat/old -> main');
+  });
+
+  test('formatRenameSubject', () => {
+    expect(formatRenameSubject('intro.md', 'getting-started.md')).toBe(
+      'rename: intro.md -> getting-started.md',
+    );
+  });
+
+  test('formatCheckpointSubject', () => {
+    expect(formatCheckpointSubject('Save progress')).toBe('checkpoint: Save progress');
+    expect(formatCheckpointSubject('pre-rollback')).toBe('checkpoint: pre-rollback');
+  });
+
+  test('formatImportSubject with oldHead', () => {
+    expect(formatImportSubject('aabbccddeeff0011', '1122334455667788')).toBe(
+      'import: from aabbccdd..11223344',
+    );
+  });
+
+  test('formatImportSubject without oldHead (initial import)', () => {
+    expect(formatImportSubject(null, '1122334455667788')).toBe('import: initial at 11223344');
+  });
+
+  test('all prefixes are distinct and match their action kind', () => {
+    const subjects = [
+      formatWipSubject(['doc.md']),
+      formatReconcileSubject('doc.md'),
+      formatRollbackSubject('doc.md', 'abc1234abcd'),
+      formatParkSubject('main', 'feat/x'),
+      formatRenameSubject('a.md', 'b.md'),
+      formatCheckpointSubject('save'),
+      formatImportSubject('aabbccdd', 'eeff0011'),
+    ];
+    const prefixes = subjects.map((s) => s.split(':')[0]);
+    expect(new Set(prefixes).size).toBe(subjects.length);
+  });
+});
+
+// Agent-write-summaries FR14 — subject-line projection of `ContributorEntry.summaries`
+describe('composeCommitSubject (FR14 — change-notes in commit subject)', () => {
+  test('zero summaries → base subject unchanged', () => {
+    expect(composeCommitSubject('wip: notes.md', [])).toBe('wip: notes.md');
+  });
+
+  test('single short summary → appended with em-dash separator', () => {
+    expect(composeCommitSubject('wip: notes.md', ['added auth design'])).toBe(
+      'wip: notes.md — added auth design',
+    );
+  });
+
+  test('single summary fits exactly at 72 chars → no truncation', () => {
+    const base = 'wip: a.md';
+    const summary = 'x'.repeat(COMMIT_SUBJECT_MAX_LEN - base.length - ' — '.length);
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.endsWith(summary)).toBe(true);
+  });
+
+  test('single oversize summary → trailing ellipsis, base preserved', () => {
+    const base = 'wip: notes.md';
+    const summary =
+      'this is a very long change-note that goes on and on well past seventy-two characters total';
+    const subject = composeCommitSubject(base, [summary]);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
+    expect(subject.startsWith('wip: notes.md — ')).toBe(true);
+    expect(subject.endsWith('…')).toBe(true);
+  });
+
+  test('two summaries → N-edits suffix, summaries live in the body (not subject)', () => {
+    expect(composeCommitSubject('wip: notes.md', ['first', 'second'])).toBe(
+      'wip: notes.md (2 edits)',
+    );
+  });
+
+  test('three summaries → accurate N-edits count', () => {
+    expect(composeCommitSubject('wip: a.md', ['a', 'b', 'c'])).toBe('wip: a.md (3 edits)');
+  });
+
+  test('works with non-wip subject prefixes (rename:, rollback:, reconcile:)', () => {
+    expect(composeCommitSubject('rename: a.md -> b.md', ['clarifying scope'])).toBe(
+      'rename: a.md -> b.md — clarifying scope',
+    );
+    expect(composeCommitSubject('rollback: doc.md to abc1234', ['reverting deletion'])).toBe(
+      'rollback: doc.md to abc1234 — reverting deletion',
+    );
+    expect(composeCommitSubject('reconcile: doc.md', ['merged conflicting edits'])).toBe(
+      'reconcile: doc.md — merged conflicting edits',
+    );
+  });
+
+  test('base already over 72 chars → defensive slice, summary dropped', () => {
+    const base = `wip: ${'a'.repeat(70)}`;
+    const subject = composeCommitSubject(base, ['ignored summary']);
+    expect(subject.length).toBe(COMMIT_SUBJECT_MAX_LEN);
   });
 });

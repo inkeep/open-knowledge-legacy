@@ -1,3 +1,11 @@
+// Burst-grouping utility (FR-12, D20)
+export {
+  type Burst,
+  bucketIntoBursts,
+  type HumanEdit,
+  type SessionTransaction,
+} from './burst-grouping.ts';
+
 // Markdown pipeline (new unified+remark)
 
 // Re-export VFileMessage for Observer B's error classification (instanceof check
@@ -14,8 +22,8 @@ export {
 } from './constants/activity.ts';
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
+export { OK_DIR } from './constants/ok-dir.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
-
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -40,6 +48,21 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
+export {
+  buildClaudeAiWebUrl,
+  buildClaudeUrl,
+  buildCodexUrl,
+  buildCursorUrl,
+  composePrompt,
+  type DocContext,
+  type HandoffFailureReason,
+  type HandoffOutcome,
+  type HandoffPayload,
+  type HandoffTarget,
+  type InstallState,
+  type TargetData,
+} from './handoff/index.ts';
 export {
   HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,
@@ -57,6 +80,18 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+
+// Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
+// defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`
+// for the desktop preload, and a future `packages/app/src/lib/desktop-bridge-
+// types.ts` for the app renderer's optional `window.okDesktop` access. Keeping
+// the contract co-located instead of re-exporting from this barrel avoids
+// dragging the full markdown / CRDT-bridge surface into desktop's compilation
+// context (TypeScript follows barrel re-exports through workspace symlinks
+// and complains about transitive deps that desktop doesn't declare directly).
+// `packages/core/src/desktop-bridge.ts` is the canonical reference shape;
+// drift between the per-package copies is caught by a contract-equality test
+// added in US-010.
 
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
@@ -82,13 +117,16 @@ export {
   type Scheduler,
 } from './bridge/index.ts';
 // Types
+export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
-  ActivityEntry,
+  AgentFlashEntry,
   AgentFocusEntry,
+  AgentPresenceEntry,
   AwarenessState,
   AwarenessUser,
 } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
+export type { Principal } from './types/principal.ts';
 export type {
   DiffLine,
   DiffLineType,
@@ -110,6 +148,7 @@ export {
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
+  iconFromClientName,
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,

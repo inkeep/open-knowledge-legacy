@@ -1,11 +1,12 @@
 import { ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,
-  resolveServerUrl,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -24,6 +25,7 @@ interface OrphansPayload {
 
 interface GetOrphansDeps extends PreviewUrlDeps {
   serverUrl: ServerUrlOrResolver;
+  config: ConfigOrResolver;
 }
 
 export function register(server: ServerInstance, deps: GetOrphansDeps): void {
@@ -35,16 +37,24 @@ export function register(server: ServerInstance, deps: GetOrphansDeps): void {
         .enum(ORPHAN_MODES)
         .optional()
         .describe('Filter which type of graph disconnection to surface'),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { mode?: OrphanMode }) => {
-      const url = await resolveServerUrl(deps.serverUrl);
+    async (args: { mode?: OrphanMode; cwd?: string }) => {
+      const context = await resolveProjectServerContext(
+        deps.resolveCwd,
+        deps.config,
+        deps.serverUrl,
+        args.cwd,
+      );
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      const { cwd, url } = context;
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.mode ? `?mode=${encodeURIComponent(args.mode)}` : '';
       const result = await httpGet(url, `/api/orphans${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...rest } = result;
       const data = rest as OrphansPayload;
-      const { resolve, ui } = await buildListResolver(deps);
+      const { resolve, ui } = await buildListResolver(deps, cwd);
       const orphans = (data.orphans ?? []).map((row) => {
         const docName = typeof row.docName === 'string' ? row.docName : null;
         const resolved = docName ? resolve(docName) : null;
@@ -54,7 +64,7 @@ export function register(server: ServerInstance, deps: GetOrphansDeps): void {
           ...(resolved ? { previewUrlSource: resolved.source } : {}),
         };
       });
-      const structured = { ...data, orphans, ui };
+      const structured = { ...data, orphans, ui, cwd };
       return textPlusStructured(JSON.stringify(structured, null, 2), structured);
     },
   );

@@ -25,14 +25,20 @@ import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import type { EditorModeValue } from '@/editor/use-editor-mode';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
+import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
+import { HelpPopover } from './HelpPopover';
+import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
+import { buildHandoffInput } from './handoff/useHandoffDispatch';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { ProjectSwitcher } from './ProjectSwitcher';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge } from './ui/badge';
@@ -72,7 +78,7 @@ function isRenameResponse(v: unknown): v is RenameResponse {
 
 interface EditorHeaderProps {
   editorMode: EditorMode;
-  onModeChange: (mode: 'wysiwyg' | 'source') => void;
+  onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
   previewEntry: TimelineEntry | null;
@@ -108,7 +114,13 @@ export function EditorHeader({
   const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
   const { state: sidebarState } = useSidebar();
+  const workspace = useWorkspace();
   const syncStatus = useSyncStatus(activeProvider);
+  // Build the handoff input once per render — the menu's trigger disables when
+  // `input === null` (no active doc, or workspace fetch still pending on web
+  // host). Surfaces own input construction so AC9's single-dispatch contract
+  // is preserved: `dispatchHandoff` is called only from `useHandoffDispatch`.
+  const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
@@ -119,14 +131,13 @@ export function EditorHeader({
       ? `${activeDocName}.md`
       : '';
 
+  const index = activeDocName?.lastIndexOf('/') ?? -1;
+
   // Split doc path into prefix (truncatable) and filename (prioritized).
   // e.g. "reports/some-report/REPORT" → prefix="reports/some-report/" filename="REPORT"
-  const pathPrefix = activeDocName?.includes('/')
-    ? `${activeDocName.substring(0, activeDocName.lastIndexOf('/') + 1)}`
-    : '';
-  const fileBaseName = activeDocName
-    ? activeDocName.substring(activeDocName.lastIndexOf('/') + 1)
-    : '';
+  const pathPrefix =
+    activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
+  const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -348,6 +359,15 @@ export function EditorHeader({
             {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
           </TooltipContent>
         </Tooltip>
+        {typeof window !== 'undefined' && window.okDesktop ? (
+          <>
+            <Separator
+              orientation="vertical"
+              className="mx-1 h-4 shrink-0 data-vertical:self-center"
+            />
+            <ProjectSwitcher bridge={window.okDesktop} />
+          </>
+        ) : null}
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         {isFolderTarget ? (
           <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
@@ -633,6 +653,7 @@ export function EditorHeader({
             <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
           </Tooltip>
         )}
+        {!isDiffMode && activeDocName && <OpenInAgentMenu input={handoffInput} />}
         <SyncStatusBadge
           onSignIn={onSignIn}
           onSetIdentity={onSetIdentity}
@@ -640,6 +661,7 @@ export function EditorHeader({
         />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
+        <HelpPopover />
         <ThemeToggle />
       </div>
     </header>

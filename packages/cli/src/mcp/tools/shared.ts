@@ -7,8 +7,44 @@
  * `registerAllTools` function that `server.ts` calls during startup.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import type { Config } from '../../config/schema.ts';
 
 export type ServerInstance = McpServer;
+export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);
+export const ROUTED_CWD_DESCRIPTION =
+  'Absolute host path to resolve the request against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.';
+
+// ─── Agent-write summary schema (shared across the four MCP write tools) ─────
+//
+// The 200-char Zod cap (D21 — transport-safety bound) and the "≤80 chars"
+// render-cap description (D24 — render bound, enforced server-side by
+// `MAX_SUMMARY_LENGTH` in packages/server/src/agent-write-summary.ts) were
+// previously duplicated across write-document, edit-document, rename-document,
+// and rollback-to-version. Centralizing them here keeps the two bounds in
+// sync and localizes future re-tuning to one place.
+
+/**
+ * Transport-safety upper bound for `summary` at the MCP layer.
+ * Rejects payloads > 200 chars BEFORE they hit the HTTP boundary. Separate
+ * from the server-side render cap (80) — see `MAX_SUMMARY_LENGTH`.
+ */
+export const SUMMARY_TRANSPORT_CAP = 200;
+
+/**
+ * Shared Zod schema for the `summary` param on write_document, edit_document,
+ * rename_document, and rollback_to_version. Includes the description that
+ * surfaces in tool introspection for agents — keep the "(≤80 chars)" phrasing
+ * here as the single source of truth (matches the API-side `MAX_SUMMARY_LENGTH`
+ * constant).
+ */
+export const summaryArgSchema = z
+  .string()
+  .max(SUMMARY_TRANSPORT_CAP)
+  .optional()
+  .describe(
+    'Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline.',
+  );
 
 /**
  * Wrap a single string into the content shape MCP tools require for text results.
@@ -40,21 +76,76 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
 
 /**
  * Either an eagerly-known server URL, an absent URL, or a lazy resolver that
- * computes the URL per-call. Tools accept this union so they can be registered
- * before the MCP client advertises its project root: the resolver variant
- * re-reads `server.lock` from the live project dir at invocation time.
+ * computes the URL per-call. The lazy resolver receives the effective cwd of
+ * the current tool invocation when available so one MCP process can route
+ * different tool calls to different Open Knowledge project servers.
  *
  * See `packages/cli/src/mcp/server.ts` for the resolver wired in at startup.
  */
-export type ServerUrlOrResolver = string | undefined | (() => Promise<string | undefined>);
+export type ServerUrlOrResolver =
+  | string
+  | undefined
+  | ((cwd?: string) => Promise<string | undefined>);
 
 /**
  * Normalize a `ServerUrlOrResolver` to a concrete URL (or `undefined` when the
  * server is not reachable). Call this at the top of every tool handler that
  * hits the Hocuspocus HTTP API.
  */
-export async function resolveServerUrl(x: ServerUrlOrResolver): Promise<string | undefined> {
-  return typeof x === 'function' ? await x() : x;
+async function resolveServerUrl(x: ServerUrlOrResolver, cwd?: string): Promise<string | undefined> {
+  return typeof x === 'function' ? await x(cwd) : x;
+}
+
+/** Normalize a `ConfigOrResolver` to a concrete config for the current cwd. */
+export async function resolveConfig(x: ConfigOrResolver, cwd?: string): Promise<Config> {
+  return typeof x === 'function' ? await x(cwd) : x;
+}
+
+/** Resolve the effective project cwd plus the matching config for this call. */
+export async function resolveProjectConfigContext(
+  resolveCwd: (explicit?: string) => Promise<string>,
+  config: ConfigOrResolver,
+  explicitCwd?: string,
+): Promise<{ ok: true; cwd: string; config: Config } | { ok: false; error: string }> {
+  let cwd: string;
+  try {
+    cwd = await resolveCwd(explicitCwd);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    const resolvedConfig = await resolveConfig(config, cwd);
+    return { ok: true, cwd, config: resolvedConfig };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Resolve the effective project cwd/config for this tool call, then resolve
+ * the matching project server URL. Returns a structured error instead of
+ * throwing so tool handlers can surface config-load or auto-start failures as
+ * normal tool errors.
+ */
+export async function resolveProjectServerContext(
+  resolveCwd: (explicit?: string) => Promise<string>,
+  config: ConfigOrResolver,
+  serverUrl: ServerUrlOrResolver,
+  explicitCwd?: string,
+): Promise<
+  { ok: true; cwd: string; config: Config; url: string | undefined } | { ok: false; error: string }
+> {
+  const configContext = await resolveProjectConfigContext(resolveCwd, config, explicitCwd);
+  if (!configContext.ok) {
+    return configContext;
+  }
+  const { cwd, config: resolvedConfig } = configContext;
+  try {
+    const url = await resolveServerUrl(serverUrl, cwd);
+    return { ok: true, cwd, config: resolvedConfig, url };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

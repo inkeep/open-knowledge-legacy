@@ -1,6 +1,7 @@
 import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
 import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
+import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenuContent,
@@ -11,13 +12,23 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ProfilerBoundary } from '@/lib/perf';
 
 export function FileSidebar() {
+  return (
+    <ProfilerBoundary name="file-sidebar">
+      <FileSidebarInner />
+    </ProfilerBoundary>
+  );
+}
+
+function FileSidebarInner() {
   // Imperative handle to the FileTree — replaces the prior createTrigger seq
   // counter. Header buttons call methods directly; no useEffect on the child
   // side, no "did-I-already-handle-this-seq" bookkeeping. See FileTree.tsx.
@@ -100,6 +111,9 @@ export function FileSidebar() {
       <SidebarContent>
         <FileTree ref={fileTreeRef} />
       </SidebarContent>
+      <SidebarFooter>
+        <UpdateNotices />
+      </SidebarFooter>
     </Sidebar>
   );
 }

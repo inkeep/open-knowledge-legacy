@@ -9,7 +9,6 @@
  */
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
-import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
 import {
@@ -18,8 +17,8 @@ import {
   type PreviewUrlSource,
   type UiInfo,
 } from './preview-url.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { resolveServerUrl, textPlusStructured, textResult } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { resolveProjectServerContext, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   'Search wiki content with metadata-enriched results. Matches are grouped by file; each file is annotated with its title, description, and tags so you can judge relevance without opening it first.',
@@ -38,7 +37,7 @@ export const DESCRIPTION = [
 interface SearchDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
-  config: Config;
+  config: ConfigOrResolver;
   /**
    * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
    * Resolved once per call before passing into `enrichPath`.
@@ -58,6 +57,7 @@ interface SearchResultRow {
 }
 
 interface SearchStructuredResult {
+  cwd: string;
   query: string;
   matchCount: number;
   fileCount: number;
@@ -93,10 +93,19 @@ export async function buildSearchResult(
   args: { query: string; case_sensitive?: boolean; cwd?: string },
   deps: SearchDeps,
 ): Promise<SearchResult> {
-  const cwd = await deps.resolveCwd(args.cwd);
-  const maxResults = deps.config.mcp.tools.search.maxResults;
-  const include = deps.config.content.include;
-  const exclude = deps.config.content.exclude;
+  const context = await resolveProjectServerContext(
+    deps.resolveCwd,
+    deps.config,
+    deps.serverUrl,
+    args.cwd,
+  );
+  if (!context.ok) {
+    throw new Error(context.error);
+  }
+  const { cwd, config, url: resolvedServerUrl } = context;
+  const maxResults = config.mcp.tools.search.maxResults;
+  const include = config.content.include;
+  const exclude = config.content.exclude;
 
   // Request one extra match so we can tell whether the result set was truncated.
   const matches = await grep(args.query, cwd, {
@@ -109,10 +118,13 @@ export async function buildSearchResult(
   const truncated = matches.length > maxResults;
   const visible = truncated ? matches.slice(0, maxResults) : matches;
 
-  const { resolve, ui } = await buildListResolver({
-    config: deps.config,
-    resolveCwd: async () => cwd,
-  });
+  const { resolve, ui } = await buildListResolver(
+    {
+      config,
+      resolveCwd: async () => cwd,
+    },
+    cwd,
+  );
 
   if (visible.length === 0) {
     return {
@@ -124,6 +136,7 @@ export async function buildSearchResult(
         truncated: false,
         results: [],
         ui,
+        cwd,
       },
     };
   }
@@ -134,8 +147,7 @@ export async function buildSearchResult(
   // no history, no backlinkCount, to avoid N-amplification on multi-file
   // search output.
   const metaByPath = new Map<string, EnrichedMeta>();
-  const resolvedServerUrl = await resolveServerUrl(deps.serverUrl);
-  const folderRules = deps.config.folders;
+  const folderRules = config.folders;
   await Promise.all(
     groups.map(async (g) => {
       try {
@@ -202,6 +214,7 @@ export async function buildSearchResult(
       truncated,
       results,
       ui,
+      cwd,
     },
   };
 }
@@ -217,7 +230,7 @@ export function register(server: ServerInstance, deps: SearchDeps): void {
         .string()
         .optional()
         .describe(
-          "Absolute host path to search in. Defaults to the MCP client's first advertised root.",
+          'Absolute host path to search in. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
         ),
     },
     async (args: { query: string; case_sensitive?: boolean; cwd?: string }) => {

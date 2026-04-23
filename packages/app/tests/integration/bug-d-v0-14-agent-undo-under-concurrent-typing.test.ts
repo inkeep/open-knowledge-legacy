@@ -22,7 +22,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
 import { mdManager, schema } from './test-harness';
@@ -39,13 +39,15 @@ import { mdManager, schema } from './test-harness';
 function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFragment): void {
   const fullText = ytext.toString();
   const { frontmatter, body } = stripFrontmatter(fullText);
-  const parsedJson = mdManager.parseSafe(body);
+  const parsedJson = mdManager.parseWithFallback(body);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, xmlFragment, pmNode, meta);
 
   // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
-  const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+  const canonicalBody = mdManager.serialize(
+    yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+  );
   const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
   if (canonicalFull !== fullText) {
     ytext.delete(0, fullText.length);
@@ -55,7 +57,7 @@ function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFr
 
 /** Serialize XmlFragment → markdown string. */
 function serializeFrag(fragment: Y.XmlFragment): string {
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 /** Apply markdown content to XmlFragment via updateYFragment. */
@@ -78,7 +80,7 @@ function applyToFragment(
 // ═════════════════════════════════════════════════════════════
 
 describe('Bug-D mechanism isolation', () => {
-  test.skip('D-iso-1: syncTextToFragment with stale Y.Text destroys XmlFragment content', () => {
+  test('D-iso-1: syncTextToFragment with stale Y.Text destroys XmlFragment content', () => {
     // ── Setup: fresh Y.Doc, seed both sides to a baseline ──
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
@@ -144,7 +146,7 @@ describe('Bug-D mechanism isolation', () => {
   //         destroys concurrent user's new XmlFragment keystroke
   // ═══════════════════════════════════════════════════════════
 
-  test.skip('D-iso-2: V0-14 flow — post-undo syncTextToFragment destroys new user XmlFragment keystroke', () => {
+  test('D-iso-2: V0-14 flow — post-undo syncTextToFragment destroys new user XmlFragment keystroke', () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
     const xmlFragment = doc.getXmlFragment('default');

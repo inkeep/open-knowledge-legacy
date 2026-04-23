@@ -4,7 +4,7 @@ description: Initialize Open Knowledge on an existing project or clone a GitHub 
 ---
 ## Prerequisites
 
-- **Bun >= 1.3.11** or **Node.js >= 22**
+- **Bun >= 1.3.13** or **Node.js >= 22**
 - **Git** installed and on your PATH
 
 ## Choose your starting point
@@ -47,7 +47,7 @@ npx @inkeep/open-knowledge init
 
 When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
 
-1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root).
+1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root). If the project has no `.git/` yet, `init` runs `git init --initial-branch=main` first so Open Knowledge's attribution journal has a parent repo to hang off of.
 2. Registers the MCP server in each editor's config file at the correct per-editor path (table below).
 3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
 4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
@@ -123,10 +123,11 @@ macOS and Linux only. Windows has long-standing Node bugs with detached spawn th
 
 The file sidebar offers several ways to create a new markdown file or folder:
 
-- **Header **`+`** button** -- opens a dropdown with "New file" and "New folder". Defaults to the active file's parent directory, or project root when no file is open.
+- **Header `+` button** -- opens a dropdown with "New file" and "New folder". Defaults to the active file's parent directory, or project root when no file is open.
 - **Right-click a folder row** -- "New file here" / "New folder here" targets that folder.
 - `Cmd+Alt+N`\*\* (macOS) / `Ctrl+Alt+N` (Linux/Windows)\*\* -- opens the new-file dialog with the active-directory default. The shortcut is ignored while focus is inside a text input, textarea, or content-editable element.
 - **Empty workspace** -- a "Create your first file" button appears when no files exist yet.
+- **Drag and drop** -- drag a file or folder row onto another folder (or onto the **library root** strip that appears while dragging) to move it. Invalid targets (for example, moving a folder into itself) are highlighted in red. Moves use the same server rename pipeline as other file operations.
 
 New folders are always created with an initial file (default `index.md`) so they appear in the tree immediately. Filenames without a `.md` extension get one appended on submit.
 
@@ -166,6 +167,8 @@ The agent now has access to three workflow tools:
   config.yml         — Workspace config (content dir, include/exclude globs, server port)
   .gitignore         — Excludes cache/
   cache/             — Derived data (gitignored)
+.git/                — Initialized via `git init --initial-branch=main` if not already present
+.git/open-knowledge/ — Attribution journal (bare git repo; see Service Topology)
 AGENTS.md            — Root agent instructions with Open Knowledge section injected
 .mcp.json            — MCP server entry for open-knowledge
 .claude/

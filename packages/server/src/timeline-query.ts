@@ -4,13 +4,14 @@
  *
  * Entry types are classified from commit message prefixes:
  *   'checkpoint:' → checkpoint
- *   'upstream:'   → upstream
+ *   'import:'     → upstream  (canonical since D53/FR-13)
+ *   'upstream:'   → upstream  (legacy fallback for pre-D53 commits)
  *   else          → wip
  */
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import { parseCheckpoint, parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
@@ -47,7 +48,7 @@ const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
 
 function classifyType(subject: string): EntryType {
   if (subject.startsWith('checkpoint:')) return 'checkpoint';
-  if (subject.startsWith('upstream:')) return 'upstream';
+  if (subject.startsWith('import:') || subject.startsWith('upstream:')) return 'upstream';
   return 'wip';
 }
 
@@ -69,7 +70,7 @@ function parseGitLogOutput(raw: string): TimelineEntry[] {
         authorEmail,
         type,
         message,
-        contributors: parseContributors(rawBody),
+        contributors: readContributors(rawBody),
         checkpoint: type === 'checkpoint' ? parseCheckpoint(rawBody) : null,
       };
     })
