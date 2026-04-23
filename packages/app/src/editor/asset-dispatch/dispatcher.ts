@@ -20,7 +20,6 @@
  * where `isPathWithinProject` + `realpath` run under main-process trust.
  */
 
-import { openHashHrefInNewTab } from '../internal-link-helpers';
 import { type AssetViewerRegistry, assetViewerRegistry } from './registry.ts';
 import type { AssetClickContext } from './types.ts';
 
@@ -37,9 +36,18 @@ interface DispatchAssetClickDeps {
   readonly desktopBridge?: typeof window.okDesktop;
   /**
    * Web fallback — invoked when no registry hit AND no Electron bridge.
-   * Defaults to `openHashHrefInNewTab` from `internal-link-helpers`.
+   * Opens the URL in a new tab via `window.open(url, '_blank',
+   * 'noopener,noreferrer')`. The URL is guaranteed project-relative or
+   * absolute-same-origin at call time (the classifier rejects external
+   * URLs before `dispatchAssetClick` is invoked), so no scheme-allowlist
+   * gate is needed — a scheme gate (like `openHashHrefInNewTab`'s
+   * `isSafeNavigationUrl`) would reject bare filenames like `meeting.pdf`.
    */
   readonly openUrl?: (url: string) => void;
+}
+
+function defaultOpenAssetTab(url: string): void {
+  globalThis.window?.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export async function dispatchAssetClick(
@@ -51,7 +59,7 @@ export async function dispatchAssetClick(
   // web-fallback branch — only fall back to globalThis when the key is absent
   // from `deps` entirely.
   const desktopBridge = 'desktopBridge' in deps ? deps.desktopBridge : globalThis.window?.okDesktop;
-  const openUrl = deps.openUrl ?? openHashHrefInNewTab;
+  const openUrl = deps.openUrl ?? defaultOpenAssetTab;
 
   // 1. Cmd/Ctrl+click (or middle-click) always skips the registry.
   if (!ctx.forceOsDelegation) {
@@ -78,8 +86,12 @@ export async function dispatchAssetClick(
     return;
   }
 
-  // 3. Web fallback — new tab via `window.open`. `openHashHrefInNewTab`
-  //    gates on the scheme-allowlist (`isSafeNavigationUrl`); relative/hash
-  //    hrefs pass through unconditionally.
+  // 3. Web fallback — new tab via `window.open(ctx.url, '_blank',
+  //    'noopener,noreferrer')`. The URL is the href the classifier emitted
+  //    (project-relative or same-origin absolute) — browser resolves it
+  //    against the current page. No scheme gate: the classifier already
+  //    rejected authored external URLs before reaching the dispatcher,
+  //    and project-relative asset URLs (`meeting.pdf`, `./photo.png`)
+  //    would fail a scheme-allowlist by construction.
   openUrl(ctx.url);
 }
