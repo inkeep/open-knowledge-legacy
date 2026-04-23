@@ -13,6 +13,7 @@ import { OK_DIR } from '../../constants.ts';
 import { type PreviewUrlDeps, resolveUiInfo } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
 import {
+  buildWorkflowFrame,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
   textPlusStructured,
@@ -20,7 +21,7 @@ import {
 } from './shared.ts';
 
 function buildBody(contentDir: string): string {
-  return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
+  return `${buildWorkflowFrame('init-content')}Initialize a project knowledge base at \`${contentDir}\` for this repository.
 
 The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
 
@@ -101,7 +102,26 @@ Depending on the project, consider articles covering:
 - **Key decisions** — Architecture decisions and their rationale (the "why")
 - **Domain concepts** — Business domain terms and their meaning in code
 
-### 6. Verify
+### 6. Optional: seed a \`log.md\` for append-only work history
+
+Karpathy's pattern recommends a \`log.md\` at the wiki root — an append-only chronological record of ingests, queries, and maintenance. If the project would benefit from that (multi-agent collaboration, audit trail for decisions, human watchability), seed it now:
+
+\`\`\`markdown
+---
+title: Work Log
+description: Chronological record of knowledge base activity
+---
+
+## YYYY-MM-DD — Initial population
+
+- Bootstrap via \`init-content\`
+- Wrote N articles covering <topics>
+- Open follow-ups: <topic-1>, <topic-2>
+\`\`\`
+
+Then agents doing later \`ingest\` / \`research\` / \`consolidate\` work append a dated entry noting what they did. This is optional — the shadow repo's git history is always the authoritative trail — but a readable in-wiki log.md is a useful orientation surface for new collaborators.
+
+### 7. Verify
 
 - \`exec("ls ${contentDir}")\` shows the articles you wrote, each with title/description/tags enrichment
 - \`exec("grep -rn <common-codebase-term> ${contentDir}")\` finds the expected articles
