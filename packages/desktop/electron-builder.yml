@@ -27,6 +27,19 @@ extraResources:
   - from: "../cli/dist/public"
     to: "app"
     filter: ["**/*"]
+  # M6a: ship the CLI bundle + wrapper so the packaged .app can host
+  # `ok` on PATH via ELECTRON_RUN_AS_NODE=1. Filter keeps cli/dist/public/**
+  # intact — `ok ui` from the wrapper reads it via $APP_PATH/Contents/
+  # Resources/cli/dist/public/ (distinct consumer from the React bundle
+  # copy above that the BrowserWindow loads from Contents/Resources/app/).
+  # Two copies, deliberately — see SPEC §5 AC1.11 and OQ-22.
+  - from: "../cli/dist"
+    to: "cli/dist"
+    filter:
+      - "**/*"
+      - "!**/*.map"
+  - from: "resources/cli/bin/ok.sh"
+    to: "cli/bin/ok.sh"
 
 asarUnpack:
   - "**/*.node"
