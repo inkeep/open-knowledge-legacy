@@ -17,7 +17,10 @@ Nine consumer call sites in `packages/app/src/server/hocuspocus-plugin.ts` consu
 
 ## Full site enumeration (post-D12, current code)
 
-Line numbers are post-D12 in the current file. The eight consumer sites + the one intermediate derivation follow:
+Line numbers are post-D12 in the current file. The eight consumer sites + the one intermediate derivation follow.
+
+> **Line numbers are point-in-time snapshots from this PR's HEAD** (`957f60a4` plus the post-PR-#292 cleanup pass). Line numbers in `hocuspocus-plugin.ts` will drift as the file evolves; the `projectRoot` binding identity (and the AGENTS.md STOP rule that names it) is the durable contract, not these line numbers. To re-verify the enumeration after future changes, run `grep -nE 'projectRoot|PROJECT_ROOT' packages/app/src/server/hocuspocus-plugin.ts` and reconcile.
+
 
 | Line | Binding | Pre-D12 status | Post-D12 |
 |---|---|---|---|

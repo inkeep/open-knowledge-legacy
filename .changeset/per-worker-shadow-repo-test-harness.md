@@ -1,8 +1,5 @@
 ---
-"@inkeep/open-knowledge-core": patch
 "@inkeep/open-knowledge-server": patch
-"@inkeep/open-knowledge": patch
-"@inkeep/open-knowledge-desktop": patch
 "@inkeep/open-knowledge-app": patch
 ---
 
