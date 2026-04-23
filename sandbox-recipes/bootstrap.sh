@@ -81,9 +81,12 @@ print_aliases() {
 # ---- Open Knowledge sandbox-recipes shortcuts ----
 # Generated: $(date +%Y-%m-%d)${note}
 #
-# Shape:  <tier-cmd> [project] [extra args...]
-#   - If the first arg matches a key in _OK_PROJECTS below, it cd's there first.
-#   - Otherwise all args are passed through to claude (or the tier wrapper).
+# Shape:  <tier-cmd> [-p <project>] [claude args...]
+#   -p <project>   cd to the registered project before launching
+#                  (see _OK_PROJECTS below; list with ccp-list)
+#
+# Note: claude's own -p (print mode) is shadowed by our -p. To use
+# claude's print mode from these aliases, use --print instead.
 #
 # Tiers: ccs (Seatbelt), ccu (Seatbelt + skip-permissions),
 #        ccb (Apple Container), ccbu (+ unattended),
@@ -107,40 +110,77 @@ _ok_resolve_project() {
   printf '%s' "\${_OK_PROJECTS[\$key]}"
 }
 
+# ── Internal: extract -p <proj> anywhere in args; cd to project, leave
+#             remaining args in a global _OK_REMAINING_ARGS. Returns 0 on
+#             success (incl. -p absent), 1 on error (unknown proj, missing val).
+_ok_extract_project() {
+  local -a remaining=()
+  local proj="" dir=""
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      -p)
+        if [[ -z "\${2:-}" ]] || [[ "\${2:-}" == -* ]]; then
+          echo "error: -p requires a project shortcut (see 'ccp-list')" >&2
+          return 1
+        fi
+        if [[ -n "\$proj" ]]; then
+          echo "error: -p specified more than once" >&2
+          return 1
+        fi
+        proj="\$2"
+        shift 2
+        ;;
+      *)
+        remaining+=("\$1")
+        shift
+        ;;
+    esac
+  done
+  if [[ -n "\$proj" ]]; then
+    if ! dir="\$(_ok_resolve_project "\$proj")"; then
+      echo "error: unknown project shortcut: '\$proj'" >&2
+      echo "       use 'ccp-list' to see registered shortcuts" >&2
+      return 1
+    fi
+    cd "\$dir" || return 1
+  fi
+  _OK_REMAINING_ARGS=("\${remaining[@]}")
+}
+
 # ── Tier 0: Seatbelt sandbox (kernel-level, no container) ────────────────
 ccs() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  command claude --effort max "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  command claude --effort max "\${_OK_REMAINING_ARGS[@]}"
 }
 ccu() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  command claude --dangerously-skip-permissions --effort max "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  command claude --dangerously-skip-permissions --effort max "\${_OK_REMAINING_ARGS[@]}"
 }
 
 # ── Tier 1: Apple Container microVM ──────────────────────────────────────
 ccb() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
 }
 ccbu() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  "\$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"
 }
 
 # ── Tier 1 Matryoshka: microVM + bubblewrap + Anthropic proxy ────────────
 ccm() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" "\${_OK_REMAINING_ARGS[@]}"
 }
 ccmu() {
-  local dir
-  if dir="\$(_ok_resolve_project "\${1:-}")"; then cd "\$dir" || return; shift; fi
-  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "\$@"
+  _OK_REMAINING_ARGS=()
+  _ok_extract_project "\$@" || return
+  "\$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh" --unattended "\${_OK_REMAINING_ARGS[@]}"
 }
 
 # ── Project helpers ───────────────────────────────────────────────────────

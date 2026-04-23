@@ -1,36 +1,38 @@
 # Shell Aliases for Sandbox Tiers
 
-Short, typeable commands to launch each tier, parameterized by project. Designed to scale to 10+ repos without alias combinatorial explosion.
+Short, typeable commands to launch each tier. Project is selected with `-p <shortcut>` so it doesn't collide with claude's positional prompt and works order-independently with any other claude flag.
 
 ## Shape
 
 ```
-<tier-cmd> [project] [extra args...]
+<tier-cmd> [-p <project>] [claude args...]
 ```
 
-If the first arg matches a registered project shortcut, the function `cd`s there first. Otherwise all args pass through to `claude` (or the tier wrapper).
+`-p` can appear anywhere in the args. All other flags pass through to `claude` (or the Tier 1 wrapper) untouched.
 
 ## One-shot install
 
 ```bash
-./bootstrap.sh --install-aliases     # or --yes for fully non-interactive
-# Installs Tier 0 profile, builds Tier 1 images, appends the alias block
-# to ~/.zshrc (with backup). Re-runnable; won't double-append.
+./bootstrap.sh --install-aliases       # backs up ~/.zshrc, appends the block
+# or fully non-interactive:
+./bootstrap.sh -y
 source ~/.zshrc
 ```
 
-## The commands
+Idempotent — re-running replaces the block in place.
+
+## Commands
 
 ### Tiers
 
 | Command | Tier | What it launches |
 |---|---|---|
-| `ccs [project]` | 0 | **s**andbox — `claude --effort max` with Seatbelt sandbox from your settings |
-| `ccu [project]` | 0 | **u**nattended — adds `--dangerously-skip-permissions`; safe because sandbox is kernel-enforced + escape hatch disabled in settings |
-| `ccb [project]` | 1 | **b**oxed — Apple Container microVM |
-| `ccbu [project]` | 1 | boxed + unattended (`--dangerously-skip-permissions` inside the microVM) |
-| `ccm [project]` | 1 | **m**atryoshka — microVM + bubblewrap + Anthropic proxy |
-| `ccmu [project]` | 1 | matryoshka + unattended |
+| `ccs` | 0 | **s**andbox — `claude --effort max` with Seatbelt |
+| `ccu` | 0 | **u**nattended — adds `--dangerously-skip-permissions` (safe because sandbox kernel-enforces + escape hatch disabled) |
+| `ccb` | 1 | **b**oxed — Apple Container microVM |
+| `ccbu` | 1 | boxed + unattended |
+| `ccm` | 1 | **m**atryoshka — microVM + bubblewrap + Anthropic proxy |
+| `ccmu` | 1 | matryoshka + unattended |
 
 ### Helpers
 
@@ -38,65 +40,83 @@ source ~/.zshrc
 |---|---|
 | `ccp <shortcut>` | cd to a registered project (no launch) |
 | `ccp-list` | print the project registry |
-| `cc-setup` | re-run bootstrap (rebuild images, switch Tier 0 profile, etc.) |
-
-## Adding more projects
-
-Open `~/.zshrc`, find the `_OK_PROJECTS` block, and add entries:
-
-```bash
-_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"     # default
-_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private" # default
-_OK_PROJECTS[site]="$HOME/Documents/code/your-site"        # your own
-_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
-_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
-```
-
-Then `source ~/.zshrc`. No re-running bootstrap needed — the registry is just an associative array the tier functions look up.
+| `cc-setup` | re-run bootstrap (rebuild images, switch Tier 0 profile) |
 
 ## Usage examples
 
 ```bash
-# In current directory
-ccs                          # sandboxed claude in $PWD
-ccb                          # boxed claude in $PWD
-ccm --unattended             # args pass through to the tier wrapper
+# In current directory (no project flag)
+ccs                                 # sandboxed claude in $PWD
+ccb                                 # boxed claude in $PWD
+ccs -r abc123                       # sandboxed, resume session abc123
 
 # With project shortcut
-ccs ok                       # cd to open-knowledge + sandboxed claude
-ccb agents                   # cd to agents-private + boxed claude
-ccmu site                    # cd to site + matryoshka unattended
+ccs -p ok                           # cd to 'ok' + sandboxed claude
+ccb -p agents                       # cd to 'agents' + boxed claude
+ccmu -p site                        # matryoshka unattended in 'site'
 
-# With project + claude args
-ccs ok --resume abc123       # cd to ok, resume session abc123
-ccbu api -- --continue       # cd to api, boxed+unattended, continue last session
+# Project + any claude flag (order doesn't matter)
+ccs -p ok -r abc123                 # cd to ok, resume session
+ccs -r abc123 -p ok                 # same — -p scans all args
+ccs -p api --model opus             # cd to api, claude with opus
+ccbu -p ml -- --resume xyz          # boxed unattended, pass --resume through
 
-# Just cd, no launch (useful for shell navigation)
-ccp ok                       # cd to open-knowledge
-ccp agents                   # cd to agents-private
-
-# Inspect what's registered
-ccp-list
-# ok           /Users/andrew/Documents/code/open-knowledge
-# agents       /Users/andrew/Documents/code/agents-private
+# Non-launch helpers
+ccp ok                              # just cd
+ccp-list                            # inspect registry
 ```
+
+## Adding your repos
+
+Open `~/.zshrc`, find the `_OK_PROJECTS` block, add entries:
+
+```bash
+_OK_PROJECTS[ok]="$HOME/Documents/code/open-knowledge"       # installed by default
+_OK_PROJECTS[agents]="$HOME/Documents/code/agents-private"   # installed by default
+_OK_PROJECTS[site]="$HOME/Documents/code/your-site"          # your additions
+_OK_PROJECTS[api]="$HOME/Documents/code/your-api"
+_OK_PROJECTS[ml]="$HOME/Documents/code/ml-experiments"
+```
+
+`source ~/.zshrc` → `ccs -p ml` works immediately. No bootstrap re-run needed.
+
+## Error cases (deliberate — they're guardrails)
+
+```bash
+ccs -p                              # error: -p requires a project shortcut
+ccs -p -r abc                       # error: next arg is a flag, not a project
+ccs -p nonexistent                  # error: unknown project shortcut — with hint to run ccp-list
+ccs -p ok -p agents                 # error: -p specified more than once
+```
+
+## The `-p` collision with claude's print mode
+
+Claude's own CLI uses `-p` / `--print` for print mode (non-interactive, pipe-friendly output). Our `-p` **consumes the flag before claude sees it**.
+
+To use claude's print mode from these aliases, use the long form:
+
+```bash
+ccs --print "summarize the diff"    # → claude --effort max --print "summarize the diff"
+ccs -p ok --print "..."             # project + print mode, both work
+```
+
+If you forget and type `ccs -p ...` expecting print mode, you'll get an error (if the arg to `-p` doesn't look like a project) — loud, not silent.
 
 ## Mnemonic
 
 ```
-cc + s   sandbox (Seatbelt)
-cc + u   unattended (skip-permissions — safe because sandbox is kernel-enforced)
-cc + b   boxed (Apple Container microVM)
-cc + m   matryoshka (microVM + bubblewrap + Anthropic proxy)
-     + u append to b / m   same but --dangerously-skip-permissions inside
-cc + p   project helper (cd only, or list)
+cc + s    sandbox (Seatbelt)
+cc + u    unattended (skip-permissions — safe because sandbox is kernel-enforced)
+cc + b    boxed (Apple Container microVM)
+cc + m    matryoshka (microVM + bubblewrap + Anthropic proxy)
+     + u  append to b / m   same but --dangerously-skip-permissions inside
+cc + p    project helper (cd only, or list)
+  -p KEY  cd to a registered project before launching any tier
 ```
-
-Three letters max. Project is a positional arg, not encoded in the name.
 
 ## How this interacts with your existing `cc` alias
 
-Your existing `.zshrc` has:
+Your `.zshrc` has:
 
 ```bash
 alias cc="claude --permission-mode bypassPermissions --effort max"
@@ -104,33 +124,33 @@ alias cca='cd ~/Documents/code/agents-private && cc'
 alias cco='cd ~/Documents/code/open-knowledge && cc'
 ```
 
-The new aliases are **additive** and orthogonal:
+The new aliases are **additive** — existing ones untouched:
 
 | Your existing | New equivalent | Difference |
 |---|---|---|
-| `cc` | (keep it) | Unsandboxed, bypasses prompts. Kept as the "I know what I'm doing" escape hatch. |
-| `cco` | `ccs ok` or `ccu ok` | Sandboxed at OS level. `ccs` keeps claude's prompts; `ccu` drops them (safe because kernel enforces). |
-| `cca` | `ccs agents` or `ccu agents` | Same. |
+| `cc` | (keep) | Unsandboxed, bypasses prompts. Your "I know what I'm doing" escape hatch. |
+| `cco` | `ccs -p ok` or `ccu -p ok` | Sandboxed at OS level. `ccs` keeps claude's prompts; `ccu` drops them safely. |
+| `cca` | `ccs -p agents` or `ccu -p agents` | Same. |
 
-You can delete `cca`/`cco` if you want to migrate, or keep them alongside. The bootstrap won't touch them.
+You can delete `cca`/`cco` if you want to migrate, or keep alongside. Bootstrap won't touch them.
 
 ## When to use each
 
 | Task | Command |
 |---|---|
-| Daily work on code you wrote (fewer prompts, safety net) | `ccs` or `ccu` |
-| Unattended overnight run on your own code | `ccu` |
-| Reviewing an OSS PR / dep you don't fully trust | `ccb <project>` |
-| Reviewing code you actively suspect (supply-chain evaluation) | `ccmu <project>` |
-| Quick navigation (no claude session) | `ccp <project>` |
+| Daily work on your own code (fewer prompts, safety net) | `ccs` or `ccu` |
+| Unattended overnight on your own code | `ccu -p <repo>` |
+| OSS PR / partner code review | `ccb -p <repo>` |
+| Reviewing actively suspicious code | `ccmu -p <repo>` |
+| Quick navigation (no claude) | `ccp <shortcut>` |
 
 ## Path-filtering note
 
-The network allowlist in all tiers is **domain-level**, not URL-path-level. `github.com` means all of GitHub, not just `github.com/inkeep/*`. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for the four options (spoiler: use a fine-grained GitHub PAT for org scoping — it's cleaner than any network-layer trick).
+Network allowlist in all tiers is **domain-level**, not URL-path. See [URL-PATH-RESTRICTIONS.md](URL-PATH-RESTRICTIONS.md) for the four options (spoiler: fine-grained GitHub PAT for github.com/org scoping).
 
-## If you'd rather have shortcuts on PATH
+## If you'd rather have PATH-based shortcuts instead of shell functions
 
-The functions are zsh-native. If you want them as standalone scripts (accessible from any shell, inside Cursor's terminal, from cron, etc.):
+The tier wrappers are already scripts. Symlink them for non-zsh contexts (CI, Cursor's terminal-less flows, cron):
 
 ```bash
 mkdir -p ~/.local/bin
@@ -138,4 +158,4 @@ ln -sf "$_OK_RECIPES/tier1-apple-container/ok-sandbox.sh"  ~/.local/bin/ok-boxed
 ln -sf "$_OK_RECIPES/tier1-matryoshka/ok-sandbox.sh"       ~/.local/bin/ok-matryoshka
 ```
 
-Those scripts don't do project resolution (they mount `$PWD` directly), so you'd `cd` before invoking. Project shortcuts are a shell-level concern.
+Those scripts mount `$PWD` directly — no `-p` resolution. `cd` before invoking.

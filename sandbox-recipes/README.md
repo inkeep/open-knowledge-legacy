@@ -32,11 +32,14 @@ source ~/.zshrc
 
 ```bash
 ccs                          # Tier 0 — sandboxed claude in current dir
-ccs ok                       # Tier 0 — cd to open-knowledge, then launch
-ccb agents                   # Tier 1 — boxed claude in agents-private
-ccmu ok                      # Matryoshka + unattended
+ccs -p ok                    # Tier 0 — cd to open-knowledge, then launch
+ccb -p agents                # Tier 1 — boxed claude in agents-private
+ccmu -p ok                   # Matryoshka + unattended
+ccs -p ok -r abc123          # Project + any claude flag (order doesn't matter)
 ccp-list                     # See registered project shortcuts
 ```
+
+The `-p <project>` flag is explicit so there's no ambiguity with claude's positional prompt. Claude's own `-p` (print mode) is shadowed — use `--print` instead when invoking through these aliases.
 
 Full command reference: **[ALIASES.md](ALIASES.md)**.
 
@@ -47,10 +50,10 @@ Full command reference: **[ALIASES.md](ALIASES.md)**.
 | Scenario | Command | Tier | Directory |
 |---|---|---|---|
 | Daily work, fewer prompts, own code | `ccs` or `ccu` | 0 | [tier0-builtin-sandbox/](tier0-builtin-sandbox/) |
-| Unattended overnight on own code | `ccu` | 0 | (same) |
-| OSS PR / partner code review | `ccb <project>` | 1 | [tier1-apple-container/](tier1-apple-container/) |
-| Strongest isolation without Docker Desktop | `ccmu <project>` | 1 matryoshka | [tier1-matryoshka/](tier1-matryoshka/) |
-| Don't have macOS 26? | `ccp <project>` then manual `limactl shell` | 1 lima | [tier1-lima-vz/](tier1-lima-vz/) |
+| Unattended overnight on own code | `ccu -p <repo>` | 0 | (same) |
+| OSS PR / partner code review | `ccb -p <repo>` | 1 | [tier1-apple-container/](tier1-apple-container/) |
+| Strongest isolation without Docker Desktop | `ccmu -p <repo>` | 1 matryoshka | [tier1-matryoshka/](tier1-matryoshka/) |
+| Don't have macOS 26? | `ccp <repo>` then manual `limactl shell` | 1 lima | [tier1-lima-vz/](tier1-lima-vz/) |
 
 Full threat-model mapping and tradeoffs: [the report](../reports/claude-code-local-sandbox-options/REPORT.md).
 
