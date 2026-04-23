@@ -129,6 +129,16 @@ tags:
 
 **Folder-level defaults via `.open-knowledge/config.yml` `folders:`.** See next section.
 
+## Follow `.open-knowledge/config.yml` — it is the project contract
+
+**Read `.open-knowledge/config.yml` at the start of every session that involves writing to the knowledge base.** It is the single source of truth for:
+
+- **Folder structure intent** — the `folders:` block tells you which folders exist, what each one contains, and what tags its files should carry. Every `exec("ls <folder>")` / `read_document` / `search` call merges these defaults with per-file frontmatter automatically, but you should also read config.yml directly when orienting so you can *place new docs in the right folder* and *write them in the voice + shape the project expects*.
+- **Per-folder instructions** — each `folders:` entry's `description:` field is the canonical place for "what does this folder contain + how should agents work inside it." Treat the description as a binding instruction, not flavor text. If a folder's description says "preserve verbatim, no analysis" (e.g. `external-sources/`), don't synthesize into those files; takeaways belong elsewhere.
+- **Content scope** — `content.dir` / `content.include` / `content.exclude` define which files count as knowledge-base documents. Anything outside those globs is regular source code, not a wiki doc.
+
+If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), each folder's description in `config.yml` encodes the layer's rules. Projects with custom layouts put their own discipline in their own descriptions. Either way: **follow what config.yml says.**
+
 ## Folder structure + metadata — edit `.open-knowledge/config.yml`
 
 When you create or restructure folders, you SHOULD add a matching entry to the `folders:` key in `.open-knowledge/config.yml` with a glob + frontmatter defaults. This is how per-folder title/description/tags land without duplicating frontmatter on every child file.
