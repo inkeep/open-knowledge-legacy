@@ -52,6 +52,7 @@ import { VFile } from 'vfile';
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
+import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -153,6 +154,13 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
     .use(calloutTransformerPlugin)
     .use(restoreFromMdx) // Phase A
+    // US-011 / FR-8: HTML5 <details> → Accordion mdast promoter. Must run
+    // AFTER Phase A so the `<` sentinels have been restored to literal
+    // characters in text nodes (the recognizer regexes key off literal
+    // `<details>` / `</details>`); and BEFORE Phase B so position-slice
+    // attaches data.sourceRaw onto the emitted mdxJsxFlowElement using its
+    // copied opener..closer position span.
+    .use(detailsAccordionPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

@@ -123,5 +123,25 @@
     "componentName": "Callout-obsidian-foldable-open",
     "blockForm": "> [!IMPORTANT]+\n> Open by default (defaultOpen=true)\n",
     "notes": "US-010 / D-MF17: Obsidian `+` marker → collapsible + defaultOpen=true; γ preserves the `+` on pristine save"
+  },
+  {
+    "componentName": "Accordion-details-single-line",
+    "blockForm": "<details><summary>Details</summary>Body text</details>\n",
+    "notes": "US-011 / FR-8: HTML5 <details> single-line → Accordion mdxJsxFlowElement; γ pristine preserves the <details> bytes verbatim"
+  },
+  {
+    "componentName": "Accordion-details-open-attr",
+    "blockForm": "<details open><summary>Show details</summary>\n\nBody\n\n</details>\n",
+    "notes": "US-011: HTML5 <details open> → Accordion with defaultOpen; multi-paragraph body form"
+  },
+  {
+    "componentName": "Accordion-details-name-attr",
+    "blockForm": "<details name=\"grp\"><summary>One</summary>Body</details>\n",
+    "notes": "US-011: HTML5 <details name> → Accordion with name (exclusive-accordion grouping via native <details name=>)"
+  },
+  {
+    "componentName": "Accordion-details-id-attr",
+    "blockForm": "<details id=\"anchor\" open><summary>Named</summary>Body</details>\n",
+    "notes": "US-011: HTML5 <details id+open> → Accordion with id + defaultOpen for deep-linking"
   }
 ]
