@@ -471,11 +471,25 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-tab sync is intentionally not implemented (SPEC D9 supersedes D7): each tab/window is its own session for its lifetime; the persisted value is read only at load (refresh, new tab, new window). Open tabs do NOT update each other live. Last toggle wins at the next load.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `EDITOR_MODE_VALUES` const array is the single source of truth — both `EditorModeValue` and `isEditorModeValue()` derive from it. `useState` initializer prefers `window.__OK_EDITOR_MODE__` (typed `unknown` — every reader MUST validate via `isEditorModeValue`), falls back to `localStorage`, then `'wysiwyg'`. Reads localStorage exactly once at mount; no focus listener; no `storage` event listener. Every call to the hook's setter persists to localStorage immediately. Session-local paths that bypass the hook (e.g. `RAW_MDX_NAV_EVENT` → `setEditorMode('source')` directly in `EditorPane`) do not persist. Invalid persisted values produce a `[editor-mode] invalid persisted value` `console.warn` (FR-8); storage throws stay silent.
+- `src/components/EditorPane.tsx` — consumer. `EditorMode = EditorModeValue | 'diff'` structurally encodes "diff is the only non-persistable mode." Seeds session-local `editorMode` from the read-once `persistedMode` on mount. Diff mode is ephemeral; `modeBeforeDiffRef` restores session pre-diff mode on exit (pre-existing repo behavior, unchanged by this feature).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (seven tests: T1, T2, T3 "open tabs are independent until reload", T4, T6, T8, T9; in the CI `test:e2e` file list).
+- **Drift-guard:** PRs that touch `use-editor-mode.ts` or `EditorPane.tsx` load-time initialization must re-run SPEC §8.4 MQ1 (Electron restart → new window picks up last-persisted mode). There is no `_electron.launch()` Playwright harness at baseline, so this is manual.
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
