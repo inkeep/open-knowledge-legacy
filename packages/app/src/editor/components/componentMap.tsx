@@ -31,7 +31,7 @@ import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 
 function Audio(props: { src?: string; title?: string; children?: React.ReactNode }) {
   return (
-    <div className="rounded-lg border bg-fd-muted/50 p-4 text-sm text-fd-muted-foreground">
+    <div className="rounded-lg border bg-muted/50 p-4 text-sm text-muted-foreground">
       <div className="mb-1 font-medium">{props.title ?? 'Audio'}</div>
       {props.src ? (
         <audio controls src={props.src} className="w-full">

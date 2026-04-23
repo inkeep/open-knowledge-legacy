@@ -3,24 +3,13 @@
 @import "shadcn/tailwind.css";
 @plugin "tailwind-scrollbar";
 
-/* Tell Tailwind v4 to scan fumadocs-ui dist for utility class generation.
-   Required for bg-fd-card, text-fd-card-foreground, divide-fd-border, etc.
-   used internally by fumadocs components. */
-@source "../../../node_modules/fumadocs-ui/dist/**/*.js";
-
 /*
- * Explicit source roots for Tailwind v4 content scanning.
+ * Explicit source root for Tailwind v4 content scanning.
  *
  * packages/app's own `bun run dev` runs with CWD=packages/app, and Tailwind
  * v4 auto-detects sources via a package.json walk from there — that default
- * works for the web distribution. A prior revision of this block listed a
- * narrower ts/tsx-only glob specifically because Tailwind v4's
- * auto-source-detection is disabled once any explicit @source exists (the
- * fumadocs @source above triggers this), and we needed local utility classes
- * like `data-[state=active]:border-fd-primary` and `bg-(--callout-color)/50`
- * in editor-local tab triggers / prop controls to be generated. The broader
- * glob below supersedes that narrower scope and additionally serves the
- * desktop case:
+ * works for the web distribution. The `@source` below is load-bearing for
+ * the desktop case only:
  *
  * When packages/desktop's `electron-vite dev` serves this CSS with
  * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
@@ -28,7 +17,9 @@
  * files, so zero utility classes get emitted. The @source directive below
  * anchors the scan to packages/app/src/** (relative to this CSS file) and is
  * inert for packages/app's own dev because the same paths are already
- * auto-covered.
+ * auto-covered. (Pre-US-004 a second Tailwind-source directive pointed at
+ * the fumadocs dist tree; removed alongside the per-component CSS-variable
+ * token bridge in D-MF2 / FR-14.)
  */
 @source "./**/*.{tsx,ts,jsx,js}";
 
@@ -1169,43 +1160,6 @@ button:active:not(:disabled) {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-
-  /* fumadocs-ui token bridge (FR-25).
-     MUST be inside @theme (not :root) for Tailwind v4 to generate
-     utilities like `bg-fd-card`, `border-fd-primary`, `text-fd-muted-foreground`.
-     `@theme inline` means these resolve to the current value of the aliased
-     CSS variable at use time, so dark-mode overrides of --card, --primary,
-     etc. flow through automatically. */
-  --color-fd-background: var(--background);
-  --color-fd-foreground: var(--foreground);
-  --color-fd-card: var(--card);
-  --color-fd-card-foreground: var(--card-foreground);
-  --color-fd-popover: var(--popover);
-  --color-fd-popover-foreground: var(--popover-foreground);
-  --color-fd-muted: var(--muted);
-  --color-fd-muted-foreground: var(--muted-foreground);
-  --color-fd-border: var(--border);
-  --color-fd-primary: var(--primary);
-  --color-fd-primary-foreground: var(--primary-foreground);
-  --color-fd-secondary: var(--secondary);
-  --color-fd-secondary-foreground: var(--secondary-foreground);
-  --color-fd-accent: var(--accent);
-  --color-fd-accent-foreground: var(--accent-foreground);
-  --color-fd-ring: var(--ring);
-}
-
-/* fumadocs semantic callout colors — literal oklch values copied verbatim
-   from fumadocs-ui/css/default.css. Must use `@theme static` (not plain
-   `@theme`) so the tokens are emitted into `:root` as CSS variables —
-   fumadocs Callout reads them at runtime via inline
-   `style={{ '--callout-color': 'var(--color-fd-info, ...)' }}` and would
-   silently fall back to --color-fd-muted if the vars weren't in :root. */
-@theme static {
-  --color-fd-info: oklch(62.3% 0.214 259.815);
-  --color-fd-warning: oklch(76.9% 0.188 70.08);
-  --color-fd-error: oklch(63.7% 0.237 25.331);
-  --color-fd-success: oklch(72.3% 0.219 149.579);
-  --color-fd-idea: oklch(70.5% 0.209 60.849);
 }
 
 :root {
@@ -1285,129 +1239,16 @@ button:active:not(:disabled) {
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* ─────────────────────────────────────────────────────────────
-   fumadocs-ui cherry-picked assets (FR-25)
-   Token bridge lives in @theme inline above (required for Tailwind v4
-   to generate bg-fd-*, border-fd-*, etc. utilities). Semantic callout
-   colors live in the @theme block above.
-
-   We intentionally do NOT import fumadocs-ui/style.css or preset.css:
-   (1) preset.css redefines `@variant dark` with different specificity
-       than our `@custom-variant dark`, (2) its `@layer base *` border
-       reset conflicts with shadcn's own reset. Cherry-picking the
-       utilities + keyframes below is the portable way to get fumadocs
-       visuals inside our app's token system.
-   ───────────────────────────────────────────────────────────── */
-
-/* Steps utility classes — verbatim from fumadocs-ui/css/preset.css
-   (@utility fd-steps, @utility fd-step). fumadocs components reference
-   these as Tailwind utilities and we can't @import fumadocs' preset
-   (conflicts with @custom-variant dark), so we mirror it here.
-   Expansions: pl-6=1.5rem, ml-2=0.5rem, sm:pl-7=1.75rem, sm:ml-4=1rem,
-   size-8=2rem, -start-4=-1rem, rounded-full=9999px. */
-.fd-steps {
-  counter-reset: step;
-  position: relative;
-  padding-left: 1.5rem;
-  margin-left: 0.5rem;
-  border-left: 1px solid var(--color-fd-border);
-}
-@media (min-width: 640px) {
-  .fd-steps {
-    margin-left: 1rem;
-    padding-left: 1.75rem;
-  }
-}
-.fd-step::before {
-  background-color: var(--color-fd-secondary);
-  color: var(--color-fd-secondary-foreground);
-  content: counter(step);
-  counter-increment: step;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  width: 2rem;
-  height: 2rem;
-  position: absolute;
-  inset-inline-start: -1rem;
-  border-radius: 9999px;
-}
-
-/* Editor-only compensation: in fumadocs' native layout the `.fd-step::before`
-   counter-circle anchors to `.fd-steps` (the only positioned ancestor), which
-   places the circle in `.fd-steps`'s left padding area. Our editor wraps every
-   jsxComponent child in `.jsx-component-wrapper` with `position: relative`
-   (needed for drag-handle + chrome overlay), hijacking that anchor: the circle
-   now sits at `-1rem` relative to the wrapper, which sits at `.fd-steps`'s
-   content edge — so the circle slides right and overlaps the heading's first
-   ~16px ("In" of "Install" disappears behind the "1"). Compensate by shifting
-   the circle left by one more `.fd-steps` padding-left's worth. */
-.jsx-component-wrapper .fd-step::before {
-  inset-inline-start: calc(-1rem - 1.5rem); /* -2.5rem to match -1rem offset from .fd-steps edge */
-}
-@media (min-width: 640px) {
-  .jsx-component-wrapper .fd-step::before {
-    inset-inline-start: calc(-1rem - 1.75rem); /* -2.75rem at sm breakpoint */
-  }
-}
-
-/* 4. Accordion + Collapsible animation keyframes — required for fumadocs
-   Accordion (AccordionContent) and Files/Folder (Collapsible) expand/collapse. */
-@keyframes fd-accordion-down {
-  from {
-    height: 0;
-    opacity: 0.5;
-  }
-  to {
-    height: var(--radix-accordion-content-height);
-  }
-}
-@keyframes fd-accordion-up {
-  from {
-    height: var(--radix-accordion-content-height);
-  }
-  to {
-    height: 0;
-    opacity: 0.5;
-  }
-}
-@keyframes fd-collapsible-down {
-  from {
-    height: 0;
-    opacity: 0;
-  }
-  to {
-    height: var(--radix-collapsible-content-height);
-  }
-}
-@keyframes fd-collapsible-up {
-  from {
-    height: var(--radix-collapsible-content-height);
-  }
-  to {
-    height: 0;
-    opacity: 0;
-  }
-}
-
-/* Animation variables consumed by fumadocs accordion/collapsible components */
-:root {
-  --animate-fd-accordion-down: fd-accordion-down 200ms ease-out;
-  --animate-fd-accordion-up: fd-accordion-up 200ms ease-out;
-  --animate-fd-collapsible-down: fd-collapsible-down 150ms cubic-bezier(0.45, 0, 0.55, 1);
-  --animate-fd-collapsible-up: fd-collapsible-up 150ms cubic-bezier(0.45, 0, 0.55, 1);
-}
-
-/* Radix collapsible content height property (needed for animation targets) */
-@property --radix-collapsible-content-height {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-/* 5. prose-no-margin — margin reset for first/last children inside wrappers */
+/* prose-no-margin — margin reset for first/last children inside wrappers.
+   Applied to the jsx-component-wrapper's nested editable region so block
+   children don't carry their natural top/bottom prose margins into the
+   component chrome. Surviving consumer: the wildcard UnregisteredBadgeRender
+   in componentMap.tsx wraps children in <div className="prose-no-margin">,
+   and this file's rawMdxFallback chrome + future DIY Callout/Accordion chrome
+   rely on the same selector shape. Pre-US-004 the fumadocs cherry-pick section
+   (Steps utility classes + Accordion/Collapsible animation keyframes) sat above
+   this block; removed alongside the per-component CSS-variable token bridge
+   in D-MF2. */
 .prose-no-margin > :first-child {
   margin-top: 0;
 }
@@ -1460,8 +1301,10 @@ button:active:not(:disabled) {
  * either way — only the name differs from the reference SPEC.
  *
  * Per-type tuning is opt-in via --selection-halo-* custom properties scoped
- * under [data-component-type="..."] — extends the existing --color-fd-*
- * token bridge pattern (Precedent #29). */
+ * under [data-component-type="..."]. Pre-US-004 this pattern was described
+ * as "extends the fumadocs token bridge"; the bridge itself was removed
+ * alongside the fumadocs-ui React deps in D-MF2 / FR-13, leaving only the
+ * per-type custom-property overlay shape. */
 .ProseMirror .jsx-component-wrapper {
   /* Default halo tokens (overridden per component type below). */
   --selection-halo-inset: -4px;
@@ -1529,15 +1372,12 @@ button:active:not(:disabled) {
 }
 
 /* Per-block-type tuning. Media blocks (Image) use a tight inset because their
- * visual bounds are sharper than text-heavy blocks. Cards and Steps containers
- * breathe wider because their chrome — counters, grid borders — already lives
- * on the outer edges. Callouts inherit their type-color so the halo matches
- * the callout's chroma.
- *
- * US-003 renamed the image selector from its prior zoom-suffixed form. Cards
- * and Steps rules below will be swept out in US-004 (CSS cleanup); they
- * currently orphan against a narrowed descriptor set that no longer registers
- * either of them. */
+ * visual bounds are sharper than text-heavy blocks. Callouts read
+ * --callout-type-color (set inline by the DIY Callout renderer in US-005) so
+ * the halo matches the callout's chroma; the fallback to var(--ring) covers
+ * unregistered / wildcard paths. Cards/Steps per-type rules were removed in
+ * US-004 alongside the fumadocs cherry-pick — those descriptor names fall
+ * through to the '*' wildcard now. */
 .ProseMirror .jsx-component-wrapper[data-component-type="image"] {
   --selection-halo-inset: -2px;
   --selection-halo-radius: calc(0.375rem + 2px);
@@ -1547,14 +1387,9 @@ button:active:not(:disabled) {
   --selection-halo-color: var(--callout-type-color, var(--ring));
 }
 
-.ProseMirror .jsx-component-wrapper[data-component-type="cards"],
-.ProseMirror .jsx-component-wrapper[data-component-type="steps"] {
-  --selection-halo-inset: -6px;
-  --selection-halo-radius: calc(0.375rem + 6px);
-}
-
 /* Hover-revealed chrome bar (component name + gear icon) — top-right overlay.
-   z-index 50 sits above fumadocs' own internal sticky/z-40 (Banner's header)
+   z-index 50 sits high enough to paint above any intra-component sticky/z-40
+   layers (pre-US-004 this was tuned against fumadocs Banner's sticky header)
    but still below shadcn Popover/Dialog portals (typically z-50+ on a detached
    layer), so the chrome isn't occluded by in-component stickies. */
 .jsx-component-chrome {
