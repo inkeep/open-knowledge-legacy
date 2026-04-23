@@ -1,6 +1,18 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
@@ -61,7 +73,7 @@ export function EditorPane() {
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
-      // "Now" clicked — exit diff mode, restore prior editing mode
+      // "Current version" clicked — exit diff mode, restore prior editing mode
       setPreviewEntry(null);
       setEditorMode(modeBeforeDiffRef.current);
     } else {
@@ -197,10 +209,6 @@ export function EditorPane() {
         onSaveVersion={handleSaveVersion}
         saving={saving}
         previewEntry={previewEntry}
-        restoring={restoring}
-        restoreError={restoreError}
-        onExitPreview={handleExitPreview}
-        onRestore={handleRestore}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
         onSignIn={() => {
@@ -215,10 +223,35 @@ export function EditorPane() {
         onOpenClone={() => setCloneDialogOpen(true)}
       />
       {editorMode === 'diff' && previewEntry && (
-        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 justify-center">
-          <span className="truncate text-xs text-muted-foreground">
+        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 gap-2">
+          <span className="flex-1 truncate text-xs text-muted-foreground">
             Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
           </span>
+          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
+          <Button variant="ghost" size="xs" onClick={handleExitPreview}>
+            Close
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="default" size="xs" disabled={restoring}>
+                {restoring ? 'Restoring…' : 'Restore'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Restore this version?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will replace the current document content with the version from{' '}
+                  {formatRelativeTime(previewEntry.timestamp)}. You can undo this by restoring a
+                  previous version from the timeline.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="font-mono uppercase">Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleRestore}>Restore</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
       <EditorArea

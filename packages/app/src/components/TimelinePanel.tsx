@@ -12,16 +12,8 @@ import {
   iconFromClientName,
   type TimelineEntry,
 } from '@inkeep/open-knowledge-core';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Diamond,
-  FileArchive,
-  RotateCcw,
-} from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Diamond, FileArchive } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 // ─── Public props ────────────────────────────────────────────────────────────
@@ -113,7 +105,30 @@ function authorDot(entry: TimelineEntry) {
   );
 }
 
-// ─── Empty entry sentinel (for "Now" / exit-diff clicks) ─────────────────────
+// ─── "Current version" pinned row ────────────────────────────────────────────
+
+function CurrentVersionRow({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      className={[
+        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset border-b border-border/50',
+        selected ? 'bg-muted' : 'hover:bg-muted/40',
+      ].join(' ')}
+      onClick={onSelect}
+    >
+      <span className="mt-1.5 flex shrink-0 items-center">
+        <span className="inline-block size-2 rounded-full bg-emerald-500" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-foreground">Current version</p>
+        <p className="text-xs text-muted-foreground">Live document</p>
+      </div>
+    </button>
+  );
+}
+
+// ─── Empty entry sentinel (for current-version clicks) ──────────────────────
 
 const EMPTY_ENTRY: TimelineEntry = {
   sha: '',
@@ -478,24 +493,12 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
+  const isViewingCurrent = !selectedSha;
+
   return (
     <div className="flex h-full flex-col">
-      {/* Header with Now button when viewing a historical version */}
-      {selectedSha && (
-        <div className="flex items-center border-b px-3 py-2 shrink-0">
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onEntrySelect?.(EMPTY_ENTRY)}
-            className="text-xs text-muted-foreground"
-          >
-            Now
-          </Button>
-        </div>
-      )}
-
       {/* Scrollable entry list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto subtle-scrollbar">
         {/* Loading skeleton */}
         {loading && (
           <div
@@ -534,6 +537,10 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
           <div className="flex flex-col">
+            <CurrentVersionRow
+              selected={isViewingCurrent}
+              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
+            />
             {entries.map((entry) => (
               <EntryRow
                 key={entry.sha}
@@ -548,6 +555,10 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
           <div className="flex flex-col">
+            <CurrentVersionRow
+              selected={isViewingCurrent}
+              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
+            />
             {groups.map((group, idx) => {
               if (group.kind === 'checkpoint') {
                 return (
@@ -573,17 +584,6 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
           </div>
         )}
       </div>
-
-      {/* Viewing indicator when entry selected */}
-      {selectedSha && (
-        <div className="border-t p-3 flex items-center justify-between shrink-0">
-          <span className="text-xs text-muted-foreground">Viewing historical version</span>
-          <Button variant="ghost" size="xs" onClick={() => onEntrySelect?.(EMPTY_ENTRY)}>
-            <RotateCcw className="size-3" />
-            Exit
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
