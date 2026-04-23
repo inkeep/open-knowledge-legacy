@@ -1,15 +1,16 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * Transitional state (US-003 shipped, US-005..US-009 in flight): the registry
- * manifest is narrowed to the 5-pack foundation (Callout + Image + Audio
- * registered today; Video in US-007, Accordion in US-009). Callout and Image
- * still render through fumadocs-ui leaf components here as a deploy-safe
- * bridge while the DIY replacements in US-005 / US-006 land. Audio is the
- * existing inline HTML5 wrapper — US-008 extracts it into its own module and
- * widens the prop shape per FR-4. Once US-005/US-006/US-008 ship their DIY
- * components, `fumadocs-ui` gets dropped from `packages/app/package.json` and
- * this file's imports become zero.
+ * Transitional state (US-003/US-005 shipped, US-006..US-009 in flight):
+ * the registry manifest is narrowed to the 5-pack foundation (Callout + Image
+ * + Audio registered today; Video in US-007, Accordion in US-009). Callout
+ * is now a DIY renderer (US-005 landed the 7-prop GFM shape at `./Callout`);
+ * Image still routes through fumadocs-ui's ImageZoom as a deploy-safe bridge
+ * until US-006 lands the DIY `react-medium-image-zoom` component. Audio is
+ * the existing inline HTML5 wrapper — US-008 extracts it into its own module
+ * and widens the prop shape per FR-4. Once US-006/US-008 ship their DIY
+ * components, `fumadocs-ui` gets dropped from `packages/app/package.json`
+ * and this file's imports become zero.
  *
  * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
  * US-002 along with the Context Bridge Registry (precedent #27 / PRECEDENTS.md
@@ -26,8 +27,8 @@
  *
  * '*' maps to UnregisteredBadgeRender for the wildcard fallback.
  */
-import { Callout } from 'fumadocs-ui/components/callout';
 import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
+import { Callout } from './Callout.tsx';
 
 function Audio(props: { src?: string; title?: string; children?: React.ReactNode }) {
   return (

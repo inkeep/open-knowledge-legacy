@@ -1387,6 +1387,135 @@ button:active:not(:disabled) {
   --selection-halo-color: var(--callout-type-color, var(--ring));
 }
 
+/* 7b. Callout (5-pack DIY renderer, US-005) — per-type accent tokens.
+ *
+ * Per-type accent color drives: left-border tint, icon color, collapsible
+ * chevron, and the wrapper's selection halo (via --callout-type-color which
+ * the §7a rule above reads). Author's `color` prop sets --callout-type-color
+ * inline on the root element, overriding the per-type default below. The
+ * 5 values match the GFM alert set (D-MF11); parser alias map (US-010)
+ * folds broader Obsidian / Mintlify types into this subset.
+ *
+ * All five accent tokens are oklch() for consistent chroma across light/dark.
+ * Mapping rationale: `note` → sky-blue (OK primary family, informational);
+ * `tip` → green (positive / supportive); `important` → violet (emphasis /
+ * attention); `warning` → amber (heads-up, non-destructive); `caution` →
+ * red (destructive / hazard).
+ */
+:root {
+  --callout-note-color: oklch(0.62 0.15 240);
+  --callout-tip-color: oklch(0.58 0.14 145);
+  --callout-important-color: oklch(0.55 0.18 290);
+  --callout-warning-color: oklch(0.65 0.16 70);
+  --callout-caution-color: oklch(0.58 0.21 25);
+}
+
+.dark {
+  --callout-note-color: oklch(0.75 0.12 240);
+  --callout-tip-color: oklch(0.73 0.13 145);
+  --callout-important-color: oklch(0.72 0.16 290);
+  --callout-warning-color: oklch(0.77 0.14 70);
+  --callout-caution-color: oklch(0.72 0.2 25);
+}
+
+/* Per-type default accent. An inline `--callout-type-color` from the
+ * Callout.tsx `color` prop wins over these defaults (inline style has
+ * higher specificity than an attribute selector rule). */
+.callout[data-callout-type="note"] {
+  --callout-type-color: var(--callout-note-color);
+}
+.callout[data-callout-type="tip"] {
+  --callout-type-color: var(--callout-tip-color);
+}
+.callout[data-callout-type="important"] {
+  --callout-type-color: var(--callout-important-color);
+}
+.callout[data-callout-type="warning"] {
+  --callout-type-color: var(--callout-warning-color);
+}
+.callout[data-callout-type="caution"] {
+  --callout-type-color: var(--callout-caution-color);
+}
+
+.callout {
+  border-left: 3px solid var(--callout-type-color);
+  background: color-mix(in oklab, var(--callout-type-color) 6%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+}
+
+.callout .callout-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--callout-type-color);
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 0.25rem;
+}
+
+.callout .callout-icon {
+  flex: none;
+  color: var(--callout-type-color);
+}
+
+.callout .callout-title {
+  font-size: 0.9rem;
+}
+
+.callout-body {
+  color: inherit;
+}
+
+.callout-body > :first-child {
+  margin-top: 0;
+}
+.callout-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* Collapsible variant — native <details>/<summary> with styled chevron.
+ * The open/close animation is deferred: details-content animation requires
+ * either ::details-content (broader 2024+ support) or a React transition;
+ * native open-state is already smooth enough for v1. Chevron rotates via
+ * CSS transform on `[open]`, honoring prefers-reduced-motion. */
+.callout-collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.callout-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.callout-collapsible > summary::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid var(--callout-type-color);
+  flex: none;
+  transform: rotate(0deg);
+  transform-origin: 25% 50%;
+}
+
+.callout-collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .callout-collapsible > summary::before {
+    transition: transform 180ms var(--ease-out-strong);
+  }
+}
+
 /* Hover-revealed chrome bar (component name + gear icon) — top-right overlay.
    z-index 50 sits high enough to paint above any intra-component sticky/z-40
    layers (pre-US-004 this was tuned against fumadocs Banner's sticky header)

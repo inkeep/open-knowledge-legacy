@@ -36,21 +36,61 @@
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
 // ── Callout ──────────────────────────────────────────────────────────────────
+//
+// FR-1 (SPEC 2026-04-23-cb-v2-md-foundation): 7-prop surface matching GFM's
+// 5-type `type` enum + Mintlify-inspired `title`/`icon`/`color` + Obsidian-
+// inspired `collapsible`/`defaultOpen` (D-MF17). Research-recommended
+// 9-value enum narrowed to GFM 5 per D-MF11 — parser alias map (US-010
+// callout-transformer) folds broader inputs (Obsidian/Mintlify aliases) into
+// this subset pre-descriptor lookup. Schema-is-add-only (precedent #9)
+// makes the enum extension free if NG26 promotes.
+//
+// `icon` is a string (not reactnode) because it encodes a lucide-react
+// identifier namespace (e.g., `lucide:ChevronRight`) — resolved in the
+// renderer to an `<Icon>` element. This lets γ round-trip the icon name
+// byte-identical and keeps the PropPanel editable (reactnode props are hidden
+// from the generic switch per `hasEditableProps` in JsxComponentView).
 
 const calloutProps: PropDef[] = [
   {
     name: 'type',
     type: 'enum',
-    enumValues: ['info', 'warn', 'error', 'success', 'warning', 'idea'],
-    defaultValue: 'info',
+    enumValues: ['note', 'tip', 'important', 'warning', 'caution'],
+    defaultValue: 'note',
     required: false,
-    description: 'Visual variant of the callout',
+    description: 'GFM alert variant',
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    description: 'Optional heading shown above the body',
   },
   {
     name: 'icon',
-    type: 'reactnode',
+    type: 'string',
     required: false,
-    description: 'Custom icon override',
+    description: 'Custom lucide icon override (e.g. `lucide:Lightbulb`)',
+  },
+  {
+    name: 'color',
+    type: 'string',
+    required: false,
+    description: 'Optional accent color override (hex — e.g. `#F05032`)',
+  },
+  {
+    name: 'collapsible',
+    type: 'boolean',
+    required: false,
+    defaultValue: false,
+    description: 'Render as a foldable `<details>` (Obsidian `[!TYPE]+/-`)',
+  },
+  {
+    name: 'defaultOpen',
+    type: 'boolean',
+    required: false,
+    defaultValue: true,
+    description: 'When collapsible, start in the open state',
   },
   {
     name: 'children',
@@ -124,8 +164,9 @@ export const builtInComponents: JsxComponentMeta[] = [
     icon: 'MessageSquareWarning',
     category: 'content',
     displayName: 'Callout',
-    description: 'Callout box with type variants (info, warning, error, etc.)',
-    searchTerms: ['note', 'warning', 'tip', 'info', 'alert', 'admonition'],
+    description:
+      'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
+    searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
   },
 
   // Media

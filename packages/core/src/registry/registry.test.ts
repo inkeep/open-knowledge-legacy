@@ -111,9 +111,12 @@ describe('builtInComponents manifest', () => {
     expect(names).toEqual([]);
   });
 
-  test('Callout has correct enum values for type prop', () => {
-    // US-003 holds the enum at its 6-value pre-narrow shape. US-005 tightens
-    // to the GFM 5-type set (note/tip/important/warning/caution) per D-MF11.
+  test('Callout has GFM 5-type enum values for type prop', () => {
+    // US-005 narrows the enum to GFM's 5 canonical types per D-MF11.
+    // Parser alias map (US-010 callout-transformer) folds broader inputs
+    // (Obsidian/Mintlify `success`/`danger`/`idea`/etc.) into this subset
+    // pre-descriptor lookup. Precedent #9 schema-add-only makes future
+    // enum extension free if NG26 promotes.
     const callout = builtInComponents.find((m) => m.name === 'Callout');
     expect(callout).toBeDefined();
     if (!callout) return;
@@ -121,11 +124,25 @@ describe('builtInComponents manifest', () => {
     expect(typeProp).toBeDefined();
     expect(typeProp?.type).toBe('enum');
     if (typeProp?.type === 'enum') {
-      expect(typeProp?.enumValues).toContain('info');
-      expect(typeProp?.enumValues).toContain('warn');
-      expect(typeProp?.enumValues).toContain('error');
-      expect(typeProp?.enumValues).toContain('success');
+      expect([...typeProp.enumValues].sort()).toEqual(
+        ['caution', 'important', 'note', 'tip', 'warning'].sort(),
+      );
+      expect(typeProp.defaultValue).toBe('note');
     }
+  });
+
+  test('Callout exposes the 7-prop FR-1 surface', () => {
+    // D-MF17 added `collapsible` + `defaultOpen` within the GFM 5-type scope.
+    // Together with `type`, `title`, `icon`, `color`, and `children` that's
+    // the FR-1 surface — order-insensitive; a future PropPanel reshuffle
+    // should not break this guard.
+    const callout = builtInComponents.find((m) => m.name === 'Callout');
+    expect(callout).toBeDefined();
+    if (!callout) return;
+    const propNames = callout.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(
+      ['children', 'collapsible', 'color', 'defaultOpen', 'icon', 'title', 'type'].sort(),
+    );
   });
 
   test('each name is unique', () => {
