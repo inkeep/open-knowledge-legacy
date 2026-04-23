@@ -165,9 +165,11 @@ describe('McpConsentDialog module shape', () => {
     // ago had no indication their row would be silently overwritten by Add.
     // Source-level assertion — the repo convention skips @testing-library/
     // react. A future refactor that drops the willReplace branch fires this.
+    // Reads from McpConsentDialogBody.tsx — the dialog body was split out
+    // of McpConsentDialog.tsx for the size-limit lazy-load split (PR #289).
     const { readFileSync } = require('node:fs') as typeof import('node:fs');
     const { join } = require('node:path') as typeof import('node:path');
-    const source = readFileSync(join(import.meta.dir, 'McpConsentDialog.tsx'), 'utf8');
+    const source = readFileSync(join(import.meta.dir, 'McpConsentDialogBody.tsx'), 'utf8');
     // The label string and the branch that sets it must both appear. Written
     // as literal-substring checks so a behaviorally-equivalent rewording of
     // the branch structure (ternary → if/else) still passes.
@@ -185,9 +187,10 @@ describe('McpConsentDialog module shape', () => {
     // the repo convention, so read the source and assert the pattern is in
     // place. A future refactor that drops the setBusy(false) call fires
     // this test (instead of silently reintroducing the locked-UI bug).
+    // Reads from McpConsentDialogBody.tsx — see note in the willReplace test.
     const { readFileSync } = require('node:fs') as typeof import('node:fs');
     const { join } = require('node:path') as typeof import('node:path');
-    const source = readFileSync(join(import.meta.dir, 'McpConsentDialog.tsx'), 'utf8');
+    const source = readFileSync(join(import.meta.dir, 'McpConsentDialogBody.tsx'), 'utf8');
     // Both onAdd and onSkip must reset `busy` inside their `!result.ok`
     // branch. Match non-greedily so a formatting change (line break between
     // toast.error and setBusy) doesn't break the regression guard.

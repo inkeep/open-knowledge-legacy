@@ -300,6 +300,26 @@ describe('buildAdminAppleScript', () => {
   test('ends with the administrator privileges suffix', () => {
     expect(buildAdminAppleScript('ls', 'p')).toMatch(/with administrator privileges$/);
   });
+
+  test('escapes embedded backslashes before double-quotes (total-contract invariant)', () => {
+    // Backslash-first escape ordering: a `\` inside `shellCmd` becomes `\\`
+    // BEFORE the `"` → `\"` pass runs, so the literal stays unambiguous.
+    // Reversed order would corrupt `a\` to `a\\` then `a\\"` on quote-add.
+    const script = buildAdminAppleScript('ls /Users/Bob\\Mac/app', 'Needs admin');
+    expect(script).toContain('do shell script "ls /Users/Bob\\\\Mac/app"');
+  });
+
+  test('escapes embedded newlines so multi-line prompt/shell inputs stay on one AppleScript literal (PR #289 review)', () => {
+    // AppleScript string literals can't span raw newlines — a `\n` in the
+    // input would close the current literal and leave dangling text. The
+    // escape converts to the AppleScript `\n` sequence, which the runtime
+    // decodes back to a literal newline when executing the shell command.
+    const script = buildAdminAppleScript('echo a\nb', 'line1\nline2');
+    expect(script).toContain('do shell script "echo a\\nb"');
+    expect(script).toContain('with prompt "line1\\nline2"');
+    // Belt and suspenders — no raw newline anywhere in the output.
+    expect(script).not.toContain('\n');
+  });
 });
 
 describe('buildInstallShellCmd', () => {

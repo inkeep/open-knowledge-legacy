@@ -1638,4 +1638,20 @@ describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
     writeFileSync(path, '', 'utf-8');
     expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
   });
+
+  it('returns the parsed entry when VS Code config uses servers key (not mcpServers)', () => {
+    // Regression gate for the `topLevelKey` abstraction: VS Code is the
+    // only EDITOR_TARGETS entry that uses 'servers' (editors.ts:EDITOR_TARGETS.vscode)
+    // instead of 'mcpServers' / 'mcp_servers'. Without this test, a future
+    // refactor that hard-codes 'mcpServers' (easy to do since 5/6 editors use
+    // it) would silently break M6b's VS Code detection — the dialog would
+    // classify the entry as absent, write a duplicate, and the consent flow
+    // would never surface the existing entry to the user for replacement.
+    // Reviewer-requested coverage (PR #289 inline thread).
+    const path = resolveVsCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ servers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.vscode, '', fakeHome)).toEqual(entry);
+  });
 });

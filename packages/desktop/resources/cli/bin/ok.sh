@@ -7,6 +7,13 @@
 # (github.com/microsoft/vscode/blob/main/resources/darwin/bin/code.sh).
 #
 # See specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md §6 (M6a).
+#
+# Note: `set -e` (errexit) is deliberately omitted. The `app_realpath`
+# while-loop handles readlink failures inline (by checking `[ -h "$SOURCE" ]`
+# before each iteration), and the final `exit $?` semantic requires a
+# non-zero exit to propagate from the exec'd CLI — `set -e` would short-
+# circuit both patterns. Matches VS Code's `code.sh` reference (same
+# omission, same rationale).
 
 function app_realpath() {
   SOURCE=$1

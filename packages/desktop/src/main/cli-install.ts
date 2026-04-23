@@ -211,17 +211,20 @@ export function classifySymlinkState(
  * rule is unit-testable without spawning.
  */
 export function buildAdminAppleScript(shellCmd: string, promptCopy: string): string {
-  // AppleScript string literals treat `\\` as a literal backslash and `\"`
-  // as a literal double-quote. Escaping MUST happen backslash-first:
-  // otherwise a `\` inserted by the `"` escape gets re-escaped on the next
-  // pass, corrupting the literal. macOS file paths can contain `\` (APFS /
-  // HFS+ both permit it), so even though the only current caller routes
-  // `shellCmd` through `shellEscapeSingleQuoted` first (which produces no
-  // `\`), the exported helper's contract must be total for future callers.
+  // AppleScript string literals treat `\\` as a literal backslash, `\"` as
+  // a literal double-quote, and `\n` as a literal newline. Escaping MUST
+  // happen backslash-first: otherwise a `\` inserted by the `"` or `\n`
+  // escapes gets re-escaped on the next pass, corrupting the literal.
+  // macOS file paths can contain `\` (APFS / HFS+ both permit it); macOS
+  // tooling output (e.g. multi-line prompt copy) can contain `\n`. Even
+  // though current callers route `shellCmd` through `shellEscapeSingleQuoted`
+  // first (which produces neither) and the prompt copy is hardcoded, the
+  // exported helper's contract must be total for future callers. PR #289
+  // reviewer-flagged the `\n` gap as a defensive hardening concern.
   // Named `escapeAppleScriptLiteral` (not `escape`) to avoid shadowing the
   // deprecated global.
   const escapeAppleScriptLiteral = (s: string): string =>
-    s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
   return `do shell script "${escapeAppleScriptLiteral(shellCmd)}" with prompt "${escapeAppleScriptLiteral(promptCopy)}" with administrator privileges`;
 }
 
