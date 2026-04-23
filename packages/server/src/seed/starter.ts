@@ -1,4 +1,4 @@
-import type { FolderRule } from '../config/schema.ts';
+import type { FolderRule } from './types.ts';
 
 /**
  * A starter-pack folder entry. Drives both the filesystem scaffold and the

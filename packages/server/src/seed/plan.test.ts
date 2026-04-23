@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { planSeed } from './plan.ts';
 import { STARTER_FOLDERS } from './starter.ts';
-import { SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
 
 let testDir: string;
 
@@ -20,7 +20,7 @@ afterEach(() => {
 function scaffoldOkDir(dir: string, configYml?: string): void {
   mkdirSync(join(dir, OK_DIR), { recursive: true });
   if (configYml !== undefined) {
-    writeFileSync(join(dir, OK_DIR, CONFIG_FILENAME), configYml, 'utf-8');
+    writeFileSync(join(dir, OK_DIR, SEED_CONFIG_FILENAME), configYml, 'utf-8');
   }
 }
 

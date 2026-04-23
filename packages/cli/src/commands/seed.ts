@@ -11,11 +11,13 @@
 
 import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import {
+  applySeed,
+  planSeed,
+  type ScaffoldPlan,
+  SeedPrerequisiteError,
+} from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { applySeed } from '../seed/apply.ts';
-import { planSeed } from '../seed/plan.ts';
-import type { ScaffoldPlan } from '../seed/types.ts';
-import { SeedPrerequisiteError } from '../seed/types.ts';
 import { accent, dim, error as errorColor, info, success, warning } from '../ui/colors.ts';
 
 export interface SeedCommandOptions {

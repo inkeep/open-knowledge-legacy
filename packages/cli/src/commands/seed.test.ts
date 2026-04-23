@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { STARTER_FOLDERS } from '@inkeep/open-knowledge-server';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
-import { STARTER_FOLDERS } from '../seed/starter.ts';
 import { runSeed } from './seed.ts';
 
 let testDir: string;

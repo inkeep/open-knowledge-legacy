@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { FolderRuleSchema } from '../config/schema.ts';
 import { LOG_MD_TEMPLATE, STARTER_FOLDERS, starterFolderRule } from './starter.ts';
 
 describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
@@ -53,11 +52,16 @@ describe('STARTER_FOLDERS — Karpathy three-layer starter pack', () => {
     expect(entry?.tags).toEqual(['article', 'canonical', 'layer-consolidate']);
   });
 
-  test('all entries are schema-valid via FolderRuleSchema', () => {
+  test('all entries are shape-valid FolderRule objects', () => {
     for (const folder of STARTER_FOLDERS) {
       const rule = starterFolderRule(folder);
-      const parsed = FolderRuleSchema.safeParse(rule);
-      expect(parsed.success).toBe(true);
+      expect(typeof rule.match).toBe('string');
+      expect(rule.match.length).toBeGreaterThan(0);
+      expect(typeof rule.frontmatter).toBe('object');
+      expect(rule.frontmatter).not.toBeNull();
+      expect(typeof rule.frontmatter.title).toBe('string');
+      expect(typeof rule.frontmatter.description).toBe('string');
+      expect(Array.isArray(rule.frontmatter.tags)).toBe(true);
     }
   });
 
@@ -102,8 +106,9 @@ describe('starterFolderRule()', () => {
     });
   });
 
-  test('output passes FolderRuleSchema parse', () => {
+  test('output is structurally a FolderRule (match + frontmatter keys only)', () => {
     const rule = starterFolderRule(STARTER_FOLDERS[0]);
-    expect(FolderRuleSchema.parse(rule)).toEqual(rule);
+    expect(Object.keys(rule).sort()).toEqual(['frontmatter', 'match']);
+    expect(Object.keys(rule.frontmatter).sort()).toEqual(['description', 'tags', 'title']);
   });
 });

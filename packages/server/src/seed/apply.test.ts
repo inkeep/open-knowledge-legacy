@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { applySeed } from './apply.ts';
 import { planSeed } from './plan.ts';
 import { LOG_MD_TEMPLATE, STARTER_FOLDERS } from './starter.ts';
+import { SEED_CONFIG_FILENAME } from './types.ts';
 
 let testDir: string;
 
@@ -20,7 +21,7 @@ afterEach(() => {
 function scaffoldOkDir(dir: string, configYml?: string): void {
   mkdirSync(join(dir, OK_DIR), { recursive: true });
   if (configYml !== undefined) {
-    writeFileSync(join(dir, OK_DIR, CONFIG_FILENAME), configYml, 'utf-8');
+    writeFileSync(join(dir, OK_DIR, SEED_CONFIG_FILENAME), configYml, 'utf-8');
   }
 }
 
@@ -37,7 +38,7 @@ describe('applySeed — fresh plan writes everything', () => {
     expect(existsSync(join(testDir, 'log.md'))).toBe(true);
     expect(readFileSync(join(testDir, 'log.md'), 'utf-8')).toBe(LOG_MD_TEMPLATE);
 
-    const config = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(config).toContain('external-sources/**');
     expect(config).toContain('research/**');
     expect(config).toContain('articles/**');
@@ -76,7 +77,7 @@ describe('applySeed — idempotent on an empty plan', () => {
     const firstPlan = await planSeed({ projectDir: testDir });
     await applySeed(firstPlan, { projectDir: testDir });
 
-    const configBefore = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const configBefore = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
 
     const secondPlan = await planSeed({ projectDir: testDir });
     const secondResult = await applySeed(secondPlan, { projectDir: testDir });
@@ -86,7 +87,7 @@ describe('applySeed — idempotent on an empty plan', () => {
     expect(secondResult.applied).toBe(0);
     expect(secondResult.errors).toEqual([]);
 
-    const configAfter = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const configAfter = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(configAfter).toBe(configBefore);
   });
 });
@@ -107,7 +108,7 @@ server:
     const plan = await planSeed({ projectDir: testDir });
     await applySeed(plan, { projectDir: testDir });
 
-    const updated = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(updated).toContain('# This is a user comment at the top');
     expect(updated).toContain('# inline comment about dir');
     expect(updated).toContain('# Separator comment');
@@ -131,7 +132,7 @@ server:
 
     await applySeed(plan, { projectDir: testDir });
 
-    const updated = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(updated).toContain('My Custom Title');
     expect(updated).toContain('My custom description for external-sources');
     expect(updated).toContain('- custom');
@@ -146,7 +147,7 @@ server:
     const plan = await planSeed({ projectDir: testDir });
     await applySeed(plan, { projectDir: testDir });
 
-    const updated = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(updated).toContain('folders:');
     // content: dir: . preserved
     expect(updated).toContain('content:');

@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { parseDocument } from 'yaml';
-import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { STARTER_FOLDERS, starterFolderRule } from './starter.ts';
 import type { ConfigEdit, FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
-import { SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
 
 const LOG_MD_FILENAME = 'log.md';
 
@@ -62,13 +62,13 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
   }
 
   // 2. config.yml folders: array collision check.
-  const configPath = join(okDir, CONFIG_FILENAME);
+  const configPath = join(okDir, SEED_CONFIG_FILENAME);
   let configYmlRaw: string | null = null;
   try {
     configYmlRaw = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : null;
   } catch (err) {
     warnings.push(
-      `Could not read ${OK_DIR}/${CONFIG_FILENAME}: ${err instanceof Error ? err.message : String(err)}. Treating as absent for plan computation.`,
+      `Could not read ${OK_DIR}/${SEED_CONFIG_FILENAME}: ${err instanceof Error ? err.message : String(err)}. Treating as absent for plan computation.`,
     );
   }
 
@@ -76,7 +76,7 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
   for (const folder of STARTER_FOLDERS) {
     if (existingMatches.has(folder.match)) {
       // Entry already in config — never overwrite user edits.
-      skipped.push({ path: `${CONFIG_FILENAME}#${folder.match}`, reason: 'already-exists' });
+      skipped.push({ path: `${SEED_CONFIG_FILENAME}#${folder.match}`, reason: 'already-exists' });
     } else {
       configEdits.push({
         configPath,

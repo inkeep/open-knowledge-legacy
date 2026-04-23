@@ -1,4 +1,32 @@
-import type { FolderRule } from '../config/schema.ts';
+/**
+ * Types for the `ok seed` scaffolder.
+ *
+ * `FolderRule` / `FolderFrontmatter` mirror the Zod schema shape in
+ * `packages/cli/src/config/schema.ts:FolderRuleSchema`. The schema lives
+ * in the CLI package alongside the rest of the config loader — this seed
+ * module (in server) produces matching shapes structurally without
+ * pulling Zod in. The CLI's config loader validates any data before it
+ * reaches runtime consumers.
+ */
+
+/**
+ * Per-folder frontmatter fields written into `config.yml` `folders:` entries.
+ * Matches `FolderFrontmatterSchema` structurally.
+ */
+export interface FolderFrontmatter {
+  title?: string;
+  description?: string;
+  tags?: string[];
+}
+
+/**
+ * A single `folders:` rule. Matches `FolderRuleSchema` structurally:
+ *   `{ match: <glob>, frontmatter: FolderFrontmatter }`.
+ */
+export interface FolderRule {
+  match: string;
+  frontmatter: FolderFrontmatter;
+}
 
 /**
  * A filesystem entry that the scaffolder will create on apply.
@@ -22,7 +50,7 @@ export interface SkipEntry {
 
 /**
  * A config.yml edit that the scaffolder will apply by appending to the `folders:`
- * array. The entry matches the existing `FolderRuleSchema` shape — no schema change.
+ * array.
  */
 export interface ConfigEdit {
   /** Absolute or project-relative path to the config.yml being edited. */
@@ -86,3 +114,10 @@ export class SeedPrerequisiteError extends Error {
     this.name = 'SeedPrerequisiteError';
   }
 }
+
+/**
+ * Filename of the workspace config under `.open-knowledge/`. Duplicates the
+ * same literal defined in `packages/cli/src/constants.ts:CONFIG_FILENAME` —
+ * kept local so the server-side seed module has no CLI dependency.
+ */
+export const SEED_CONFIG_FILENAME = 'config.yml';
