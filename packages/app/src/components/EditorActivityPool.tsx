@@ -134,7 +134,7 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
 /**
  * Maximum number of editors mounted concurrently inside `<Activity>` boundaries.
  * Decoupled from `MAX_POOL` (exported from `provider-pool.ts`, default 10) per
- * SPEC.md §10 DX9 / PRECEDENTS.md precedent #15(c) — pool-resident-but-not-
+ * SPEC.md §10 DX9 / PRECEDENTS.md precedent #18(c) — pool-resident-but-not-
  * Activity-mounted docs keep their warm provider (so revisiting is fast via
  * Suspense-gated remount with `syncPromise` resolving immediately from
  * `hasSynced=true`) but skip the per-editor memory + observer-CPU cost of
@@ -295,7 +295,7 @@ function EditorActivityPoolInner({
     });
     priorMountKeyRef.current = mountKey;
     // The cache uses this list to drive provider connect/disconnect for
-    // cached-but-not-Activity-mounted editors (precedent #18(i)). Bounds
+    // cached-but-not-Activity-mounted editors (precedent #25(b)). Bounds
     // remote-peer CRDT load to the top ACTIVITY_MOUNT_LIMIT editors
     // regardless of how many docs are pool-resident.
     setActivityMountList(mounted);

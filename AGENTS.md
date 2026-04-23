@@ -1265,7 +1265,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Twenty-five numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across \~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Thirty-four numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -1292,6 +1292,15 @@ Twenty-five numbered rules govern how work lands in this repo. Code comments cit
 23. **Async socket errors at the boundary** — Classify EPIPE/ECONNRESET at upgrade; no userspace pre-filter
 24. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
 25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
+26. **Direct PM dispatch for nested editors** — CM-in-PM dispatches PM transactions, not y-codemirror.next direct Y.Text binding
+27. **Compound components bridge via DOM data-attributes** — Tabs/Accordion state crosses NodeView portals via `data-active-tab`, not React Context
+28. **All user content visible and editable** — No `display:none` on `NodeViewContent`; render failures degrade to nested CM source editor
+29. **Selection state as typed PM PluginState** — `SelectionStatePlugin` is single source of truth for selection-adjacent surfaces; read-only over doc
+30. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics
+31. **CSS custom-property tokens scoped via `[data-component-type]`** — Per-block-type visual tuning via `--*` overrides, not new class selectors
+32. **Innermost-wins visible chrome via state, not `:has()`** — `data-has-child-selected` propagated by plugin store; beats `:has()` on perf + compat
+33. **Floating UI for selection-anchored overlays** — `@floating-ui/dom` with virtual elements derived from PM selection; anchor preference is `view.nodeDOM(pos)` → `posToDOMRect(view, from, to)`. No scaffolded `useSelectionAnchoredPopover` / `computeSelectionAnchor` ships ahead of the first real consumer — extraction happens at that consumer's site. See PRECEDENTS.md §33.
+34. **A11y codified in the selection plugin, not retrofitted per-block** — `role="group"`, `aria-live` announcer, forced-colors / reduced-motion from plugin + descriptor
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -1315,12 +1324,16 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/markdown/` — unified + remark pipeline (see "Markdown Pipeline" below)
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter utilities for observer sync (Y.Text ↔ Y.Map bridge)
-- `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema only; markdown dispatch via `markdown/handlers.ts`)
-- `src/extensions/jsx-inline.ts` — JsxInline PM node for inline MDX elements (`content: 'text*'`, isolating)
+- `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (`content: 'block*'`, `isolating: true`, `defining: true`). Attrs: `componentName`, `kind`, `attributes`, `sourceRaw`, `sourceDirty`, `props`. Descriptor-dispatched at render time via the registry. Widened from atom to block container in Component Blocks v2.
+- `src/extensions/jsx-inline.ts` — JsxInline PM node for inline MDX elements (`content: 'text*'`, `isolating: false`, zero attrs). Text content IS the source — no `sourceDirty`, no `sourceRaw`, no descriptor dispatch. Renders as visible inline source text in WYSIWYG.
 - `src/extensions/raw-mdx-fallback.ts` — RawMdxFallback PM node for degraded MDX blocks (`content: 'text*'`, atom-false)
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
+- `src/registry/` — Component descriptor registry subsystem (single source of truth for descriptors; `built-ins.ts` is the hand-authored manifest, `createRegistry()` returns the runtime `ComponentRegistry` with wildcard `'*'` fallback)
+  - `types.ts` — `PropDef` (discriminated union: string/boolean/number/enum/reactnode) + `JsxComponentMeta` (name, props, icon, category, searchTerms, emptyChildName)
+  - `built-ins.ts` — Manifest of 17 built-in component descriptors (Callout, Card, Cards, Steps, Step, Tabs, Tab, Accordions, Accordion, Files, Folder, File, ImageZoom, Banner, TypeTable, InlineTOC, Audio). Mermaid was removed 2026-04-21 (placeholder stub was non-functional — no SVG rendering); existing `<Mermaid />` content auto-converts to `rawMdxFallback` via the wildcard path. Un-defer framework at `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`.
+  - `index.ts` — `createRegistry()` factory returning `ComponentRegistry` (get/set/has/entries), pre-populated with built-ins + wildcard `'*'` fallback
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
@@ -1345,8 +1358,7 @@ Hocuspocus Server
 ├── Shadow Repo (.git/open-knowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 ├── Shadow Branch GC (orphaned ref cleanup)
-├── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
-└── Agent Presence Broadcaster (map-valued awareness on __system__ Y.Doc — N-agent coexistence)
+└── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
 ```
 
 ### CC1 push-over-awareness (derived-view invalidation)
@@ -1366,25 +1378,6 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 **Status.** Server-side primitive landed (PR #106). Client-side consumer (ProviderPool pin, `main.tsx` mount, `FileSidebar` subscriber, Playwright L2 test) lands in a follow-up.
 
 **File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
-
-### Agent presence on `__system__` (map-valued awareness)
-
-All agent presence state lives on the `__system__` Y.Doc's awareness as a map-valued `agentPresence: Record<agentId, AgentPresenceEntry>` field. This is the canonical substrate for any "who is writing right now" UI — the current `PresenceBar`, the future Cluster A Activity sidebar, any cross-doc visibility. Per-content-doc agent awareness is structurally unworkable: every Hocuspocus `Document` has one shared `Awareness` with a single `clientID`, so `setLocalState({user:...})` stomps across N concurrent agents. Publishing a map keyed by `agentId` on the single shared `__system__` awareness sidesteps that constraint.
-
-**Key files.**
-- `packages/server/src/agent-presence.ts` — `AgentPresenceBroadcaster` class. API: `setPresence(agentId, entry)` (upsert), `clearPresence(agentId)` (remove one key), `touchMode(agentId, mode)` (update `mode`+`ts` only — no-op if the entry doesn't exist, so incomplete entries never reach the client), `getPresenceMap()` (diagnostic read). Structured pino logs under `[agent-presence]` namespace per precedent #3.
-- `packages/core/src/types/awareness.ts` — `AgentPresenceEntry` shape `{displayName, icon, color, currentDoc, mode:'idle'|'editing', ts}`. `AwarenessUser.type` is narrowed to `'human'`; agents never appear in per-doc awareness under this design.
-- `packages/app/src/lib/agent-presence.ts` — client helpers: `AGENT_PRESENCE_STALE_MS = 5_000`, `pickAgentsForDoc(awareness, activeDocName, now) → {current, crossDoc}`, `pickPrimary(awareness, now)`. Entries with `currentDoc === null` (D8) and entries older than `AGENT_PRESENCE_STALE_MS` are filtered.
-- `packages/app/src/presence/use-presence.ts` / `PresenceBar.tsx` — two-source hook (humans from `activeProvider.awareness`, agents from `systemProvider.awareness`) rendered in the sectioned bar (current-doc | vertical divider | cross-doc dimmed + grayscale).
-- `packages/app/src/components/SystemDocSubscriber.tsx` + `packages/app/src/editor/DocumentContext.tsx` — lift the `__system__` `HocuspocusProvider` to context so `usePresence` can read agent awareness without re-opening the provider.
-
-**Write surface.** The three agent write handlers in `api-extension.ts` (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) all call `agentPresenceBroadcaster.setPresence(..., mode:'editing')` before the transact and `touchMode(agentId, 'idle')` in a `finally` so a thrown transact still flips the badge back to idle. Agent-session lifecycle (`AgentSessionManager.getSession` / `closeSession` / `closeAllForAgent`) no longer touches content-doc awareness at all — there is no per-doc agent state to clear.
-
-**Cleanup is deterministic via the MCP keepalive WS.** The keepalive URL carries `agentId=${connectionId}` (`packages/cli/src/mcp/keepalive.ts`); `boot.ts`'s `/collab/keepalive` upgrade handler parses the param via `parseKeepaliveAgentId()` and wires `ws.on('close') → presenceBroadcaster.clearPresence(agentIdForCleanup)` so the badge disappears within ~ms of process exit. The 5 s TTL filter on the client side (`AGENT_PRESENCE_STALE_MS`) is a belt-and-suspenders fallback for ungraceful disconnects, clock skew, or proxies that eat the close frame.
-
-**STOP — the `agent-` prefix convention.** `api-extension.ts`'s `extractAgentIdentity` stores presence under the key `agent-${rawAgentId}`, but the keepalive URL carries the raw `connectionId`. Use the exported `toBroadcasterKey(rawAgentId)` helper in `packages/server/src/boot.ts` for every translation from a raw URL / HTTP-body agentId to the broadcaster-map key — the close handler, test harnesses, and any future cleanup path. Silent prefix drift between the write path and the cleanup path makes `clearPresence` no-op in production without failing any test.
-
-**Observability.** `GET /api/metrics/agent-presence` returns `{ presence: Record<agentId, AgentPresenceEntry> }` — the current map. **Diagnostic-only** in this iteration: the browser does NOT poll this endpoint. Presence-bar state always comes from the `__system__` provider's awareness sync (delivered in the WS handshake window). The endpoint is stable surface for `curl` + operator dashboards. Wiring it as a client-side cold-start fallback is noted but not load-bearing — awareness replay is fast in practice.
 
 ### Shadow repo & branch runtime
 
@@ -1459,7 +1452,6 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                                |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park)             |
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)                      |
-| GET    | `/api/metrics/agent-presence` | Current `agentPresence` map (diagnostic-only; clients don't poll)                     |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)                   |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                                     |
 | GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
@@ -1478,11 +1470,9 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
-- `src/agent-sessions.ts` — `AgentSessionManager` class; owns `(docName, agentId)`-keyed `DirectConnection` + per-agent `UndoManager` lifecycle. Does NOT publish any awareness state — agent presence lives on `__system__` via `AgentPresenceBroadcaster`
-- `src/agent-presence.ts` — `AgentPresenceBroadcaster`; map-valued `agentPresence` field on `__system__` awareness (see "Agent presence on `__system__`" above)
+- `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, metrics (including `/api/metrics/agent-presence`) endpoints
-- `src/boot.ts` — `bootServer()` composition wrapper. Owns the `/collab/keepalive` WS upgrade handler; exports `parseKeepaliveAgentId(url)` + `toBroadcasterKey(rawAgentId)` for the deterministic agent-presence cleanup path
+- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
@@ -1580,10 +1570,8 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 ### Presence & awareness
 
-- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source); `AwarenessUser.type === 'human'` only (agents never appear in per-doc awareness)
-- Humans live on the per-doc `HocuspocusProvider.awareness`; agents live on the `__system__` provider's `agentPresence` map. `PresenceBar` reads both sources via `usePresence(activeProvider, systemProvider, activeDocName)` and renders the sectioned layout (current-doc | vertical divider | cross-doc dimmed + grayscale). See "Agent presence on `__system__`" under Package: server for the substrate design.
-- `DocumentContext` exposes `systemProvider: HocuspocusProvider | null`; `SystemDocSubscriber.tsx` is the single mount point that holds the provider ref.
-- Agent activity flash via Y.Map('activity') → CSS @keyframes (orthogonal to presence — activity is per-write, presence is session-scoped)
+- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
+- Agent activity flash via Y.Map('activity') → CSS @keyframes
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
 - Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
@@ -1652,9 +1640,8 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/GraphLegend.tsx` — Cluster color legend (fullscreen Explore only; max 10 entries)
 - `src/components/graph-colors.ts` — Deterministic hash-to-color mapping for cluster names (16-color palette, theme-aware)
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
-- `src/presence/PresenceBar.tsx` — Sectioned presence bar (current-doc | divider | cross-doc dimmed + grayscale). Overflow chip (M=4 current, K=3 cross-doc) via shadcn Popover per section; cross-doc tooltip shows `editing [[doc.md]]` with a clickable wiki-link that calls `openDocumentTransition(docName)` and updates `window.location.hash`
-- `src/presence/use-presence.ts` — Two-source hook reading humans from `activeProvider.awareness` + agents from `systemProvider.awareness` via `pickAgentsForDoc`; `~1s` `setInterval` tick ages out stale entries when no awareness events arrive (backup for the `AGENT_PRESENCE_STALE_MS` filter)
-- `src/lib/agent-presence.ts` — Client presence helpers (`AGENT_PRESENCE_STALE_MS`, `pickAgentsForDoc`, `pickPrimary`). See the server-side substrate doc above for the full design
+- `src/presence/PresenceBar.tsx` — Presence bar component
+- `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
 ## Package: desktop
 

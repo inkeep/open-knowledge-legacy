@@ -3,12 +3,24 @@
 @import "shadcn/tailwind.css";
 @plugin "tailwind-scrollbar";
 
+/* Tell Tailwind v4 to scan fumadocs-ui dist for utility class generation.
+   Required for bg-fd-card, text-fd-card-foreground, divide-fd-border, etc.
+   used internally by fumadocs components. */
+@source "../../../node_modules/fumadocs-ui/dist/**/*.js";
+
 /*
  * Explicit source roots for Tailwind v4 content scanning.
  *
  * packages/app's own `bun run dev` runs with CWD=packages/app, and Tailwind
  * v4 auto-detects sources via a package.json walk from there — that default
- * works for the web distribution.
+ * works for the web distribution. A prior revision of this block listed a
+ * narrower ts/tsx-only glob specifically because Tailwind v4's
+ * auto-source-detection is disabled once any explicit @source exists (the
+ * fumadocs @source above triggers this), and we needed local utility classes
+ * like `data-[state=active]:border-fd-primary` and `bg-(--callout-color)/50`
+ * in editor-local tab triggers / prop controls to be generated. The broader
+ * glob below supersedes that narrower scope and additionally serves the
+ * desktop case:
  *
  * When packages/desktop's `electron-vite dev` serves this CSS with
  * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
@@ -554,7 +566,20 @@
     [full-end];
 }
 
-.tiptap-editor > div {
+/* Content-column children. The `.tiptap-editor` wrapper is a 3-column named
+ * grid ([full-start] margin [content-start] content [content-end] margin
+ * [full-end]). Direct children default to `grid-column: content` so editor
+ * chrome — EditorContent, Breadcrumb footer, future <nav>/<header>/<footer>
+ * — lands in the content column. An earlier version of this rule targeted
+ * `> div` specifically, which worked while every child was a <div> but
+ * silently broke semantic elements: a direct <nav> child auto-placed into
+ * the right-margin track (width = --margin-width = 4rem), truncating its
+ * content into a ~64px vertical sliver. Widened to `> *` so the rule's
+ * intent ("content-column children") matches the CSS. Edge-to-edge
+ * elements that want a different track can explicit-override with
+ * `grid-column: full`.
+ */
+.tiptap-editor > * {
   grid-column: content;
   position: relative;
 }
@@ -930,7 +955,9 @@
   @apply text-muted-foreground/60;
 }
 
-/* Block controls container — replaces ok-drag-handle */
+/* DragHandlePlugin container — absolutely positioned flex row of grip + "+"
+   created imperatively by `BlockDragHandle` (see
+   `packages/app/src/editor/extensions/drag-handle.ts`). Per FR-15 / FR-16. */
 .ok-block-controls {
   position: absolute;
   display: flex;
@@ -1000,9 +1027,14 @@
 
 /* CodeMirror polish */
 .cm-editor {
-  min-height: 200px;
   font-size: 14px;
   font-family: var(--font-mono);
+}
+
+/* SourceEditor (full-page source mode) reserves a usable baseline height;
+   nested CM instances inside PM NodeViews size to their content. */
+.source-editor .cm-editor {
+  min-height: 200px;
 }
 
 .cm-editor .cm-content {
@@ -1137,6 +1169,43 @@ button:active:not(:disabled) {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* fumadocs-ui token bridge (FR-25).
+     MUST be inside @theme (not :root) for Tailwind v4 to generate
+     utilities like `bg-fd-card`, `border-fd-primary`, `text-fd-muted-foreground`.
+     `@theme inline` means these resolve to the current value of the aliased
+     CSS variable at use time, so dark-mode overrides of --card, --primary,
+     etc. flow through automatically. */
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--foreground);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--card-foreground);
+  --color-fd-popover: var(--popover);
+  --color-fd-popover-foreground: var(--popover-foreground);
+  --color-fd-muted: var(--muted);
+  --color-fd-muted-foreground: var(--muted-foreground);
+  --color-fd-border: var(--border);
+  --color-fd-primary: var(--primary);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--accent);
+  --color-fd-accent-foreground: var(--accent-foreground);
+  --color-fd-ring: var(--ring);
+}
+
+/* fumadocs semantic callout colors — literal oklch values copied verbatim
+   from fumadocs-ui/css/default.css. Must use `@theme static` (not plain
+   `@theme`) so the tokens are emitted into `:root` as CSS variables —
+   fumadocs Callout reads them at runtime via inline
+   `style={{ '--callout-color': 'var(--color-fd-info, ...)' }}` and would
+   silently fall back to --color-fd-muted if the vars weren't in :root. */
+@theme static {
+  --color-fd-info: oklch(62.3% 0.214 259.815);
+  --color-fd-warning: oklch(76.9% 0.188 70.08);
+  --color-fd-error: oklch(63.7% 0.237 25.331);
+  --color-fd-success: oklch(72.3% 0.219 149.579);
+  --color-fd-idea: oklch(70.5% 0.209 60.849);
 }
 
 :root {
@@ -1216,7 +1285,418 @@ button:active:not(:disabled) {
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* ─────────────────────────────────────────────────────────────
+   fumadocs-ui cherry-picked assets (FR-25)
+   Token bridge lives in @theme inline above (required for Tailwind v4
+   to generate bg-fd-*, border-fd-*, etc. utilities). Semantic callout
+   colors live in the @theme block above.
+
+   We intentionally do NOT import fumadocs-ui/style.css or preset.css:
+   (1) preset.css redefines `@variant dark` with different specificity
+       than our `@custom-variant dark`, (2) its `@layer base *` border
+       reset conflicts with shadcn's own reset. Cherry-picking the
+       utilities + keyframes below is the portable way to get fumadocs
+       visuals inside our app's token system.
+   ───────────────────────────────────────────────────────────── */
+
+/* Steps utility classes — verbatim from fumadocs-ui/css/preset.css
+   (@utility fd-steps, @utility fd-step). fumadocs components reference
+   these as Tailwind utilities and we can't @import fumadocs' preset
+   (conflicts with @custom-variant dark), so we mirror it here.
+   Expansions: pl-6=1.5rem, ml-2=0.5rem, sm:pl-7=1.75rem, sm:ml-4=1rem,
+   size-8=2rem, -start-4=-1rem, rounded-full=9999px. */
+.fd-steps {
+  counter-reset: step;
+  position: relative;
+  padding-left: 1.5rem;
+  margin-left: 0.5rem;
+  border-left: 1px solid var(--color-fd-border);
+}
+@media (min-width: 640px) {
+  .fd-steps {
+    margin-left: 1rem;
+    padding-left: 1.75rem;
+  }
+}
+.fd-step::before {
+  background-color: var(--color-fd-secondary);
+  color: var(--color-fd-secondary-foreground);
+  content: counter(step);
+  counter-increment: step;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  width: 2rem;
+  height: 2rem;
+  position: absolute;
+  inset-inline-start: -1rem;
+  border-radius: 9999px;
+}
+
+/* Editor-only compensation: in fumadocs' native layout the `.fd-step::before`
+   counter-circle anchors to `.fd-steps` (the only positioned ancestor), which
+   places the circle in `.fd-steps`'s left padding area. Our editor wraps every
+   jsxComponent child in `.jsx-component-wrapper` with `position: relative`
+   (needed for drag-handle + chrome overlay), hijacking that anchor: the circle
+   now sits at `-1rem` relative to the wrapper, which sits at `.fd-steps`'s
+   content edge — so the circle slides right and overlaps the heading's first
+   ~16px ("In" of "Install" disappears behind the "1"). Compensate by shifting
+   the circle left by one more `.fd-steps` padding-left's worth. */
+.jsx-component-wrapper .fd-step::before {
+  inset-inline-start: calc(-1rem - 1.5rem); /* -2.5rem to match -1rem offset from .fd-steps edge */
+}
+@media (min-width: 640px) {
+  .jsx-component-wrapper .fd-step::before {
+    inset-inline-start: calc(-1rem - 1.75rem); /* -2.75rem at sm breakpoint */
+  }
+}
+
+/* 4. Accordion + Collapsible animation keyframes — required for fumadocs
+   Accordion (AccordionContent) and Files/Folder (Collapsible) expand/collapse. */
+@keyframes fd-accordion-down {
+  from {
+    height: 0;
+    opacity: 0.5;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+@keyframes fd-accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0.5;
+  }
+}
+@keyframes fd-collapsible-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+@keyframes fd-collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+/* Animation variables consumed by fumadocs accordion/collapsible components */
+:root {
+  --animate-fd-accordion-down: fd-accordion-down 200ms ease-out;
+  --animate-fd-accordion-up: fd-accordion-up 200ms ease-out;
+  --animate-fd-collapsible-down: fd-collapsible-down 150ms cubic-bezier(0.45, 0, 0.55, 1);
+  --animate-fd-collapsible-up: fd-collapsible-up 150ms cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+/* Radix collapsible content height property (needed for animation targets) */
+@property --radix-collapsible-content-height {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* 5. prose-no-margin — margin reset for first/last children inside wrappers */
+.prose-no-margin > :first-child {
+  margin-top: 0;
+}
+.prose-no-margin > :last-child {
+  margin-bottom: 0;
+}
+
+/* 7. Component block chrome — all overlays, zero permanent layout shift.
+ * Principle: components render exactly like production. Editor affordances
+ * are hover-revealed overlays (badge+gear, add-child pill, subtle hover tint). */
+
+.ProseMirror .jsx-component-wrapper {
+  position: relative;
+  border-radius: 0.375rem;
+  /* Establishes a stacking context for the behind-content halo (§7a).
+   * `position: relative` alone is NOT sufficient: with `z-index: auto`
+   * the wrapper doesn't open its own stacking context, so the `::after`
+   * at `z-index: -1` escapes to the viewport root and paints BEHIND
+   * `body { background-color: ... }` — the halo becomes invisible.
+   * `isolation: isolate` creates a stacking context without affecting
+   * z-index cascade for siblings, trapping the halo at -1 behind the
+   * wrapper's own content but above the body background. SPEC §3.3
+   * T10 evidence assumed `position: relative` was enough; it's not. */
+  isolation: isolate;
+}
+/* Child component drag prevention is handled via onDragStart={preventDefault}
+   on the NodeViewWrapper in JsxComponentView.tsx. CSS-level -webkit-user-drag
+   was removed due to Biome lint incompatibility. */
+/* Invisible hover zone above the component — allows reaching the parent's
+   chrome bar even when children fill the entire block. Does NOT affect
+   layout (position:absolute + negative top, zero height in flow). */
+.ProseMirror .jsx-component-wrapper::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  z-index: 9;
+}
+
+/* 7a. Selection halo — per-block-type tokens, behind-content (T10),
+ * transparent-outline placeholder (T3), forced-colors compliant,
+ * reduced-motion gated, compositor-safe opacity transition.
+ *
+ * Consumes data-* attrs emitted by JsxComponentView from SelectionStatePlugin
+ * (see selection-state-plugin.ts). The pseudo-element is `::after` because
+ * `::before` is already used above as an invisible hover hit-zone; the
+ * T10 (behind-content) + T3 (transparent-outline) architecture is identical
+ * either way — only the name differs from the reference SPEC.
+ *
+ * Per-type tuning is opt-in via --selection-halo-* custom properties scoped
+ * under [data-component-type="..."] — extends the existing --color-fd-*
+ * token bridge pattern (Precedent #29). */
+.ProseMirror .jsx-component-wrapper {
+  /* Default halo tokens (overridden per component type below). */
+  --selection-halo-inset: -4px;
+  --selection-halo-radius: calc(0.375rem + 4px);
+  --selection-halo-color: var(--ring);
+  --selection-halo-opacity: 0;
+  --selection-halo-width: 2px;
+}
+
+.ProseMirror .jsx-component-wrapper::after {
+  content: "";
+  position: absolute;
+  inset: var(--selection-halo-inset);
+  /* T3: transparent-outline placeholder — forced-colors mode forces
+     border-color, making the element visible in Windows High Contrast
+     even when the browser strips box-shadow. */
+  border: var(--selection-halo-width) solid transparent;
+  border-radius: var(--selection-halo-radius);
+  opacity: var(--selection-halo-opacity);
+  pointer-events: none;
+  /* T10: behind-content — halo paints below the wrapper's chrome and its
+     own content, so Card/Accordion/Callout borders don't stack a second
+     ring. Requires position:relative on the wrapper (set above) + the
+     wrapper having a transparent default background (it does). */
+  z-index: -1;
+  box-sizing: border-box;
+}
+
+/* Compositor-safe fade — only animate when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .ProseMirror .jsx-component-wrapper::after {
+    /* Use the repo's custom easing token (defined ~L32) — matches the
+       Emil Kowalski "strong ease-out" used by every other interactive
+       transition in this file (7 usages incl. Popover, Callout). */
+    transition: opacity 180ms var(--ease-out-strong);
+  }
+}
+
+/* Paint the halo for the innermost selected wrapper. */
+.ProseMirror .jsx-component-wrapper[data-selected="true"]::after {
+  --selection-halo-opacity: 1;
+  border-color: var(--selection-halo-color);
+}
+
+/* Innermost-wins defense-in-depth: the plugin never sets both attrs on the
+ * same wrapper (store-enforced), but if a future refactor were to regress
+ * that invariant, this rule keeps only the innermost halo visible. */
+.ProseMirror .jsx-component-wrapper[data-has-child-selected="true"][data-selected="true"]::after {
+  --selection-halo-opacity: 0;
+}
+
+/* Drag suppresses the halo + transition (Vaul pattern — halo re-appears
+ * cleanly on drop rather than fading during the gesture). */
+.ProseMirror .jsx-component-wrapper[data-dragging="true"]::after {
+  --selection-halo-opacity: 0;
+  transition: none;
+}
+
+/* Forced-colors (Windows High Contrast): CanvasText is the current system
+ * foreground color, guaranteed visible regardless of WHCM theme. */
+@media (forced-colors: active) {
+  .ProseMirror .jsx-component-wrapper[data-selected="true"]::after {
+    border-color: CanvasText;
+  }
+}
+
+/* Per-block-type tuning. Media blocks (ImageZoom) use a tight inset because
+ * their visual bounds are sharper than text-heavy blocks. Cards and Steps
+ * containers breathe wider because their chrome — counters, grid borders —
+ * already lives on the outer edges. Callouts inherit their type-color so the
+ * halo matches the callout's chroma. */
+.ProseMirror .jsx-component-wrapper[data-component-type="imagezoom"] {
+  --selection-halo-inset: -2px;
+  --selection-halo-radius: calc(0.375rem + 2px);
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="callout"] {
+  --selection-halo-color: var(--callout-type-color, var(--ring));
+}
+
+.ProseMirror .jsx-component-wrapper[data-component-type="cards"],
+.ProseMirror .jsx-component-wrapper[data-component-type="steps"] {
+  --selection-halo-inset: -6px;
+  --selection-halo-radius: calc(0.375rem + 6px);
+}
+
+/* Hover-revealed chrome bar (component name + gear icon) — top-right overlay.
+   z-index 50 sits above fumadocs' own internal sticky/z-40 (Banner's header)
+   but still below shadcn Popover/Dialog portals (typically z-50+ on a detached
+   layer), so the chrome isn't occluded by in-component stickies. */
+.jsx-component-chrome {
+  position: absolute;
+  top: -11px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 50;
+  white-space: nowrap;
+}
+/* Only show chrome for the INNERMOST hovered component — prevents
+   parent and child chrome bars from overlapping at the top-right.
+   When hovering a Card inside Cards, only the Card's icons show.
+   When hovering the Cards container gap, only Cards' icons show. */
+.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover))
+> .jsx-component-chrome {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Unconfigured hint — when the component has settable props AND at least one
+   is empty/unset, surface the full-styled chrome pill with ONLY the gear
+   button visible (arrows + destructive delete stay hidden until hover).
+   The pill itself looks identical to its hovered state (full background,
+   border, padding, opacity) — the hint is conveyed by *presence*, not by
+   styling the gear differently. Hover upgrades the pill to show every
+   button via the hover rule above. */
+.jsx-component-wrapper[data-needs-config="true"]:not(
+  :has(.component-children .jsx-component-wrapper:hover)
+)
+> .jsx-component-chrome {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* In hint mode (not hovering the wrapper itself), hide every chrome button
+   except the properties trigger so the gear is the only affordance shown. */
+.jsx-component-wrapper[data-needs-config="true"]:not(:hover):not(
+    :has(.component-children .jsx-component-wrapper:hover)
+  ) > .jsx-component-chrome
+  > button:not([aria-label*="properties"]) {
+  display: none;
+}
+
+/* Chrome bar icon buttons — shared base style */
+.jsx-chrome-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.125rem;
+  border: none;
+  border-radius: 0.1875rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.1s,
+    color 0.1s;
+}
+.jsx-chrome-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+/* Delete icon — subtle red tint on hover, not a full red background */
+.jsx-chrome-btn--delete:hover {
+  background: transparent;
+  color: var(--destructive, #ef4444);
+}
+
+/* 8. Container child insertion — overlay pill + empty placeholder */
+
+/* "Add child" pill — centered at bottom edge of container, absolute overlay */
+.jsx-add-child-pill {
+  position: absolute;
+  bottom: -10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 0.125rem 0;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+.jsx-add-child-pill > span {
+  display: inline-block;
+  padding: 0.125rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  white-space: nowrap;
+}
+/* Add-child pill shows on ANY hover of the container — not restricted to
+   innermost-only like the chrome bar. The pill sits at bottom:-10px (outside
+   children) so it doesn't compete with child chrome. This makes it accessible
+   even when children fill the entire container (e.g., Steps full of Steps). */
+.jsx-component-wrapper:hover > .jsx-add-child-pill {
+  opacity: 1;
+  pointer-events: auto;
+}
+.jsx-add-child-pill:hover > span {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--accent);
+}
+
+/* Empty container placeholder — in-flow (it IS the content for empty containers) */
+.jsx-empty-child-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 1rem;
+  margin-top: 0.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+.jsx-empty-child-placeholder:hover {
+  border-color: var(--ring);
+  color: var(--accent-foreground);
+}
+
 /* Sidebar: separate hover (neutral gray) from active (blue accent) */
+
 /* Dark overrides — ProseMirror content surfaces */
 .dark .ProseMirror blockquote {
   border-color: var(--color-gray-600);

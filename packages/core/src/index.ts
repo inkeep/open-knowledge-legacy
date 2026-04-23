@@ -74,12 +74,34 @@ export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
+  incrementJsxAutoConvertFailed,
+  incrementJsxAutoConvertSucceeded,
+  incrementJsxPropDropped,
+  incrementJsxRenderFailure,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,
   incrementYpsMismatchInline,
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+
+// Registry
+export {
+  builtInComponents,
+  type ComponentRegistry,
+  createRegistry,
+  wildcardMeta,
+} from './registry/index.ts';
+export type {
+  JsxComponentMeta,
+  PropDef,
+  PropDefBase,
+  PropDefBoolean,
+  PropDefEnum,
+  PropDefNumber,
+  PropDefReactNode,
+  PropDefString,
+} from './registry/types.ts';
 
 // Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
 // defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`

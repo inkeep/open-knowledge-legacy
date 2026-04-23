@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   getParseHealth,
   incrementBlockFallback,
+  incrementJsxAutoConvertFailed,
+  incrementJsxRenderFailure,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,
   incrementYpsMismatchInline,
@@ -26,6 +28,8 @@ describe('parse-health metrics', () => {
     expect(h.parseFallback.wholeDoc).toBe(0);
     expect(h.ypsMismatch.block).toBe(0);
     expect(h.ypsMismatch.inline).toBe(0);
+    expect(h.jsxRenderFailure).toEqual({});
+    expect(h.jsxAutoConvertFailed).toEqual({});
   });
 
   test('incrementBlockFallback increments blockLevel', () => {
@@ -65,12 +69,43 @@ describe('parse-health metrics', () => {
     incrementWholeDocFallback();
     incrementYpsMismatchBlock();
     incrementYpsMismatchInline();
+    incrementJsxRenderFailure('Callout');
+    incrementJsxAutoConvertFailed('wildcard');
     resetParseHealth();
     const h = getParseHealth();
     expect(h.parseFallback.blockLevel).toBe(0);
     expect(h.parseFallback.wholeDoc).toBe(0);
     expect(h.ypsMismatch.block).toBe(0);
     expect(h.ypsMismatch.inline).toBe(0);
+    expect(h.jsxRenderFailure).toEqual({});
+    expect(h.jsxAutoConvertFailed).toEqual({});
+  });
+
+  test('incrementJsxRenderFailure keys by clamped descriptor name', () => {
+    incrementJsxRenderFailure('Callout');
+    incrementJsxRenderFailure('Callout');
+    incrementJsxRenderFailure('Card');
+    incrementJsxRenderFailure('wildcard');
+    const h = getParseHealth();
+    expect(h.jsxRenderFailure).toEqual({ Callout: 2, Card: 1, wildcard: 1 });
+  });
+
+  test('incrementJsxAutoConvertFailed keys by clamped descriptor name', () => {
+    incrementJsxAutoConvertFailed('wildcard');
+    incrementJsxAutoConvertFailed('wildcard');
+    incrementJsxAutoConvertFailed('Tabs');
+    const h = getParseHealth();
+    expect(h.jsxAutoConvertFailed).toEqual({ wildcard: 2, Tabs: 1 });
+  });
+
+  test('getParseHealth returns defensive copies of jsx counter objects', () => {
+    incrementJsxRenderFailure('Callout');
+    const snap1 = getParseHealth();
+    incrementJsxRenderFailure('Callout');
+    const snap2 = getParseHealth();
+    // snap1 must NOT reflect the second increment.
+    expect(snap1.jsxRenderFailure.Callout).toBe(1);
+    expect(snap2.jsxRenderFailure.Callout).toBe(2);
   });
 
   test('ypsMismatch counters are bridged via globalThis (CJS patch ↔ ESM)', () => {

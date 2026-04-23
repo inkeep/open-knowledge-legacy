@@ -66,6 +66,24 @@
       "dependsOn": ["^build"],
       "cache": false
     },
+    "test:visual": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "test:perf": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
+        "tests/stress/component-blocks.perf.test.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
+    "test:a11y": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
     "test:perf:bench": {
       "dependsOn": [],
       "cache": false,

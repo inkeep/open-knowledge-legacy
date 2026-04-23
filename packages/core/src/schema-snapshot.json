@@ -109,12 +109,30 @@
       "attrs": {
         "content": {
           "hasDefault": true
+        },
+        "componentName": {
+          "hasDefault": true
+        },
+        "kind": {
+          "hasDefault": true
+        },
+        "attributes": {
+          "hasDefault": true
+        },
+        "sourceRaw": {
+          "hasDefault": true
+        },
+        "sourceDirty": {
+          "hasDefault": true
+        },
+        "props": {
+          "hasDefault": true
         }
       },
-      "content": "",
+      "content": "block*",
       "group": "block",
       "inline": false,
-      "atom": true
+      "atom": false
     },
     "rawMdxFallback": {
       "attrs": {
@@ -131,15 +149,8 @@
       "atom": false
     },
     "jsxInline": {
-      "attrs": {
-        "attributes": {
-          "hasDefault": true
-        },
-        "sourceRaw": {
-          "hasDefault": true
-        }
-      },
-      "content": "inline*",
+      "attrs": {},
+      "content": "text*",
       "group": "inline",
       "inline": true,
       "atom": false

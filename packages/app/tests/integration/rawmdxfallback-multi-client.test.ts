@@ -187,8 +187,14 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
     expect(clientA.ytext.toString()).toContain(expectedInserted);
 
     // ── Step 6: Assert rawMdxFallback Y.XmlElement identity preserved ──
-    // Observer B freezes on broken content, so XmlFragment is unchanged.
-    // The rawMdxFallback element should be the exact same Y.Item.
+    // Under FR-22 / G9 (server-authoritative + always-live bridge), the
+    // rawMdxFallback's inner *content* reflects the current Y.Text — it
+    // is no longer frozen. But its Y.XmlElement IDENTITY must survive
+    // per Precedent #10 (opaque-but-content-bearing nodes — atom:false +
+    // content:'text*' means attr-change-on-every-keystroke doesn't fire
+    // updateYFragment's deep-attr delete+reinsert path). A stable _item
+    // lets y-prosemirror preserve the PM NodeView instance and keeps
+    // RelativePositions resolving correctly.
     const fallbackBAfter = findRawMdxFallback(clientB.fragment);
     expect(fallbackBAfter).not.toBeNull();
     // biome-ignore lint/style/noNonNullAssertion: checked above
@@ -202,9 +208,19 @@ describe('rawMdxFallback multi-client Y.Item identity (US-011, M8, Q5)', () => {
     // biome-ignore lint/style/noNonNullAssertion: checked above
     expect(cursorAbsPos!.index).toBe(3);
 
-    // ── Step 8: Assert Client B's XmlFragment unchanged (Observer B freeze) ──
+    // ── Step 8: Assert Client B's XmlFragment reflects the new Y.Text ──
+    // Under FR-22, Client B sees the updated broken content (no freeze).
+    // The structure around the rawMdxFallback (headings, safe paragraphs)
+    // is preserved; only the rawMdxFallback's inner content updates.
     const fragmentSerializedAfter = serializeFragment(clientB.fragment);
-    expect(fragmentSerializedAfter).toBe(fragmentSerializedBefore);
+    expect(fragmentSerializedAfter).toContain('Top heading');
+    expect(fragmentSerializedAfter).toContain('Safe paragraph above');
+    expect(fragmentSerializedAfter).toContain('Bottom heading');
+    expect(fragmentSerializedAfter).toContain('Safe text below');
+    expect(fragmentSerializedAfter).toContain(expectedInserted);
+    // Quiet the unused-variable warning — fragmentSerializedBefore is kept
+    // as a snapshot for future debugging if the invariant shifts again.
+    void fragmentSerializedBefore;
 
     // ── Step 9: Assert per-keystroke updates are small ──
     // Each Y.Text char insert should produce a small CRDT update (< 200 bytes).

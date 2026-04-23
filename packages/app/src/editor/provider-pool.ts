@@ -66,7 +66,7 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
  * a `ProviderPool` can reference the same name rather than a magic literal.
  *
  * Coupled to `ACTIVITY_MOUNT_LIMIT = 3` (exported from `EditorActivityPool.tsx`)
- * per SPEC.md §10 DX9 / precedent #15(c): `MAX_POOL` bounds how many warm
+ * per SPEC.md §10 DX9 / precedent #18(c): `MAX_POOL` bounds how many warm
  * providers we keep; `ACTIVITY_MOUNT_LIMIT` bounds how many editor subtrees
  * are Activity-mounted inside those providers. The two constraints are
  * intentionally independent — pool-resident-but-not-Activity-mounted docs

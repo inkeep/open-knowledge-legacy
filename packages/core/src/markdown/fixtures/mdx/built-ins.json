@@ -1,0 +1,92 @@
+[
+  {
+    "componentName": "Callout",
+    "blockForm": "<Callout type=\"warning\">\n\nAlways run tests\n\n</Callout>\n",
+    "notes": "type attr; block form with inline children"
+  },
+  {
+    "componentName": "Callout-self-closing",
+    "blockForm": "<Callout />\n",
+    "notes": "self-closing standalone line → flow"
+  },
+  {
+    "componentName": "Callout-info",
+    "blockForm": "<Callout type=\"info\">\n\nContent here\n\n</Callout>\n",
+    "notes": "info type"
+  },
+  {
+    "componentName": "Card",
+    "blockForm": "<Card href=\"/docs\" title=\"Docs\">\n\nCard content\n\n</Card>\n",
+    "notes": "href + title attrs"
+  },
+  {
+    "componentName": "Cards",
+    "blockForm": "<Cards>\n\n<Card href=\"/a\" title=\"A\">\n\nFirst\n\n</Card>\n\n<Card href=\"/b\" title=\"B\">\n\nSecond\n\n</Card>\n\n</Cards>\n",
+    "notes": "compound container with 2 Card children"
+  },
+  {
+    "componentName": "Steps",
+    "blockForm": "<Steps>\n\n<Step>\n\nDo this\n\n</Step>\n\n<Step>\n\nThen this\n\n</Step>\n\n</Steps>\n",
+    "notes": "compound container with 2 Step children"
+  },
+  {
+    "componentName": "Tabs",
+    "blockForm": "<Tabs items={[\"npm\",\"pnpm\"]}>\n\n<Tab value=\"npm\">\n\nnpm install\n\n</Tab>\n\n<Tab value=\"pnpm\">\n\npnpm add\n\n</Tab>\n\n</Tabs>\n",
+    "notes": "compound container with items array expr attr + 2 Tab children"
+  },
+  {
+    "componentName": "Accordion",
+    "blockForm": "<Accordion title=\"FAQ\">\n\nAnswer text\n\n</Accordion>\n",
+    "notes": "title attr"
+  },
+  {
+    "componentName": "Banner",
+    "blockForm": "<Banner>\n\nBanner content\n\n</Banner>\n",
+    "notes": "no attrs"
+  },
+  {
+    "componentName": "ImageZoom",
+    "blockForm": "<ImageZoom src=\"/img.png\" alt=\"Photo\" />\n",
+    "notes": "self-closing with src + alt attrs"
+  },
+  {
+    "componentName": "Unregistered-CustomThing",
+    "blockForm": "<CustomThing foo=\"bar\">\n\nContent\n\n</CustomThing>\n",
+    "notes": "unregistered component — exercises wildcard descriptor path; byte-identity preservation"
+  },
+  {
+    "componentName": "Card-with-unknown-attrs",
+    "blockForm": "<Card color=\"#F05032\" external>\n\nCard with unknown attrs\n\n</Card>\n",
+    "notes": "FR-21 merge: registered Card without PropDef for color/external — unknown attrs preserved through γ path"
+  },
+  {
+    "componentName": "Callout-boolean-shorthand",
+    "blockForm": "<Callout disabled>\n\nContent\n\n</Callout>\n",
+    "notes": "boolean shorthand (value: null in mdast)"
+  },
+  {
+    "componentName": "Comp-expression-attr",
+    "blockForm": "<Comp data={values}>\n\nContent\n\n</Comp>\n",
+    "notes": "identifier expression attr (not a literal)"
+  },
+  {
+    "componentName": "Comp-spread-attr",
+    "blockForm": "<Comp {...rest}>\n\nContent\n\n</Comp>\n",
+    "notes": "spread attr — preserved verbatim, not destructured"
+  },
+  {
+    "componentName": "Icon-inline-self-closing",
+    "blockForm": "Hello <Icon name=\"check\" /> world\n",
+    "notes": "inline thin shape — self-closing within paragraph"
+  },
+  {
+    "componentName": "Badge-inline-paired",
+    "blockForm": "See <Badge>x</Badge> here\n",
+    "notes": "inline thin shape — paired tags within paragraph"
+  },
+  {
+    "componentName": "Comp-inline-expression-attr",
+    "blockForm": "Use <Comp data={values} /> now\n",
+    "notes": "inline thin shape — expression attr on self-closing"
+  }
+]

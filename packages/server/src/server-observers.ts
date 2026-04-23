@@ -35,7 +35,6 @@ import {
   normalizeBridge,
   prependFrontmatter,
   stripFrontmatter,
-  VFileMessage,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -65,10 +64,10 @@ import { type ShadowHandle, saveInMemoryCheckpoint } from './shadow-repo.ts';
  * persistenceDiskWrites counter in `server-observer-feedback-loop.test.ts`.
  */
 export const OBSERVER_SYNC_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: true,
   context: { origin: 'observer-sync' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Branded `LocalTransactionOrigin` for paired-write semantics — transactions
@@ -515,26 +514,20 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         return;
       }
 
-      let parsedJson: ReturnType<typeof mdManager.parse>;
-      try {
-        parsedJson = mdManager.parse(body);
-      } catch (parseErr) {
-        // Transient parse errors from remark-mdx/acorn while user is mid-edit.
-        // XmlFragment keeps its last valid state; next keystroke retriggers.
-        if (
-          parseErr instanceof SyntaxError ||
-          parseErr instanceof VFileMessage ||
-          (parseErr instanceof RangeError &&
-            (parseErr as RangeError).message.includes('Invalid content for node'))
-        ) {
-          console.debug('[Server Observer B] Parse skipped (partial/invalid markdown):', parseErr);
-          // Update baseline to current Y.Text so Observer A has a consistent
-          // reference — mirrors Observer A's error-recovery baseline reset.
-          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-          return;
-        }
-        throw parseErr;
-      }
+      // FR-22 (G9 bridge always-live): parseWithFallback never throws — it
+      // always produces a valid JSONContent tree, falling back to rawMdxFallback
+      // for unparseable spans via single-pass structural enumeration (FR-23).
+      // Replaces the previous mdManager.parse(body) + catch-and-freeze pattern
+      // that swallowed SyntaxError/VFileMessage/RangeError and froze XmlFragment
+      // on any malformed MDX. Under server-authoritative architecture
+      // (precedent #14), this observer is the sole writer for XmlFragment — so
+      // preserving the "always-live" contract here means no client sees frozen
+      // WYSIWYG when another peer is mid-typing a broken MDX tag.
+      //
+      // Consistency: every other server parse call site already uses
+      // parseWithFallback (persistence.ts, external-change.ts, agent-sessions.ts,
+      // api-extension.ts). Previously this observer was the sole outlier.
+      const parsedJson = mdManager.parseWithFallback(body);
 
       const pmNode = opts.schema.nodeFromJSON(parsedJson);
 

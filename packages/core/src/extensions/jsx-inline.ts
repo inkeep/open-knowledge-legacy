@@ -1,88 +1,42 @@
 import { Node } from '@tiptap/core';
 
 /**
- * jsxInline — inline PM node for MDX inline JSX (`<Icon />`, `<Badge />`)
- * shipped at the T1 Layer 3 target shape from day one.
+ * jsxInline — thin inline PM node for MDX inline JSX.
  *
- * Shape: `atom: false, content: 'inline*'`. Children are populated from
- * `mdxJsxTextElement.children` (already parsed by remark-mdx). No atom→non-atom
- * migration ever needed — ships at the final shape.
+ * Per NG14, inline JSX renders as visible source text in WYSIWYG — no live
+ * React render, no PropPanel, no descriptor dispatch, no chrome. The node
+ * exists only to preserve `<` and `>` characters through the markdown
+ * serializer without escape (mdast-util-to-markdown would otherwise escape
+ * `<word` patterns per CommonMark safety).
  *
- * NodeView renders with `contenteditable: 'false'` — children render inline
- * for visual fidelity but are NOT editable in WYSIWYG. Edits route through
- * source mode → Y.Text → Observer B → fresh parse → new jsxInline with
- * refreshed sourceRaw.
+ * Shape: atom:false, content:'text*', isolating:false, selectable:true.
+ * Zero attrs — the text content IS the source. No NodeView, no
+ * contentEditable:false, no sourceDirty, no sourceRaw attr.
  *
- * `sourceRaw` is canonical for serialization; structured `attributes` are
- * derived at parse time, never independently mutated. This transitional
- * behavior (read-only children, source-mode-only edits) holds until T1
- * Layer 3 adds structured-editing UI + serialization.
+ * Greenfield rewrite of the #136 jsxInline shape. content:'text*' per
+ * Precedent #10 preserves Y.Item identity on per-keystroke text mutation.
  *
- * See SPEC §9 R3, D3, greenfield precedent #10.
+ * See SPEC §9.8, FR-4, NG14.
  */
 export const JsxInline = Node.create({
   name: 'jsxInline',
   group: 'inline',
   inline: true,
   atom: false,
-  content: 'inline*',
-  isolating: true,
+  content: 'text*',
+  isolating: false,
   selectable: true,
   priority: 60,
 
   addAttributes() {
-    return {
-      attributes: { default: [] },
-      sourceRaw: { default: '' },
-    };
+    return {};
   },
 
   parseHTML() {
-    return [
-      {
-        tag: 'span[data-jsx-inline]',
-        getAttrs: (node) => {
-          if (typeof node === 'string') return false;
-          return {
-            sourceRaw: node.getAttribute('data-source-raw') || '',
-          };
-        },
-      },
-    ];
+    return [{ tag: 'span[data-jsx-inline]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return [
-      'span',
-      {
-        'data-jsx-inline': '',
-        'data-source-raw': HTMLAttributes.sourceRaw,
-        contenteditable: 'false',
-      },
-      0,
-    ];
-  },
-
-  addNodeView() {
-    return ({ HTMLAttributes }) => {
-      const dom = document.createElement('span');
-      dom.setAttribute('data-jsx-inline', '');
-      dom.setAttribute('contenteditable', 'false');
-      dom.classList.add('jsx-inline');
-
-      if (HTMLAttributes.sourceRaw) {
-        dom.setAttribute('data-source-raw', HTMLAttributes.sourceRaw);
-      }
-
-      const contentDOM = document.createElement('span');
-      contentDOM.classList.add('jsx-inline-content');
-      dom.appendChild(contentDOM);
-
-      return {
-        dom,
-        contentDOM,
-        ignoreMutation: () => true,
-      };
-    };
+  renderHTML() {
+    return ['span', { 'data-jsx-inline': '' }, 0];
   },
 });

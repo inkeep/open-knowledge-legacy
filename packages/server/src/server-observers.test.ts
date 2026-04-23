@@ -641,7 +641,15 @@ describe('Server Observer B — error recovery paths', () => {
   // branches deterministically by wrapping mdManager with a stub that
   // throws on demand.
 
-  /** Wrap mdManager so parse/serialize can be toggled to throw. */
+  /** Wrap mdManager so parse/serialize can be toggled to throw.
+   *
+   * Under FR-22/G9, Observer B calls `parseWithFallback` — the real impl
+   * catches parse() errors and produces rawMdxFallback nodes. Tests still
+   * need to exercise the outer catch path for unexpected errors escaping
+   * parseWithFallback itself (internal RangeError, PM-construction failure,
+   * etc.), so the stub's parseWithFallback honours `parseThrow` directly.
+   * Serialize errors remain a valid test surface in the post-sync
+   * re-serialization block. */
   function createMdManagerStub() {
     let parseThrow: Error | null = null;
     let serializeThrow: Error | null = null;
@@ -649,6 +657,10 @@ describe('Server Observer B — error recovery paths', () => {
       parse(md: string) {
         if (parseThrow) throw parseThrow;
         return mdManager.parse(md);
+      },
+      parseWithFallback(md: string) {
+        if (parseThrow) throw parseThrow;
+        return mdManager.parseWithFallback(md);
       },
       serialize(json: unknown) {
         if (serializeThrow) throw serializeThrow;
@@ -679,51 +691,42 @@ describe('Server Observer B — error recovery paths', () => {
 
     const errorsBefore = getMetrics().serverObserverErrorsB;
 
-    // Arm the stub: next parse() throws a SyntaxError — matches the
-    // "transient parse error while user is mid-edit" branch. Observer B
-    // should early-return, update baseline to current Y.Text, and
-    // increment NO error counter (SyntaxError is a known-transient case,
-    // so it goes through the debug log + baseline reset path).
-    stub.setParseThrow(
-      new SyntaxError('Could not parse expression with acorn (deliberately thrown for test)'),
-    );
-
-    // Drive Observer B via a Y.Text edit. The edit produces malformed
-    // MDX from the parser's perspective.
+    // Write end-tag-mismatched MDX — pre-FR-22 this path froze XmlFragment
+    // because the parser threw VFileMessage. Post-FR-22, `parseWithFallback`
+    // produces a rawMdxFallback node for the unparseable span.
     doc.transact(() => {
       ytext.delete(0, ytext.length);
-      ytext.insert(0, '# Seed\n\n<Note prop={unclosed\n');
+      ytext.insert(0, '# Still here\n\n<Foo>broken text</Bar>\n');
     });
 
-    // Disarm so any subsequent firings use the real parser
-    stub.setParseThrow(null);
-
-    // Transient parse path: NO error counter increment (it's a debug case),
-    // NO Observer A write-fire follow-up because the baseline reset prevents
-    // a stale delta from re-applying.
+    // XmlFragment now reflects Y.Text — no freeze, no error counter increment.
+    // Post Precedent #14 (server-authoritative observer) + `parseWithFallback`,
+    // Observer B ALWAYS writes the XmlFragment — malformed MDX surfaces as
+    // `rawMdxFallback` nodes instead of freezing the fragment on last-valid
+    // state. This supersedes the pre-#14 "retain last state" assertion. API
+    // call updated to main's PR #250 rename (`yXmlFragmentToProseMirrorRootNode`
+    // replaces deprecated `yXmlFragmentToProsemirrorJSON`).
     expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore);
-
-    // The XmlFragment keeps its last valid state (the seed content) because
-    // updateYFragment never ran.
     const postBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
     );
-    expect(postBody).toContain('Seed');
-    expect(postBody).toContain('Body.');
-    expect(postBody).not.toContain('<Note');
+    expect(postBody).toContain('Still here');
+    expect(postBody).toContain('<Foo>broken text</Bar>');
 
-    // A subsequent valid Y.Text edit converges normally (baseline recovery
-    // confirmed — if the baseline were stale, this next write would
-    // reintroduce the previously-failed content).
+    // Recovery: valid MDX written next propagates normally.
     doc.transact(() => {
       ytext.delete(0, ytext.length);
-      ytext.insert(0, '# Seed\n\nBody.\n\n## Recovered\n');
+      ytext.insert(0, '# Recovered\n');
     });
 
     const finalBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
     );
     expect(finalBody).toContain('Recovered');
+    // FR-22/G9 full-recovery assertion: the malformed span is gone, not just
+    // appended-past. Rules out a class of bugs where the bridge accumulates
+    // content across writes instead of replacing.
+    expect(finalBody).not.toContain('<Foo>');
 
     cleanup();
   });
