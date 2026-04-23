@@ -1258,7 +1258,7 @@ Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
 
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-Thirty-four numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
+Thirty-four numbered rules (with #27 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
 
 1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
 2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
@@ -1286,7 +1286,7 @@ Thirty-four numbered rules govern how work lands in this repo. Code comments cit
 24. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
 25. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
 26. **Direct PM dispatch for nested editors** — CM-in-PM dispatches PM transactions, not y-codemirror.next direct Y.Text binding
-27. **Compound components bridge via DOM data-attributes** — Tabs/Accordion state crosses NodeView portals via `data-active-tab`, not React Context
+27. ~~**Compound components bridge via DOM data-attributes**~~ — **RETRACTED 2026-04-23** per `specs/2026-04-23-cb-v2-md-foundation/SPEC.md` D-MF4 + FR-15 (5-pack foundation has no compound parent-child descriptors; `compound-wrappers.tsx` + supporting machinery deleted in US-002). Full precedent text preserved on PR #165 branch at commit `e56f33c3` for future compound tier revival (NG19). Slot retained to keep `precedent #28+` citations stable.
 28. **All user content visible and editable** — No `display:none` on `NodeViewContent`; render failures degrade to nested CM source editor
 29. **Selection state as typed PM PluginState** — `SelectionStatePlugin` is single source of truth for selection-adjacent surfaces; read-only over doc
 30. **`data-*` attributes over className toggling** — Composable orthogonal runtime states via single-attribute selectors, not class combinatorics

@@ -42,11 +42,21 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
+        // Landed in US-001 as deferred-consumer; first import arrives in US-006
+        // (Image component — uses <Zoom wrapElement="span"> per FR-18).
+        // specs/2026-04-23-cb-v2-md-foundation/SPEC.md §6 FR-16.
+        'react-medium-image-zoom',
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
     'packages/core': {
       entry: ['tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      ignoreDependencies: [
+        // Landed in US-001 as deferred-consumer; first import arrives in US-010
+        // (Callout GFM-alerts + Obsidian-foldable parse path per FR-7 / Q-MF1 path (a)).
+        // specs/2026-04-23-cb-v2-md-foundation/SPEC.md §6 FR-17.
+        'remark-github-alerts',
+      ],
     },
     docs: {
       ignoreDependencies: [
