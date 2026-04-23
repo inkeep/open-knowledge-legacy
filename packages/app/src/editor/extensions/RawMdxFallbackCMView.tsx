@@ -26,6 +26,7 @@ import { Trash2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 import { markUserTyping } from '../observers';
+import { getEditorView } from '../utils/get-editor-view';
 import { getYDoc } from '../utils/get-ydoc';
 import { getSharedMarkdownManager } from '../utils/md-singleton';
 import { classifySeverity, SEVERITY_STYLES } from '../utils/severity';
@@ -228,13 +229,16 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
   const style = SEVERITY_STYLES[severity];
 
   // CM→PM sync: forward CM changes as PM transactions.
-  // Uses getPos() and editor.view.state directly (both stable across renders)
+  // Uses getPos() and getEditorView(editor) directly (both stable across renders)
   // instead of refs (React Compiler prohibits ref writes during render).
+  // getEditorView avoids TipTap v3's throwing-proxy on `editor.view` during
+  // recycle/remount races; returns undefined pre-mount so the existing
+  // `if (!pmView) return` guards become live.
   const forwardUpdate = (newText: string) => {
     const pos = typeof getPos === 'function' ? getPos() : undefined;
     if (pos === undefined) return;
 
-    const pmView = editor.view;
+    const pmView = getEditorView(editor);
     if (!pmView) return;
 
     // Look up the current node at this position to get its size
@@ -316,7 +320,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     const escapeToPM = (dir: -1 | 1): boolean => {
       const pos = typeof getPos === 'function' ? getPos() : undefined;
       if (typeof pos !== 'number') return false;
-      const pmView = editor.view;
+      const pmView = getEditorView(editor);
       if (!pmView) return false;
       const currentNode = pmView.state.doc.nodeAt(pos);
       if (!currentNode) return false;
@@ -375,7 +379,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
         if (update.focusChanged && update.view.hasFocus && !updatingRef.current) {
           const pos = typeof getPos === 'function' ? getPos() : undefined;
           if (typeof pos !== 'number') return;
-          const pmView = editor.view;
+          const pmView = getEditorView(editor);
           if (!pmView) return;
           const currentSel = pmView.state.selection;
           // Already a NodeSelection on this exact node → nothing to do
@@ -410,7 +414,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
         if (update.focusChanged && !update.view.hasFocus && !updatingRef.current) {
           const pos = typeof getPos === 'function' ? getPos() : undefined;
           if (typeof pos !== 'number') return;
-          const pmView = editor.view;
+          const pmView = getEditorView(editor);
           if (!pmView) return;
           const currentNode = pmView.state.doc.nodeAt(pos);
           if (!currentNode || currentNode.type.name !== 'rawMdxFallback') return;
@@ -492,7 +496,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       const cmView = cmViewRef.current;
       if (!cmView) return;
       if (updatingRef.current) return;
-      const pmView = editor.view;
+      const pmView = getEditorView(editor);
       if (!pmView) return;
       const currentNode = pmView.state.doc.nodeAt(pos);
       if (!currentNode) return;

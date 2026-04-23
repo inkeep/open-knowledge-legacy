@@ -40,6 +40,7 @@ import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
+import { getEditorView } from './utils/get-editor-view';
 
 /** Custom cursor renderer — agents don't get cursors (NG1: no fake cursor animation). */
 function renderCursor(user: Record<string, string>): HTMLElement {
@@ -373,7 +374,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
       if (attachedDom || !editor || editor.isDestroyed) return;
-      attachedDom = editor.view.dom;
+      const view = getEditorView(editor);
+      if (!view) return;
+      attachedDom = view.dom;
       attachedDom.addEventListener('keydown', mark);
       attachedDom.addEventListener('paste', mark);
       attachedDom.addEventListener('drop', mark);
@@ -387,9 +390,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       attachedDom.removeEventListener('cut', mark);
       attachedDom = null;
     };
-    // Access `editorView` directly (not through the throwing proxy) to check
-    // mount state. The proxy intercepts property access on `editor.view` only.
-    const isMounted = !!(editor as unknown as { editorView?: unknown }).editorView;
+    // `getEditorView` returns undefined pre-mount; truthy check confirms the
+    // underlying ProseMirror EditorView is present so `attach()` can run now.
+    const isMounted = !!getEditorView(editor);
     if (isMounted) {
       attach();
     } else {
@@ -617,10 +620,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
       if (!detail || detail.mode !== 'wysiwyg' || !editor || editor.isDestroyed) return;
-      // Access the real editorView directly (not editor.view which is a
-      // throwing proxy pre-mount). Typed as the relevant subset so we don't
-      // need an `any` cast at the call site.
-      const realView = (editor as unknown as { editorView?: { dom: HTMLElement } }).editorView;
+      // `getEditorView` is the non-throwing accessor for the underlying
+      // ProseMirror EditorView (see utils/get-editor-view.ts). Returns
+      // undefined pre-mount, never throws on the recycle/remount race.
+      const realView = getEditorView(editor);
       if (!realView) return;
       const headings = realView.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const target = headings[detail.index];
