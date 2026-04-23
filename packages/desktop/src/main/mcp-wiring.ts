@@ -47,6 +47,15 @@ import {
   writeFileSync as fsWriteFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import type { IpcMain, IpcMainInvokeEvent } from 'electron';
+import type {
+  McpWiringConfirmRequest,
+  McpWiringConfirmResult,
+  McpWiringEditorDetection,
+  McpWiringEditorId,
+  McpWiringSkipResult,
+} from '../shared/ipc-channels.ts';
+import { createHandler } from '../shared/ipc-handler.ts';
 
 /** Canonical symlink path created by M6a (`Install Command-Line Tools…`). */
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
@@ -319,4 +328,356 @@ function isPriorCliPathShape(existing: Record<string, unknown>): boolean {
   if (existing.command === 'npx') return false;
   if (!Array.isArray(existing.args)) return false;
   return existing.args.length === 1 && existing.args[0] === 'mcp';
+}
+
+// ---------------------------------------------------------------------------
+// Runtime orchestration — US-008 (M6b runMcpWiringOnFirstLaunch)
+// ---------------------------------------------------------------------------
+
+/**
+ * Structurally-compatible subset of Electron's `IpcMain`. Declared inline
+ * so tests can inject a stub without pulling in the real Electron runtime.
+ * Only `handle` + `removeHandler` are needed now that `renderer-ready` is
+ * modeled as an invoke-style channel (D19: no `ipcMain.on` outside the
+ * allowlisted wrappers).
+ */
+export interface IpcMainLike extends Pick<IpcMain, 'handle' | 'removeHandler'> {}
+
+/** Matches `IpcMainInvokeEvent.sender.send` for the show-dispatch reply. */
+export interface IpcMainEventLike {
+  sender: { send(channel: string, ...args: unknown[]): void };
+}
+
+/**
+ * Shape consumed from the CLI side (`@inkeep/open-knowledge`). Injected so
+ * tests can stub without spinning up a real CLI, and main/index.ts can
+ * hand the real functions in at boot time. Member-set intentionally minimal:
+ * every helper we need to classify + write per-editor configs.
+ */
+export interface McpWiringCliSurface {
+  /** Mirrors `detectInstalledEditors(cwd, home)` from init.ts. */
+  detectInstalledEditors(cwd: string, home?: string): McpWiringEditorId[];
+  /** Mirrors `writeUserMcpConfigs(opts)` from init.ts. */
+  writeUserMcpConfigs(opts: {
+    editors: McpWiringEditorId[];
+    force?: boolean | Set<McpWiringEditorId>;
+    cliPath?: string;
+    home?: string;
+  }): Promise<
+    Array<{
+      editorId: McpWiringEditorId;
+      label: string;
+      action:
+        | 'written'
+        | 'skipped-existing'
+        | 'skipped-conflict'
+        | 'overwritten'
+        | 'skipped-flag'
+        | 'failed';
+      configPath: string;
+      serverName: string;
+      error?: string;
+    }>
+  >;
+  /** Look up an editor's existing MCP entry (format-aware). `null` when the
+   *  config file is absent or has no entry for this editor. The editorId
+   *  surface avoids a cross-package `EditorMcpTarget` type in this module. */
+  readExistingMcpEntry(editorId: McpWiringEditorId, home: string): Record<string, unknown> | null;
+  /** Full `ALL_EDITOR_IDS` — used to build the dialog-payload detection list. */
+  allEditorIds: readonly McpWiringEditorId[];
+  /** `EDITOR_TARGETS[id]` keyed by editor. Structurally a superset of
+   *  `ForceComputeTarget`; used for `computeForce` + label lookup. */
+  editorTargets: Record<McpWiringEditorId, EditorTargetForWiring>;
+}
+
+/**
+ * Shape of an `EDITOR_TARGETS[id]` value as M6b needs it. Structural subset
+ * of `EditorMcpTarget` in editors.ts — we only read `id`, `label`, and call
+ * `isCompatible` (via `ForceComputeTarget`). The real `EditorMcpTarget` is
+ * structurally assignable.
+ */
+export interface EditorTargetForWiring extends ForceComputeTarget {
+  readonly id: McpWiringEditorId;
+  readonly label: string;
+}
+
+/** Minimal logger surface — bracket-prefix operational + structured events. */
+export interface McpWiringLogger {
+  info(msg: string, ctx?: object): void;
+  warn(msg: string, ctx?: object): void;
+  error(msg: string, ctx?: object): void;
+  /** Structured JSON event — tests assert on this. */
+  event(payload: { event: string; [k: string]: unknown }): void;
+}
+
+const DEFAULT_LOGGER: McpWiringLogger = {
+  info: (msg, ctx) => console.info('[mcp-wiring]', msg, ctx ?? ''),
+  warn: (msg, ctx) => console.warn('[mcp-wiring]', msg, ctx ?? ''),
+  error: (msg, ctx) => console.error('[mcp-wiring]', msg, ctx ?? ''),
+  event: (payload) => console.warn(JSON.stringify(payload)),
+};
+
+interface RunMcpWiringOpts {
+  /** `app.isPackaged` — D-M6-R7 dev-mode contamination guard. */
+  isPackaged: boolean;
+  /** `app.getPath('exe')` — must end in `.app/Contents/MacOS/<name>` (STOP_IF c). */
+  executablePath: string;
+  /** `os.homedir()` in production; an isolated tmpdir under Playwright smoke. */
+  home: string;
+  /** `process.platform` — M6a/M6b are macOS-only in v0 (NG4). */
+  platform: 'darwin' | 'win32' | 'linux' | string;
+  ipcMain: IpcMainLike;
+  cli: McpWiringCliSurface;
+  /** Value of `process.env.OK_M6B_FORCE` — `'1'` bypasses the packaged gate for dev smokes. */
+  forceEnv?: string | null | undefined;
+  fs?: McpWiringFsOps;
+  now?: () => Date;
+  logger?: McpWiringLogger;
+}
+
+export interface RunMcpWiringHandle {
+  /** Tear down IPC handlers + event listener. Safe to call multiple times. */
+  destroy(): void;
+  /** Test-only introspection: true if the module has armed its IPC surface. */
+  readonly armed: boolean;
+}
+
+/** Entry-point invoked from `app.whenReady()` in main/index.ts. */
+export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringHandle {
+  const {
+    isPackaged,
+    executablePath,
+    home,
+    platform,
+    ipcMain,
+    cli,
+    forceEnv,
+    fs,
+    now,
+    logger = DEFAULT_LOGGER,
+  } = opts;
+  const nowDate = (): Date => (now ? now() : new Date());
+  const inertHandle: RunMcpWiringHandle = { destroy() {}, armed: false };
+
+  // NG4 — macOS-only in v0. Windows / Linux parity deferred to M7.
+  if (platform !== 'darwin') {
+    logger.info('skip — platform is not darwin', { platform });
+    return inertHandle;
+  }
+
+  // STOP_IF (b) / D-M6-R7 — dev-mode contamination guard. In `electron-vite dev`,
+  // `app.getPath('exe')` points at the dev Electron binary and `extraResources`
+  // are not mounted; computing + writing `cliPath` would contaminate the
+  // developer's real user MCP configs irrecoverably. `OK_M6B_FORCE=1` is an
+  // explicit opt-in for developer testing with an isolated HOME.
+  if (!isPackaged && forceEnv !== '1') {
+    logger.info('skip — app not packaged and OK_M6B_FORCE not set');
+    return inertHandle;
+  }
+
+  // STOP_IF (c) — if executablePath doesn't match `.app/Contents/MacOS/<name>`,
+  // the bundle-absolute cliPath derivation would produce garbage. Abort rather
+  // than write something the renderer would later fail to spawn.
+  if (!/\.app\/Contents\/MacOS\/[^/]+$/.test(executablePath)) {
+    logger.warn('skip — executablePath does not match .app/Contents/MacOS/<name> shape', {
+      executablePath,
+    });
+    return inertHandle;
+  }
+
+  // Idempotent — marker present means prior decision recorded; never re-fire.
+  const marker = readMcpStatusMarker(home, fs);
+  if (marker !== null) {
+    logger.info('skip — marker present', { configured: marker.configured });
+    return inertHandle;
+  }
+
+  const detectedIds = new Set<McpWiringEditorId>(cli.detectInstalledEditors('', home));
+  const detections: McpWiringEditorDetection[] = cli.allEditorIds.map((id) => ({
+    id,
+    label: cli.editorTargets[id].label,
+    detected: detectedIds.has(id),
+  }));
+
+  // Once-per-boot idempotence gate. Flipped on the FIRST confirm or skip.
+  let handled = false;
+
+  const confirmHandler = async (
+    _event: IpcMainInvokeEvent,
+    ...args: unknown[]
+  ): Promise<McpWiringConfirmResult> => {
+    if (handled) return { ok: true };
+    handled = true;
+    const request = (args[0] ?? {}) as McpWiringConfirmRequest;
+    const selectedEditors = Array.isArray(request.editorIds)
+      ? [...request.editorIds].filter((id): id is McpWiringEditorId =>
+          cli.allEditorIds.includes(id as McpWiringEditorId),
+        )
+      : [];
+
+    const cliPath = resolveCliPath(executablePath, fs);
+
+    // Per-editor force classification (D-M6-R4 refined). Foreign shapes are
+    // preserved; managed shapes (canonical npx, -y variant, prior cliPath) are
+    // overwritten via `force: Set<EditorId>`.
+    const forceSet = new Set<McpWiringEditorId>();
+    for (const editor of selectedEditors) {
+      const target = cli.editorTargets[editor];
+      if (!target) continue;
+      const existing = cli.readExistingMcpEntry(editor, home);
+      if (existing === null) continue; // absent entry → plain write, no force needed
+      if (computeForce(existing, target)) {
+        forceSet.add(editor);
+      } else {
+        logger.event({
+          event: 'mcp-wiring-skip-customized',
+          editor,
+        });
+      }
+    }
+
+    let results: Awaited<ReturnType<McpWiringCliSurface['writeUserMcpConfigs']>>;
+    try {
+      results = await cli.writeUserMcpConfigs({
+        editors: selectedEditors,
+        force: forceSet,
+        cliPath,
+        home,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('writeUserMcpConfigs threw — marker not written', { message });
+      return { ok: false, error: message };
+    }
+
+    // Deferred-marker (OQ-19). If any per-editor write failed, leave the
+    // marker absent so the next app launch re-fires the dialog.
+    let anyFailed = false;
+    for (const r of results) {
+      if (r.action === 'failed') {
+        anyFailed = true;
+        logger.event({
+          event: 'mcp-wiring-write-failed',
+          editor: r.editorId,
+          configPath: r.configPath,
+          error: r.error ?? null,
+        });
+      }
+    }
+    if (anyFailed) {
+      logger.info('partial failure — marker not written; dialog will re-fire next boot');
+      return { ok: true };
+    }
+
+    try {
+      writeMcpStatusMarker(
+        home,
+        {
+          configured: true,
+          configuredAt: nowDate().toISOString(),
+          editors: [...selectedEditors],
+          cliPath,
+        },
+        fs,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('marker write failed', { message });
+      return { ok: false, error: message };
+    }
+
+    logger.info('configured', { editors: selectedEditors, cliPath });
+    return { ok: true };
+  };
+
+  const skipHandler = async (_event: IpcMainInvokeEvent): Promise<McpWiringSkipResult> => {
+    if (handled) return { ok: true };
+    handled = true;
+    try {
+      writeMcpStatusMarker(
+        home,
+        {
+          configured: false,
+          skippedAt: nowDate().toISOString(),
+        },
+        fs,
+      );
+    } catch (err) {
+      // Skip writes should not fail in practice; log and surface ok:true so
+      // the dialog still closes. Marker absence → dialog re-fires next boot.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('skip-marker write failed', { message });
+      return { ok: true };
+    }
+    logger.info('skipped');
+    return { ok: true };
+  };
+
+  // D-M6-R10 mount-ack handshake. The renderer-ready invoke fires AFTER
+  // React has subscribed to `ok:mcp-wiring:show`, so sending show on its
+  // receipt avoids the `did-finish-load` race (subscribe-order vs. send).
+  // One-shot: first renderer-ready wins the dialog. Remove-then-dispatch
+  // ordering means a racing second invoke sees no handler and rejects —
+  // the preload swallows that rejection by design.
+  const rendererReadyHandler = (event: IpcMainInvokeEvent): undefined => {
+    try {
+      ipcMain.removeHandler('ok:mcp-wiring:renderer-ready');
+    } catch {
+      // best-effort; continue dispatching even if removeHandler glitches
+    }
+    try {
+      (event as unknown as IpcMainEventLike).sender.send('ok:mcp-wiring:show', {
+        detectedEditors: detections,
+      });
+      logger.info('dispatched show to renderer', { detectedCount: detections.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('show dispatch failed', { message });
+    }
+    return undefined;
+  };
+
+  // D19: register via the typed `createHandler` wrapper (not raw
+  // `ipcMain.handle`). Teardown still calls `ipcMain.removeHandler` directly —
+  // that primitive isn't part of the banned surface.
+  const register = createHandler(ipcMain as IpcMain);
+  register('ok:mcp-wiring:confirm', confirmHandler);
+  register('ok:mcp-wiring:skip', skipHandler);
+  register('ok:mcp-wiring:renderer-ready', rendererReadyHandler);
+
+  logger.info('armed — waiting for renderer mount-ack', {
+    detectedCount: detections.filter((d) => d.detected).length,
+  });
+
+  let destroyed = false;
+  return {
+    destroy(): void {
+      if (destroyed) return;
+      destroyed = true;
+      try {
+        ipcMain.removeHandler('ok:mcp-wiring:confirm');
+      } catch (err) {
+        logger.warn('removeHandler(confirm) threw', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        ipcMain.removeHandler('ok:mcp-wiring:skip');
+      } catch (err) {
+        logger.warn('removeHandler(skip) threw', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        ipcMain.removeHandler('ok:mcp-wiring:renderer-ready');
+      } catch (err) {
+        logger.warn('removeHandler(renderer-ready) threw', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    get armed(): boolean {
+      return !destroyed;
+    },
+  };
 }

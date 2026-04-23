@@ -37,6 +37,12 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
+import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '../../../cli/src/commands/editors.ts';
+import {
+  detectInstalledEditors,
+  readExistingMcpEntry,
+  writeUserMcpConfigs,
+} from '../../../cli/src/commands/init.ts';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
@@ -54,6 +60,11 @@ import {
   recordHandoff as recordHandoffImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
+import {
+  type McpWiringCliSurface,
+  type RunMcpWiringHandle,
+  runMcpWiringOnFirstLaunch,
+} from './mcp-wiring.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
@@ -162,6 +173,13 @@ let wm: WindowManager;
  */
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 let debugIpc: DebugIpcHandle | null = null;
+/**
+ * M6b first-launch MCP consent handle. Armed by `runMcpWiringOnFirstLaunch`
+ * inside `app.whenReady()` when the user-scoped marker is absent; torn down
+ * on `app.on('will-quit')` so IPC handlers don't outlive the app. Null
+ * when the wiring no-ops (marker present, dev mode, non-macOS, etc.).
+ */
+let mcpWiringHandle: RunMcpWiringHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -776,6 +794,35 @@ function bootPrimaryInstance(): void {
       });
     });
 
+    // M6b first-launch MCP consent (D-M6-R1 / D-M6-R7 / D-M6-R8 / D-M6-R10).
+    // Armed before the window-open branch so the `ok:mcp-wiring:renderer-ready`
+    // listener is installed BEFORE any renderer could possibly fire it —
+    // otherwise a fast `did-finish-load` → React-mount would race and the
+    // ack event lands on a dead channel. `runMcpWiringOnFirstLaunch` no-ops
+    // (returns an inert handle) when the platform is non-darwin, the app is
+    // in dev mode without `OK_M6B_FORCE=1`, the user-scoped marker is present,
+    // or `app.getPath('exe')` doesn't match the bundle shape. The cli
+    // surface pulls from the workspace's CLI source directly — not a
+    // package import — keeping the DMG bundle size bounded (Rollup tree-
+    // shakes unused CLI code at electron-vite build time).
+    const mcpWiringCli: McpWiringCliSurface = {
+      detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
+      writeUserMcpConfigs: (opts) => writeUserMcpConfigs(opts),
+      readExistingMcpEntry: (editorId, home) =>
+        readExistingMcpEntry(EDITOR_TARGETS[editorId], '', home),
+      allEditorIds: ALL_EDITOR_IDS,
+      editorTargets: EDITOR_TARGETS,
+    };
+    mcpWiringHandle = runMcpWiringOnFirstLaunch({
+      isPackaged: app.isPackaged,
+      executablePath: app.getPath('exe'),
+      home: osHomedir(),
+      platform: process.platform,
+      ipcMain,
+      cli: mcpWiringCli,
+      forceEnv: process.env.OK_M6B_FORCE ?? null,
+    });
+
     // D3 revised: every project open spawns a NEW editor window. App boot
     // restores the last-opened project (if any) into a fresh editor window OR
     // opens the Navigator if the user holds Option at launch (or no last project).
@@ -900,6 +947,8 @@ function bootPrimaryInstance(): void {
   app.on('will-quit', () => {
     autoUpdaterHandle?.destroy();
     autoUpdaterHandle = null;
+    mcpWiringHandle?.destroy();
+    mcpWiringHandle = null;
   });
 
   app.on('window-all-closed', () => {

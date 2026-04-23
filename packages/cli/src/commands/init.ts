@@ -453,6 +453,41 @@ export async function writeUserMcpConfigs(
   );
 }
 
+/**
+ * Read a single editor's existing MCP server entry for use with
+ * `computeForce`-style classification (M6b). Reads the user-scoped config
+ * (format-aware — JSON or TOML), looks up `config[topLevelKey][serverName]`,
+ * and returns it as a plain object. Returns `null` when the config file is
+ * absent, unreadable, unparseable, or has no entry for this editor's
+ * server name.
+ *
+ * Never throws — tolerant on purpose so the first-launch consent flow can
+ * classify every selected editor without aborting on one malformed config.
+ */
+export function readExistingMcpEntry(
+  target: EditorMcpTarget,
+  cwd: string,
+  home?: string,
+): Record<string, unknown> | null {
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch {
+    return null;
+  }
+  let config: Record<string, unknown>;
+  try {
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
+  } catch {
+    return null;
+  }
+  const servers = config[target.topLevelKey];
+  if (!isObject(servers)) return null;
+  const existing = servers[target.serverName(cwd)];
+  if (!isObject(existing)) return null;
+  return existing;
+}
+
 // ---------------------------------------------------------------------------
 // Core init logic
 // ---------------------------------------------------------------------------

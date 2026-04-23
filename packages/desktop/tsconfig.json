@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "module": "esnext",
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "lib": ["ES2024", "DOM"],

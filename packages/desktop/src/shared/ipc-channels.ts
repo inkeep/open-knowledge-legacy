@@ -70,6 +70,38 @@ export interface HandoffStatsLine {
     | 'web-host-cursor-unsupported';
 }
 
+/** Editor IDs known to the first-launch MCP consent flow (M6b). Mirrors
+ *  `EditorId` in `packages/cli/src/commands/editors.ts`. Duplicated here so
+ *  the IPC surface stays self-contained — desktop does NOT dep `@inkeep/open-knowledge`
+ *  as a package. Drift caught at typecheck if the CLI adds a new editor. */
+export type McpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Single entry in the consent dialog — one per editor in `ALL_EDITOR_IDS`.
+ *  `detected: true` preselects the checkbox (OQ-14 DIRECTED). */
+export interface McpWiringEditorDetection {
+  readonly id: McpWiringEditorId;
+  readonly label: string;
+  readonly detected: boolean;
+}
+
+/** Confirm payload from renderer → main. Editors the user checked when they
+ *  clicked "Add". Subset of `McpWiringEditorId`. */
+export interface McpWiringConfirmRequest {
+  readonly editorIds: readonly McpWiringEditorId[];
+}
+
+/** Confirm / skip response shape. `ok:false` currently only surfaces when
+ *  `writeUserMcpConfigs` throws — per-editor failures still resolve `ok:true`
+ *  and are surfaced via `mcp-wiring-write-failed` structured log events. */
+export type McpWiringConfirmResult = { ok: true } | { ok: false; error: string };
+export type McpWiringSkipResult = { ok: true };
+
 export interface RequestChannels {
   /** Open native folder-picker (`showOpenDialog({ properties: ['openDirectory'] })`). */
   'ok:dialog:open-folder': { args: []; result: string | null };
@@ -141,4 +173,36 @@ export interface RequestChannels {
    * surface is populated only when the same gate allows (D-M5-8).
    */
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
+  /**
+   * M6b first-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
+   * Main resolves the hybrid `cliPath` per D-M6-R9, classifies each editor's
+   * existing entry via `computeForce`, calls `writeUserMcpConfigs`, and writes
+   * the user-scoped marker at `<home>/.open-knowledge/.mcp-status.json` IFF
+   * every per-editor write succeeds (deferred-marker per OQ-19). Per-editor
+   * failures emit `mcp-wiring-write-failed` structured logs and leave the
+   * marker absent so the dialog re-fires next launch. Foreign (user-customized)
+   * entries are preserved and logged as `mcp-wiring-skip-customized`.
+   */
+  'ok:mcp-wiring:confirm': {
+    args: [request: McpWiringConfirmRequest];
+    result: McpWiringConfirmResult;
+  };
+  /**
+   * M6b first-launch MCP consent — user clicked "Skip" (or ESC). Main writes
+   * `{configured: false, skippedAt}` to the user-scoped marker so the dialog
+   * never re-fires. Re-triggering the consent flow requires manually deleting
+   * the marker file (OQ-5).
+   */
+  'ok:mcp-wiring:skip': { args: []; result: McpWiringSkipResult };
+  /**
+   * M6b mount-ack handshake (D-M6-R10). Every renderer (Navigator + editor)
+   * invokes this once on React-app first mount. The FIRST invoke per boot
+   * tells main a renderer is subscribed to `ok:mcp-wiring:show`; main
+   * responds by dispatching the show event back to the invoking webContents
+   * and removes the handler so subsequent mounts don't re-fire the dialog.
+   * Modeled as invoke/result (not a one-way event) so it composes through
+   * the typed `createHandler` / `createInvoker` wrappers (D19 enforcement).
+   * Result is `undefined` — the renderer discards it.
+   */
+  'ok:mcp-wiring:renderer-ready': { args: []; result: undefined };
 }

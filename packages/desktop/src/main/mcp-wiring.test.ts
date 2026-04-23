@@ -1,13 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { EDITOR_TARGETS } from '../../../cli/src/commands/editors.ts';
+import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '../../../cli/src/commands/editors.ts';
 import {
   computeForce,
   type ForceComputeTarget,
+  type IpcMainEventLike,
+  type IpcMainLike,
   type McpStatusMarker,
+  type McpWiringCliSurface,
   type McpWiringFsOps,
+  type McpWiringLogger,
   mcpStatusMarkerPath,
   readMcpStatusMarker,
   resolveCliPath,
+  runMcpWiringOnFirstLaunch,
   SYMLINK_OK_PATH,
   writeMcpStatusMarker,
 } from './mcp-wiring.ts';
@@ -385,5 +390,692 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
       computeForce({ command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] }, minimalTarget),
     ).toBe(true);
     expect(computeForce({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runMcpWiringOnFirstLaunch — runtime orchestration (US-008)
+// ---------------------------------------------------------------------------
+
+/** Minimal ipcMain stub capturing handler registration for assertion. */
+interface IpcMainStub extends IpcMainLike {
+  handlers: Map<string, (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>>;
+  /** Simulate a renderer `invoke(channel, ...args)`. Event is stubbed to `{}`. */
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+  /** Simulate an invoke with a custom sender event (for renderer-ready tests). */
+  invokeWithEvent(channel: string, event: unknown, ...args: unknown[]): Promise<unknown>;
+}
+
+function createIpcMainStub(): IpcMainStub {
+  const handlers = new Map<
+    string,
+    (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
+  >();
+  return {
+    handlers,
+    handle(channel, handler) {
+      handlers.set(channel, handler as (e: unknown, ...a: unknown[]) => unknown);
+    },
+    removeHandler(channel) {
+      handlers.delete(channel);
+    },
+    async invoke(channel, ...args) {
+      const handler = handlers.get(channel);
+      if (!handler) throw new Error(`no handler for ${channel}`);
+      return handler({}, ...args);
+    },
+    async invokeWithEvent(channel, event, ...args) {
+      const handler = handlers.get(channel);
+      if (!handler) throw new Error(`no handler for ${channel}`);
+      return handler(event, ...args);
+    },
+  };
+}
+
+function createCapturedLogger(): {
+  logger: McpWiringLogger;
+  events: Array<{ event: string; [k: string]: unknown }>;
+  infos: Array<{ msg: string; ctx?: object }>;
+  warns: Array<{ msg: string; ctx?: object }>;
+  errors: Array<{ msg: string; ctx?: object }>;
+} {
+  const events: Array<{ event: string; [k: string]: unknown }> = [];
+  const infos: Array<{ msg: string; ctx?: object }> = [];
+  const warns: Array<{ msg: string; ctx?: object }> = [];
+  const errors: Array<{ msg: string; ctx?: object }> = [];
+  const logger: McpWiringLogger = {
+    info(msg, ctx) {
+      infos.push({ msg, ctx });
+    },
+    warn(msg, ctx) {
+      warns.push({ msg, ctx });
+    },
+    error(msg, ctx) {
+      errors.push({ msg, ctx });
+    },
+    event(payload) {
+      events.push(payload);
+    },
+  };
+  return { logger, events, infos, warns, errors };
+}
+
+type WriteCall = Parameters<McpWiringCliSurface['writeUserMcpConfigs']>[0];
+type WriteResult = Awaited<ReturnType<McpWiringCliSurface['writeUserMcpConfigs']>>;
+
+function createCliSurface(opts?: {
+  detected?: ReadonlyArray<(typeof ALL_EDITOR_IDS)[number]>;
+  existingEntries?: Record<string, Record<string, unknown> | null>;
+  writeResult?: (call: WriteCall) => WriteResult;
+}): {
+  cli: McpWiringCliSurface;
+  writeCalls: WriteCall[];
+} {
+  const writeCalls: WriteCall[] = [];
+  const detected = new Set<(typeof ALL_EDITOR_IDS)[number]>(opts?.detected ?? []);
+  const existingEntries = opts?.existingEntries ?? {};
+  const defaultWriteResult: (call: WriteCall) => WriteResult = (call) =>
+    call.editors.map((editorId) => ({
+      editorId,
+      label: EDITOR_TARGETS[editorId].label,
+      action: 'written' as const,
+      configPath: `/fake/${editorId}/config.json`,
+      serverName: 'open-knowledge',
+    }));
+  const cli: McpWiringCliSurface = {
+    detectInstalledEditors() {
+      return ALL_EDITOR_IDS.filter((id) => detected.has(id));
+    },
+    writeUserMcpConfigs: async (call) => {
+      writeCalls.push(call);
+      const fn = opts?.writeResult ?? defaultWriteResult;
+      return fn(call);
+    },
+    readExistingMcpEntry(editorId) {
+      return existingEntries[editorId] ?? null;
+    },
+    allEditorIds: ALL_EDITOR_IDS,
+    editorTargets: EDITOR_TARGETS,
+  };
+  return { cli, writeCalls };
+}
+
+function createShowCapturingEvent(): {
+  event: IpcMainEventLike;
+  captured: Array<{ channel: string; args: unknown[] }>;
+} {
+  const captured: Array<{ channel: string; args: unknown[] }> = [];
+  return {
+    event: {
+      sender: {
+        send(channel, ...args) {
+          captured.push({ channel, args });
+        },
+      },
+    },
+    captured,
+  };
+}
+
+describe('runMcpWiringOnFirstLaunch — gating', () => {
+  test('returns inert handle when platform !== darwin', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger, infos } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'linux',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+    expect(infos.some((i) => i.msg.includes('platform is not darwin'))).toBe(true);
+  });
+
+  test('returns inert handle when !isPackaged and OK_M6B_FORCE unset (D-M6-R7)', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: false,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      forceEnv: null,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+  });
+
+  test('proceeds when !isPackaged but OK_M6B_FORCE=1 (dev-smoke opt-in)', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: false,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      forceEnv: '1',
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(true);
+    expect(ipcMain.handlers.has('ok:mcp-wiring:confirm')).toBe(true);
+    expect(ipcMain.handlers.has('ok:mcp-wiring:skip')).toBe(true);
+    expect(ipcMain.handlers.has('ok:mcp-wiring:renderer-ready')).toBe(true);
+    handle.destroy();
+  });
+
+  test('returns inert handle when executablePath does not match .app/Contents/MacOS/<name> (STOP_IF c)', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger, warns } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: '/some/other/path/to/electron',
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+    expect(warns.some((w) => w.msg.includes('executablePath does not match'))).toBe(true);
+  });
+
+  test('returns inert handle when marker is present (idempotent)', () => {
+    const { fs, files } = createVirtualFs();
+    files.set(
+      '/Users/andrew/.open-knowledge/.mcp-status.json',
+      JSON.stringify({
+        configured: true,
+        configuredAt: '2026-04-23T00:00:00Z',
+        editors: ['claude'],
+        cliPath: '/usr/local/bin/ok',
+      }),
+    );
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+  });
+
+  test('returns inert handle when skip marker is present (still idempotent)', () => {
+    const { fs, files } = createVirtualFs();
+    files.set(
+      '/Users/andrew/.open-knowledge/.mcp-status.json',
+      JSON.stringify({
+        configured: false,
+        skippedAt: '2026-04-23T00:00:00Z',
+      }),
+    );
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(false);
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handshake', () => {
+  test('first renderer-ready invoke sends show payload to that sender', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface({ detected: ['claude', 'cursor'] });
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const { event, captured } = createShowCapturingEvent();
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', event);
+      expect(captured.length).toBe(1);
+      expect(captured[0]?.channel).toBe('ok:mcp-wiring:show');
+      const payload = captured[0]?.args[0] as {
+        detectedEditors: Array<{ id: string; label: string; detected: boolean }>;
+      };
+      expect(payload.detectedEditors.length).toBe(ALL_EDITOR_IDS.length);
+      const claude = payload.detectedEditors.find((d) => d.id === 'claude');
+      const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
+      const vscode = payload.detectedEditors.find((d) => d.id === 'vscode');
+      expect(claude?.detected).toBe(true);
+      expect(cursor?.detected).toBe(true);
+      expect(vscode?.detected).toBe(false);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('second renderer-ready rejects (handler removed after first fire; one-shot)', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const first = createShowCapturingEvent();
+      const second = createShowCapturingEvent();
+      await ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', first.event);
+      expect(first.captured.length).toBe(1);
+      // After the handler removes itself, a second invoke has no handler
+      // and rejects — the preload-side bridge swallows that rejection.
+      await expect(
+        ipcMain.invokeWithEvent('ok:mcp-wiring:renderer-ready', second.event),
+      ).rejects.toThrow(/no handler for ok:mcp-wiring:renderer-ready/);
+      expect(second.captured.length).toBe(0);
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
+  test('confirm writes MCP configs, resolves bundle-absolute cliPath (no symlink), persists marker', async () => {
+    const { fs } = createVirtualFs(); // no symlink → bundle-absolute
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const now = () => new Date('2026-04-23T12:34:56Z');
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      now,
+      logger,
+    });
+    try {
+      const result = await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude', 'cursor'],
+      });
+      expect(result).toEqual({ ok: true });
+      expect(writeCalls.length).toBe(1);
+      const call = writeCalls[0];
+      if (!call) throw new Error('no write call recorded');
+      expect(call.editors).toEqual(['claude', 'cursor']);
+      expect(call.cliPath).toBe(INSTALLED_BUNDLE_WRAPPER);
+      expect(call.home).toBe('/Users/andrew');
+      const markerRaw =
+        createVirtualFs().files.get('/Users/andrew/.open-knowledge/.mcp-status.json') ?? null;
+      expect(markerRaw).toBeNull(); // written to the LIVE fs, not a fresh virtual fs
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual({
+        configured: true,
+        configuredAt: '2026-04-23T12:34:56.000Z',
+        editors: ['claude', 'cursor'],
+        cliPath: INSTALLED_BUNDLE_WRAPPER,
+      });
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm resolves /usr/local/bin/ok when M6a symlink points inside current bundle', async () => {
+    const fs: McpWiringFsOps = {
+      existsSync: (path) => path === SYMLINK_OK_PATH,
+      readlinkSync: (path) => {
+        if (path === SYMLINK_OK_PATH) return INSTALLED_BUNDLE_WRAPPER;
+        throw ENOENT;
+      },
+      readFileSync: () => {
+        throw ENOENT;
+      },
+      writeFileSync() {},
+      mkdirSync() {},
+    };
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
+      const call = writeCalls[0];
+      if (!call) throw new Error('no write call recorded');
+      expect(call.cliPath).toBe(SYMLINK_OK_PATH);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm with existing canonical npx entry → force set includes that editor', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: {
+        claude: { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+      },
+    });
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude', 'cursor'] });
+      const call = writeCalls[0];
+      if (!call) throw new Error('no write call recorded');
+      expect(call.force).toBeInstanceOf(Set);
+      const forceSet = call.force as Set<string>;
+      expect(forceSet.has('claude')).toBe(true);
+      expect(forceSet.has('cursor')).toBe(false); // no existing entry → no force needed
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm with foreign customization → force=false, emits mcp-wiring-skip-customized event', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface({
+      existingEntries: {
+        cursor: { command: 'custom-wrapper', args: ['--my-flag', 'mcp'] },
+      },
+    });
+    const { logger, events } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
+      const call = writeCalls[0];
+      if (!call) throw new Error('no write call recorded');
+      const forceSet = call.force as Set<string>;
+      expect(forceSet.has('cursor')).toBe(false);
+      expect(
+        events.some((e) => e.event === 'mcp-wiring-skip-customized' && e.editor === 'cursor'),
+      ).toBe(true);
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm with partial failure → marker NOT written, emits mcp-wiring-write-failed per failed editor', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface({
+      writeResult: (call) =>
+        call.editors.map((editorId) => {
+          if (editorId === 'cursor') {
+            return {
+              editorId,
+              label: EDITOR_TARGETS[editorId].label,
+              action: 'failed' as const,
+              configPath: '/fake/cursor/mcp.json',
+              serverName: 'open-knowledge',
+              error: 'EACCES: permission denied',
+            };
+          }
+          return {
+            editorId,
+            label: EDITOR_TARGETS[editorId].label,
+            action: 'written' as const,
+            configPath: `/fake/${editorId}/config.json`,
+            serverName: 'open-knowledge',
+          };
+        }),
+    });
+    const { logger, events } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const result = await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude', 'cursor'],
+      });
+      expect(result).toEqual({ ok: true });
+      // Marker must NOT be written (deferred-marker per OQ-19).
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
+      const failedEvents = events.filter((e) => e.event === 'mcp-wiring-write-failed');
+      expect(failedEvents.length).toBe(1);
+      expect(failedEvents[0]?.editor).toBe('cursor');
+      expect(failedEvents[0]?.error).toBe('EACCES: permission denied');
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm with writeUserMcpConfigs throwing → returns ok:false, marker NOT written', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface({
+      writeResult: () => {
+        throw new Error('simulated write throw');
+      },
+    });
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
+        editorIds: ['claude'],
+      })) as { ok: boolean; error?: string };
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('simulated write throw');
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('confirm twice → second call is idempotent no-op (returns ok:true without re-writing)', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['claude'] });
+      const second = await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: ['cursor'] });
+      expect(second).toEqual({ ok: true });
+      expect(writeCalls.length).toBe(1); // second call did nothing
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — skip flow', () => {
+  test('skip writes configured:false marker, no writeUserMcpConfigs call', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli, writeCalls } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const now = () => new Date('2026-04-23T00:00:00Z');
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      now,
+      logger,
+    });
+    try {
+      const result = await ipcMain.invoke('ok:mcp-wiring:skip');
+      expect(result).toEqual({ ok: true });
+      expect(writeCalls.length).toBe(0);
+      expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual({
+        configured: false,
+        skippedAt: '2026-04-23T00:00:00.000Z',
+      });
+    } finally {
+      handle.destroy();
+    }
+  });
+
+  test('skip after confirm → second call is idempotent no-op', async () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    try {
+      await ipcMain.invoke('ok:mcp-wiring:confirm', { editorIds: [] });
+      // Marker is now `configured:true, editors:[]` — exercise the idempotence
+      // gate by issuing skip right after. Marker should NOT be overwritten.
+      const result = await ipcMain.invoke('ok:mcp-wiring:skip');
+      expect(result).toEqual({ ok: true });
+      const marker = readMcpStatusMarker('/Users/andrew', fs);
+      expect(marker?.configured).toBe(true); // not flipped to false
+    } finally {
+      handle.destroy();
+    }
+  });
+});
+
+describe('runMcpWiringOnFirstLaunch — destroy', () => {
+  test('destroy removes all three handlers', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    expect(handle.armed).toBe(true);
+    expect(ipcMain.handlers.size).toBe(3);
+    expect(ipcMain.handlers.has('ok:mcp-wiring:renderer-ready')).toBe(true);
+    handle.destroy();
+    expect(handle.armed).toBe(false);
+    expect(ipcMain.handlers.size).toBe(0);
+  });
+
+  test('destroy is idempotent (calling twice does not throw)', () => {
+    const { fs } = createVirtualFs();
+    const ipcMain = createIpcMainStub();
+    const { cli } = createCliSurface();
+    const { logger } = createCapturedLogger();
+    const handle = runMcpWiringOnFirstLaunch({
+      isPackaged: true,
+      executablePath: INSTALLED_EXE,
+      home: '/Users/andrew',
+      platform: 'darwin',
+      ipcMain,
+      cli,
+      fs,
+      logger,
+    });
+    handle.destroy();
+    handle.destroy();
+    expect(handle.armed).toBe(false);
   });
 });
