@@ -464,10 +464,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
   });
 
-  test('F6: error boundary "Go back" navigates to prior doc', async ({
-    page,
-    api,
-  }) => {
+  test('F6: error boundary "Go back" navigates to prior doc', async ({ page, api }) => {
     await api.seedDocs([
       { name: 'doc-a', markdown: DOC_A },
       { name: 'doc-b', markdown: DOC_B },
