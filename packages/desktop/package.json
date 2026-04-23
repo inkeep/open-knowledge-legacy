@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build:desktop": "electron-vite build",
@@ -27,7 +30,7 @@
     "@electron/fuses": "^2.1.1",
     "@electron/notarize": "^3.1.1",
     "@resvg/resvg-js": "^2.6.2",
-    "@types/node": "^22.16.0",
+    "@types/node": "^24.7.0",
     "@vitejs/plugin-react": "^5.0.4",
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "electron": "41.2.1",

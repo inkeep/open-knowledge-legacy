@@ -20,7 +20,7 @@ import {
   FileArchive,
   RotateCcw,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -208,6 +208,101 @@ function formatBytes(n: number): string {
   return `${Math.round(n / 104857.6) / 10} MB`;
 }
 
+// ─── Summary bullets (spec D16 + D25) ─────────────────────────────────────────
+//
+// Agent-provided summaries render as a collapsible bullet list under the author
+// line. First bullet inline, further bullets behind a "Show N more" expander
+// matching the existing WipGroup pattern.
+// The doc-list line ALWAYS renders alongside (D16 — it stays ground truth;
+// bullets enrich, they don't replace).
+
+/**
+ * Flatten summaries across contributors (D23 flat shape) preserving insertion
+ * order. Multi-contributor commits coalesce into one flat list — per-bullet
+ * contributor identity is deliberately deferred (NG4 / D26). Exported so the
+ * test suite can lock the flatten invariant without touching React.
+ */
+export function allSummariesFor(entry: TimelineEntry): string[] {
+  const out: string[] = [];
+  for (const c of entry.contributors) {
+    if (!c.summaries) continue;
+    for (const s of c.summaries) out.push(s);
+  }
+  return out;
+}
+
+interface SummaryBulletsProps {
+  summaries: string[];
+}
+
+/**
+ * Collapsible bullet renderer. Default is collapsed so coalesced-heavy rows
+ * don't dominate the panel. The expander is a real `<button>` — this works
+ * because EntryRow is a `<div role="button">` (nested `<button>` inside a
+ * `<button>` is invalid HTML; see EntryRow comment). The expander's
+ * onClick stops propagation so the row's onSelect doesn't also fire.
+ *
+ * Markup shape: a SINGLE `<ul>` containing the always-visible first bullet
+ * AND the expanded rest (conditionally rendered) — screen-reader list
+ * navigation (VoiceOver rotor, JAWS list mode, NVDA) treats every bullet as
+ * part of the same list instead of seeing the first as a free-floating
+ * paragraph. The expander lives OUTSIDE the `<ul>` because `<button>` is not
+ * a valid `<ul>` child per HTML spec.
+ *
+ * Keys combine the bullet's positional index with its text. The contributor
+ * accumulator explicitly permits duplicate summaries within a debounce window
+ * (`contributor-tracker.ts:87-91` — "No dedup: an agent may legitimately log
+ * the same summary twice"), so a text-only key would collide on duplicates
+ * and trigger React's "two children with the same key" warning + subtly wrong
+ * reconciliation. The list is append-only with no reorder within a row, so a
+ * positional component is safe.
+ */
+function SummaryBullets({ summaries }: SummaryBulletsProps) {
+  const [expanded, setExpanded] = useState(false);
+  // `useId` is React 19's idiomatic source for associating the expander
+  // `<button aria-controls>` with its `<ul>` — each row instance gets its own
+  // unique id, so multiple TimelinePanel rows mounted on one page don't
+  // collide. NVDA and JAWS use this association to announce which region
+  // just grew/shrank when the user activates "Show N more"; without it the
+  // user only hears "expanded" with no cue about what changed.
+  const listId = useId();
+  if (summaries.length === 0) return null;
+  const [first, ...rest] = summaries;
+  return (
+    <div className="mt-0.5">
+      <ul id={listId} className="list-none">
+        <li className="text-xs text-foreground/90">
+          <span aria-hidden="true">• </span>
+          {first}
+        </li>
+        {expanded &&
+          rest.map((s, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: bullet list is append-only within a debounce window — no reorder, no insertion, no deletion. Index in the composite key is needed because contributor-tracker.ts:87-91 explicitly permits duplicate summaries (text-only key collides on dupes and breaks React reconciliation).
+            <li key={`${idx}-${s}`} className="text-xs text-foreground/90">
+              <span aria-hidden="true">• </span>
+              {s}
+            </li>
+          ))}
+      </ul>
+      {rest.length > 0 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={listId}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+        >
+          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {expanded ? `Hide ${rest.length} more` : `Show ${rest.length} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Entry row ────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
@@ -221,18 +316,40 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
+  const allSummaries = allSummariesFor(entry);
 
+  // Div-with-role rather than <button>: the row contains a nested SummaryBullets
+  // expander that needs to be a real <button> (nested native buttons are
+  // invalid HTML). The div is clickable + Enter/Space-activatable to preserve
+  // the same keyboard semantics the previous <button> had.
+  //
+  // Focus styling: native `<button>` gets the UA default focus ring for free;
+  // `<div role="button">` gets NOTHING without explicit CSS. Without a
+  // focus-visible ring, keyboard users tabbing through the timeline see no
+  // visible focus indicator (selected-state `bg-muted` follows `selected`,
+  // not focus, so a focused-but-unselected row is invisible). `ring-inset`
+  // keeps the ring within the row bounds — the timeline rows are flush with
+  // each other, so an outset ring would overflow into neighboring rows.
+  const handleActivate = () => onSelect?.(entry);
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
+    <div
+      role="button"
+      tabIndex={0}
       className={[
-        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors',
+        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
         selected ? 'bg-muted' : 'hover:bg-muted/40',
         prominent ? 'border-b border-border/50' : '',
       ]
         .filter(Boolean)
         .join(' ')}
-      onClick={() => onSelect?.(entry)}
+      onClick={handleActivate}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleActivate();
+        }
+      }}
     >
       {prominent ? (
         (() => {
@@ -270,6 +387,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
           </div>
         )}
         {!prominent && <p className="truncate text-xs text-foreground">{authorName}</p>}
+        {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
         {allDocs.length > 0 ? (
           <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
             {allDocs.join(', ')}
@@ -288,7 +406,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
       >
         {relative}
       </time>
-    </button>
+    </div>
   );
 }
 

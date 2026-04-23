@@ -439,6 +439,7 @@ export async function commitUpstreamImport(
   const subject = formatImportSubject(oldHead, newHead);
   const actorEntry: OkActorEntry = {
     v: 1,
+    writer_id: UPSTREAM_WRITER.id,
     principal: null,
     agent_session: null,
     agent_type: null,
@@ -483,6 +484,7 @@ export async function safetyCheckpoint(
   const subject = formatCheckpointSubject(`pre-${params.action}`);
   const actorEntry: OkActorEntry = {
     v: 1,
+    writer_id: SAFETY_WRITER.id,
     principal: null,
     agent_session: null,
     agent_type: null,
@@ -993,6 +995,7 @@ export async function parkBranch(
 
     const parkActorEntry: OkActorEntry = {
       v: 1,
+      writer_id: SERVICE_WRITER.id,
       principal: null,
       agent_session: null,
       agent_type: null,
@@ -1145,6 +1148,7 @@ export async function saveVersion(
 
     const checkpointActorEntry: OkActorEntry = {
       v: 1,
+      writer_id: SERVICE_WRITER.id,
       principal: null,
       agent_session: null,
       agent_type: null,

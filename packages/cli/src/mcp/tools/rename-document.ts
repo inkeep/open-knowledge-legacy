@@ -14,6 +14,7 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
+  SUMMARY_TRANSPORT_CAP,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -38,6 +39,12 @@ interface RenameDocumentSuccess {
   previewUrlSource?: PreviewUrlSource;
   /** Preview URL that used to resolve to the now-renamed doc. Present only when the helper resolves. */
   previousPreviewUrl?: string;
+  /** Stored summary + original length when truncation fired + truncation hint.
+   *  Absent when no agent-provided or default summary was recorded (e.g., UI-driven path).
+   *  `truncatedFrom` + `hint` are only present when the agent-provided summary
+   *  was truncated — server-generated defaults that overflow the cap suppress
+   *  both fields so the response does not misattribute truncation to the caller. */
+  summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
 interface RenameDocumentError {
@@ -52,6 +59,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `docName` — Current document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `newDocName` — New document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
+  '- `summary` — Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline. If omitted, a default like "Renamed X → Y" is generated. Provide your own summary to explain the why. Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 function parseRenameMappings(value: unknown): RenameDocumentMapping[] {
@@ -84,6 +92,9 @@ export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
+  /** Same identity passthrough pattern as write-document (D15). Without this,
+   *  MCP-driven renames post no agentId → the server-side D22 guard skips
+   *  attribution, so summaries would have no contributor entry to live on. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -94,9 +105,16 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
     {
       docName: z.string().describe('Current document name'),
       newDocName: z.string().describe('New document name'),
+      summary: z
+        .string()
+        .max(SUMMARY_TRANSPORT_CAP)
+        .optional()
+        .describe(
+          'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted.',
+        ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; newDocName: string; cwd?: string }) => {
+    async (args: { docName: string; newDocName: string; summary?: string; cwd?: string }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -115,6 +133,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       const result = await httpPost(url, '/api/rename', {
         docName: normalizedDoc.docName,
         newDocName: normalizedNewDoc.docName,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -148,6 +167,12 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       const newPreview = await resolvePreviewUrlForTool(normalizedNewDoc.docName, previewDeps, cwd);
       const oldPreview = await resolvePreviewUrlForTool(normalizedDoc.docName, previewDeps, cwd);
 
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
+          : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
+
       const structured: RenameDocumentSuccess = {
         ok: true,
         renamed,
@@ -155,9 +180,12 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
         previewUrl: newPreview?.url ?? null,
         ...(newPreview ? { previewUrlSource: newPreview.source } : {}),
         ...(oldPreview ? { previousPreviewUrl: oldPreview.url } : {}),
+        ...(summaryResult ? { summary: summaryResult } : {}),
       };
 
-      return textPlusStructured(`Renamed ${renamedSummary}. ${rewrittenSummary}`, structured);
+      const textLines = [`Renamed ${renamedSummary}. ${rewrittenSummary}`];
+      if (summaryHint) textLines.push(summaryHint);
+      return textPlusStructured(textLines.join('\n'), structured);
     },
   );
 }

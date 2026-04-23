@@ -11,7 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import { parseCheckpoint, parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
@@ -70,7 +70,7 @@ function parseGitLogOutput(raw: string): TimelineEntry[] {
         authorEmail,
         type,
         message,
-        contributors: parseContributors(rawBody),
+        contributors: readContributors(rawBody),
         checkpoint: type === 'checkpoint' ? parseCheckpoint(rawBody) : null,
       };
     })
