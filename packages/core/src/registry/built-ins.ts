@@ -13,13 +13,12 @@
  * the wildcard `'*'` descriptor (`hasChildren: true`, empty props) per
  * `createRegistry()` / `getOrWildcard()`.
  *
- * ImageZoom renamed to Image (US-003 / FR-20) — prop shape stays as-is for
- * now; US-006 widens to the FR-2 8-prop shape (alt, width, height, caption,
- * title, loading, zoom) alongside the DIY `react-medium-image-zoom` renderer.
- * Callout and Audio prop shapes are untouched here; US-005 widens Callout to
- * 7 props (GFM 5-type enum + title/icon/color/collapsible/defaultOpen) and
- * US-008 widens Audio to 7 props (src/title/autoplay/loop/muted/preload +
- * children).
+ * ImageZoom renamed to Image (US-003 / FR-20); US-006 widens the prop surface
+ * to the FR-2 8-prop shape (src, alt, width, height, caption, title, loading,
+ * zoom) alongside the DIY `react-medium-image-zoom` renderer. US-005 widened
+ * Callout to 7 props (GFM 5-type enum + title/icon/color/collapsible/
+ * defaultOpen). Audio stays at the pre-US-006 shape here; US-008 widens it to
+ * 7 props (src/title/autoplay/loop/muted/preload + children).
  *
  * ── Intent-of-ship ───────────────────────────────────────────────────────
  *
@@ -100,7 +99,24 @@ const calloutProps: PropDef[] = [
   },
 ];
 
-// ── Image (renamed from ImageZoom in US-003; prop shape widens in US-006) ───
+// ── Image (US-003 rename from ImageZoom; US-006 widens to FR-2 8-prop shape) ─
+//
+// FR-2 surface: `src` + `alt` + `width` + `height` + `caption` + `title` +
+// `loading` + `zoom` (8 typed props). Superset of CommonMark `![alt](src)` —
+// MDX JSX adds dimensions, caption, loading strategy, and zoom override.
+// Children slot is NOT declared on the descriptor (isSelfClosing stays true);
+// `caption` is a typed string prop rather than a reactnode so it round-trips
+// through γ + PropPanel cleanly.
+//
+// Rendering (Image.tsx):
+//   - `caption` set   → <figure> → <Zoom wrapElement="span"><img></Zoom>
+//                     → <figcaption>{caption}</figcaption> → </figure>
+//   - `caption` unset → <Zoom wrapElement="span"><img></Zoom>
+//   - `zoom: false`   → skip Zoom wrapper; bare <img> (still inside <figure>
+//                       when caption present)
+//
+// `loading` defaults to `'lazy'` at the renderer for consistency with the
+// native img contract; an explicit `'eager'` author-override preserves.
 
 const imageProps: PropDef[] = [
   {
@@ -129,10 +145,31 @@ const imageProps: PropDef[] = [
     description: 'Image height',
   },
   {
-    name: 'children',
-    type: 'reactnode',
+    name: 'caption',
+    type: 'string',
     required: false,
-    description: 'Image caption',
+    description: 'Optional caption rendered below the image in a <figcaption>',
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    description: 'Tooltip text (rendered as the native HTML title attribute)',
+  },
+  {
+    name: 'loading',
+    type: 'enum',
+    enumValues: ['eager', 'lazy'],
+    defaultValue: 'lazy',
+    required: false,
+    description: 'Native img loading strategy (defaults to lazy)',
+  },
+  {
+    name: 'zoom',
+    type: 'boolean',
+    defaultValue: true,
+    required: false,
+    description: 'When true (default), click the image to open a full-viewport zoom modal',
   },
 ];
 
@@ -178,8 +215,8 @@ export const builtInComponents: JsxComponentMeta[] = [
     icon: 'ZoomIn',
     category: 'media',
     displayName: 'Image',
-    description: 'Image with click-to-zoom',
-    searchTerms: ['image', 'zoom', 'picture', 'photo'],
+    description: 'Image with optional caption, explicit dimensions, and click-to-zoom',
+    searchTerms: ['image', 'zoom', 'picture', 'photo', 'figure', 'caption'],
   },
   {
     name: 'Audio',

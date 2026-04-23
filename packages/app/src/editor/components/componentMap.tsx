@@ -1,16 +1,16 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * Transitional state (US-003/US-005 shipped, US-006..US-009 in flight):
+ * Transitional state (US-003/US-005/US-006 shipped, US-007..US-009 in flight):
  * the registry manifest is narrowed to the 5-pack foundation (Callout + Image
  * + Audio registered today; Video in US-007, Accordion in US-009). Callout
- * is now a DIY renderer (US-005 landed the 7-prop GFM shape at `./Callout`);
- * Image still routes through fumadocs-ui's ImageZoom as a deploy-safe bridge
- * until US-006 lands the DIY `react-medium-image-zoom` component. Audio is
- * the existing inline HTML5 wrapper — US-008 extracts it into its own module
- * and widens the prop shape per FR-4. Once US-006/US-008 ship their DIY
- * components, `fumadocs-ui` gets dropped from `packages/app/package.json`
- * and this file's imports become zero.
+ * is a DIY renderer (US-005, 7-prop GFM shape at `./Callout`). Image is a
+ * DIY renderer wrapping `react-medium-image-zoom` (US-006, 8-prop shape at
+ * `./Image`). Audio is still the inline HTML5 wrapper below — US-008
+ * extracts it into its own module and widens the prop shape per FR-4. Once
+ * US-008 ships its DIY component, the last upstream-docs-lib React import
+ * in this file goes away and `fumadocs-ui` drops from
+ * `packages/app/package.json`.
  *
  * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
  * US-002 along with the Context Bridge Registry (precedent #27 / PRECEDENTS.md
@@ -27,8 +27,8 @@
  *
  * '*' maps to UnregisteredBadgeRender for the wildcard fallback.
  */
-import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import { Callout } from './Callout.tsx';
+import { Image } from './Image.tsx';
 
 function Audio(props: { src?: string; title?: string; children?: React.ReactNode }) {
   return (
@@ -52,10 +52,7 @@ function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
 // biome-ignore lint/suspicious/noExplicitAny: Component props are heterogeneous across the 5-pack + transitional shim imports; no single prop type covers all
 export const componentMap: Record<string, React.ComponentType<any>> = {
   Callout,
-  // US-003 renames the ImageZoom descriptor to Image. The renderer still points
-  // at fumadocs-ui's ImageZoom until US-006 lands the DIY
-  // `react-medium-image-zoom` implementation keyed on `Image`.
-  Image: ImageZoom,
+  Image,
   Audio,
   '*': UnregisteredBadgeRender,
 };

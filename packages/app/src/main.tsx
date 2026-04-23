@@ -16,6 +16,11 @@ import { installUpdateNoticesBridge } from '@/lib/update-notices-store';
 import { App } from './App';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
+// react-medium-image-zoom ships structural CSS (modal positioning, dialog
+// backdrop, zoom animation gated on prefers-reduced-motion internally). Must
+// be imported once globally so the Image component's click-to-zoom works
+// without each consumer re-importing (US-006 / FR-18 / D-MF3).
+import 'react-medium-image-zoom/dist/styles.css';
 import './globals.css';
 
 // Electron-only: rewrite `/api/*` fetches to target the utility process. The

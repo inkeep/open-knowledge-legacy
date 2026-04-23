@@ -145,6 +145,56 @@ describe('builtInComponents manifest', () => {
     );
   });
 
+  test('Image exposes the 8-prop FR-2 surface', () => {
+    // US-006 widens the Image descriptor from the pre-narrow 5 props
+    // (src/alt/width/height/children) to the FR-2 8-prop shape. `caption`
+    // becomes a typed string (not a reactnode) so γ round-trips it through
+    // PropPanel edits byte-identical; `loading` is an `'eager'|'lazy'` enum;
+    // `zoom` is a boolean with default `true` driving the click-to-zoom
+    // wrapper. Order-insensitive — a future reshuffle should not break this.
+    const image = builtInComponents.find((m) => m.name === 'Image');
+    expect(image).toBeDefined();
+    if (!image) return;
+    const propNames = image.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(
+      ['alt', 'caption', 'height', 'loading', 'src', 'title', 'width', 'zoom'].sort(),
+    );
+  });
+
+  test('Image has `loading` as a 2-value enum with lazy default', () => {
+    const image = builtInComponents.find((m) => m.name === 'Image');
+    const loading = image?.props.find((p) => p.name === 'loading');
+    expect(loading).toBeDefined();
+    if (loading?.type === 'enum') {
+      expect([...loading.enumValues].sort()).toEqual(['eager', 'lazy'].sort());
+      expect(loading.defaultValue).toBe('lazy');
+    } else {
+      throw new Error('Image.loading must be an enum');
+    }
+  });
+
+  test('Image has `zoom` as a boolean with `true` default', () => {
+    const image = builtInComponents.find((m) => m.name === 'Image');
+    const zoom = image?.props.find((p) => p.name === 'zoom');
+    expect(zoom).toBeDefined();
+    if (zoom?.type === 'boolean') {
+      expect(zoom.defaultValue).toBe(true);
+    } else {
+      throw new Error('Image.zoom must be a boolean');
+    }
+  });
+
+  test('Image stays `isSelfClosing: true` after US-006 widen (caption is a typed string, not a reactnode)', () => {
+    // D-MF15: `caption` round-trips as a typed string prop, not a React node,
+    // so γ + PropPanel can edit it losslessly. The descriptor MUST NOT flip
+    // `hasChildren: true` / drop `isSelfClosing` — that would make the
+    // CommonMark image bridge (NG23 / PR #270 consolidation) treat Image as
+    // a compound container.
+    const image = builtInComponents.find((m) => m.name === 'Image');
+    expect(image?.hasChildren).toBe(false);
+    expect(image?.isSelfClosing).toBe(true);
+  });
+
   test('each name is unique', () => {
     const names = builtInComponents.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);

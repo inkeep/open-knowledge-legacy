@@ -42,10 +42,6 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
-        // Landed in US-001 as deferred-consumer; first import arrives in US-006
-        // (Image component — uses <Zoom wrapElement="span"> per FR-18).
-        // specs/2026-04-23-cb-v2-md-foundation/SPEC.md §6 FR-16.
-        'react-medium-image-zoom',
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
