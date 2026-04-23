@@ -2,6 +2,10 @@
 title: Getting started
 description: Initialize Open Knowledge on an existing project or clone a GitHub repo, start the editor, and connect AI agents.
 ---
+<Callout type="info" title="Installed from the macOS DMG?">
+The desktop app launches a [first-launch MCP consent dialog](/guides/mcp-integration#desktop-app-first-launch-consent) that writes user-level MCP entries to every detected editor — so your AI tools can already see Open Knowledge without any terminal commands. This guide covers the CLI-driven path for project-scoped scaffolding (`.open-knowledge/`, `AGENTS.md`, `launch.json`). The two paths coexist; run `ok init` on any project where you want that scaffolding landed.
+</Callout>
+
 ## Prerequisites
 
 - **Bun >= 1.3.13** or **Node.js >= 22**
