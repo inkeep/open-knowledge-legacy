@@ -472,6 +472,59 @@ The driver sets `OK_DEBUG_KEYRING_SMOKE=1 + OK_DEBUG_KEYRING_SMOKE_EXIT=1 + OK_D
 
 See [`tests/smoke/keyring-e2e.md`](./tests/smoke/keyring-e2e.md) for the 11-step procedure covering the four AC4–AC7 proof points: CFBundleDisplayName prompt UX, relaunch persistence, v0.1.0→v0.1.1 upgrade persistence, `log show` caller-attribution evidence. Runnable once Apple Developer credentials (`CSC_LINK`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) are available on the test machine.
 
+## M6a — Command-Line Tools
+
+**Status:** Shipped. `Install Command-Line Tools…` File menu item (macOS-only per D51) creates user-local symlinks at `/usr/local/bin/ok` + `/usr/local/bin/open-knowledge`, both pointing at the bundled wrapper at `Contents/Resources/cli/bin/ok.sh`. The wrapper invokes the bundled CLI via `ELECTRON_RUN_AS_NODE=1` — no Node install required on the user's machine. Full spec: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../../specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md). Phase 2 (M6b — first-launch MCP consent) is in progress; this section covers Phase 1 only.
+
+### Install / uninstall
+
+Click **File → Install Command-Line Tools…** on macOS. An admin prompt fires via `osascript`; after authentication, both symlinks land and the menu label flips to **Uninstall Command-Line Tools**. Click again to remove (same admin flow; only removes symlinks whose `readlink` target is inside the currently-running bundle — foreign files untouched per G6).
+
+The wrapper runs the Electron binary as a Node process under the hood. It re-exports any `NODE_OPTIONS` set by the user's shell as `OK_NODE_OPTIONS` and `unset`s `NODE_OPTIONS` before exec, avoiding the VS Code "`--require of ESM`" crash class when a user's project-level Node options conflict with Electron's embedded Node.
+
+### Diagnostic — `which -a ok`
+
+Both `ok` and `open-knowledge` resolve to the same binary (`open-knowledge` is the backward-compat alias retained per D52). To see every `ok` on your `$PATH`:
+
+```bash
+which -a ok
+```
+
+Expected output after M6a install:
+
+```
+/usr/local/bin/ok
+```
+
+If a second path shows up (e.g. `/opt/homebrew/bin/ok`), an npm-global install coexists — see the coexistence matrix below.
+
+### Coexistence with `npm install -g @inkeep/open-knowledge`
+
+Two origins of `ok` can live on the same machine — the DMG's wrapper (M6a) and a published npm global install. macOS resolution depends on the chip:
+
+| Architecture  | Homebrew prefix      | Typical `$PATH` order                           | Effect                                                                                                                                                                                                                                                                 |
+| ------------- | -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apple Silicon | `/opt/homebrew/bin`  | `/opt/homebrew/bin` precedes `/usr/local/bin`   | Terminal-typed `ok` resolves to the npm install; M6b writes MCP configs that point at the DMG wrapper (distinct binaries). Same codebase today, but versions can drift if you upgrade one without the other.                                                          |
+| Intel         | `/usr/local/bin`     | `/usr/local/bin` IS Homebrew's default prefix   | M6a and `npm -g` compete for the same path. G4's collision guard prompts before overwriting. If `npm install -g` later stomps the M6a symlink, re-run **File → Install Command-Line Tools…** to restore.                                                              |
+
+The diagnostic posture is the same on both chips: `which -a ok` shows every copy. Note that M6b resolves `cliPath` for MCP configs via a hybrid path per D-M6-R9 — the symlink at `/usr/local/bin/ok` is preferred when present AND ownership-checked (`readlink` target lives inside the current bundle), with a bundle-absolute fallback (`.../Contents/Resources/cli/bin/ok.sh`) otherwise. Foreign symlinks are never trusted.
+
+### Translocation gotcha
+
+macOS App Translocation runs unsigned apps launched directly from a DMG mount or a random Downloads-adjacent path out of a randomized `/private/var/folders/.../AppTranslocation/` copy. The translocated copy vanishes when the app quits, so symlinks pointing at it would break immediately.
+
+The menu item refuses to install when `app.getPath('exe')` lives under a translocation path. A dialog points the user at the fix:
+
+> Drag **Open Knowledge.app** to `/Applications/`, relaunch from there, then click **Install Command-Line Tools…** again.
+
+Signed+notarized DMGs also trigger translocation on the first launch from the mount. The same recipe applies.
+
+### Drag-to-Trash recovery
+
+If you uninstall the app (drag to Trash) without clicking **Uninstall Command-Line Tools…** first, the symlinks at `/usr/local/bin/ok` + `/usr/local/bin/open-knowledge` dangle — their targets vanish with the bundle. On your next app launch (e.g. after reinstalling the DMG), a **"Command-Line Tools are broken — repair?"** dialog offers to re-point the symlinks at the new install via the same admin flow as the initial install (G5). Decline to leave them; accept to repair in place.
+
+This check fires once per app session on packaged builds only — dev-mode launches (`electron-vite dev`) never classify a prior user's symlinks as "broken" relative to the dev binary, which would otherwise be a contamination vector.
+
 ## Scope boundary
 
-This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification. Work that belongs to M6–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the CLI-on-PATH menu item (M6) and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification + M6a (CLI-on-PATH install). M6b (first-launch MCP wiring) is in progress; M7 is out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers.
