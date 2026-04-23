@@ -79,6 +79,11 @@ export function computeLinkResolutionAttrs(
 ): Record<string, string> | null {
   const href = markInfo.attrs?.href;
   if (typeof href !== 'string' || href.length === 0) return null;
+  // Wiki-embed asset links are not doc-links — the pages cache is markdown-
+  // only, so running the doc-link intent classifier against a PDF/video/
+  // audio href always returns 'unresolved' and paints the link as broken.
+  // Skip the decoration; asset links get default <a> styling.
+  if (markInfo.attrs?.sourceForm === 'wikiembed') return null;
   const state = computeLinkResolutionState(href, sourceDocName, cache);
   return { 'data-resolution-state': state };
 }
