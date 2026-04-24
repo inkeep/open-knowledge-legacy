@@ -20,7 +20,17 @@ export interface CC1Signal {
   v: typeof CC1_CONTRACT_VERSION;
   ch: string;
   seq: number;
+  /**
+   * Only populated on `ch === 'server-info'` broadcasts. Carries the
+   * per-process serverInstanceId the clients use for restart-defense.
+   * See `ServerInstance.serverInstanceId` in standalone.ts for the full
+   * defense flow.
+   */
+  serverInstanceId?: string;
 }
+
+/** CC1 channel for the server-info broadcast (per-process instance ID). */
+export const CC1_CHANNEL_SERVER_INFO = 'server-info';
 
 export class CC1Broadcaster {
   private readonly hocuspocus: Hocuspocus;
@@ -79,6 +89,41 @@ export class CC1Broadcaster {
       setCC1SubscriberCount(doc.getConnectionsCount());
     } catch (err) {
       this.log.error({ err, channel }, '[cc1] broadcast failed');
+    }
+  }
+
+  /**
+   * Broadcast the server's per-process instance ID on the `server-info`
+   * CC1 channel. Bypasses the debounce + seq machinery used by the
+   * derived-view channels — instance ID does not change during a process
+   * lifetime and new subscribers need an immediate signal on first
+   * `__system__` connect. Call once at startup after `__system__` is
+   * materialized, and additionally on every new subscriber if desired
+   * (Hocuspocus's awareness replay covers late joiners without us
+   * needing to re-broadcast, but a re-broadcast is cheap and idempotent).
+   */
+  emitServerInfo(serverInstanceId: string): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn({}, `[cc1] __system__ document not found at emitServerInfo — dropped`);
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const payload: CC1Signal = {
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_SERVER_INFO,
+        seq: 0,
+        serverInstanceId,
+      };
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_SERVER_INFO, 0);
+    } catch (err) {
+      this.log.error({ err }, '[cc1] emitServerInfo failed');
     }
   }
 

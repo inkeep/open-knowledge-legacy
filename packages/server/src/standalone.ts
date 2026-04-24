@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
@@ -123,6 +124,17 @@ export interface ServerInstance {
   agentFocusBroadcaster: AgentFocusBroadcaster;
   agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
+  /**
+   * Random UUID generated once per `createServer()` call. Advertised to
+   * clients via `GET /api/server-info` + the `__system__` CC1 `server-info`
+   * channel. Clients cache the last-observed ID and include it in the
+   * `expectedServerInstanceId` field of their auth token on every connect —
+   * `onAuthenticate` rejects on mismatch, forcing a clean client recycle
+   * before Yjs sync can merge stale-client state with a post-restart
+   * server Y.Doc. Part of the CRDT server-restart recovery defense (see
+   * `reports/crdt-server-restart-recovery/REPORT.md`).
+   */
+  readonly serverInstanceId: string;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -188,6 +200,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   // to call multiple times (bootServer also calls it, but dev-plugin path
   // bypasses bootServer and enters createServer directly).
   initTelemetry();
+
+  // Generated once per process. Advertised to clients so they can detect
+  // restart-across-reconnect before Yjs sync merges stale state. See the
+  // field docstring on ServerInstance.serverInstanceId for the full
+  // defense-in-depth flow.
+  const serverInstanceId = randomUUID();
 
   // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
   // HTTP listen, etc.). Collides fast with another running server in the same
@@ -321,6 +339,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       hocuspocus,
       sessionManager,
       contentDir,
+      serverInstanceId,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,
@@ -1128,6 +1147,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     // any browser connects. Must happen before the file watcher starts.
     try {
       systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+      // Emit the server-info signal once __system__ is materialized so any
+      // late-arriving client that subscribes to the channel gets the current
+      // serverInstanceId (part of the CRDT restart-recovery defense — clients
+      // cache this + claim it in their auth token on every connect).
+      cc1Broadcaster?.emitServerInfo(serverInstanceId);
     } catch (err) {
       log.error(
         { err },
@@ -1459,6 +1483,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
     contentFilter,
+    serverInstanceId,
     destroy,
     ready,
     degraded,

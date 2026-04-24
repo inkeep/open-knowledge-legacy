@@ -716,3 +716,50 @@ describe('createServer() server-lock integration (V0-1)', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 });
+
+describe('createServer() — serverInstanceId', () => {
+  let tmpDirA: string;
+  let tmpDirB: string;
+
+  beforeEach(async () => {
+    tmpDirA = await mkdtemp(join(tmpdir(), 'ok-iid-a-'));
+    tmpDirB = await mkdtemp(join(tmpdir(), 'ok-iid-b-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDirA, { recursive: true, force: true });
+    await rm(tmpDirB, { recursive: true, force: true });
+  });
+
+  test('each createServer() call produces a distinct serverInstanceId (UUID)', async () => {
+    const serverA = createServer({ contentDir: tmpDirA, projectDir: tmpDirA, quiet: true });
+    const serverB = createServer({ contentDir: tmpDirB, projectDir: tmpDirB, quiet: true });
+    try {
+      await serverA.ready;
+      await serverB.ready;
+
+      // Both IDs are non-empty strings.
+      expect(typeof serverA.serverInstanceId).toBe('string');
+      expect(serverA.serverInstanceId.length).toBeGreaterThan(0);
+      expect(typeof serverB.serverInstanceId).toBe('string');
+      expect(serverB.serverInstanceId.length).toBeGreaterThan(0);
+
+      // UUID v4 shape (8-4-4-4-12 hex with the `-4` version nibble).
+      expect(serverA.serverInstanceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(serverB.serverInstanceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+
+      // Distinct between instances — this is the load-bearing property for
+      // the CRDT restart-recovery defense: every server process advertises
+      // a fresh ID so a client's cached prior ID will mismatch and force a
+      // recycle before Yjs sync can merge stale state.
+      expect(serverA.serverInstanceId).not.toBe(serverB.serverInstanceId);
+    } finally {
+      await serverA.destroy();
+      await serverB.destroy();
+    }
+  });
+});

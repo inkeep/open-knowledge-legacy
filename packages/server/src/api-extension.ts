@@ -513,6 +513,14 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * Per-process UUID advertised via `GET /api/server-info` and the
+   * `__system__` CC1 `server-info` broadcast. Clients cache this value
+   * and claim it in the `expectedServerInstanceId` field of their auth
+   * token on every connect; the server rejects on mismatch. Part of the
+   * CRDT server-restart recovery defense.
+   */
+  serverInstanceId: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /** Accessor for the alias map (alias docName → canonical docName). */
@@ -688,6 +696,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     hocuspocus,
     sessionManager,
     contentDir,
+    serverInstanceId,
     getFileIndex,
     getAliasMap,
     enableTestRoutes = false,
@@ -3073,6 +3082,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  /**
+   * GET /api/server-info
+   *
+   * Returns `{ ok: true, serverInstanceId }`. Called by the client's
+   * `ProviderPool` as a boot-time warmup BEFORE any WebSocket provider opens,
+   * so the first provider's auth token can carry `expectedServerInstanceId`
+   * on the very first connect (avoiding one "null-claim accept → broadcast
+   * → populate cache → next connect claim" cycle on cold start).
+   *
+   * Public by design (no loopback / Host-header gate). The UUID is not
+   * sensitive — it's explicitly advertised to any client that may
+   * reconnect after restart. Cross-origin / LAN peers reading it gain no
+   * capability; the worst they can do is correctly predict their own
+   * connections will be rejected after a server restart.
+   */
+  async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    json(res, 200, { ok: true, serverInstanceId });
+  }
+
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -5219,6 +5252,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/metrics/agent-presence': handleMetricsAgentPresence,
+    '/api/server-info': handleServerInfo,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
