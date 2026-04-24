@@ -166,8 +166,6 @@ interface DocumentContextValue {
   openActivityPanel: (connectionId: string) => void;
   /** Explicit "show the doc info again" affordance. Clears agent id too. */
   closeActivityPanel: () => void;
-  /** Imperative mode setter (for the DocPanel mode-toggle button). */
-  setDocPanelMode: (mode: 'doc' | 'agent') => void;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -514,14 +512,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     closeActivityPanel: () => {
       setDocPanelModeState('doc');
       setDocPanelAgentId(null);
-    },
-    setDocPanelMode: (mode: 'doc' | 'agent') => {
-      setDocPanelModeState(mode);
-      // Toggling INTO agent mode via the mode-toggle button (not via an
-      // avatar click) should also ensure the panel is visible — matches
-      // FR-T10 intent. Toggling to doc mode is not a "request to see";
-      // user just wants the info tabs, so no expand needed.
-      if (mode === 'agent') setDocPanelExpandSignal((prev) => prev + 1);
     },
   };
 

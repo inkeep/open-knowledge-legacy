@@ -1,13 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import {
-  Activity,
-  Clock,
-  CornerDownLeft,
-  CornerUpRight,
-  FileText,
-  ListTree,
-  Network,
-} from 'lucide-react';
+import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { ActivityModeContent } from '@/components/ActivityModeContent';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
@@ -30,11 +22,11 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
 /**
  * Top-level mode for the DocPanel container. Two values:
  *   - `'doc'`:   existing per-document info tabs (outline / backlinks / …).
- *   - `'agent'`: Agent Activity view keyed to a `connectionId` (SPEC
- *     2026-04-24-activity-panel-to-docpanel-mode-toggle).
+ *   - `'agent'`: Agent Activity view keyed to a `connectionId`.
  *
- * The mode is chosen at this top level, NOT as a 6th tab — per-file tabs
- * and a per-agent tab violate a shared invariant (see D-T1 in that SPEC).
+ * The mode is a drill-in, not a persistent toggle: agent avatar click enters
+ * `'agent'` mode; the back arrow (shown only in `'agent'` mode) returns to
+ * `'doc'` mode via `closeActivityPanel()`.
  */
 type DocPanelMode = 'doc' | 'agent';
 
@@ -54,17 +46,8 @@ interface DocPanelProps {
   onActiveTabChange: (tab: PanelTab) => void;
   onEntrySelect?: (entry: TimelineEntry) => void;
   selectedSha?: string;
-  /** Active mode — flipped by the mode-toggle + presence-bar avatar clicks. */
+  /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
   mode: DocPanelMode;
-  /** Imperative mode setter (wired to `DocumentContext.setDocPanelMode`). */
-  onModeChange: (mode: DocPanelMode) => void;
-  /**
-   * Whether any agent has a live presence entry. When `false`, the
-   * `'agent'` mode toggle is disabled with a tooltip. Derived from
-   * `systemProvider.awareness` in `EditorArea` via `useHasActiveAgents`.
-   * SPEC-24 FR-T4.
-   */
-  hasActiveAgents: boolean;
 }
 
 export function DocPanel({
@@ -75,66 +58,15 @@ export function DocPanel({
   onEntrySelect,
   selectedSha,
   mode,
-  onModeChange,
-  hasActiveAgents,
 }: DocPanelProps) {
-  // Disable the `'agent'` toggle when (a) there are no live agents AND
-  // (b) we're not already scoped to one — an in-progress `'agent'` mode
-  // with a session-ended agent should stay toggleable so the user can
-  // review residual activity before deciding to flip away (SPEC-24 S-T6).
-  const agentToggleDisabled = !hasActiveAgents && mode !== 'agent';
   return (
     <>
-      {/* Single-row header: compact icon-only mode toggle on the LEFT,
-          followed (in `'doc'` mode only) by the sub-tab bar for Outline /
-          Backlinks / Outgoing / Graph / Timeline. Tooltips carry the text
-          that used to sit next to the mode icons. */}
-      <div className="flex flex-row items-center justify-center gap-3 border-b border-border/60 p-2">
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          value={mode}
-          onValueChange={(value) => {
-            // Radix fires empty string when the user clicks the active item
-            // (trying to un-toggle it in a single-select group). Ignore —
-            // mode is always one of the two values, no neutral state.
-            if (value === 'doc' || value === 'agent') onModeChange(value);
-          }}
-          aria-label="Panel mode"
-          data-testid="docpanel-mode-toggle"
-        >
-          <Tooltip>
-            <ToggleGroupItem
-              value="doc"
-              aria-label="Document info"
-              data-testid="docpanel-mode-doc"
-              asChild
-            >
-              <TooltipTrigger>
-                <FileText />
-              </TooltipTrigger>
-            </ToggleGroupItem>
-            <TooltipContent side="bottom">Document info</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <ToggleGroupItem
-              value="agent"
-              aria-label="Agent activity"
-              disabled={agentToggleDisabled}
-              data-testid="docpanel-mode-agent"
-              asChild
-            >
-              <TooltipTrigger>
-                <Activity />
-              </TooltipTrigger>
-            </ToggleGroupItem>
-            <TooltipContent side="bottom">
-              {agentToggleDisabled ? 'No active agents' : 'Agent activity'}
-            </TooltipContent>
-          </Tooltip>
-        </ToggleGroup>
-
-        {mode === 'doc' ? (
+      {/* In `'doc'` mode: the 5 info sub-tabs render as the panel header.
+          In `'agent'` mode: no header row — `ActivityModeContent` owns its
+          own header (avatar + back-arrow), which eliminates the empty-row
+          footprint the standalone back-arrow used to have. */}
+      {mode === 'doc' ? (
+        <div className="flex flex-row items-center justify-center gap-3 border-b border-border/60 p-2">
           <ToggleGroup
             type="single"
             variant="outline"
@@ -162,8 +94,8 @@ export function DocPanel({
               </Tooltip>
             ))}
           </ToggleGroup>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {mode === 'doc' ? (
         <div

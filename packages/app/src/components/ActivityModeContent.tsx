@@ -21,7 +21,7 @@
  * be unit-tested via `renderToString` without any portal / context /
  * fetch dependencies. The outer wrapper owns the hook + callbacks.
  */
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
@@ -29,6 +29,7 @@ import { useActivityPanel } from '@/lib/use-activity-panel';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
 import { AgentIcon } from './icons/AgentIcon';
 import { Button } from './ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 // ---------------------------------------------------------------
 // HTTP: undo dispatch
@@ -119,16 +120,44 @@ function EmptyState(): React.JSX.Element {
 }
 
 /** SPEC-24 FR-T15: visible hint when mode is `'agent'` but no agent is scoped. */
-function NoAgentSelectedState(): React.JSX.Element {
+function NoAgentSelectedState({ onExit }: { onExit: () => void }): React.JSX.Element {
   return (
-    <div
-      className="flex h-full items-center justify-center p-6 text-muted-foreground"
+    <section
+      className="flex h-full min-h-0 flex-col"
       data-testid="activity-panel-no-agent"
+      aria-label="Agent activity"
     >
-      <p className="text-center text-sm italic">
-        Click an agent's avatar in the presence bar to view their session.
-      </p>
-    </div>
+      <div className="flex shrink-0 flex-row items-center gap-2 border-b border-border px-3 py-2">
+        <BackToDocumentButton onClick={onExit} />
+        <h2 className="truncate text-sm font-medium">Agent activity</h2>
+      </div>
+      <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground">
+        <p className="text-center text-sm italic">
+          Click an agent's avatar in the presence bar to view their session.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function BackToDocumentButton({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          onClick={onClick}
+          aria-label="Back to document view"
+          data-testid="docpanel-exit-agent-mode"
+        >
+          <ArrowLeft />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Back to document view</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -190,6 +219,7 @@ interface ActivityModeBodyProps {
   error: ReturnType<typeof useActivityPanel>['error'];
   reload: () => void;
   fetchBurstDiff: (docName: string, stackIndex: number) => Promise<string>;
+  onExit: () => void;
   onNavigate: (docName: string) => void;
   onUndoLast: (docName: string) => Promise<void>;
   onUndoAll: (docName: string) => Promise<void>;
@@ -201,6 +231,7 @@ function ActivityModeBody({
   error,
   reload,
   fetchBurstDiff,
+  onExit,
   onNavigate,
   onUndoLast,
   onUndoAll,
@@ -212,7 +243,8 @@ function ActivityModeBody({
       data-testid="activity-panel"
       aria-label="Agent activity"
     >
-      <div className="flex flex-row items-center gap-3 border-b border-border px-4 py-3 shrink-0">
+      <div className="flex flex-row items-center gap-2 border-b border-border px-3 py-2 shrink-0">
+        <BackToDocumentButton onClick={onExit} />
         {data?.agent ? (
           <>
             <AgentAvatar agent={data.agent} />
@@ -271,15 +303,16 @@ function ActivityModeBody({
 // ---------------------------------------------------------------
 
 export function ActivityModeContent(): React.JSX.Element {
-  const { docPanelAgentId } = useDocumentContext();
+  const { docPanelAgentId, closeActivityPanel } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const { data, status, error, reload, fetchBurstDiff } = useActivityPanel(docPanelAgentId);
 
   // FR-T15: when mode is `'agent'` but no agent is scoped (edge case: user
-  // flipped via the mode toggle without ever clicking an avatar), render a
-  // discoverable hint rather than silently showing an empty panel.
+  // flipped mode without ever clicking an avatar), render a discoverable
+  // hint rather than silently showing an empty panel. Back-arrow still
+  // reachable so the user is never wedged in this state.
   if (docPanelAgentId === null) {
-    return <NoAgentSelectedState />;
+    return <NoAgentSelectedState onExit={closeActivityPanel} />;
   }
 
   const onNavigate = (docName: string): void => {
@@ -332,6 +365,7 @@ export function ActivityModeContent(): React.JSX.Element {
       error={error}
       reload={reload}
       fetchBurstDiff={fetchBurstDiff}
+      onExit={closeActivityPanel}
       onNavigate={onNavigate}
       onUndoLast={onUndoLast}
       onUndoAll={onUndoAll}

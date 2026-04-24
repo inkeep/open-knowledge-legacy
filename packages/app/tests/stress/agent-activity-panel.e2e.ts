@@ -1,46 +1,37 @@
 /**
  * Layer C (Tier 2): Agent Activity Panel (DocPanel `'agent'` mode) — end-
- * to-end coverage for SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle
- * and its dependent SPEC 2026-04-23 that now lives inside DocPanel.
+ * to-end coverage for the drill-in model introduced when the persistent
+ * doc/activity mode toggle was removed. The activity view is now entered
+ * exclusively via avatar click and exited via the back-arrow button.
  *
- * Covers (SPEC-24 §7 acceptance criteria):
- *   - AC-T1: click agent avatar → DocPanel flips to `'agent'` mode, auto-
- *     expands if collapsed, file list renders within 300 ms budget
- *     (Playwright poll tolerates CI cold-start noise).
- *   - AC-T2: click the same avatar a second time → mode flips back to
- *     `'doc'`.
- *   - AC-T3: click a different avatar → scoped agent swaps, still in
- *     `'agent'` mode.
- *   - AC-T6 (formerly SPEC-23 AC-P3): click a filename in the activity
- *     list → main editor navigates; panel stays in `'agent'` mode.
- *   - AC-P4 carryover (SPEC-23, preserved under the new host): opening
- *     the panel + clicking Undo last does NOT move the main editor's
- *     active doc. Scroll invariants are inherited from the DocPanel host
- *     (a layout panel; scroll behaviour not changed by undo dispatch).
+ * Covers:
+ *   - AC-T1: click agent avatar → DocPanel flips to `'agent'` mode, activity
+ *     body renders (Playwright poll tolerates CI cold-start noise).
+ *   - AC-T2: click the same avatar a second time → exits back to `'doc'` mode.
+ *   - AC-T3 (back arrow): click the activity view's back arrow → exits to
+ *     `'doc'` mode. Tooltip copy is verified.
+ *   - AC-T6: click a filename in the activity list → main editor navigates;
+ *     panel stays in `'agent'` mode.
+ *   - AC-P4 carryover: Undo last dispatch does not move the main editor's
+ *     active doc and does not exit the activity view.
  *
  * Behaviour deliberately NOT tested here, with rationale:
  *   - AC-P8 live CC1 update (700 ms arrival budget) — the Playwright
- *     dev-server fixture runs with `gitEnabled: false` for test isolation
- *     (see SPEC-24 §NG-T1 + the c11 integration's test-harness comment).
+ *     dev-server fixture runs with `gitEnabled: false` for test isolation.
  *     CC1 `session-activity` only fires from the L2 drain after a
- *     successful `commitWipFromTree` — with gitEnabled=false that
- *     callback is never reached. The live-update pipeline is covered
- *     end-to-end in `packages/app/tests/integration/c11-activity-panel-
- *     undo.test.ts` which uses gitEnabled=true + commitDebounceMs=200.
- *   - Esc / X / click-outside close semantics (old SPEC-23 FR-P4) — the
- *     DocPanel is a layout panel, not a modal Sheet. Close is via the
- *     editor's existing collapse toggle button; those semantics are
- *     covered by DocPanel's existing tests, not this file.
+ *     successful `commitWipFromTree`; with gitEnabled=false that callback
+ *     is never reached. The live-update pipeline is covered in
+ *     `packages/app/tests/integration/c11-activity-panel-undo.test.ts`.
+ *   - Esc / X / click-outside close semantics — the DocPanel is a layout
+ *     panel, not a modal Sheet. Close is via the back-arrow button.
  *
  * Canonical selectors:
- *   [data-testid="activity-panel"]            — activity body region
- *   [data-testid="docpanel-mode-toggle"]      — ToggleGroup for mode
- *   [data-testid="docpanel-mode-doc"]         — Document mode button
- *   [data-testid="docpanel-mode-agent"]       — Activity mode button
- *   [data-testid="activity-panel-file-row"]   — one file entry
+ *   [data-testid="activity-panel"]                   — activity body region
+ *   [data-testid="docpanel-exit-agent-mode"]         — back-arrow button
+ *   [data-testid="activity-panel-file-row"]          — one file entry
  *   [data-testid="activity-panel-file-row-filename"] — filename link
  *   [data-testid="activity-panel-file-row-carrot"]   — expand toggle
- *   [data-testid="activity-panel-undo-last"]  — undo-last button
+ *   [data-testid="activity-panel-undo-last"]         — undo-last button
  */
 
 import { expect, test } from './_helpers';
@@ -49,7 +40,7 @@ function agentId(label: string): string {
   return `${label}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', () => {
+test.describe('Activity mode (DocPanel) — avatar drill-in, back-arrow exit', () => {
   test('AC-T1: clicking an agent avatar flips DocPanel to agent mode with correct file list', async ({
     page,
     api,
@@ -87,18 +78,10 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
     await expect(claudeAvatar).toBeVisible({ timeout: 10_000 });
     await claudeAvatar.click();
 
-    // SPEC-24 AC-T1: after click, the DocPanel's mode toggle's agent
-    // button should be the active state AND the activity body should
-    // be visible. DocPanel auto-expands (FR-T10) if collapsed; the
-    // toggle becoming `aria-pressed=true` is the canonical "I'm in
-    // agent mode" signal.
-    const agentModeButton = page.locator('[data-testid="docpanel-mode-agent"]');
-    await expect
-      .poll(async () => agentModeButton.getAttribute('data-state'), {
-        timeout: 5_000,
-        intervals: [100, 250, 500],
-      })
-      .toBe('on');
+    // After click, the activity body should be visible and the back-arrow
+    // button should be present (canonical signal that we're in agent mode).
+    const backButton = page.locator('[data-testid="docpanel-exit-agent-mode"]');
+    await expect(backButton).toBeVisible({ timeout: 5_000 });
 
     const panel = page.locator('[data-testid="activity-panel"]');
     await expect(panel).toBeVisible({ timeout: 5_000 });
@@ -111,9 +94,13 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
     const rowTexts = await fileRows.allInnerTexts();
     expect(rowTexts.some((t) => t.includes(docA))).toBe(true);
     expect(rowTexts.some((t) => t.includes(docB))).toBe(true);
+
+    // Scoped avatar carries the `data-presence-scoped="true"` marker so
+    // the ring highlight is verifiable without color assertions.
+    await expect(claudeAvatar).toHaveAttribute('data-presence-scoped', 'true');
   });
 
-  test('AC-T2: clicking the same avatar a second time flips back to doc mode', async ({
+  test('AC-T2: clicking the same avatar a second time exits back to doc mode', async ({
     page,
     api,
   }) => {
@@ -138,22 +125,54 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
       .first();
     await expect(claudeAvatar).toBeVisible({ timeout: 10_000 });
 
-    const docModeButton = page.locator('[data-testid="docpanel-mode-doc"]');
-    const agentModeButton = page.locator('[data-testid="docpanel-mode-agent"]');
+    const backButton = page.locator('[data-testid="docpanel-exit-agent-mode"]');
+    const panel = page.locator('[data-testid="activity-panel"]');
 
-    // First click → agent mode on, doc mode off.
+    // First click → agent mode: back-arrow + activity body visible.
     await claudeAvatar.click();
-    await expect
-      .poll(async () => agentModeButton.getAttribute('data-state'), { timeout: 5_000 })
-      .toBe('on');
-    await expect(docModeButton).toHaveAttribute('data-state', 'off');
+    await expect(backButton).toBeVisible({ timeout: 5_000 });
+    await expect(panel).toBeVisible();
 
-    // Second click on the SAME avatar → toggle back to doc mode.
+    // Second click on the SAME avatar → back to doc mode.
     await claudeAvatar.click();
-    await expect
-      .poll(async () => docModeButton.getAttribute('data-state'), { timeout: 5_000 })
-      .toBe('on');
-    await expect(agentModeButton).toHaveAttribute('data-state', 'off');
+    await expect(backButton).toBeHidden({ timeout: 5_000 });
+    await expect(panel).toBeHidden();
+  });
+
+  test('AC-T3: back-arrow button exits agent mode; tooltip copy is descriptive', async ({
+    page,
+    api,
+  }) => {
+    const docView = 'panel-t3-view';
+    const docAgent = 'panel-t3-agent';
+    await api.seedDocs([
+      { name: docView, markdown: '# view' },
+      { name: docAgent, markdown: '# body' },
+    ]);
+    await page.goto(`/#/${docView}`);
+
+    const claude = agentId('claude-t3');
+    await api.writeAsAgent(docAgent, '# Claude', {
+      agentId: claude,
+      agentName: 'Claude',
+      clientName: 'claude-code',
+    });
+
+    const claudeAvatar = page
+      .locator('[data-slot="presence-bar"] [data-presence-badge="agent"]')
+      .filter({ has: page.locator('[aria-label*="Claude"]') })
+      .first();
+    await expect(claudeAvatar).toBeVisible({ timeout: 10_000 });
+    await claudeAvatar.click();
+
+    const backButton = page.locator('[data-testid="docpanel-exit-agent-mode"]');
+    await expect(backButton).toBeVisible({ timeout: 5_000 });
+    await expect(backButton).toHaveAccessibleName('Back to document view');
+
+    await backButton.click();
+    const panel = page.locator('[data-testid="activity-panel"]');
+    await expect(panel).toBeHidden({ timeout: 5_000 });
+    await expect(backButton).toBeHidden();
   });
 
   test('AC-T6 (was AC-P3): filename click navigates main editor; panel stays in agent mode', async ({
@@ -175,7 +194,6 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
       clientName: 'claude-code',
     });
 
-    // Flip to agent mode via avatar click.
     const claudeAvatar = page
       .locator('[data-slot="presence-bar"] [data-presence-badge="agent"]')
       .filter({ has: page.locator('[aria-label*="Claude"]') })
@@ -186,7 +204,6 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
     const panel = page.locator('[data-testid="activity-panel"]');
     await expect(panel).toBeVisible({ timeout: 5_000 });
 
-    // Click the filename in the activity list.
     const filenameBtn = panel
       .locator('[data-testid="activity-panel-file-row-filename"]')
       .filter({ hasText: docTarget })
@@ -201,9 +218,9 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
         intervals: [100, 250, 500],
       })
       .toContain(`#/${docTarget}`);
-    // DocPanel stays in agent mode (SPEC-24 FR-T13).
-    const agentModeButton = page.locator('[data-testid="docpanel-mode-agent"]');
-    await expect(agentModeButton).toHaveAttribute('data-state', 'on');
+    // DocPanel stays in agent mode.
+    const backButton = page.locator('[data-testid="docpanel-exit-agent-mode"]');
+    await expect(backButton).toBeVisible();
     await expect(panel).toBeVisible();
   });
 
@@ -216,16 +233,6 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
     ]);
     await page.goto(`/#/${docView}`);
 
-    // Pin docView to prevent any auto-nav from chasing the agent write.
-    await page.evaluate(
-      ([d]) => {
-        const setPin = (window as { __test_setPin?: (x: string | null) => void }).__test_setPin;
-        if (!setPin) throw new Error('__test_setPin dev hook missing');
-        setPin(d);
-      },
-      [docView],
-    );
-
     const claude = agentId('claude-t7');
     await api.writeAsAgent(docAgent, '# Claude wrote burst 1', {
       agentId: claude,
@@ -235,7 +242,6 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
 
     const urlBefore = page.url();
 
-    // Flip to agent mode via avatar click.
     const claudeAvatar = page
       .locator('[data-slot="presence-bar"] [data-presence-badge="agent"]')
       .filter({ has: page.locator('[aria-label*="Claude"]') })
@@ -251,39 +257,12 @@ test.describe('Activity mode (DocPanel) — open, navigate, undo, mode toggle', 
     await expect(undoLast).toBeVisible({ timeout: 5_000 });
     await undoLast.click();
 
-    // After undo dispatch, the URL hash (active doc) stays pinned to docView.
-    // The active-doc invariant is the specific thing undo logic could violate
-    // (the cursor/scroll invariants fall out naturally because the panel's
-    // openDocumentTransition is guarded + undo never calls navigateToDoc).
+    // After undo dispatch, the URL hash (active doc) stays on docView.
     await expect
       .poll(async () => page.url(), { timeout: 2_000, intervals: [100, 250, 500] })
       .toBe(urlBefore);
     // DocPanel stays in agent mode across undo.
-    const agentModeButton = page.locator('[data-testid="docpanel-mode-agent"]');
-    await expect(agentModeButton).toHaveAttribute('data-state', 'on');
-  });
-
-  test('AC-T5: agent mode toggle is disabled when no agents have sessions', async ({
-    page,
-    api,
-  }) => {
-    const docView = 'panel-t5-view';
-    await api.seedDocs([{ name: docView, markdown: '# view' }]);
-    await page.goto(`/#/${docView}`);
-
-    // No agents have been seeded with writes on this page. The presence
-    // bar's current section may still include the seed-agent `claude-1`
-    // from `api.seedDocs` depending on timing, but its TTL (5 s) should
-    // age it out before this assertion; the stale-filter in
-    // `hasActiveAgents` matches. We poll the button state to allow for
-    // the initial presence-bar race.
-    const agentModeButton = page.locator('[data-testid="docpanel-mode-agent"]');
-    await expect(agentModeButton).toBeVisible({ timeout: 5_000 });
-    await expect
-      .poll(async () => agentModeButton.isDisabled(), {
-        timeout: 10_000,
-        intervals: [500, 1_000, 2_000],
-      })
-      .toBe(true);
+    const backButton = page.locator('[data-testid="docpanel-exit-agent-mode"]');
+    await expect(backButton).toBeVisible();
   });
 });

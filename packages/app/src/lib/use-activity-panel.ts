@@ -23,7 +23,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { AGENT_PRESENCE_STALE_MS, hasAgentPresenceShape } from '@/lib/agent-presence';
+import { hasAgentPresenceShape } from '@/lib/agent-presence';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 // ---------------------------------------------------------------
@@ -353,72 +353,4 @@ export function computeWritingDocs(
     }
   }
   return out;
-}
-
-/**
- * Pure `hasActiveAgents` — true iff at least one entry in any client's
- * `agentPresence` map is within the TTL window. Used by `DocPanel` to
- * enable/disable the `'agent'` mode-toggle button (SPEC-24 FR-T4).
- *
- * Deliberately mirrors the shape of `computeWritingDocs` so the same
- * systemProvider reference + null/undefined guards flow through.
- */
-function hasActiveAgents(
-  systemProvider: { awareness?: unknown } | null,
-  now: number = Date.now(),
-): boolean {
-  if (!systemProvider) return false;
-  const awareness = systemProvider.awareness;
-  if (!hasAgentPresenceShape(awareness)) return false;
-  for (const state of awareness.getStates().values()) {
-    const presence = state.agentPresence;
-    if (!presence) continue;
-    for (const entry of Object.values(presence)) {
-      if (!entry || typeof entry.ts !== 'number') continue;
-      if (now - entry.ts < AGENT_PRESENCE_STALE_MS) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * `useHasActiveAgents` — reactive wrapper around `hasActiveAgents`.
- * Subscribes to `systemProvider.awareness` updates so the DocPanel's
- * mode-toggle enabled-state flips live as agents connect / go idle.
- *
- * Tick interval (1s) backstops the awareness-event subscription for
- * entries that silently age out of the TTL window between events — no
- * awareness change fires when a presence merely becomes stale. Identical
- * shape to `usePresence`'s staleness tick.
- */
-export function useHasActiveAgents(systemProvider: { awareness?: unknown } | null): boolean {
-  const [active, setActive] = useState<boolean>(() => hasActiveAgents(systemProvider));
-
-  useEffect(() => {
-    const recompute = () => setActive(hasActiveAgents(systemProvider));
-    recompute();
-    if (!systemProvider) return;
-    const awareness = systemProvider.awareness;
-    if (!hasAgentPresenceShape(awareness)) return;
-    const handler = () => recompute();
-    // Bind to the awareness's on/off API when available. Falling back to a
-    // ticker alone would still work (1 s polling picks up new entries) but
-    // loses sub-second responsiveness when an agent first connects.
-    const maybeOn = (awareness as { on?: (e: string, cb: () => void) => void }).on;
-    const maybeOff = (awareness as { off?: (e: string, cb: () => void) => void }).off;
-    if (maybeOn && maybeOff) {
-      maybeOn.call(awareness, 'change', handler);
-      maybeOn.call(awareness, 'update', handler);
-    }
-    const tickerId = setInterval(recompute, 1_000);
-    return () => {
-      if (maybeOn && maybeOff) {
-        maybeOff.call(awareness, 'change', handler);
-        maybeOff.call(awareness, 'update', handler);
-      }
-      clearInterval(tickerId);
-    };
-  }, [systemProvider]);
-
-  return active;
 }

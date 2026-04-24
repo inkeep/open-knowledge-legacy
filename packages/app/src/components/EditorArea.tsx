@@ -16,7 +16,6 @@ import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentCont
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
-import { useHasActiveAgents } from '@/lib/use-activity-panel';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
@@ -52,13 +51,9 @@ function EditorAreaInner({
     activeProvider,
     activeTarget,
     recycleDocument,
-    systemProvider,
     docPanelMode,
     docPanelExpandSignal,
-    setDocPanelMode,
   } = useDocumentContext();
-  // SPEC-24 FR-T4: the `'agent'` mode toggle disables when no agents are live.
-  const hasActiveAgents = useHasActiveAgents(systemProvider);
   const { openDocumentTransition } = useDocumentTransition();
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
@@ -367,8 +362,6 @@ function EditorAreaInner({
               onEntrySelect={onEntrySelect}
               selectedSha={selectedSha}
               mode={docPanelMode}
-              onModeChange={setDocPanelMode}
-              hasActiveAgents={hasActiveAgents}
             />
           </SheetContent>
         </Sheet>
@@ -405,8 +398,6 @@ function EditorAreaInner({
             onEntrySelect={onEntrySelect}
             selectedSha={selectedSha}
             mode={docPanelMode}
-            onModeChange={setDocPanelMode}
-            hasActiveAgents={hasActiveAgents}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

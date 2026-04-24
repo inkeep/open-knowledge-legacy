@@ -170,10 +170,13 @@ function useWritingPulse(mode: AgentPresenceEntry['mode']): boolean {
 function AgentAvatar({
   participant,
   crossDoc,
+  scoped,
   onClickAgent,
 }: {
   participant: AgentParticipant;
   crossDoc: boolean;
+  /** `true` when the DocPanel is currently showing this agent's Activity view. */
+  scoped: boolean;
   /**
    * Handler invoked when the avatar is clicked. Receives the agent's
    * connectionId (the presence map key — the `agent-<raw>` form).
@@ -192,9 +195,13 @@ function AgentAvatar({
   // grayscaled by a parent wrapper; composing animate-pulse on top of that
   // is visually noisy). Precedent #20 bans pulsing on touch targets.
   const writing = !crossDoc && heldWriting;
+  // Scoped ring communicates "this avatar's Activity view is currently open."
+  // Takes precedence over the writing-pulse ring so the signal is stable
+  // even while the agent is actively writing.
   const sharedClasses = [
-    'inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2 ring-background cursor-pointer',
-    writing ? 'ring-primary/40 animate-pulse' : '',
+    'inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2 cursor-pointer',
+    scoped ? 'ring-primary ring-offset-2 ring-offset-background' : 'ring-background',
+    writing && !scoped ? 'ring-primary/40 animate-pulse' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -202,6 +209,7 @@ function AgentAvatar({
     'data-presence-badge': 'agent',
     'data-presence-mode': presence.mode,
     'data-presence-crossdoc': crossDoc ? 'true' : undefined,
+    'data-presence-scoped': scoped ? 'true' : undefined,
   };
 
   const ariaLabel =
@@ -246,11 +254,13 @@ function OverflowChip({
   count,
   remainder,
   crossDoc,
+  scopedAgentId,
   onClickAgent,
 }: {
   count: number;
   remainder: Participant[];
   crossDoc: boolean;
+  scopedAgentId: string | null;
   onClickAgent: (connectionId: string) => void;
 }) {
   return (
@@ -277,6 +287,7 @@ function OverflowChip({
                 key={p.agentId}
                 participant={p}
                 crossDoc={crossDoc}
+                scoped={scopedAgentId === p.agentId}
                 onClickAgent={onClickAgent}
               />
             );
@@ -291,17 +302,31 @@ function renderParticipant(
   p: Participant,
   onClickAgent: (connectionId: string) => void,
   crossDoc: boolean,
+  scopedAgentId: string | null,
 ) {
   if (p.kind === 'human') {
     return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
   }
   return (
-    <AgentAvatar key={p.agentId} participant={p} crossDoc={crossDoc} onClickAgent={onClickAgent} />
+    <AgentAvatar
+      key={p.agentId}
+      participant={p}
+      crossDoc={crossDoc}
+      scoped={scopedAgentId === p.agentId}
+      onClickAgent={onClickAgent}
+    />
   );
 }
 
 export function PresenceBar() {
-  const { activeProvider, activeDocName, systemProvider, openActivityPanel } = useDocumentContext();
+  const {
+    activeProvider,
+    activeDocName,
+    systemProvider,
+    openActivityPanel,
+    docPanelMode,
+    docPanelAgentId,
+  } = useDocumentContext();
   const { current, crossDoc } = usePresence(activeProvider, systemProvider, activeDocName);
   const syncStatus = useSyncStatus(activeProvider);
   useSyncToasts(syncStatus, activeDocName);
@@ -312,20 +337,21 @@ export function PresenceBar() {
   const crossDocRemainder = crossDoc.slice(K_CROSSDOC_PRIMARY);
 
   // D-P9 LOCKED: every agent avatar opens the Activity Panel keyed to that
-  // agent's connectionId. The old cross-doc nav-on-click behavior is
-  // replaced — the panel's filename click provides equivalent nav with
-  // richer context.
+  // agent's connectionId. Avatars of the currently-scoped agent get a ring
+  // highlight so the user sees which session the DocPanel is showing.
   const onClickAgent = openActivityPanel;
+  const scopedAgentId = docPanelMode === 'agent' ? docPanelAgentId : null;
 
   return (
     <div data-slot="presence-bar" className="flex items-center px-1 py-1.5">
       <div className="flex items-center gap-1.5" data-presence-section="current">
-        {currentPrimary.map((p) => renderParticipant(p, onClickAgent, false))}
+        {currentPrimary.map((p) => renderParticipant(p, onClickAgent, false, scopedAgentId))}
         {currentRemainder.length > 0 ? (
           <OverflowChip
             count={currentRemainder.length}
             remainder={currentRemainder}
             crossDoc={false}
+            scopedAgentId={scopedAgentId}
             onClickAgent={onClickAgent}
           />
         ) : null}
@@ -338,12 +364,13 @@ export function PresenceBar() {
             className="flex items-center gap-1.5 opacity-60 grayscale"
             data-presence-section="crossdoc"
           >
-            {crossDocPrimary.map((p) => renderParticipant(p, onClickAgent, true))}
+            {crossDocPrimary.map((p) => renderParticipant(p, onClickAgent, true, scopedAgentId))}
             {crossDocRemainder.length > 0 ? (
               <OverflowChip
                 count={crossDocRemainder.length}
                 remainder={crossDocRemainder}
                 crossDoc={true}
+                scopedAgentId={scopedAgentId}
                 onClickAgent={onClickAgent}
               />
             ) : null}
