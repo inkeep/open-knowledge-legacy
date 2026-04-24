@@ -31,9 +31,9 @@ import type {
 import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSub,
+  DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
@@ -86,7 +86,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
         <Sparkles aria-hidden="true" />
         Open in…
       </DropdownMenuSubTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuSubContent>
         {KNOWN_TARGETS.map((target) => {
           const installState = installStates[target.id];
           const rowState = computeRowState({ target, installState, isElectronHost });
@@ -123,7 +123,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
             </DropdownMenuItem>
           );
         })}
-      </DropdownMenuContent>
+      </DropdownMenuSubContent>
     </DropdownMenuSub>
   );
 }

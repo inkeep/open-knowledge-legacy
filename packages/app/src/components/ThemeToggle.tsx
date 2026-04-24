@@ -3,10 +3,10 @@ import { useTheme } from 'next-themes';
 import type { ComponentProps, FC } from 'react';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
@@ -25,7 +25,7 @@ export const ThemeToggle: FC = () => {
   const TriggerIcon = theme === 'system' ? Contrast : theme === 'dark' ? Moon : Sun;
 
   return (
-    <DropdownMenuRoot>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -46,6 +46,6 @@ export const ThemeToggle: FC = () => {
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 };

@@ -13,7 +13,6 @@ import {
   FolderPlus,
   FoldVertical,
   Pencil,
-  Sparkles,
   SquarePen,
   Trash2,
   UnfoldVertical,
@@ -60,20 +59,20 @@ import type { DocEntry } from '@/components/file-tree-utils';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRoot,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
-import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
-import { contextRowHint } from './handoff/OpenInAgentContextSubmenu';
-import { computeRowState, TargetIcon } from './handoff/OpenInAgentMenuItem';
+import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
 import {
   buildHandoffInput,
   type HandoffDispatchInput,
@@ -184,7 +183,7 @@ function FileTreeMenu({
   const closeForInlineSurface = () => context.close({ restoreFocus: false });
   const close = () => context.close();
   return (
-    <DropdownMenuRoot
+    <DropdownMenu
       open
       modal={false}
       onOpenChange={(open) => {
@@ -199,7 +198,6 @@ function FileTreeMenu({
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        portal={false}
         sideOffset={0}
         align="start"
         data-file-tree-context-menu-root="true"
@@ -262,84 +260,48 @@ function FileTreeMenu({
           <Pencil aria-hidden="true" />
           Rename
         </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={!workspace}
-          onSelect={() => {
-            if (!workspace) return;
-            close();
-            const full = joinWorkspacePath(
-              workspace.contentDir,
-              relativePathForTreeItem(item),
-              workspace.pathSeparator,
-            );
-            void copyToClipboard(full, 'full path');
-          }}
-        >
-          <Copy aria-hidden="true" />
-          Copy Full Path
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => {
-            close();
-            void copyToClipboard(relativePathForTreeItem(item), 'relative path');
-          }}
-        >
-          <Copy aria-hidden="true" />
-          Copy Relative Path
-        </DropdownMenuItem>
-        {!isFolder ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">
-              <Sparkles aria-hidden="true" />
-              Open in
-            </DropdownMenuLabel>
-            {KNOWN_TARGETS.map((knownTarget) => {
-              const installState = handoff.installStates[knownTarget.id];
-              const rowState = computeRowState({
-                target: knownTarget,
-                installState,
-                isElectronHost: handoff.isElectronHost,
-              });
-              const inputMissing = handoffInput === null;
-              const enabled = rowState.enabled && !inputMissing;
-              const hint = contextRowHint(
-                knownTarget,
-                installState,
-                handoff.isElectronHost,
-                inputMissing,
-              );
-              return (
-                <DropdownMenuItem
-                  key={knownTarget.id}
-                  disabled={!enabled}
-                  aria-label={
-                    hint
-                      ? `Open in ${knownTarget.displayName}, ${hint}`
-                      : `Open in ${knownTarget.displayName}`
-                  }
-                  data-testid={`file-tree-open-in-${knownTarget.id}`}
-                  onSelect={() => {
-                    if (!enabled || !handoffInput) return;
-                    close();
-                    void handoff.dispatch(knownTarget.id, handoffInput);
-                  }}
-                >
-                  <TargetIcon id={knownTarget.id} aria-hidden="true" />
-                  <span className="flex-1">{knownTarget.displayName}</span>
-                  {hint ? (
-                    <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
-                      {hint}
-                    </span>
-                  ) : null}
-                </DropdownMenuItem>
-              );
-            })}
-          </>
-        ) : null}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Copy aria-hidden="true" />
+            Copy Path
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuItem
+              disabled={!workspace}
+              onSelect={() => {
+                if (!workspace) return;
+                close();
+                const full = joinWorkspacePath(
+                  workspace.contentDir,
+                  relativePathForTreeItem(item),
+                  workspace.pathSeparator,
+                );
+                void copyToClipboard(full, 'full path');
+              }}
+            >
+              Full Path
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                close();
+                void copyToClipboard(relativePathForTreeItem(item), 'relative path');
+              }}
+            >
+              Relative Path
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {!isFolder && (
+          <OpenInAgentContextSubmenu
+            input={handoffInput}
+            installStates={handoff.installStates}
+            isElectronHost={handoff.isElectronHost}
+            dispatch={handoff.dispatch}
+          />
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+          variant="destructive"
           disabled={anyActionBusy}
           onSelect={() => {
             close();
@@ -350,7 +312,7 @@ function FileTreeMenu({
           Delete
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }
 
