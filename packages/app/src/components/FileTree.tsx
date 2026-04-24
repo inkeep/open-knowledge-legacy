@@ -207,8 +207,7 @@ function FileTreeMenu({
           <>
             <DropdownMenuItem
               disabled={anyActionBusy}
-              onSelect={(event) => {
-                event.preventDefault();
+              onSelect={() => {
                 closeForInlineSurface();
                 onStartCreating('file', treeDirectoryPathToFolderPath(item.path));
               }}
@@ -218,8 +217,7 @@ function FileTreeMenu({
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={anyActionBusy}
-              onSelect={(event) => {
-                event.preventDefault();
+              onSelect={() => {
                 closeForInlineSurface();
                 onStartCreating('folder', treeDirectoryPathToFolderPath(item.path));
               }}
@@ -251,8 +249,7 @@ function FileTreeMenu({
         ) : null}
         <DropdownMenuItem
           disabled={anyActionBusy}
-          onSelect={(event) => {
-            event.preventDefault();
+          onSelect={() => {
             closeForInlineSurface();
             model.startRenaming(item.path);
           }}
@@ -399,9 +396,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     renaming: {
       canRename: () => busyPathRef.current === null,
       onRename: (event) => handleRenameRef.current(event),
-      onError: (message) => {
-        toast.error(message);
-      },
+      onError: toast.error,
     },
     onSelectionChange: (selectedPaths) => handleSelectionChangeRef.current(selectedPaths),
     renderRowDecoration: ({ item }) => {
@@ -445,9 +440,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const folderTreePaths = collectTreeFolderPathsFromDocuments(documents);
   const folderTreePathsRef = useRef(folderTreePaths);
 
-  const activeAncestorTreePaths = activeTreePath
-    ? computeTreeAncestorPaths(activeTreePath)
-    : computeTreeAncestorPaths(activeNavigationPath);
+  const activeAncestorTreePaths = computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
   const activeAncestorTreePathsSignature = activeAncestorTreePaths.join('\0');
 
   const resetModelToDocuments = (nextDocuments?: readonly DocEntry[]) => {
@@ -546,7 +539,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       : [];
     for (const ancestor of ancestorPaths) {
       const item = asDirectoryHandle(model.getItem(ancestor));
-      if (item && !item.isExpanded()) item.expand();
+      if (item && !item.isExpanded()) {
+        item.expand();
+      }
     }
     const item = model.getItem(activeTreePath);
     if (!item) return;
@@ -602,7 +597,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: createPath }),
         });
-        const data = (await res.json().catch(() => null)) as CreatePageResponse | null;
+        const data: CreatePageResponse | null = await res.json().catch(() => null);
 
         if (!res.ok || !data?.ok) {
           const msg = data?.error ?? `Failed to create ${kind}`;
@@ -652,7 +647,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = (await res.json()) as RenamePathResponse;
+      const data: RenamePathResponse = await res.json();
 
       if (!res.ok || !data.ok) {
         const msg = data.error ?? 'Failed to rename path';
@@ -684,9 +679,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         const destinationTreePath = computeTreeDropDestinationPath(sourcePath, event.target);
         return sourcePath === destinationTreePath ? null : { sourcePath, destinationTreePath };
       })
-      .filter((operation): operation is { sourcePath: string; destinationTreePath: string } =>
-        Boolean(operation),
-      );
+      .filter((operation) => !!operation);
     if (operations.length === 0) return;
 
     setBusyPath(operations[0]?.sourcePath ?? null);
@@ -713,7 +706,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        const data = (await res.json()) as RenamePathResponse;
+        const data: RenamePathResponse = await res.json();
 
         if (!res.ok || !data.ok) {
           const msg = data.error ?? 'Failed to move';
@@ -757,7 +750,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       for (const folderPath of folderTreePathsRef.current) {
         if (folderPath === root || folderPath.startsWith(root)) {
           const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) item.expand();
+          if (item) {
+            item.expand();
+          }
         }
       }
     });
@@ -773,7 +768,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           !activeAncestors.has(folderPath)
         ) {
           const item = asDirectoryHandle(model.getItem(folderPath));
-          if (item) item.collapse();
+          if (item) {
+            item.collapse();
+          }
         }
       }
     });
@@ -792,12 +789,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (!selected) return;
       navigateToWithPulse(treePathToAppPath(selected));
     };
-    handleRenameRef.current = (event) => {
-      void handleTreeRename(event);
-    };
-    handleDropCompleteRef.current = (event) => {
-      void handleDropComplete(event);
-    };
+    handleRenameRef.current = handleTreeRename;
+    handleDropCompleteRef.current = handleDropComplete;
   });
 
   useImperativeHandle(ref, () => ({
@@ -836,7 +829,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: target.kind, path: target.path }),
       });
-      const data = (await res.json()) as DeletePathResponse;
+      const data: DeletePathResponse = await res.json();
 
       if (!res.ok || !data.ok) {
         toast.error(data.error ?? 'Failed to delete path');
@@ -897,15 +890,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     );
   }
 
-  if (error && documents.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center py-8">
-        <span className="select-none text-sidebar-foreground/50 text-sm">{error}</span>
-      </div>
-    );
-  }
-
   if (documents.length === 0) {
+    if (error) {
+      return (
+        <div className="flex flex-1 items-center justify-center py-8">
+          <span className="select-none text-sidebar-foreground/50 text-sm">{error}</span>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sidebar-foreground/30 text-sm">No files yet.</span>
@@ -975,7 +967,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
 function findTreeItemPath(event: MouseEvent): string | null {
   for (const entry of event.composedPath()) {
-    if (entry instanceof HTMLElement && entry.dataset.itemPath) return entry.dataset.itemPath;
+    if (entry instanceof HTMLElement && entry.dataset.itemPath) {
+      return entry.dataset.itemPath;
+    }
   }
   return null;
 }
