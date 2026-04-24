@@ -1,3 +1,11 @@
+// OpenTelemetry init runs FIRST (before any other module load) so the
+// WebTracerProvider is registered before auto-instrumentations need it. The
+// init is opt-in via VITE_OTEL_ENABLED — default-off keeps bundle cost + CORS
+// spam out of normal dev sessions.
+import { initFrontendTelemetry } from './telemetry';
+
+initFrontendTelemetry();
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { StrictMode } from 'react';

@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   formatCheckpointBodyLine,
@@ -29,8 +29,10 @@ import {
   resolveShadowDir,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
+import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
 import { incrementShadowMigrationLegacyRefsDeleted } from './metrics.ts';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
+import { withSpan } from './telemetry.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +54,18 @@ export interface WriterIdentity {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const GIT_TIMEOUT_MS = 30_000;
+/**
+ * Per-op timeout for shadow-repo git invocations. Default 30s. Override via
+ * `OK_GIT_TIMEOUT_MS` for slow storage (NFS, heavily-used filesystems) or
+ * intentionally-low values in tests that exercise timeout failure paths.
+ * Invalid / non-positive values fall back to the 30s default.
+ */
+const GIT_TIMEOUT_MS = (() => {
+  const raw = process.env.OK_GIT_TIMEOUT_MS;
+  if (!raw) return 30_000;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30_000;
+})();
 
 /** Create a simple-git instance pointed at the shadow bare repo. */
 export function shadowGit(shadow: ShadowHandle) {
@@ -89,7 +102,7 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
   const legacyExists = existsSync(legacyDir);
   const newExists = existsSync(shadowDir);
   if (legacyExists && !newExists) {
-    renameSync(legacyDir, shadowDir);
+    tracedRenameSync(legacyDir, shadowDir);
   } else if (legacyExists && newExists) {
     console.warn('[shadow-repo] unexpected legacy + new shadow both present — no rename performed');
   }
@@ -97,7 +110,7 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
   // Skip init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
   if (!alreadyInit) {
-    mkdirSync(shadowDir, { recursive: true });
+    tracedMkdirSync(shadowDir, { recursive: true });
 
     const git = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
     await git.raw('init', '--bare', shadowDir);
@@ -214,6 +227,25 @@ export async function sweepLegacyShadowRefs(shadow: ShadowHandle): Promise<numbe
  * @param branch - Project branch name (e.g. 'main', 'feature/xyz'). When omitted, defaults to 'main'.
  */
 export async function commitWip(
+  shadow: ShadowHandle,
+  writer: WriterIdentity,
+  contentRoot: string,
+  message: string,
+  branch = 'main',
+): Promise<string> {
+  return withSpan(
+    'shadow.commitWip',
+    {
+      attributes: {
+        'shadow.writer': writer.id,
+        'shadow.branch': branch,
+      },
+    },
+    async () => commitWipInner(shadow, writer, contentRoot, message, branch),
+  );
+}
+
+async function commitWipInner(
   shadow: ShadowHandle,
   writer: WriterIdentity,
   contentRoot: string,
@@ -361,6 +393,26 @@ export async function commitWipFromTree(
   message: string,
   branch = 'main',
 ): Promise<string> {
+  return withSpan(
+    'shadow.commitWipFromTree',
+    {
+      attributes: {
+        'shadow.writer': writer.id,
+        'shadow.branch': branch,
+        'shadow.tree': treeSha.slice(0, 8),
+      },
+    },
+    async () => commitWipFromTreeInner(shadow, writer, treeSha, message, branch),
+  );
+}
+
+async function commitWipFromTreeInner(
+  shadow: ShadowHandle,
+  writer: WriterIdentity,
+  treeSha: string,
+  message: string,
+  branch = 'main',
+): Promise<string> {
   const ref = `refs/wip/${branch}/${writer.id}`;
   const sg = shadowGit(shadow);
 
@@ -430,6 +482,20 @@ const UPSTREAM_WRITER: WriterIdentity = GIT_UPSTREAM_WRITER;
  * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function commitUpstreamImport(
+  shadow: ShadowHandle,
+  contentRoot: string,
+  oldHead: string | null,
+  newHead: string,
+  branch = 'main',
+): Promise<string> {
+  return withSpan(
+    'shadow.commitUpstreamImport',
+    { attributes: { 'shadow.branch': branch, 'shadow.new_head': newHead.slice(0, 8) } },
+    async () => commitUpstreamImportInner(shadow, contentRoot, oldHead, newHead, branch),
+  );
+}
+
+async function commitUpstreamImportInner(
   shadow: ShadowHandle,
   contentRoot: string,
   oldHead: string | null,
@@ -589,7 +655,7 @@ export async function saveInMemoryCheckpoint(
   const message = `checkpoint: ${params.label}\n\n${bodyLine}`;
 
   try {
-    writeFileSync(tmpBlobFile, params.contents, 'utf-8');
+    tracedWriteFileSync(tmpBlobFile, params.contents, 'utf-8');
     const blobSha = (
       await sg
         .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
@@ -949,7 +1015,26 @@ export async function parkBranch(
   newBranch?: string,
 ): Promise<string | null> {
   if (documents.length === 0) return null;
+  return withSpan(
+    'shadow.parkBranch',
+    {
+      attributes: {
+        'shadow.branch': branch,
+        'shadow.new_branch': newBranch ?? '',
+        'shadow.doc_count': documents.length,
+      },
+    },
+    async () => parkBranchInner(shadow, branch, writerId, documents, newBranch),
+  );
+}
 
+async function parkBranchInner(
+  shadow: ShadowHandle,
+  branch: string,
+  writerId: string,
+  documents: ParkableDoc[],
+  newBranch?: string,
+): Promise<string | null> {
   const sg = shadowGit(shadow);
   const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
   const ref = `refs/wip/${branch}/${writerId}`;
@@ -959,7 +1044,7 @@ export async function parkBranch(
     // Build a tree with both Y.Doc state and disk snapshots
     for (const doc of documents) {
       // Store Y.Doc state at the doc's path
-      writeFileSync(tmpBlobFile, doc.markdown, 'utf-8');
+      tracedWriteFileSync(tmpBlobFile, doc.markdown, 'utf-8');
       const blobSha = (
         await sg
           .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
@@ -970,7 +1055,7 @@ export async function parkBranch(
         .raw('update-index', '--add', '--cacheinfo', `100644,${blobSha},${doc.docName}`);
 
       // Store disk snapshot at .park-base/<docName>
-      writeFileSync(tmpBlobFile, doc.diskSnapshot, 'utf-8');
+      tracedWriteFileSync(tmpBlobFile, doc.diskSnapshot, 'utf-8');
       const baseSha = (
         await sg
           .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
@@ -1087,6 +1172,24 @@ export interface SaveVersionResult {
  * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function saveVersion(
+  shadow: ShadowHandle,
+  contentRoot: string,
+  writers: WriterIdentity[],
+  branch = 'main',
+): Promise<SaveVersionResult> {
+  return withSpan(
+    'shadow.saveVersion',
+    {
+      attributes: {
+        'shadow.branch': branch,
+        'shadow.writer_count': writers.length,
+      },
+    },
+    async () => saveVersionInner(shadow, contentRoot, writers, branch),
+  );
+}
+
+async function saveVersionInner(
   shadow: ShadowHandle,
   contentRoot: string,
   writers: WriterIdentity[],

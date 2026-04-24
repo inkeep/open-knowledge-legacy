@@ -1,6 +1,26 @@
+import { context, trace } from '@opentelemetry/api';
 import type { LoggerOptions, Logger as PinoLoggerInstance, TransportSingleOptions } from 'pino';
 import pino from 'pino';
 import pinoPretty from 'pino-pretty';
+
+/**
+ * Pino mixin that injects OTel trace context into log records.
+ * When an active span exists, adds trace_id, span_id, and trace_flags.
+ * When no span is active, returns an empty object (no trace fields).
+ *
+ * This enables trace↔log correlation in Grafana: clicking a log line with
+ * trace_id jumps to the full trace in Tempo, and vice-versa.
+ */
+function otelMixin(): Record<string, unknown> {
+  const span = trace.getSpan(context.active());
+  if (!span) return {};
+  const ctx = span.spanContext();
+  return {
+    trace_id: ctx.traceId,
+    span_id: ctx.spanId,
+    trace_flags: ctx.traceFlags,
+  };
+}
 
 /**
  * Determines whether log output should be colorized.
@@ -53,6 +73,7 @@ export class PinoLogger {
         err: pino.stdSerializers.err,
         error: pino.stdSerializers.err,
       },
+      mixin: otelMixin,
       ...config.options,
     };
 
