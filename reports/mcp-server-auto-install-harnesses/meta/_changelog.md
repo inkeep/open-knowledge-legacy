@@ -157,3 +157,29 @@ The viable degraded patterns:
 3. **Cursor Extension + `registerServer()`** — only one-conversation path, gated on prior extension install (flips bootstrap problem from MCP to extension)
 
 **Strategic outlook:** This is a known gap every vendor tracks (open feature requests across all three). Betting on it becoming available in 6-12 months is reasonable; building on current state requires accepting two-conversation flow as baseline UX.
+
+---
+
+## 2026-04-24 — Path C pass: Agent Skills dimension + 6-day staleness refresh (run: 2026-04-24-skills-dim)
+
+Added Dim 12 to the rubric + refreshed the 6-day-old Cowork MCP findings.
+
+### New evidence files
+- [cowork-skills-surface-update-2026-04-24.md](../evidence/cowork-skills-surface-update-2026-04-24.md) — programmatic Agent Skills install per harness. Verdict for Cowork: **NO** (HIGH confidence, CONFIRMED).
+- [refresh-check-2026-04-24.md](../evidence/refresh-check-2026-04-24.md) — spot-check on bugs #26259 / #24433 / #26952 + Claude Code v2.1.116–v2.1.119 release notes.
+
+### New finding: Agent Skills install surface is Claude-Code-only among our 7 harnesses
+
+1. **`npx skills@~1.5.0` covers ~45 agent IDs** — `claude-code`, `cursor-agent`, `codex`, `gemini-cli`, `amp`, `opencode`, and many others — but **none of them is Cowork, Claude Desktop, or a transitive alias that reaches Cowork.**
+2. **Cowork VM filesystem isolation is total for skills.** The VM does not mount the host's `~/.claude/skills/`. It boots with a per-session synthetic filesystem that only resolves 6 built-in Anthropic skills; user-created skills land in ephemeral `local_<uuid>/.claude/skills/` directories that get wiped on session cleanup (claude-code#31422).
+3. **Sanctioned Cowork install paths are human-UI only** — per-user ZIP upload via `Customize > Skills > +` in Claude Desktop, or org-admin ZIP upload / GitHub-sync for Team+ plans. Neither is scriptable.
+4. **Known bug class: "registered but not mounted"** — #26254, #31542, #39400 report metadata-registered skills not actually loading inside the VM. Zero Anthropic-staff engagement as of 2026-04-24.
+5. **Cursor / Codex do not implement the Skills spec.** Cursor has `.cursor/rules/` (different convention); Codex's AGENTS.md is per-project, not user-global. Cross-harness skill reach beyond Claude Code is not achievable today without re-encoding guidance into per-tool MCP descriptions or per-project AGENTS.md.
+
+### 6-day refresh verdict
+
+**Parent report is still accurate.** Bug #26259 (stdio bridge) still open. Bug #24433 (per-tool re-approval) still CLOSED "not planned" (earlier 2026-04-18 `cowork-escape-paths.md` already captured this; new refresh confirms unchanged). Bug #26952 (`claude://` MCP install) still closed "not planned". Claude Code v2.1.116–v2.1.119 (Apr 20–23) shipped MCP-adjacent work (OAuth, header env-var substitution, hook→MCP invocation) but zero Cowork-specific fixes in the official changelog.
+
+### Scope note
+
+This Path C pass was driven by a specific question — "does `npx skills add --agent '*'` transitively cover Cowork?" — raised while building an Electron-app auto-installer (Open Knowledge). The answer is NO with high confidence. The broader ecosystem conclusion (Skills install is Claude-Code-only) also holds for any third-party developer tool evaluating cross-harness reach.

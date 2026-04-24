@@ -14,6 +14,7 @@
  */
 
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { OkDesktopConfig } from './bridge-contract.ts';
@@ -234,4 +235,27 @@ export interface RequestChannels {
    * Result is `undefined` — the renderer discards it.
    */
   'ok:mcp-wiring:renderer-ready': { args: []; result: undefined };
+
+  /**
+   * Returns true when Claude Desktop's config directory exists on this
+   * machine (macOS ~/Library/Application Support/Claude/ or Windows
+   * %APPDATA%/Claude/). Reuses the shared `detectClaudeDesktopPresence`
+   * helper so the init hint (CLI) and the install dialog (Electron) gate
+   * on the same signal. False on Linux (unsupported upstream).
+   * SPEC 2026-04-24 Ship 1e / D12.
+   */
+  'ok:skill:detect-claude-desktop': { args: []; result: boolean };
+
+  /**
+   * Build `openknowledge.skill` locally from the bundled SKILL.md source,
+   * write it to the user's Downloads folder, then invoke `shell.openPath`
+   * to route it to Claude Desktop via the `.skill` CFBundleDocumentType
+   * association. Renderer treats any `ok: true` response as "Claude Desktop
+   * has taken over — show 'Follow prompts in Claude' copy and wait."
+   *
+   * Local build (no network, no GitHub Releases dep) — version matches
+   * whatever the user's installed Electron app bundles.
+   * SPEC 2026-04-24 Ship 1e / 1j (local-build simplification).
+   */
+  'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
 }
