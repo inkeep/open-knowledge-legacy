@@ -1,41 +1,64 @@
+/**
+ * Zod-typed parsers for CC1 (push-over-awareness) stateless payloads
+ * received from the `__system__` Hocuspocus document.
+ *
+ * Every parser routes through a Zod v4 schema via `safeParse` — never
+ * `JSON.parse` + ad-hoc field checks. Each schema is the single source
+ * of truth for its channel's wire shape; consumer types are
+ * `z.infer<typeof Schema>`.
+ *
+ * Design (per `/eng:type-safety`):
+ *
+ * - **Schema-first.** Adding a field to the wire format means editing
+ *   one schema; the consumer type updates automatically.
+ *
+ * - **`.loose()` for forward-compat** (matches the precedent set by
+ *   `packages/server/src/auth-token-schema.ts`). Unknown wire fields
+ *   pass through to the parsed result rather than being stripped, so a
+ *   future server can add fields without breaking old clients. Same
+ *   semantics as v3's `.passthrough()`.
+ *
+ * - **Discriminated by `ch` literal.** Each schema pins `ch` to a
+ *   specific literal so the three parsers are mutually exclusive — no
+ *   payload can satisfy more than one. The `SystemDocSubscriber`
+ *   stateless handler tries them in order and short-circuits on the
+ *   first match.
+ *
+ * - **`null` on parse failure, never throw.** The stateless listener
+ *   sees a steady stream of payloads and must skip ones it doesn't
+ *   recognize without surfacing exceptions to React.
+ */
+
 import { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
-import type { CC1Signal as ServerCC1Signal } from '@inkeep/open-knowledge-server';
+import { z } from 'zod';
 
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
-export type DerivedViewChannel = 'files' | 'backlinks' | 'graph' | 'sync-status';
+/**
+ * Channels that carry derived-view invalidation hints (file list,
+ * backlink graph, hub graph, sync-status). Distinct from the
+ * `server-info` and `branch-switched` channels, which carry their own
+ * payload shapes.
+ */
+export const DerivedViewChannelSchema = z.enum(['files', 'backlinks', 'graph', 'sync-status']);
+export type DerivedViewChannel = z.infer<typeof DerivedViewChannelSchema>;
 
-interface CC1Signal extends ServerCC1Signal {
-  ch: DerivedViewChannel;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isDerivedViewChannel(value: unknown): value is DerivedViewChannel {
-  return value === 'files' || value === 'backlinks' || value === 'graph' || value === 'sync-status';
-}
+/**
+ * CC1 derived-view signal. The `v` discriminator pins the contract
+ * version; `seq` is monotonic per channel so debounced consumers can
+ * dedupe replays.
+ */
+const CC1SignalSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: DerivedViewChannelSchema,
+    seq: z.number(),
+  })
+  .loose();
+type CC1Signal = z.infer<typeof CC1SignalSchema>;
 
 export function parseCC1Signal(payload: string): CC1Signal | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return null;
-  }
-
-  if (!isObject(parsed)) return null;
-  if (parsed.v !== CC1_CONTRACT_VERSION) return null;
-  if (!isDerivedViewChannel(parsed.ch) || typeof parsed.seq !== 'number') {
-    return null;
-  }
-
-  return {
-    v: CC1_CONTRACT_VERSION,
-    ch: parsed.ch,
-    seq: parsed.seq,
-  };
+  return safeParseJson(payload, CC1SignalSchema);
 }
 
 /**
@@ -43,38 +66,20 @@ export function parseCC1Signal(payload: string): CC1Signal | null {
  * `packages/server/src/cc1-broadcast.ts:emitServerInfo`). Distinct from
  * `CC1Signal` because `server-info` bypasses debounce + monotonic seq
  * machinery and carries the per-process `serverInstanceId` as payload.
- * Kept separate from the `DerivedViewChannel` union so adding a new
- * derived-view channel doesn't accidentally create a channel whose
- * downstream treats an instance-ID payload as a cache-invalidation hint.
+ * Kept on its own schema so adding a new derived-view channel doesn't
+ * accidentally route an instance-ID payload to a derived-view consumer.
  */
-interface CC1ServerInfoSignal {
-  serverInstanceId: string;
-}
+const CC1ServerInfoSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: z.literal('server-info'),
+    serverInstanceId: z.string().min(1),
+  })
+  .loose();
+type CC1ServerInfoSignal = z.infer<typeof CC1ServerInfoSchema>;
 
-/**
- * Try to parse a `__system__` stateless payload as a CC1 `server-info`
- * broadcast. Returns the extracted `serverInstanceId` or `null` when the
- * payload is on a different channel, malformed, or missing the field.
- *
- * Called from `SystemDocSubscriber` alongside `parseCC1Signal`. The two
- * parsers are mutually exclusive by channel — no payload can match both.
- * Unparseable JSON or mismatched contract version yields `null`, not a
- * throw, so the stateless listener can cleanly skip.
- */
 export function parseCC1ServerInfo(payload: string): CC1ServerInfoSignal | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return null;
-  }
-  if (!isObject(parsed)) return null;
-  if (parsed.v !== CC1_CONTRACT_VERSION) return null;
-  if (parsed.ch !== 'server-info') return null;
-  if (typeof parsed.serverInstanceId !== 'string' || parsed.serverInstanceId.length === 0) {
-    return null;
-  }
-  return { serverInstanceId: parsed.serverInstanceId };
+  return safeParseJson(payload, CC1ServerInfoSchema);
 }
 
 /**
@@ -86,40 +91,35 @@ export function parseCC1ServerInfo(payload: string): CC1ServerInfoSignal | null 
  */
 export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched';
 
-/**
- * Shape consumers receive for a successfully-parsed `branch-switched`
- * broadcast. Carries only the fields call-sites act on; unknown wire
- * fields are dropped, which keeps the parse result forward-compatible
- * without tying consumers to future additions.
- */
-interface CC1BranchSwitchedSignal {
-  branch: string;
+const CC1BranchSwitchedSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: z.literal(CC1_CHANNEL_BRANCH_SWITCHED),
+    branch: z.string(),
+  })
+  .loose();
+type CC1BranchSwitchedSignal = z.infer<typeof CC1BranchSwitchedSchema>;
+
+export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedSignal | null {
+  return safeParseJson(payload, CC1BranchSwitchedSchema);
 }
 
 /**
- * Try to parse a `__system__` stateless payload as a CC1 `branch-switched`
- * broadcast. Returns the branch name payload or `null` when the message
- * is on a different channel, malformed, or missing the `branch` field.
- *
- * Called from `SystemDocSubscriber` alongside `parseCC1ServerInfo` and
- * `parseCC1Signal`. All three parsers are mutually exclusive by channel —
- * no payload can match more than one. Structural over-match is fine:
- * unknown fields pass through because the parser reads only the fields
- * it recognizes (forward-compat; mirrors the `.loose()` zod idiom used
- * by the server-side auth-token schema).
+ * Shared safe-parse for stateless CC1 payloads. JSON parse error or Zod
+ * schema mismatch yields `null` so the stateless listener can skip the
+ * frame without surfacing an exception. Uses `safeParse` (never throws)
+ * instead of `parse` per `/eng:type-safety` validation-narrowing
+ * guidance.
  */
-export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedSignal | null {
+function safeParseJson<T extends z.ZodType>(payload: string, schema: T): z.infer<T> | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
   } catch {
     return null;
   }
-  if (!isObject(parsed)) return null;
-  if (parsed.v !== CC1_CONTRACT_VERSION) return null;
-  if (parsed.ch !== CC1_CHANNEL_BRANCH_SWITCHED) return null;
-  if (typeof parsed.branch !== 'string') return null;
-  return { branch: parsed.branch };
+  const result = schema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 export function defaultCollabWsUrl(): string {

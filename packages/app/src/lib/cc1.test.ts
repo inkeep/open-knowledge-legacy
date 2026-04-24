@@ -48,10 +48,15 @@ describe('parseCC1BranchSwitched', () => {
           branch: 'main',
         }),
       ),
-    ).toEqual({ branch: 'main' });
+    ).toEqual({
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_BRANCH_SWITCHED,
+      seq: 1,
+      branch: 'main',
+    });
   });
 
-  test('tolerates extra unknown fields (forward-compat)', () => {
+  test('preserves unknown wire fields (forward-compat via .loose())', () => {
     const payload = JSON.stringify({
       v: CC1_CONTRACT_VERSION,
       ch: CC1_CHANNEL_BRANCH_SWITCHED,
@@ -60,7 +65,14 @@ describe('parseCC1BranchSwitched', () => {
       extra: 'whatever',
       nested: { lol: true },
     });
-    expect(parseCC1BranchSwitched(payload)).toEqual({ branch: 'feature/auth' });
+    expect(parseCC1BranchSwitched(payload)).toEqual({
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_BRANCH_SWITCHED,
+      seq: 7,
+      branch: 'feature/auth',
+      extra: 'whatever',
+      nested: { lol: true },
+    });
   });
 
   test('returns null for malformed JSON', () => {
