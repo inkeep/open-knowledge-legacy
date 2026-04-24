@@ -86,3 +86,16 @@ with shared chrome, Steps + Step) is not built in today; it returns
 when concrete dev-docs / help-center authoring demand surfaces. No
 public API will change for existing 5-pack consumers when that
 happens.
+
+Bundle size:
+
+- Main app bundle stays flat (~210 kB gzipped) — the `fumadocs-ui`
+  drop and 12-descriptor cut offset the 5-pack prop-surface widening
+  and new selection-chrome plugins.
+- Total JS across lazy-loaded chunks grows ~60 kB gzipped (~978 kB →
+  ~1.04 MB) to accommodate CB-v2 feature surface (descriptor-dispatch
+  registry, V2 editor cache, SelectionStatePlugin + Breadcrumb +
+  SelectionAnnouncer + BlockDragHandle, nested CodeMirror for
+  `rawMdxFallback`, slash-command menu). This is delivered via
+  on-demand chunk loading — users don't pay the full bill on first
+  paint.

@@ -21,16 +21,17 @@ byte-identically on pristine save.
 |---|---|---|---|
 | `Callout` | Content | `> [!NOTE]\nText` (GFM alerts; `+`/`-` suffix for foldable) | `<Callout type="note" title="…" icon="lucide:…" color="#…" collapsible defaultOpen>…</Callout>` |
 | `Image` | Media | `![alt](src)` (standard CommonMark) | `<Image src="…" alt="…" width={…} height={…} caption="…" title="…" loading="lazy" zoom />` |
-| `Video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<Video src="…" poster="…" autoPlay muted loop playsInline controls preload="…">…</Video>` |
-| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoPlay loop muted preload="…">…</Audio>` |
+| `Video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<Video src="…" poster="…" autoPlay muted loop playsInline controls preload="…" />` |
+| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoPlay loop muted preload="…" />` |
 | `Accordion` | Content | `<details open><summary>X</summary>Y</details>` | `<Accordion title="X" defaultOpen icon="lucide:…" description="…" id="…" name="…">Y</Accordion>` |
 
 > **Prop counts in this section** include `children` for components
-> that accept it (every component except `Image`). The `Props (N)` count
+> that accept it (`Callout` and `Accordion`). The `Props (N)` count
 > matches the number of typed entries in the component's prop panel +
 > the children slot, so you can read it as "everything that lands in
-> the editor surface." `Image` has no children slot (it's
-> self-closing), so its count reflects only typed props.
+> the editor surface." `Image`, `Video`, and `Audio` have no children
+> slot (they're self-closing leaves), so their counts reflect only
+> typed props.
 
 ### Callout
 

@@ -46,6 +46,18 @@ const fixtures = loadBuiltInFixtures();
 // (Callout|Accordion) {in} (Callout|Accordion) shape combinations.
 const nestedFixtures = fixtures.filter((f) => f.componentName.startsWith('Nested-'));
 
+// Fail loudly if the fixture set ever loses its `Nested-*` entries — the
+// per-fixture `if (allPaths.length < 2) return` guard below would otherwise
+// silently degrade this PBT to a no-op, and the nested-dirty invariant it
+// protects (pristine ancestor emits stale sourceRaw → descendant edit lost)
+// is load-bearing for γ data preservation.
+if (nestedFixtures.length === 0) {
+  throw new Error(
+    'I16 precondition: no Nested-* fixtures found in built-ins.json. ' +
+      'The PBT would silently no-op and the hasDirtyDescendant walk would go unprotected.',
+  );
+}
+
 /**
  * Collect every jsxComponent node into a flat list with its path (indices
  * from root). Used so the PBT can pick a subset by path rather than having
