@@ -7,7 +7,7 @@
  * lives on the file-row action area (FR-P18, FR-P19).
  */
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { BurstData } from '@/lib/use-activity-panel';
 import { ActivityPanelDiffView } from './ActivityPanelDiffView';
 
@@ -35,8 +35,14 @@ export function ActivityPanelBurstRow({
   const [diff, setDiff] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const now = Date.now();
+  // React Compiler: `Date.now()` is impure — hoist behind useState + tick
+  // every 30 s so relative-timestamp labels stay fresh without violating
+  // render purity.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const toggle = (): void => {
     const next = !expanded;

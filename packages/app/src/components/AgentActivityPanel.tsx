@@ -19,6 +19,7 @@
  * On success, `reload()` fires to refresh the file list.
  */
 import { AlertCircle, Loader2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useActivityPanel } from '@/lib/use-activity-panel';
@@ -115,7 +116,14 @@ function EmptyState(): React.JSX.Element {
 }
 
 function SessionEndedBanner({ lastTs }: { lastTs: number | null }): React.JSX.Element {
-  const ago = lastTs ? formatAgo(Date.now() - lastTs) : null;
+  // `Date.now()` is impure — React Compiler rejects direct render calls.
+  // Hoist via useState + 30 s tick so the "Xm ago" copy stays fresh.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const ago = lastTs ? formatAgo(now - lastTs) : null;
   return (
     <div
       className="border-b border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground"

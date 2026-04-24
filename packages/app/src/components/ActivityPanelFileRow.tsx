@@ -16,7 +16,7 @@
  * Both buttons disabled when sessionAlive === false OR bursts.length === 0.
  */
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -59,13 +59,21 @@ export function ActivityPanelFileRow({
   const [expanded, setExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [undoInFlight, setUndoInFlight] = useState(false);
+  // `Date.now()` is an impure function — calling it directly in render
+  // violates React Compiler's purity contract. Seed `now` once at mount + tick
+  // it every ~30 s so the relative timestamp ("15s ago") stays reasonably
+  // fresh without re-rendering every frame.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // D-P18: empty rows disappear. Defensive guard in the component itself in
   // case the parent hasn't filtered yet (should be rare since the hook's
   // data.files is the source of truth and typically pre-filters).
   if (file.bursts.length === 0) return null;
 
-  const now = Date.now();
   const disabled = !sessionAlive || file.bursts.length === 0 || undoInFlight;
 
   const handleUndoLast = (): void => {
