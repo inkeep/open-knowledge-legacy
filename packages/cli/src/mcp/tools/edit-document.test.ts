@@ -63,6 +63,7 @@ let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 const requestBodies: unknown[] = [];
 let mockSubscriberCount: number | undefined = 1;
+let mockSystemSubscriberCount: number | undefined = 1;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -85,6 +86,9 @@ beforeAll(() => {
           ok: true,
           timestamp: '2026-04-14T22:00:00.000Z',
           ...(mockSubscriberCount !== undefined ? { subscriberCount: mockSubscriberCount } : {}),
+          ...(mockSystemSubscriberCount !== undefined
+            ? { systemSubscriberCount: mockSystemSubscriberCount }
+            : {}),
         });
       }
 
@@ -106,6 +110,7 @@ beforeEach(async () => {
   originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   mockSubscriberCount = 1;
+  mockSystemSubscriberCount = 1;
 });
 
 afterEach(async () => {
@@ -226,9 +231,10 @@ describe('edit_document MCP tool', () => {
     expect(result.content[0]?.text).toBe('Edit applied successfully.');
   });
 
-  test('emits warning with previewUrl when subscriberCount=0', async () => {
+  test('emits attach-preview-once hint with previewUrl when systemSubscriberCount=0', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
     mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
 
     register(server, makeDeps());
@@ -243,15 +249,19 @@ describe('edit_document MCP tool', () => {
       previewUrl: 'https://env.example/#/notes',
       previewUrlSource: 'env',
       warning: {
-        message: 'No preview attached to notes.',
+        action: 'attach-preview-once',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: 'https://env.example/#/notes',
       },
     });
-    expect(result.content[0]?.text).toContain('Warning: no preview is currently attached');
+    expect(result.content[0]?.text).toContain(
+      'Open https://env.example/#/notes in your preview browser.',
+    );
   });
 
-  test('emits warning with null previewUrl when subscriberCount=0 and no resolver source', async () => {
+  test('emits attach-preview-once hint with null previewUrl when systemSubscriberCount=0 and no resolver source', async () => {
     mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
 
     register(server, makeDeps());
@@ -264,15 +274,34 @@ describe('edit_document MCP tool', () => {
 
     expect(result.structuredContent).toMatchObject({
       warning: {
-        message: 'No preview attached to notes.',
+        action: 'attach-preview-once',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: null,
       },
     });
     expect(result.structuredContent?.previewUrl).toBeUndefined();
   });
 
-  test('no warning emitted when server omits subscriberCount field (legacy server)', async () => {
+  test('no hint when systemSubscriberCount>0 even if per-doc subscriberCount=0 (second doc, server-push follows)', async () => {
+    mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 1;
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'notes',
+      find: 'Project Alpha',
+      replace: '[[Project Alpha]]',
+    });
+
+    expect(result.structuredContent?.warning).toBeUndefined();
+    expect(result.content[0]?.text).not.toContain('No preview attached');
+  });
+
+  test('no warning emitted when server omits systemSubscriberCount field (legacy server)', async () => {
     mockSubscriberCount = undefined;
+    mockSystemSubscriberCount = undefined;
     const { server, getTool } = createFakeServer();
 
     register(server, makeDeps());

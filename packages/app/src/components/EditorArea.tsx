@@ -1,12 +1,13 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
+import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -45,7 +46,14 @@ function EditorAreaInner({
   onEntrySelect,
   selectedSha,
 }: EditorAreaProps) {
-  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
+  const {
+    activeDocName,
+    activeProvider,
+    activeTarget,
+    recycleDocument,
+    docPanelMode,
+    docPanelExpandSignal,
+  } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
@@ -88,6 +96,24 @@ function EditorAreaInner({
       }
     }
   }, [autoCollapse, docPanelLayout, panelRef]);
+
+  // SPEC-24 FR-T10: expand-on-avatar-click. `docPanelExpandSignal` is a
+  // monotonic counter incremented by `DocumentContext.openActivityPanel`
+  // (called from `PresenceBar` avatar clicks and the mode-toggle button).
+  // When it increments, expand/open the panel in whichever layout mode
+  // is active. Initial 0 → 0 transition (mount) is harmless — calling
+  // `expand` when already expanded is a no-op in react-resizable-panels.
+  useEffect(() => {
+    if (docPanelExpandSignal === 0) return;
+    if (isSheetMode) {
+      setSheetOpen(true);
+    } else {
+      // Panel mode — clear the user-collapsed sticky flag so the
+      // expand call isn't immediately fought by a later layout effect.
+      userCollapsedRef.current = false;
+      panelRef.current?.expand();
+    }
+  }, [docPanelExpandSignal, isSheetMode, panelRef]);
 
   // Track the previously-active docName for DocumentErrorBoundary's
   // "Back to previous document" affordance. Updated AFTER render (effect) so
@@ -190,12 +216,7 @@ function EditorAreaInner({
     if (hashDoc !== null) {
       return <EditorSkeleton />;
     }
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
-        <OkBlob size={80} />
-        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      </div>
-    );
+    return <EmptyEditorState />;
   }
 
   const isDiffMode = editorMode === 'diff';
@@ -340,6 +361,7 @@ function EditorAreaInner({
               onActiveTabChange={setActiveTab}
               onEntrySelect={onEntrySelect}
               selectedSha={selectedSha}
+              mode={docPanelMode}
             />
           </SheetContent>
         </Sheet>
@@ -375,9 +397,38 @@ function EditorAreaInner({
             onActiveTabChange={setActiveTab}
             onEntrySelect={onEntrySelect}
             selectedSha={selectedSha}
+            mode={docPanelMode}
           />
         </ResizablePanel>
       </ResizablePanelGroup>
+    </div>
+  );
+}
+
+/**
+ * Landing state when no document is selected. Shows the OkBlob plus an
+ * optional CTA to initialize the Karpathy three-layer knowledge-base
+ * structure (`external-sources/`, `research/`, `articles/` + log.md + matching
+ * `config.yml` `folders:` entries). Works in both the Electron desktop app
+ * and the web editor — the SeedDialog internally routes to IPC when
+ * `window.okDesktop` is present, otherwise to the `/api/seed/*` HTTP
+ * endpoints.
+ */
+function EmptyEditorState() {
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <OkBlob size={80} />
+      <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+      <div className="flex flex-col items-center gap-2">
+        <Button variant="outline" onClick={() => setSeedDialogOpen(true)}>
+          <BrainCircuit aria-hidden="true" className="h-4 w-4" />
+          Initialize LLM brain
+        </Button>
+        <span className="text-xs text-muted-foreground">Optional starter structure</span>
+      </div>
+      <SeedDialog open={seedDialogOpen} onOpenChange={setSeedDialogOpen} />
     </div>
   );
 }

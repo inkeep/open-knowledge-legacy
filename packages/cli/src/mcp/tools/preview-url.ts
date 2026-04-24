@@ -118,7 +118,7 @@ export interface UiInfo {
  * Pure helper: given a resolved lockDir + config, return the UI origin if the
  * lock points at a live, bound UI process. Never throws.
  */
-export function resolveUiInfo(ctx: PreviewUrlContext): UiInfo {
+function resolveUiInfo(ctx: PreviewUrlContext): UiInfo {
   try {
     const lock = readUiLock(ctx.lockDir);
     if (lock && lock.port > 0) {

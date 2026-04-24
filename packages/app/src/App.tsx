@@ -4,6 +4,7 @@ import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
+import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { McpConsentDialog } from '@/components/McpConsentDialog';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
 import { resolveNavigationTarget } from '@/components/navigation-targets';
@@ -61,6 +62,40 @@ function NavigationHandler() {
   return null;
 }
 
+/**
+ * Mounts `InstallInClaudeDesktopDialog` at the App root and opens it when
+ * `window.location.hash === '#install-claude-desktop'`. This is the minimum
+ * viable trigger for Ship 1e — docs and future in-app CTAs link to the hash.
+ * The hash clears when the dialog closes so it reopens only if the user
+ * navigates back to the URL fragment. SPEC 2026-04-24 FR9-FR13.
+ */
+const INSTALL_DIALOG_HASH = '#install-claude-desktop';
+function InstallInClaudeDesktopTrigger() {
+  const [open, setOpen] = useState(
+    typeof window !== 'undefined' && window.location.hash === INSTALL_DIALOG_HASH,
+  );
+
+  useEffect(() => {
+    function onHashChange() {
+      if (window.location.hash === INSTALL_DIALOG_HASH) setOpen(true);
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next && window.location.hash === INSTALL_DIALOG_HASH) {
+      // Clear the fragment so closing doesn't instantly re-open on refresh.
+      // Uses history.replaceState to avoid adding a history entry.
+      const { pathname, search } = window.location;
+      window.history.replaceState(null, '', `${pathname}${search}`);
+    }
+  }
+
+  return <InstallInClaudeDesktopDialog open={open} onOpenChange={handleOpenChange} />;
+}
+
 function NewItemShortcutHandler() {
   const { activeDocName, activeTarget } = useDocumentContext();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -116,6 +151,7 @@ export function App() {
           <SystemDocSubscriber />
           <NavigationHandler />
           <NewItemShortcutHandler />
+          <InstallInClaudeDesktopTrigger />
           {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
               Self-gates on the shared `mcpConsentStore` snapshot; renders
               nothing until main fires `ok:mcp-wiring:show`. Mounted

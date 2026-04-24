@@ -41,6 +41,7 @@ import {
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  SYSTEM_DOC_NAME,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import {
@@ -53,6 +54,7 @@ import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromFile } from 'file-type';
 import { captureEffect } from './activity-log.ts';
+import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
@@ -95,7 +97,7 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
+import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -144,6 +146,7 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import { applySeed, planSeed, type ScaffoldPlan, SeedPrerequisiteError } from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
@@ -173,6 +176,19 @@ function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHisto
     });
   }
   return _httpDurationHist;
+}
+
+// Lazy-init so the counter registers against a real meter post-initTelemetry
+// (not the pre-init no-op). Matches the httpDurationHist pattern above.
+let _hintEmittedCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
+function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_hintEmittedCounter) {
+    _hintEmittedCounter = getMeter().createCounter('ok.preview_attach.hint_emitted', {
+      description:
+        'Count of attach-preview-once hints emitted on write-tool responses when no editor is attached to __system__',
+    });
+  }
+  return _hintEmittedCounter;
 }
 
 /**
@@ -1079,14 +1095,36 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * Return the number of live browser/editor connections currently subscribed
    * to the given Hocuspocus document. Zero means the agent is writing to a
-   * room nobody is watching — the MCP tool surfaces that as a warning so the
-   * user can open the preview.
+   * room nobody is watching. Under the once-per-session preview-attach
+   * contract, this is a per-doc diagnostic — the hint threshold is
+   * `getSystemSubscriberCount()` (transport-presence on `__system__`).
    *
    * Never throws: a Hocuspocus introspection failure is silent (returns 0).
    */
   function getSubscriberCount(docName: string): number {
     try {
       const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Return the number of live connections to the `__system__` Y.Doc — the
+   * shared awareness channel every editor tab subscribes to. Zero means no
+   * editor is attached to this server anywhere; non-zero means at least one
+   * tab is watching (and will follow agent writes via `AgentFocusBroadcaster`).
+   *
+   * This is the correct signal for the once-per-session preview-attach hint:
+   * the per-doc count flips on every new doc even when the user's tab is open
+   * and following, which would produce spurious "attach" hints.
+   *
+   * Never throws.
+   */
+  function getSystemSubscriberCount(): number {
+    try {
+      const doc = hocuspocus.documents.get(SYSTEM_DOC_NAME);
       return doc?.connections.size ?? 0;
     } catch {
       return 0;
@@ -1842,11 +1880,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const hints = computeOrphanHints(resolvedDocName);
 
       const subscriberCount = getSubscriberCount(resolvedDocName);
+      const systemSubscriberCount = getSystemSubscriberCount();
+
+      // Once-per-session attach hint counter: fires when no editor is attached
+      // to `__system__` (transport-presence = false). Labels are bounded-
+      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
+      // is always `agent` at this call site (`handleAgentWriteMd`), and
+      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
+      if (systemSubscriberCount === 0) {
+        hintEmittedCounter().add(1, {
+          'shadow.writer': 'agent',
+          'agent.type': resolveAgentType(clientName),
+        });
+      }
 
       json(res, 200, {
         ok: true,
         timestamp,
         subscriberCount,
+        systemSubscriberCount,
         ...(hints ? { hints } : {}),
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
@@ -2439,6 +2491,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       onAgentWrite?.();
 
       const subscriberCount = getSubscriberCount(docName);
+      const systemSubscriberCount = getSystemSubscriberCount();
+
+      // Once-per-session attach hint counter (matches handleAgentWriteMd).
+      if (systemSubscriberCount === 0) {
+        hintEmittedCounter().add(1, {
+          'shadow.writer': 'agent',
+          'agent.type': resolveAgentType(clientName),
+        });
+      }
 
       const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
 
@@ -2446,6 +2507,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ok: true,
         timestamp,
         subscriberCount,
+        systemSubscriberCount,
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
@@ -2514,7 +2576,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const rawScope = body.scope;
-      const scope: 'last' | 'session' = rawScope === 'session' ? 'session' : 'last';
+      // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
+      const scope: 'last' | 'session' =
+        rawScope === 'session' || rawScope === 'file' ? 'session' : 'last';
 
       if (!sessionManager.hasSession(docName, connectionId)) {
         json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
@@ -2579,6 +2643,112 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, docName, scope, undone });
     } catch (e) {
       log.error({ err: e }, '[agent-undo] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * GET /api/agent-activity?agentId=<connId>
+   * Returns per-file + per-burst stats for one agent's session(s).
+   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
+   */
+  async function handleAgentActivity(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
+      // POST handler) — consistent identity shape across all surfaces per
+      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
+      const agentId = validateAgentId(url.searchParams.get('agentId'));
+      if (agentId === null) {
+        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
+        return;
+      }
+      const result = listAgentActivity(sessionManager, agentId);
+      json(res, 200, { ok: true, ...result });
+    } catch (e) {
+      log.error({ err: e }, '[agent-activity] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * GET /api/agent-burst-diff?agentId=<connId>&docName=<path>&stackIndex=<n>
+   * Returns unified-diff text for one StackItem in a given session.
+   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
+   */
+  async function handleAgentBurstDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const agentId = validateAgentId(url.searchParams.get('agentId'));
+      const rawDocName = url.searchParams.get('docName');
+      const stackIndexStr = url.searchParams.get('stackIndex');
+
+      if (agentId === null) {
+        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
+        return;
+      }
+      if (!rawDocName || rawDocName.trim() === '') {
+        json(res, 400, { ok: false, error: 'docName required' });
+        return;
+      }
+      // Same docName validator every mutating POST handler uses — parity with
+      // the rest of the API surface (path traversal, reserved names).
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+      if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
+        json(res, 400, { ok: false, error: 'stackIndex must be a number' });
+        return;
+      }
+      const stackIndex = Number(stackIndexStr);
+      if (!Number.isInteger(stackIndex) || stackIndex < 0) {
+        json(res, 400, { ok: false, error: 'stackIndex must be a non-negative integer' });
+        return;
+      }
+
+      // Typed accessor — no `(as any).sessions` bypass.
+      const session = sessionManager.getLiveSession(docName, agentId);
+      if (!session) {
+        json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
+        return;
+      }
+
+      const um = session.um;
+      if (stackIndex >= um.undoStack.length) {
+        json(res, 404, {
+          ok: false,
+          error: `stackIndex ${stackIndex} out of range (stack has ${um.undoStack.length} items)`,
+        });
+        return;
+      }
+
+      // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
+      const stackItem = um.undoStack[stackIndex] as any;
+      const ytext = session.dc.document.getText('source');
+      const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
+      // `generatedAt` is the server's wall clock at response time (used for
+      // client-side cache staleness). The StackItem's capture timestamp is
+      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
+      // to duplicate it here.
+      json(res, 200, { ok: true, diff, generatedAt: Date.now() });
+    } catch (e) {
+      log.error({ err: e }, '[agent-burst-diff] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -5619,6 +5789,67 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
+  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
+  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
+  //
+  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
+  // three surfaces share `planSeed` / `applySeed` from the server seed module.
+  // Gated on `checkLocalOpSecurity` because the operation mutates the local
+  // filesystem; same contract as /api/local-op/* and /api/installed-agents.
+
+  async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const plan = await planSeed({ projectDir: contentDir });
+      json(res, 200, { ok: true, plan });
+    } catch (err) {
+      if (err instanceof SeedPrerequisiteError) {
+        json(res, 200, {
+          ok: false,
+          error: { kind: 'prerequisite-missing', message: err.message },
+        });
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
+  async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let plan: ScaffoldPlan;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { plan?: unknown };
+      if (!parsed.plan || typeof parsed.plan !== 'object') {
+        json(res, 400, { ok: false, error: 'Missing or invalid plan' });
+        return;
+      }
+      plan = parsed.plan as ScaffoldPlan;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await applySeed(plan, { projectDir: contentDir });
+      json(res, 200, { ok: true, result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5677,6 +5908,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
     '/api/agent-undo': handleAgentUndo,
+    '/api/agent-activity': handleAgentActivity,
+    '/api/agent-burst-diff': handleAgentBurstDiff,
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,
@@ -5704,6 +5937,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/seed/plan': handleSeedPlan,
+    '/api/seed/apply': handleSeedApply,
   };
 
   if (enableTestRoutes) {

@@ -13,17 +13,21 @@
  * directories for tools that are not installed.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { ensureProjectGit, ProjectGitInitError } from '@inkeep/open-knowledge-server';
+import { dirname, join, relative, resolve } from 'node:path';
+import {
+  detectClaudeDesktopPresence,
+  ensureProjectGit,
+  type InstallUserSkillOptions,
+  type InstallUserSkillResult,
+  installUserSkill,
+  ProjectGitInitError,
+} from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
-import {
-  initContent,
-  type RootInstructionResult,
-  upsertRootInstructions,
-} from '../content/init.ts';
+import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { accent, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -131,12 +135,16 @@ interface InitCommandOptions {
   /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
   devMcp?: boolean;
   editors?: EditorId[];
-  /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
-  rootInstructions?: boolean;
   /** Override home directory (test-only, for global editor config paths). */
   home?: string;
   /** Override the current CLI entry path (test-only; used by --dev-mcp). */
   cliEntryPath?: string;
+  /**
+   * Inject a pre-fabricated `installUserSkill` implementation (test hook).
+   * Production callers omit this and hit the real `installUserSkill` from
+   * `@inkeep/open-knowledge-server`. Introduced per SPEC 2026-04-22 FR6.
+   */
+  installUserSkill?: (opts?: InstallUserSkillOptions) => Promise<InstallUserSkillResult>;
 }
 
 interface InitCommandResult {
@@ -146,14 +154,25 @@ interface InitCommandResult {
   editors: EditorMcpResult[];
   /** Legacy project-local MCP configs left in place after global init. */
   legacyProjectConfigs: LegacyProjectConfigResult[];
-  /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
-  rootInstructions: RootInstructionResult[];
+  /**
+   * Result of the user-global Agent Skill install step (SPEC 2026-04-22 FR6).
+   * `undefined` only when `content` scaffolding failed before the install
+   * step could run.
+   */
+  skillInstall?: InstallUserSkillResult;
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
   launchJson?: LaunchJsonResult;
   /** `true` if `ensureProjectGit` ran `git init` during this invocation (SPEC R2 / D9). */
   didGitInit: boolean;
+  /**
+   * `true` when Claude Desktop's config directory is present on this machine.
+   * Used to decide whether to append the Cowork install hint to the summary.
+   * Detection reuses `detectClaudeDesktopPresence` from
+   * `@inkeep/open-knowledge-server`; returns false on Linux (unsupported).
+   */
+  claudeDesktopDetected: boolean;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
   mcpPath: string;
@@ -533,8 +552,8 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
       contentSkipped: [],
       editors: [],
       legacyProjectConfigs: [],
-      rootInstructions: [],
       didGitInit: gitResult.didInit,
+      claudeDesktopDetected: false,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -581,15 +600,22 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const launchJson =
     hasClaude && options.mcp !== false ? scaffoldLaunchJson(cwd, installOptions) : undefined;
 
-  // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
-  const extraInstructionFiles = availableTargets
-    .map((t) => t.instructionsPath?.(cwd))
-    .filter((p): p is string => p !== undefined)
-    .map((p) => (isAbsolute(p) ? relative(cwd, p) : p));
-  const rootInstructions =
-    options.rootInstructions === false
-      ? []
-      : upsertRootInstructions(cwd, true, extraInstructionFiles);
+  // Per SPEC 2026-04-22 (D2 LOCKED / FR1): `ok init` no longer writes
+  // to root AGENTS.md / CLAUDE.md. Behavioral guidance ships via (1)
+  // compressed MCP instructions handshake, (2) per-tool MCP tool
+  // descriptions, and (3) the user-global Agent Skill installed via
+  // `installUserSkill` from @inkeep/open-knowledge-server.
+
+  // 4. Install the user-global Agent Skill (SPEC FR6 / D17). Non-fatal per
+  // D6 — init exits 0 even on install failure; users see a warning + a
+  // manual-install hint in the summary.
+  const installSkill = options.installUserSkill ?? installUserSkill;
+  const skillInstall = await installSkill({ home: options.home });
+
+  // 5. Detect Claude Desktop for the Cowork install hint (SPEC 2026-04-24
+  // D12 / FR5). Non-fatal — just controls whether the summary surfaces the
+  // hint line. Linux returns false (Anthropic doesn't ship a Linux build).
+  const claudeDesktopDetected = detectClaudeDesktopPresence({ home: options.home });
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const defaultAction: EditorMcpResult['action'] =
@@ -605,9 +631,10 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     contentSkipped: contentResult.skipped,
     editors: editorResults,
     legacyProjectConfigs,
-    rootInstructions,
     launchJson,
+    skillInstall,
     didGitInit: gitResult.didInit,
+    claudeDesktopDetected,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -738,31 +765,44 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     );
   }
 
-  // Root instructions (AGENTS.md) summary
-  if (result.rootInstructions.length > 0) {
-    const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
-    if (visible.length > 0) {
-      lines.push('');
-      lines.push('Root instructions:');
-      for (const r of visible) {
-        const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
-        const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
-        switch (r.action) {
-          case 'created':
-            lines.push(`  ${r.file}${pad}${rel}  created`);
-            break;
-          case 'appended':
-            lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
-            break;
-          case 'replaced':
-            lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section`);
-            break;
-          case 'skipped-existing':
-            lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
-            break;
-        }
-      }
+  // Root instructions (AGENTS.md) summary — removed per SPEC 2026-04-22
+  // (D2 LOCKED / FR1). `runInit` no longer writes to root AGENTS.md /
+  // CLAUDE.md; skill-install replaces it. Output block deleted along with
+  // the upstream behavior.
+
+  // User-global skill install summary (SPEC 2026-04-22 FR6 / D17)
+  if (result.skillInstall) {
+    lines.push('');
+    lines.push('User-global skill:');
+    switch (result.skillInstall) {
+      case 'installed':
+        lines.push('  open-knowledge  installed to detected agent hosts via `npx skills`');
+        break;
+      case 'skip-current':
+        lines.push('  open-knowledge  already installed at current version');
+        break;
+      case 'failed':
+        lines.push(
+          `  ${warning('open-knowledge  install failed — MCP still configured; run manually:')}`,
+        );
+        lines.push(
+          `  ${warning("  npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy")}`,
+        );
+        break;
     }
+  }
+
+  // Chat & Cowork install hint (SPEC 2026-04-24 FR5 / D12). Surfaced only
+  // when the Claude Desktop App's config dir exists on this machine.
+  // `npx skills` covers Claude Code (including the Code tab inside the
+  // Desktop App) but not Claude Chat or Claude Cowork modes — those read
+  // from a separate, isolated Skills list and need a manual `.skill`
+  // install via `ok install-skill`.
+  if (result.claudeDesktopDetected) {
+    lines.push('');
+    lines.push(
+      `Claude Desktop App detected. To enable in Claude Chat & Cowork, run: ${accent('ok install-skill')}`,
+    );
   }
 
   // Content preview block (between MCP and Next steps)
@@ -784,10 +824,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push('Next steps:');
     lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
     lines.push('  2. Approve the MCP server when prompted');
-    lines.push('  3. The knowledge base is ready — use the three workflow tools:');
-    lines.push('     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase');
-    lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
-    lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
+    lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
+    lines.push('     - ok seed');
+    lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
+    lines.push('     - mcp__open-knowledge__ingest      — capture an external source');
+    lines.push('     - mcp__open-knowledge__research    — gather sources and write findings');
+    lines.push('     - mcp__open-knowledge__consolidate — promote research to canonical articles');
   }
 
   return lines.join('\n');

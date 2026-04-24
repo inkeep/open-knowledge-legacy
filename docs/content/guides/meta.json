@@ -8,9 +8,11 @@
     "assets-and-embeds",
     "cli-reference",
     "mcp-integration",
+    "install-claude-cowork",
     "open-in-agent-desktop",
     "content-filtering",
     "timeline",
+    "agent-activity-panel",
     "collaboration-recovery"
   ]
 }

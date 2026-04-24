@@ -227,13 +227,6 @@ export interface EditorMcpTarget {
   detectPath?: (cwd: string, home?: string) => string;
   /** Legacy project-local MCP config path from pre-global installs, if any. */
   legacyProjectConfigPath?: (cwd: string) => string;
-  /**
-   * Project-local agent instruction file to inject the Open Knowledge section
-   * into, if any. Claude reads CLAUDE.md; every other editor picks up the
-   * tool-agnostic root AGENTS.md which `open-knowledge init` always writes.
-   * Only declared for editors that can't read AGENTS.md directly.
-   */
-  instructionsPath?: (cwd: string) => string;
 }
 
 function managedFieldEquals(a: unknown, b: unknown): boolean {
@@ -296,7 +289,6 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     scope: 'global',
     detectPath: (_cwd, home) => join(home ?? homedir(), '.claude'),
     legacyProjectConfigPath: (cwd) => join(cwd, '.mcp.json'),
-    instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   }),
   'claude-desktop': createEditorTarget({
     id: 'claude-desktop',

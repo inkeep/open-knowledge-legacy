@@ -202,3 +202,54 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
     expect(body.hints).toBeUndefined();
   });
 });
+
+/**
+ * Once-per-session preview-attach contract — L1 integration (FR7a).
+ *
+ * The `systemSubscriberCount` response field is the canonical signal agents
+ * use to decide whether to open a preview. It counts connections to the
+ * `__system__` Y.Doc (transport-presence), NOT the target doc's connections.
+ * This is what lets the contract collapse to "attach once, write freely" —
+ * subsequent writes to new docs don't re-fire the hint because any open tab
+ * subscribes to `__system__` regardless of which doc it's currently viewing.
+ */
+describe('systemSubscriberCount response field — L1 integration (FR7a)', () => {
+  async function postWriteRaw(
+    docName: string,
+    body: string,
+  ): Promise<{
+    ok: boolean;
+    subscriberCount?: number;
+    systemSubscriberCount?: number;
+  }> {
+    const res = await fetch(`http://localhost:${server.port}/api/agent-write-md`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ markdown: body, position: 'replace', docName }),
+    });
+    return res.json() as Promise<{
+      ok: boolean;
+      subscriberCount?: number;
+      systemSubscriberCount?: number;
+    }>;
+  }
+
+  test('response includes systemSubscriberCount alongside subscriberCount', async () => {
+    const docName = `ssc-${crypto.randomUUID().slice(0, 8)}`;
+    const body = await postWriteRaw(docName, '# hello');
+    expect(body.ok).toBe(true);
+    expect(typeof body.subscriberCount).toBe('number');
+    expect(typeof body.systemSubscriberCount).toBe('number');
+  });
+
+  test('systemSubscriberCount is 0 when no editor is attached to __system__', async () => {
+    // No client is attached in this test (no HocuspocusProvider opened). The
+    // `__system__` doc may or may not be materialized depending on whether
+    // prior tests in the suite connected — the count must still be a number.
+    // We assert it specifically equals 0 when no prior subscriber exists.
+    const docName = `ssc-cold-${crypto.randomUUID().slice(0, 8)}`;
+    const body = await postWriteRaw(docName, '# hello');
+    expect(body.ok).toBe(true);
+    expect(body.systemSubscriberCount).toBe(0);
+  });
+});

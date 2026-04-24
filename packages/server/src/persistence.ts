@@ -159,6 +159,13 @@ export interface PersistenceOptions {
    * of a "Local User" stub (post-QA review fix).
    */
   getPrincipal?: () => Principal | null;
+  /**
+   * Optional callback fired after each successful `commitWipFromTree` for an
+   * agent writer (`writerId.startsWith('agent-')`). Used to emit CC1
+   * `ch:'session-activity'` so Activity Panel clients get live invalidations.
+   * Omitted in plugin mode where no CC1Broadcaster is available.
+   */
+  onAgentCommit?: () => void;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -251,6 +258,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
+  const onAgentCommit = options?.onAgentCommit;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -397,6 +405,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },
             `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${writerId}`,
           );
+          // Notify Activity Panel clients when an agent writer commits (FR-P25).
+          if (writerId.startsWith('agent-')) {
+            onAgentCommit?.();
+          }
         } catch (e) {
           // Per-writer failure — restore this writer's entry, let others succeed (D38)
           restoreContributorEntry(writerId, entry);

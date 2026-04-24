@@ -25,14 +25,16 @@ export default {
     // the typed IPC wrappers. Knip doesn't follow the full discriminated
     // union back to the string literals on each channel.
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
-    // MDX docs page — rendered by the Fumadocs site's file-system route
-    // discovery. It's referenced from `docs/content/overview.mdx` (card grid)
-    // and `docs/content/guides/meta.json` (sidebar order), but knip can't
-    // follow the MDX cross-refs / meta.json include list for the docs
-    // workspace's default entry discovery. M4 (#266) landed this page;
-    // silencing the warning here is the whole-workspace pattern we already
-    // use for the bridge-contract + ipc-events duplicated-by-design files.
-    'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
+    // MDX docs pages — rendered by the Fumadocs site's file-system route
+    // discovery. They're referenced from `docs/content/overview.mdx`
+    // (card grid) and `docs/content/guides/meta.json` (sidebar order), but
+    // knip can't follow the MDX cross-refs / meta.json include list for
+    // the docs workspace's default entry discovery. Silencing the warning
+    // here is the whole-workspace pattern we already use for the
+    // bridge-contract + ipc-events duplicated-by-design files.
+    'docs/content/guides/open-in-agent-desktop.mdx': ['files'], // M4 (#266)
+    'docs/content/guides/agent-activity-panel.mdx': ['files'], // #314
+    'docs/content/guides/install-claude-cowork.mdx': ['files'], // #318
   },
   ignoreBinaries: ['printf'],
   workspaces: {

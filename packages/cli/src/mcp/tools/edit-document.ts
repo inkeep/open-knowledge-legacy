@@ -21,8 +21,6 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
-  '',
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   'Use `offset` when you need to patch an exact occurrence; omit it to preserve first-match behavior.',
@@ -104,7 +102,11 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      const noPreviewAttached = subscriberCount === 0;
+      // Once-per-session attach hint — see write-document.ts for rationale.
+      const systemSubscriberCount =
+        typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
+      const noPreviewAnywhere = systemSubscriberCount === 0;
+      const noPreviewOnThisDoc = subscriberCount === 0;
 
       const summaryResult =
         result.summary && typeof result.summary === 'object'
@@ -114,17 +116,17 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
 
       const lines: string[] = ['Edit applied successfully.'];
       if (preview) lines.push(`Preview: ${preview.url}`);
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         lines.push(
           preview
-            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
-            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+            ? `Open ${preview.url} in your preview browser.`
+            : `No preview attached. Start the UI.`,
         );
       }
       if (summaryHint) lines.push(summaryHint);
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached && !summaryResult) {
+      if (!preview && !noPreviewAnywhere && !noPreviewOnThisDoc && !summaryResult) {
         return textResult(text);
       }
 
@@ -133,9 +135,10 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         structured.previewUrl = preview.url;
         structured.previewUrlSource = preview.source;
       }
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         structured.warning = {
-          message: `No preview attached to ${normalized.docName}.`,
+          message: `Open the previewUrl in your preview browser.`,
+          action: 'attach-preview-once' as const,
           previewUrl: preview?.url ?? null,
         };
       }

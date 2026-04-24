@@ -129,6 +129,16 @@ const bridge: OkDesktopBridge = {
     close: () => invoke('ok:project:close'),
   },
 
+  seed: {
+    plan: () => invoke('ok:seed:plan'),
+    apply: (plan) => invoke('ok:seed:apply', plan),
+  },
+
+  skill: {
+    detectClaudeDesktop: () => invoke('ok:skill:detect-claude-desktop'),
+    buildAndOpen: () => invoke('ok:skill:build-and-open'),
+  },
+
   update: {
     relaunchNow: () => invoke('ok:update:relaunch-now'),
   },
