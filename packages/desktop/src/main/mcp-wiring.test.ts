@@ -702,7 +702,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
     handle.destroy();
   });
 
-  test('returns inert handle when executablePath does not match .app/Contents/MacOS/<name> (STOP_IF c)', () => {
+  test('returns inert handle when executablePath does not match .app/Contents/MacOS/<name>', () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli } = createCliSurface();
