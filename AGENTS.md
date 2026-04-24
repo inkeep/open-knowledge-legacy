@@ -179,6 +179,8 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **`recordContributor` summaries route through `normalizeSummary`** (`packages/server/src/agent-write-summary.ts`). Single API-boundary truncation point — don't scatter trimming/type-checking across handlers. Whitespace-only inputs classify as `absent` and don't count as adoption. SPEC: [`specs/2026-04-21-agent-write-summaries/SPEC.md`](specs/2026-04-21-agent-write-summaries/SPEC.md) §6 FR2 + D5/D24.
 - **`handleRename` / `handleRollback` guard `extractAgentIdentity` + `recordContributor` on explicit `agentId`.** In-editor Restore posts with no identity; the default `claude-1/Claude` fallback would attribute every human-driven rollback to Claude (D22 LOCKED 1-way-door, NG12). Adding attribution by default is scope-extension.
 - **Don't narrow PM mark `excludes` fields.** Precedent #9 covers mark attrs as add-only. US-017 widened `Code` via `CodeMarkFidelity` (`excludes: ''`) to let emphasis/strong coexist with inline code per CommonMark. Reverting via a Tiptap upgrade reintroduces idempotence failures.
+- **Server-side disk writes go through `fs-traced.ts` wrappers.** Never import `writeFile` / `rename` / `mkdir` / `unlink` directly from `node:fs` (or `node:fs/promises`) in server code that might run in production paths — use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (or `*Sync` variants) from `packages/server/src/fs-traced.ts` so every disk write emits an `fs.*` span with bounded-cardinality path attributes. `@opentelemetry/instrumentation-fs` does NOT work on Bun (oven-sh/bun#6546, #26536); the hand-rolled wrappers are the sanctioned path. Exception: test-only code and one-shot scripts that never run in production don't need wrapping. Reference: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17 US-010.
+- **Don't emit unbounded-cardinality span/metric attributes.** Raw absolute paths, document content, user free-form strings on histograms or high-volume span attributes will blow up Tempo's index and Prometheus's label cardinality. Normalize before emitting: paths → last-two-segments + a `*.role` classifier (reference: `fs-traced.ts`'s `normalizeFsPath` + `classifyFsPath`); identifiers → pre-validated UUIDs / enums. Safe spans tag `doc.name`, `shadow.writer`, `agent.write_position`, `http.route` (pre-normalized). Reference: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17 US-010 cardinality rule.
 
 ## WARN rules
 
@@ -190,8 +192,67 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - React 19.2 `<Activity mode="hidden">` unmounts the hidden subtree's DOM. Scroll containers that wrap multiple Activity mounts lose `scrollTop` on every flip. **Each Activity mount must own its own scroll container** — see `EditorActivityPool.tsx` + `ScrollPreservingContainer`.
 - Playwright's `_electron.launch({ args: [url] })` does NOT fire the macOS `open-url` Apple Event — URL arrives via `process.argv` (second-instance path only), NOT the cold-start queue-then-flush. Tests that need true Apple-Event delivery must shell out to `execSync('open -g "openknowledge://..."')`. Reference: `packages/desktop/tests/smoke/deep-link.e2e.ts`.
 - `syntaxTreeAvailable()` from `@codemirror/language` reflects the DEEPEST pending sublanguage, not the outer markdown tree. Gating decorations on it silently disables them whenever a fenced-code language block enters the viewport. For ViewPlugin: detect `syntaxTree(update.startState) !== syntaxTree(update.state)`. For StateField: early-return on `!tr.docChanged`. Reference: `packages/app/src/editor/source-polish/`.
+- `OTEL_SDK_DISABLED` follows OTel convention: only the literal string `"false"` enables the SDK. Any other value (`"true"`, `"1"`, empty, unset) keeps it disabled. Misreading this as "boolean" sends people down an hour of wondering why no traces appear when they set `OTEL_SDK_DISABLED=0`. Frontend gate `VITE_OTEL_ENABLED` is the inverse (must equal `"true"` to enable) and is a Vite build-time env — setting it AFTER `bun run dev` starts has no effect on the current bundle.
+- The dev plugin runs `createServer()` from `@inkeep/open-knowledge-server` (no longer constructs Hocuspocus directly — changed in PR #293). `createServer()` calls `initTelemetry()` internally, so `bun run dev` gets OTel for free when the env vars are set. Don't re-add a separate `initTelemetry()` call in the plugin — it'd be a redundant no-op (init is idempotent) but noise in the init sequence.
 
 **Logging conventions.** Two `console.warn` styles coexist: (1) bracket-prefix (`[file-watcher] ...`) for ad-hoc ops warnings read by humans; (2) structured JSON (`console.warn(JSON.stringify({event, ...}))`) for events counted in aggregate or asserted in tests. Don't convert one to the other without knowing the consumers.
+
+## Observability (OpenTelemetry)
+
+OTel instrumentation is **opt-in** and **dev-focused**. Default builds have the SDK disabled on the server and bundle-eliminated on the frontend — zero overhead when off.
+
+**Turn it on + see traces:** full getting-started is in [`docker/otel-dev/README.md`](docker/otel-dev/README.md). Three commands: `docker compose up -d`, export env vars (`OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 VITE_OTEL_ENABLED=true VITE_OTEL_COLLECTOR_URL=http://localhost:14318`), `bun run dev`. Grafana at **http://localhost:3001** (anonymous admin, no login).
+
+**What's instrumented:** browser UserInteraction / DocumentLoad / Fetch → HTTP server span (with `traceparent` extraction) → agent-write → persistence load/store → `fs.writeFile` / `fs.rename` / `fs.mkdir` (via `fs-traced.ts`) → `persistence.commitToWipRef` → `shadow.commitWip`. Full app→disk chain as one trace when fetch-initiated. Metrics: `http.server.request.duration`, `ok.persistence.load/store/git_commit.duration`, `ok.file_watcher.events`. Pino log records carry `trace_id` / `span_id` for trace↔log correlation in Grafana.
+
+**Canonical sites:**
+
+- [`packages/server/src/telemetry.ts`](packages/server/src/telemetry.ts) — SDK init (`initTelemetry`, `shutdownTelemetry`), helpers (`withSpan`, `withSpanSync`, `setActiveSpanAttributes`, `getTracer`, `getMeter`). SDK 2.x, Bun-compatible (`BasicTracerProvider` + `AsyncLocalStorageContextManager`).
+- [`packages/server/src/fs-traced.ts`](packages/server/src/fs-traced.ts) — the ONLY sanctioned path for adding a disk-write span. Every new `writeFile` / `rename` / `mkdir` call site in the server package goes through these wrappers.
+- [`packages/app/src/telemetry.ts`](packages/app/src/telemetry.ts) + [`telemetry-impl.ts`](packages/app/src/telemetry-impl.ts) — lazy-loaded browser SDK. Dynamic import gates the ~45 KB OTel bundle behind `VITE_OTEL_ENABLED === 'true'` — nothing ships when off.
+- [`packages/app/src/editor/collab-otel.ts`](packages/app/src/editor/collab-otel.ts) — Hocuspocus WebSocket trace-context propagation (query param, since browser `WebSocket` can't set headers).
+- [`docker/otel-dev/`](docker/otel-dev/) — the local Grafana LGTM stack (Grafana + Tempo + Loki + Prometheus + OTel Collector). README has port layout, env vars, and troubleshooting.
+
+**Adding a new span** (agents + humans):
+
+1. Identify the operation. Is it a ≥1ms unit worth measuring, and a named boundary in the codebase (function, hook, handler)? If yes, it gets a span; if it's 5 lines of CPU-bound arithmetic, it doesn't.
+2. Wrap the call site:
+
+   ```typescript
+   import { withSpan } from './telemetry.ts';  // or from @inkeep/open-knowledge-server
+
+   await withSpan('my.operation', { attributes: { 'my.attr': value } }, async () => {
+     // existing code
+   });
+   ```
+
+   `withSpan` handles exception recording + status + `span.end()` — just write the body.
+
+3. If you need to read the active span without a reference (e.g. to add attributes deep in a call chain), use `setActiveSpanAttributes({ ... })`.
+4. If the operation writes to disk, use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (async) or `*Sync` variants from `fs-traced.ts` — do NOT import raw `fs` and wrap it yourself.
+5. Attribute keys: follow OTel semantic conventions (`http.*`, `db.*`, `fs.*`, `file.*`, etc.). Repo-specific attributes use namespaced prefixes (`ok.*`, `agent.*`, `shadow.*`, `persistence.*`, `doc.*`).
+6. **Cardinality check:** attributes with an unbounded value space (raw paths, user IDs, document content) will blow up Tempo's index. Normalize or classify before emitting — `fs-traced.ts`'s `fs.path` + `fs.path.role` pattern is the reference.
+
+**Adding a new metric:**
+
+```typescript
+import { getMeter } from './telemetry.ts';
+
+// Lazy-init at first use (meter is a no-op when disabled, so allocation is cheap).
+const hist = getMeter().createHistogram('ok.my_subsystem.duration', {
+  description: 'What this measures',
+  unit: 's',
+});
+hist.record(elapsedSeconds, { 'bounded.label': value });
+```
+
+- Namespace: `ok.<subsystem>.<metric_name>`. Standard OTel names (`http.*`) when they apply.
+- Units follow semconv: seconds (`s`), bytes (`By`), counts unitless.
+- Histogram labels must be bounded-cardinality. Never put raw paths, user IDs, or free-form strings on a metric.
+
+**Adding trace context to a new write surface:** if the surface receives an HTTP request, the server's `onRequest` extension already extracts the incoming `traceparent` header — just wrap the handler body with `withSpan`. If it's a WebSocket-initiated path, the server-side `onConnect` extraction of `traceparent` from `requestParameters` is deferred (see [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17.4) — your span will be an independent root, which is fine.
+
+Full PRD + decisions + non-goals + user stories: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md). **§17 is the scope-expansion amendment** (2026-04-23) — read before adding non-trivial instrumentation.
 
 ## Symlinks
 
