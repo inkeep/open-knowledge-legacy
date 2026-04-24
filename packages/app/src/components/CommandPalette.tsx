@@ -17,7 +17,7 @@
  * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
  */
 
-import { FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
+import { Download, FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   CommandDialog,
@@ -155,6 +155,19 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <FolderPlus />
             <span>Start fresh in a new folder…</span>
             <CommandShortcut>⌘⇧N</CommandShortcut>
+          </CommandItem>
+          <CommandItem
+            onSelect={() => {
+              // Trigger the install dialog by navigating to its hash route
+              // (App.tsx's InstallInClaudeDesktopTrigger listens for it).
+              // Closes the palette; the dialog renders independently.
+              setOpen(false);
+              window.location.hash = '#install-claude-desktop';
+            }}
+            data-testid="command-palette-install-claude-desktop"
+          >
+            <Download />
+            <span>Install in Claude Desktop…</span>
           </CommandItem>
         </CommandGroup>
 
