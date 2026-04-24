@@ -28,12 +28,14 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Return a browser URL for the given wiki docName. Agents should call this IMMEDIATELY BEFORE `write_document` / `edit_document` so they can navigate the preview browser to the doc first and watch the CRDT edit land live.',
+  'Return a browser URL for the given wiki docName. Useful for embedding preview links inside doc content, or for a manual re-navigation. Per-edit navigation is NOT required — the server pushes focus to the attached preview on every write.',
+  '',
+  'When no preview is attached, `write_document` / `edit_document` responses include `warning: { action: "attach-preview-once", previewUrl }` — open that URL in your preview browser once and keep writing. After attach, subsequent writes need no navigation action.',
   '',
   '**Parameters:**',
   '- `docName` — Wiki doc name, typically without extension.',
   '',
-  'Returns `{ previewUrl, previewUrlSource }` (source: `env` / `lock` / `config`). When no source is configured, returns `{ previewUrl: null }` and the agent may proceed without navigation.',
+  'Returns `{ previewUrl, previewUrlSource }` (source: `env` / `lock` / `config`). When no source is configured, returns `{ previewUrl: null }`.',
 ].join('\n');
 
 interface GetPreviewUrlDeps {

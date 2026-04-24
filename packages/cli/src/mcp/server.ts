@@ -191,7 +191,7 @@ export function buildInstructions(config: Config, _opts?: { dynamicConfig?: bool
 
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-**STOP — native tools on in-scope \`.md\` / \`.mdx\`.** Do NOT use host-native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on markdown inside the content dir. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY, each preceded by \`get_preview_url(docName)\` + browser open.
+**STOP — native tools on in-scope \`.md\` / \`.mdx\`.** Do NOT use host-native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on markdown inside the content dir. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY. If a write response includes \`action: "attach-preview-once"\`, open the \`previewUrl\` once.
 
 Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
 
@@ -199,11 +199,9 @@ Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
 
 \`exec("cat <path>.md")\` / \`exec("ls <dir>")\` / \`exec("grep -rn <term> <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` / \`search\` when you need \`structuredContent\`.
 
-## Preview before every write (REQUIRED)
+## Preview — attach on server hint
 
-Every \`write_document\` / \`edit_document\` MUST be preceded by \`get_preview_url(docName)\` → open returned URL in your preview browser → call write tool.
-
-If \`get_preview_url\` returns \`null\`, start the UI (\`open-knowledge ui\`, or \`preview_start("open-knowledge-ui")\` in Claude Code). Native \`Edit\` / \`sed\` on in-scope markdown bypasses the CRDT and loses agent attribution.
+The server sends \`warning: { action: "attach-preview-once", previewUrl }\` when no editor is attached. Open the URL once; after attach, focus pushes on every write (no per-edit nav). Multiple agents may share one tab. Start UI: \`open-knowledge ui\` or \`preview_start("open-knowledge-ui")\` in Claude Code.
 
 ## Full guidance
 

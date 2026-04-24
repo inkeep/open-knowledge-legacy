@@ -55,7 +55,7 @@ describe('MCP server module', () => {
     const head = instructions.substring(0, 400);
     expect(head).toContain('STOP');
     expect(head).toContain('write_document');
-    expect(head).toContain('get_preview_url');
+    expect(head).toContain('attach-preview-once');
   });
 
   it('buildInstructions points at the Agent Skill for full guidance (SPEC §9 D17)', async () => {
