@@ -55,6 +55,7 @@ import {
   SERVICE_WRITER,
   shadowGit,
 } from './shadow-repo.ts';
+import { writeSidecar } from './sidecar.ts';
 import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 
 const log = getLogger('persistence');
@@ -822,6 +823,25 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
           // Update reconciled base after successful store
           setReconciledBase(documentName, markdown);
+
+          // CRDT server-restart recovery (US-003 / Commit 5): write the Yjs
+          // binary sidecar alongside the markdown. Best-effort — a sidecar
+          // failure MUST NOT fail the L1 cycle (markdown is the source of
+          // truth; sidecar is disposable recovery cache). Structured warn log
+          // lets operators observe sidecar-write problems without affecting
+          // user-visible behavior. See reports/crdt-server-restart-recovery/
+          // for the full rationale.
+          try {
+            await writeSidecar(contentDir, documentName, document);
+          } catch (sidecarErr) {
+            console.warn(
+              JSON.stringify({
+                event: 'sidecar-write-failed',
+                documentName,
+                reason: (sidecarErr as Error).message ?? String(sidecarErr),
+              }),
+            );
+          }
 
           if (backlinkIndex) {
             backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
