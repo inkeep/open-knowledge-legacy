@@ -80,6 +80,47 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
 export const MAX_POOL = 10;
 
 /**
+ * Shape of the JSON `token` field on every HocuspocusProvider this pool
+ * constructs. Mirrors `HocuspocusAuthTokenSchema` in
+ * `packages/server/src/auth-token-schema.ts` — the server's `onAuthenticate`
+ * hook parses this back out. Kept as a local type (not imported from the
+ * server package) to keep the client free of server-package deps.
+ */
+interface AuthTokenClaim {
+  principalId?: string;
+  tabSessionId?: string;
+  expectedServerInstanceId?: string;
+}
+
+/**
+ * Build the stringified JSON `token` HocuspocusProvider sends on every
+ * connect, or `undefined` when no claim is set. Returning `undefined` (vs.
+ * `'{}'`) preserves the pre-US-001 shape where the `token` option is simply
+ * absent for anonymous connections — older servers that don't parse the
+ * token see no change in the wire protocol.
+ *
+ * Exported for the MECHANISM-ONLY unit tests in `provider-pool.test.ts` per
+ * the Commit 3 acceptance criteria in the spec. Callers inside this module
+ * pass the current pool state; external callers should not depend on this
+ * symbol.
+ */
+export function buildAuthToken(
+  tabIdentity: { principalId: string; tabSessionId: string } | null,
+  expectedServerInstanceId: string | null,
+): string | undefined {
+  const claim: AuthTokenClaim = {};
+  if (tabIdentity !== null) {
+    claim.principalId = tabIdentity.principalId;
+    claim.tabSessionId = tabIdentity.tabSessionId;
+  }
+  if (expectedServerInstanceId !== null && expectedServerInstanceId.length > 0) {
+    claim.expectedServerInstanceId = expectedServerInstanceId;
+  }
+  if (Object.keys(claim).length === 0) return undefined;
+  return JSON.stringify(claim);
+}
+
+/**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
  *
@@ -113,6 +154,22 @@ export class ProviderPool {
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
   private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
+  /**
+   * Last-observed server instance ID. Set at boot via
+   * `DocumentContext`'s one-shot `GET /api/server-info` fetch, and refreshed
+   * on every `__system__` CC1 `server-info` broadcast arriving through
+   * `SystemDocSubscriber`. When non-null, included in the auth token's
+   * `expectedServerInstanceId` field on every `open()`. When the server
+   * rejects with `reason: 'server-instance-mismatch'` (Commit 4), the
+   * `authenticationFailed` handler nulls this field so the recycled
+   * providers re-open with an anonymous claim and resync cleanly.
+   *
+   * Null-by-default: preserves the backward-compat path where a client that
+   * never reached `/api/server-info` (endpoint 404, fetch blocked, boot
+   * race) simply doesn't claim an instance ID — server treats this as a
+   * legacy token and accepts.
+   */
+  private cachedServerInstanceId: string | null = null;
 
   constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
@@ -132,6 +189,21 @@ export class ProviderPool {
    */
   setTabIdentity(identity: { principalId: string; tabSessionId: string }): void {
     this.tabIdentity = identity;
+  }
+
+  /**
+   * Update the cached server instance ID the pool will claim in every future
+   * provider's auth token. Pass `null` to clear (used by the auth-failure
+   * recycle path in Commit 4, and by the boot fetch on network failure).
+   *
+   * Idempotent: if the new ID matches the cached one, no-op. Does NOT
+   * recycle existing providers — the claim only affects new `open()` calls.
+   * Commit 4 wires recycle on server-side rejection, which is the path that
+   * flips stale pools to the new ID.
+   */
+  setExpectedServerInstanceId(id: string | null): void {
+    if (this.cachedServerInstanceId === id) return;
+    this.cachedServerInstanceId = id;
   }
 
   /** Register a callback that fires whenever pool state changes. */
@@ -172,6 +244,7 @@ export class ProviderPool {
       this.evictLru();
     }
 
+    const token = buildAuthToken(this.tabIdentity, this.cachedServerInstanceId);
     const provider = new HocuspocusProvider({
       // OTel trace context propagation for the WebSocket handshake. The
       // browser's WebSocket API cannot set request headers, so traceparent
@@ -179,7 +252,7 @@ export class ProviderPool {
       url: appendTraceContextToCollabUrl(this.wsUrl),
       name: docName,
       forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
-      ...(this.tabIdentity !== null ? { token: JSON.stringify(this.tabIdentity) } : {}),
+      ...(token !== undefined ? { token } : {}),
     });
 
     const entry: PoolEntry = {

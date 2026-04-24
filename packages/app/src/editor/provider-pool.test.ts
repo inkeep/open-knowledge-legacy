@@ -8,7 +8,7 @@
  * exercised without needing a running Hocuspocus server.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { ProviderPool } from './provider-pool';
+import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
   __syncPromiseCacheSize,
@@ -535,6 +535,140 @@ describe('ProviderPool HocuspocusProvider configuration (D8)', () => {
     // @hocuspocus/provider exposes the resolved configuration; the default
     // is `false`, so a set value confirms the pool passed the option through.
     expect(entry.provider.configuration.forceSyncInterval).toBe(5000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MECHANISM-ONLY tests for `buildAuthToken` + `setExpectedServerInstanceId`
+// (US-001 / Commit 3 in the CRDT server-restart recovery plan).
+//
+// These tests assert the token-shape the pool will send to the server when
+// `cachedServerInstanceId` is set vs. null. They do NOT verify that a
+// stale-client reconnect after a server restart correctly recycles and
+// produces a duplication-free Y.Doc — that end-to-end behavior is covered by
+// the 11 bug-class integration tests under `packages/app/tests/integration/`
+// (T1, T2, T6, T9 flip from FAIL→PASS at Commit 4; T4, T10 at Commit 6).
+//
+// "Green mechanism ≠ green feature" per /tdd: a passing buildAuthToken test
+// here does NOT imply the server-restart-recovery fix is working. Trust the
+// integration suite to judge behavior correctness.
+// ---------------------------------------------------------------------------
+describe('buildAuthToken (MECHANISM-ONLY — CRDT restart recovery / US-001)', () => {
+  test('returns undefined when both identity and instance ID are absent', () => {
+    expect(buildAuthToken(null, null)).toBeUndefined();
+  });
+
+  test('includes expectedServerInstanceId when the cache is set', () => {
+    const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
+    const token = buildAuthToken(tabId, 'server-instance-abc');
+    expect(token).toBeDefined();
+    const parsed = JSON.parse(token as string) as {
+      principalId?: string;
+      tabSessionId?: string;
+      expectedServerInstanceId?: string;
+    };
+    expect(parsed.principalId).toBe('p-1');
+    expect(parsed.tabSessionId).toBe('s-1');
+    expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+  });
+
+  test('omits expectedServerInstanceId when the cache is null', () => {
+    const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
+    const token = buildAuthToken(tabId, null);
+    expect(token).toBeDefined();
+    const parsed = JSON.parse(token as string) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+    expect(parsed.principalId).toBe('p-1');
+    expect(parsed.tabSessionId).toBe('s-1');
+  });
+
+  test('empty-string instance ID is treated as absent (not claimed)', () => {
+    const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
+    const token = buildAuthToken(tabId, '');
+    expect(token).toBeDefined();
+    const parsed = JSON.parse(token as string) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+  });
+
+  test('instance-ID-only claim (no tab identity) still serializes cleanly', () => {
+    const token = buildAuthToken(null, 'server-instance-abc');
+    expect(token).toBeDefined();
+    const parsed = JSON.parse(token as string) as Record<string, unknown>;
+    expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+    expect(parsed).not.toHaveProperty('principalId');
+    expect(parsed).not.toHaveProperty('tabSessionId');
+  });
+});
+
+describe('ProviderPool server-instance-ID claim (US-001)', () => {
+  test('token serialized on open() reflects setExpectedServerInstanceId', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
+    pool.setExpectedServerInstanceId('server-instance-xyz');
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    // HocuspocusProvider resolves `token` lazily (it can be a string, a
+    // function, or a Promise). The pool passes a string, so the resolved
+    // configuration.token should be exactly the JSON we serialized.
+    const resolved = entry.provider.configuration.token as unknown;
+    expect(typeof resolved).toBe('string');
+    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
+    expect(parsed.expectedServerInstanceId).toBe('server-instance-xyz');
+    expect(parsed.principalId).toBe('p-1');
+    expect(parsed.tabSessionId).toBe('s-1');
+  });
+
+  test('token omits expectedServerInstanceId when the cache is null', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
+    // No setExpectedServerInstanceId call — cache stays null.
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    const resolved = entry.provider.configuration.token as unknown;
+    expect(typeof resolved).toBe('string');
+    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+  });
+
+  test('setExpectedServerInstanceId(null) clears a previously-set cache', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
+    pool.setExpectedServerInstanceId('server-instance-xyz');
+    pool.setExpectedServerInstanceId(null);
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    const resolved = entry.provider.configuration.token as unknown;
+    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+  });
+
+  test('setExpectedServerInstanceId affects future opens, not existing providers', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
+
+    // Open BEFORE setting the instance ID — first provider has no claim.
+    const entry1 = pool.open('doc1');
+    if (!entry1) throw new Error('expected entry1');
+
+    pool.setExpectedServerInstanceId('server-instance-xyz');
+
+    // Open AFTER — second provider carries the claim.
+    const entry2 = pool.open('doc2');
+    if (!entry2) throw new Error('expected entry2');
+
+    const tok1 = JSON.parse(entry1.provider.configuration.token as string) as Record<
+      string,
+      unknown
+    >;
+    const tok2 = JSON.parse(entry2.provider.configuration.token as string) as Record<
+      string,
+      unknown
+    >;
+    expect(tok1).not.toHaveProperty('expectedServerInstanceId');
+    expect(tok2.expectedServerInstanceId).toBe('server-instance-xyz');
   });
 });
 

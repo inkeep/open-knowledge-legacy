@@ -10,21 +10,31 @@ import {
   type AgentPresenceAwareness,
   pickPrimary,
 } from '@/lib/agent-presence';
-import { parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
+import { parseCC1ServerInfo, parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { activeDocName, pinnedDoc, collabUrl, setSystemProvider } = useDocumentContext();
+  const { activeDocName, pinnedDoc, collabUrl, setSystemProvider, updateServerInstanceId } =
+    useDocumentContext();
   // Hold activeDocName + pinnedDoc in refs so the awareness handler reads the
   // latest without needing to recreate the provider on every change. Writing
   // refs in effects (not during render) keeps React Compiler happy.
   const activeDocRef = useRef<string | null>(activeDocName);
   const pinnedDocRef = useRef<string | null>(pinnedDoc);
+  // Same rationale for `updateServerInstanceId` — it's re-created each
+  // render by DocumentContext's `value` literal, so capturing it by
+  // closure inside the provider's `onStateless` handler would tie the
+  // main effect's lifecycle to every render. The ref reads the current
+  // setter lazily inside the handler, keeping the effect's deps stable.
+  const updateServerInstanceIdRef = useRef(updateServerInstanceId);
   useEffect(() => {
     activeDocRef.current = activeDocName;
   }, [activeDocName]);
+  useEffect(() => {
+    updateServerInstanceIdRef.current = updateServerInstanceId;
+  }, [updateServerInstanceId]);
   // Track the just-unpinned moment so we can immediately nav to the current
   // primary without waiting for the next awareness change. Runs after the
   // main effect has wired the provider/listener.
@@ -54,6 +64,18 @@ export function SystemDocSubscriber() {
       name: SYSTEM_DOC_NAME,
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
+        // CRDT server-restart recovery (Commit 3): the server emits a
+        // `server-info` broadcast once at startup carrying the per-process
+        // instance ID (plus idempotent re-broadcasts). Route those through
+        // the pool's cached-ID setter BEFORE falling through to the
+        // derived-view channel parser so both payload shapes coexist on the
+        // single __system__ stateless channel. The two parsers are mutually
+        // exclusive by `ch` — no payload can match both.
+        const serverInfo = parseCC1ServerInfo(payload);
+        if (serverInfo) {
+          updateServerInstanceIdRef.current(serverInfo.serverInstanceId);
+          return;
+        }
         const signal = parseCC1Signal(payload);
         if (!signal) {
           console.warn('[CC1] Unparseable stateless payload, skipping:', payload.slice(0, 100));

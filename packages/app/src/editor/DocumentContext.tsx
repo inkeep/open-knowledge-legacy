@@ -107,6 +107,13 @@ interface DocumentContextValue {
    */
   setSystemProvider: (provider: HocuspocusProvider | null) => void;
   /**
+   * Update the pool's cached server instance ID. Called by
+   * `SystemDocSubscriber` on every `__system__` CC1 `server-info` broadcast
+   * so the pool's next provider-open claim matches the live server. Null
+   * clears the claim (used by the auth-failure recycle path in Commit 4).
+   */
+  updateServerInstanceId: (id: string | null) => void;
+  /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
    * while `server.lock` is absent — consumers that also need the URL
@@ -265,6 +272,26 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         // principal unavailable — pool opens providers with anonymous auth token
+      });
+
+    // CRDT server-restart recovery (Commit 3): fetch the server's
+    // per-process instance ID at boot and seed the pool's cache. Every
+    // subsequent provider open includes the cached ID in its auth-token's
+    // `expectedServerInstanceId` field so Commit 4's server-side
+    // enforcement can reject a stale-client reconnect before Yjs sync
+    // merges ghost state (see reports/crdt-server-restart-recovery/).
+    // Silent on failure: pre-Commit-2 servers return 404 here, and the
+    // pool simply doesn't claim an instance ID (legacy path accepted
+    // unconditionally by the server).
+    fetch('/api/server-info')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info: unknown) => {
+        if (info && typeof (info as { serverInstanceId?: unknown }).serverInstanceId === 'string') {
+          p.setExpectedServerInstanceId((info as { serverInstanceId: string }).serverInstanceId);
+        }
+      })
+      .catch(() => {
+        // server-info unavailable — pool opens providers without an instance claim
       });
 
     // systemProvider exposure happens in a dedicated effect below because it
@@ -446,6 +473,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     },
     systemProvider,
     setSystemProvider,
+    updateServerInstanceId: (id: string | null) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.setExpectedServerInstanceId(id);
+    },
     collabUrl,
     collabTerminal,
     collabLastError,

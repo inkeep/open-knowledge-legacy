@@ -38,6 +38,45 @@ export function parseCC1Signal(payload: string): CC1Signal | null {
   };
 }
 
+/**
+ * Shape the CC1 `server-info` channel emits (see
+ * `packages/server/src/cc1-broadcast.ts:emitServerInfo`). Distinct from
+ * `CC1Signal` because `server-info` bypasses debounce + monotonic seq
+ * machinery and carries the per-process `serverInstanceId` as payload.
+ * Kept separate from the `DerivedViewChannel` union so adding a new
+ * derived-view channel doesn't accidentally create a channel whose
+ * downstream treats an instance-ID payload as a cache-invalidation hint.
+ */
+export interface CC1ServerInfoSignal {
+  serverInstanceId: string;
+}
+
+/**
+ * Try to parse a `__system__` stateless payload as a CC1 `server-info`
+ * broadcast. Returns the extracted `serverInstanceId` or `null` when the
+ * payload is on a different channel, malformed, or missing the field.
+ *
+ * Called from `SystemDocSubscriber` alongside `parseCC1Signal`. The two
+ * parsers are mutually exclusive by channel — no payload can match both.
+ * Unparseable JSON or mismatched contract version yields `null`, not a
+ * throw, so the stateless listener can cleanly skip.
+ */
+export function parseCC1ServerInfo(payload: string): CC1ServerInfoSignal | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed)) return null;
+  if (parsed.v !== CC1_CONTRACT_VERSION) return null;
+  if (parsed.ch !== 'server-info') return null;
+  if (typeof parsed.serverInstanceId !== 'string' || parsed.serverInstanceId.length === 0) {
+    return null;
+  }
+  return { serverInstanceId: parsed.serverInstanceId };
+}
+
 export function defaultCollabWsUrl(): string {
   if (typeof location === 'undefined') {
     return 'ws://localhost/collab';
