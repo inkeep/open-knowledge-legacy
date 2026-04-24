@@ -19,6 +19,53 @@
  * fall through to the existing /api/config poll path.
  */
 
+/** Seed scaffolder shapes — structurally duplicated from
+ * `@inkeep/open-knowledge-server`'s seed module. See core's desktop-bridge.ts
+ * for rationale (avoids pulling server into the app compilation tree). */
+export interface OkFolderRule {
+  match: string;
+  frontmatter: { title?: string; description?: string; tags?: string[] };
+}
+export interface OkScaffoldFileEntry {
+  path: string;
+  kind: 'folder' | 'file';
+  contentPreview?: string;
+}
+export interface OkScaffoldSkipEntry {
+  path: string;
+  reason: 'already-exists' | 'user-content' | 'glob-collision';
+}
+export interface OkScaffoldConfigEdit {
+  configPath: string;
+  folderMatch: string;
+  entry: OkFolderRule;
+}
+export interface OkScaffoldPlan {
+  created: OkScaffoldFileEntry[];
+  skipped: OkScaffoldSkipEntry[];
+  configEdits: OkScaffoldConfigEdit[];
+  warnings: string[];
+}
+export interface OkScaffoldApplyError {
+  path: string;
+  error: string;
+}
+export interface OkScaffoldApplyResult {
+  applied: number;
+  errors: OkScaffoldApplyError[];
+  durationMs: number;
+}
+export interface OkSeedError {
+  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  message: string;
+}
+export type OkSeedPlanResult =
+  | { ok: true; plan: OkScaffoldPlan }
+  | { ok: false; error: OkSeedError };
+export type OkSeedApplyResult =
+  | { ok: true; result: OkScaffoldApplyResult }
+  | { ok: false; error: OkSeedError };
+
 export type OkDesktopMode = 'editor' | 'navigator';
 
 export interface OkDesktopConfig {
@@ -159,6 +206,10 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
+  };
+  seed: {
+    plan(): Promise<OkSeedPlanResult>;
+    apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
   update: {
     relaunchNow(): Promise<void>;

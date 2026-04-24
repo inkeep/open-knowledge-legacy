@@ -172,6 +172,62 @@ export interface OkKeyringSmokeResult {
 }
 
 /**
+ * Seed scaffolder shapes duplicated structurally (same rationale as
+ * `OkKeyringSmokeResult` above — avoids pulling the server package into
+ * core's compilation tree). Structural shape tracks
+ * `@inkeep/open-knowledge-server`'s `ScaffoldPlan` / `ApplyResult` /
+ * `ApplyError` / `FileEntry` / `SkipEntry` / `ConfigEdit` / `FolderRule`.
+ */
+export interface OkFolderRule {
+  match: string;
+  frontmatter: {
+    title?: string;
+    description?: string;
+    tags?: string[];
+  };
+}
+export interface OkScaffoldFileEntry {
+  path: string;
+  kind: 'folder' | 'file';
+  contentPreview?: string;
+}
+export interface OkScaffoldSkipEntry {
+  path: string;
+  reason: 'already-exists' | 'user-content' | 'glob-collision';
+}
+export interface OkScaffoldConfigEdit {
+  configPath: string;
+  folderMatch: string;
+  entry: OkFolderRule;
+}
+export interface OkScaffoldPlan {
+  created: OkScaffoldFileEntry[];
+  skipped: OkScaffoldSkipEntry[];
+  configEdits: OkScaffoldConfigEdit[];
+  warnings: string[];
+}
+export interface OkScaffoldApplyError {
+  path: string;
+  error: string;
+}
+export interface OkScaffoldApplyResult {
+  applied: number;
+  errors: OkScaffoldApplyError[];
+  durationMs: number;
+}
+
+export interface OkSeedError {
+  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  message: string;
+}
+export type OkSeedPlanResult =
+  | { ok: true; plan: OkScaffoldPlan }
+  | { ok: false; error: OkSeedError };
+export type OkSeedApplyResult =
+  | { ok: true; result: OkScaffoldApplyResult }
+  | { ok: false; error: OkSeedError };
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -301,6 +357,18 @@ export interface OkDesktopBridge {
     listRecent(): Promise<RecentProjectEntry[]>;
     open(request: OkProjectOpenRequest): Promise<void>;
     close(): Promise<void>;
+  };
+
+  /**
+   * `ok seed` scaffolder surface consumed by the FileSidebar + menu.
+   * `plan()` is read-only and returns what the scaffolder would write;
+   * `apply(plan)` performs the writes. Mirrors the shadcn-3.0 shared-
+   * implementation pattern — same functions run under the Commander CLI
+   * (`ok seed`). See SPEC 2026-04-23-ok-seed-scaffold.
+   */
+  seed: {
+    plan(): Promise<OkSeedPlanResult>;
+    apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
 
   /**

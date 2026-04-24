@@ -32,7 +32,7 @@ import {
   readExistingMcpEntry,
   writeUserMcpConfigs,
 } from '@inkeep/open-knowledge';
-import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
+import { installUserSkill, isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
 import {
   app,
   BrowserWindow,
@@ -61,6 +61,7 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
@@ -677,6 +678,22 @@ function registerIpcHandlers() {
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
+
+  // `ok seed` — project-level scaffolder. Pure plan/apply handlers scoped to
+  // the invoking window's ProjectContext (same pattern as `ok:shell:spawn-cursor`).
+  // See packages/desktop/src/main/ipc/seed.ts + SPEC 2026-04-23-ok-seed-scaffold.
+  const resolveSeedProjectRoot = (event: Electron.IpcMainInvokeEvent): string | undefined => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    return callerWin && wm
+      ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+      : undefined;
+  };
+  handle('ok:seed:plan', async (event) => {
+    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) });
+  });
+  handle('ok:seed:apply', async (event, plan) => {
+    return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
+  });
 }
 
 /**
@@ -892,6 +909,23 @@ function bootPrimaryInstance(): void {
     } else {
       openNavigator();
     }
+
+    // Fire-and-forget user-global Agent Skill install per SPEC 2026-04-22
+    // (FR13 / D21). Runs on every launch — idempotent via the sidecar at
+    // `~/.open-knowledge/skill-installed-version`, so the no-op path is
+    // ~50 ms when current. Never awaited so window rendering + menu are
+    // unblocked. Failures log to main-process console and never surface to
+    // the user.
+    void installUserSkill({
+      logger: {
+        warn: (data, message) => console.warn(message, data),
+        info: (data, message) => console.info(message, data),
+      },
+    }).catch(() => {
+      /* installUserSkill is documented as never-throws; this is defense
+         against a future regression that would otherwise crash the main
+         process during the floating microtask. */
+    });
 
     // M3 auto-updater — wired as the LAST step in whenReady, after the window-
     // open branch (either openProjectOrFallbackToNavigator OR openNavigator).

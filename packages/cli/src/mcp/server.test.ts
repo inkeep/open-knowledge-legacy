@@ -40,25 +40,32 @@ describe('MCP server module', () => {
     expect(mod.startMcpServer.constructor.name).toBe('AsyncFunction');
   });
 
-  it('buildInstructions embeds shared PREVIEW_GUIDANCE constant', async () => {
+  it('buildInstructions fits within Claude Code 2KB cap (SPEC 2026-04-22 FR3 / QA-008)', async () => {
     const { buildInstructions } = await import('./server.ts');
-    const { PREVIEW_GUIDANCE } = await import('../content/init.ts');
     const config = ConfigSchema.parse({});
     const instructions = buildInstructions(config);
-    expect(instructions).toContain(PREVIEW_GUIDANCE);
+    // G1: ≤ 1,500 bytes so it survives Claude Code's per-server cap intact.
+    expect(instructions.length).toBeLessThanOrEqual(1500);
   });
 
-  it('buildInstructions describes both per-file and folders: surfaces (US-006 / QA-010)', async () => {
+  it('buildInstructions front-loads STOP-rule keywords in first 400 bytes (SPEC FR3)', async () => {
     const { buildInstructions } = await import('./server.ts');
     const config = ConfigSchema.parse({});
     const instructions = buildInstructions(config);
-    // Describes both surfaces, not the stale "deprecated" wording
-    expect(instructions).not.toContain('Folder-level frontmatter was deprecated');
-    expect(instructions).not.toContain('the only authored metadata surface');
-    expect(instructions).toContain('Per-file frontmatter');
-    expect(instructions).toContain('folders:');
-    // Distinguishes from the rejected INDEX.md-inside-content pattern
-    expect(instructions).toContain('INDEX.md');
+    const head = instructions.substring(0, 400);
+    expect(head).toContain('STOP');
+    expect(head).toContain('write_document');
+    expect(head).toContain('get_preview_url');
+  });
+
+  it('buildInstructions points at the Agent Skill for full guidance (SPEC §9 D17)', async () => {
+    const { buildInstructions } = await import('./server.ts');
+    const config = ConfigSchema.parse({});
+    const instructions = buildInstructions(config);
+    expect(instructions).toContain('Agent Skill');
+    // Does NOT inline per-tool descriptions — those reach clients via tools/list (SPEC D13)
+    expect(instructions).not.toContain('### `exec`');
+    expect(instructions).not.toContain('### `read_document`');
   });
 });
 
@@ -86,9 +93,10 @@ describe('registerAllTools', () => {
     });
 
     expect(toolNames).toContain('get_dead_links');
+    // init-content is deliberately absent (removed per SPEC 2026-04-23-ok-seed-scaffold).
+    expect(toolNames).not.toContain('init-content');
     const routedTools = [
       'exec',
-      'init-content',
       'ingest',
       'research',
       'consolidate',

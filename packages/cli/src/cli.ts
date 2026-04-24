@@ -29,6 +29,7 @@ import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
+import { seedCommand } from './commands/seed.ts';
 import { startCommand } from './commands/start.ts';
 import { statusCommand } from './commands/status.ts';
 import { stopCommand } from './commands/stop.ts';
@@ -92,6 +93,9 @@ program.addCommand(mcp);
 
 // init command — stateless terminal setup, no config needed
 program.addCommand(initCommand());
+
+// seed command — stateless content-scaffold, no config needed
+program.addCommand(seedCommand());
 
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);
