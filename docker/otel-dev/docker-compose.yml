@@ -80,9 +80,12 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     ports:
-      - "4317:4317"   # OTLP/gRPC
-      - "4318:4318"   # OTLP/HTTP
-      - "8889:8889"   # Prometheus scrape target
+      # Remapped from defaults 4317/4318 to avoid collisions with other local
+      # OTel collectors (Jaeger, SigNoz). Export with:
+      #   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318
+      - "14317:4317"  # OTLP/gRPC
+      - "14318:4318"  # OTLP/HTTP
+      - "18889:8889"  # Prometheus scrape target
     depends_on: [tempo, loki, prometheus]
     restart: unless-stopped
 

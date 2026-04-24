@@ -43,20 +43,20 @@ exporters:
 
   # Debug: print spans/logs to the collector's stdout. Uncomment if you want
   # to tail `docker compose logs otel-collector` to see incoming data.
-  # debug:
-  #   verbosity: detailed
+  debug:
+    verbosity: basic
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/tempo]
+      exporters: [otlp/tempo, debug]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/loki]
+      exporters: [otlphttp/loki, debug]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [prometheus]
+      exporters: [prometheus, debug]
