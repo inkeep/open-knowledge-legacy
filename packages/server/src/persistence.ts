@@ -661,7 +661,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }
   }
 
-
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
@@ -968,7 +967,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             console.warn(
               JSON.stringify({
                 event: 'sidecar-write-failed',
-                documentName,
+                docName: documentName,
                 reason: (sidecarErr as Error).message ?? String(sidecarErr),
               }),
             );

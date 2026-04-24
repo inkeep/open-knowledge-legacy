@@ -290,16 +290,15 @@ describe('ProviderPool reconnects', () => {
     paragraph.insert(0, [ytext]);
     doc.getXmlFragment('default').push([paragraph]);
 
-    // 50ms window between edit and killNetwork. Long enough on loopback for
-    // Hocuspocus to deliver the Yjs update to the server's in-memory Y.Doc
-    // (typical ack ~1-5ms), short enough that the L1 persistence debounce
-    // (200ms) has NOT yet flushed the edit to markdown. This is the
-    // scenario the plan's sidecar-preservation story targets: "edit
-    // reached the server's last L1 debounce window but not yet on disk."
-    // During the subsequent killAndRestartOnSamePort wait, the old
-    // server's L1 fires and writes markdown + sidecar both — so the fresh
-    // server2 can recover the marker from the sidecar.
-    await wait(50);
+    // Wait for the edit to reach the server's in-memory Y.Doc by polling
+    // `unsyncedChanges === 0` (deterministic — does not depend on wall-clock
+    // timing, so slow CI runners behave identically to local loopback). We
+    // MUST kill the network before the L1 persistence debounce (200ms) flushes
+    // to markdown — that's the scenario the sidecar-preservation story
+    // targets: "edit reached the server's last L1 debounce window but not yet
+    // on disk." Poll interval is 10ms; on loopback the ack lands in 1-5ms, so
+    // we exit this wait well before the 200ms L1 threshold.
+    await pollUntil(() => firstProvider.unsyncedChanges === 0, 180, 10);
     server.killNetwork();
     // Small wait so the client's websocket observes the disconnect.
     await wait(100);

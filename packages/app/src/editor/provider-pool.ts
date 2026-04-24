@@ -1,5 +1,6 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
+import type { HocuspocusAuthToken } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { mark } from '../lib/perf/mark';
 import { appendTraceContextToCollabUrl } from './collab-otel';
@@ -80,19 +81,6 @@ const FORCE_SYNC_INTERVAL_MS = 5_000;
 export const MAX_POOL = 10;
 
 /**
- * Shape of the JSON `token` field on every HocuspocusProvider this pool
- * constructs. Mirrors `HocuspocusAuthTokenSchema` in
- * `packages/server/src/auth-token-schema.ts` — the server's `onAuthenticate`
- * hook parses this back out. Kept as a local type (not imported from the
- * server package) to keep the client free of server-package deps.
- */
-interface AuthTokenClaim {
-  principalId?: string;
-  tabSessionId?: string;
-  expectedServerInstanceId?: string;
-}
-
-/**
  * Build the stringified JSON `token` HocuspocusProvider sends on every
  * connect, or `undefined` when no claim is set. Returning `undefined` (vs.
  * `'{}'`) preserves the pre-US-001 shape where the `token` option is simply
@@ -108,7 +96,10 @@ export function buildAuthToken(
   tabIdentity: { principalId: string; tabSessionId: string } | null,
   expectedServerInstanceId: string | null,
 ): string | undefined {
-  const claim: AuthTokenClaim = {};
+  // Type is type-only-imported from the server package — the schema's
+  // single source of truth is `HocuspocusAuthTokenSchema`. Adding a field
+  // there propagates to the type consumed here with no client-side drift.
+  const claim: HocuspocusAuthToken = {};
   if (tabIdentity !== null) {
     claim.principalId = tabIdentity.principalId;
     claim.tabSessionId = tabIdentity.tabSessionId;

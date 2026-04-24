@@ -1,9 +1,9 @@
 /**
  * Sidecar primitives — unit tests for the happy path, corruption defense,
- * version handling, and the bounded Y.applyUpdate timeout. Integration
- * coverage (onStoreDocument writes the sidecar, onLoadDocument reads it)
- * lives in persistence.test.ts for Commit 6. Bug-class end-to-end coverage
- * of the whole restart-recovery flow is the 11-test integration suite.
+ * and version handling. Integration coverage (onStoreDocument writes the
+ * sidecar, onLoadDocument reads it) lives in persistence.test.ts. Bug-class
+ * end-to-end coverage of the whole restart-recovery flow is the 11-test
+ * integration suite.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';

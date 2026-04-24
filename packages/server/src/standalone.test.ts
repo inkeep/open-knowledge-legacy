@@ -783,19 +783,15 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
   });
 
   // Pull the principalAuthExtension out of the configured Hocuspocus
-  // extensions list. Our identity check: the onAuthenticate owner that parses
-  // the auth token; kind='human' is the distinguishing context write.
+  // extensions list via its `__kind: 'principal-auth'` marker. Matching on a
+  // named marker is robust against future additions of other extensions
+  // that also implement `onAuthenticate` — the `find` by function existence
+  // alone would silently pick the wrong one.
   function getAuthExtension(server: Awaited<ReturnType<typeof createServer>>): {
     onAuthenticate: (payload: unknown) => Promise<void>;
   } {
     const ext = server.hocuspocus.configuration.extensions.find(
-      (e) =>
-        typeof (e as { onAuthenticate?: unknown }).onAuthenticate === 'function' &&
-        // Match by identity on the known function name to avoid catching the
-        // DocExtension hooks that also implement onAuthenticate in the future.
-        // Today only principalAuthExtension owns onAuthenticate here — but
-        // this narrows future drift.
-        true,
+      (e) => (e as { __kind?: string }).__kind === 'principal-auth',
     ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
     if (!ext) throw new Error('expected principalAuthExtension on hocuspocus.configuration');
     return ext;

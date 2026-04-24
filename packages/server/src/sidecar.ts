@@ -24,22 +24,28 @@
  * - Corrupt header → return `null`, caller falls through to markdown.
  * - Version mismatch (yjs major or schema version bump) → return `null`,
  *   log a structured event, caller falls through.
- * - `Y.applyUpdate` hang (open Yjs #479 case; documented in research
- *   evidence/d2-yjs-format-durability.md) → defended by a 1s
- *   `Promise.race` timeout; returned as `null` with a load-failed log.
+ * - `Y.applyUpdate` throws (corrupt body bytes) → `applyFn` returns
+ *   `false`; caller calls `deleteSidecar` + falls through to markdown.
  * - Post-apply assertion (caller's responsibility) can still delete the
  *   sidecar via `deleteSidecar` and fall through — that's Commit 6's
  *   divergence-handling path.
+ * - `Y.applyUpdate` infinite loop (Yjs #479; docs at
+ *   `reports/crdt-server-restart-recovery/evidence/d2-yjs-format-durability.md`)
+ *   — NOT defended. Synchronous infinite loop blocks the event loop, so
+ *   no JS-land timer could fire. Worker-thread isolation is the only
+ *   real defense and is out of scope for v1. Operator recovery: delete
+ *   the sidecar dir manually; markdown is intact.
  *
  * STOP: the sidecar IS NOT source of truth. Markdown is (precedent #1).
  * `writeSidecar` failures must NEVER bubble up and fail the L1 cycle —
  * callers should try/catch and log at warn.
  */
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import * as Y from 'yjs';
 import { z } from 'zod';
+import { tracedMkdir, tracedRename, tracedRm, tracedUnlink, tracedWriteFile } from './fs-traced.ts';
 
 /**
  * Relative path the sidecar lives in under `contentDir`. Matches the
@@ -67,12 +73,24 @@ export const CURRENT_SCHEMA_VERSION = 1;
 export const CURRENT_FORMAT_VARIANT = 'v1' as const;
 
 /**
- * Timeout on the post-load `Y.applyUpdate` call. Defends against open Yjs
- * issue #479 (infinite loop on malformed updates). 1000ms is generous —
- * a legitimate update for doc sizes we ship (tens of KB) should apply in
- * under 10ms.
+ * `Y.applyUpdate` is a synchronous call that either returns cleanly or
+ * throws. The applyFn wrapper below catches throws and returns `false` so
+ * the caller can deleteSidecar + fall through to markdown.
+ *
+ * Known failure mode this does NOT defend against: Yjs #479 (infinite loop
+ * on malformed updates). Because `Y.applyUpdate` is synchronous and runs
+ * on the single JS thread, an infinite loop inside it blocks the event
+ * loop entirely — no `setTimeout` would fire, no Promise.race could
+ * short-circuit. A previous version of this code wrapped the call in a
+ * `Promise.race` with a `setTimeout` to claim timeout defense; that
+ * pattern was removed because it was ineffective for the synchronous-hang
+ * case it claimed to cover. Properly defending against #479 would require
+ * running `applyUpdate` in a Worker thread — currently out of scope.
+ *
+ * Practical impact of the gap: if a corrupt sidecar triggers #479, the
+ * server process locks up at startup. Markdown stays the source of truth
+ * on disk, so the operator recovers by deleting the sidecar dir manually.
  */
-const APPLY_UPDATE_TIMEOUT_MS = 1000;
 
 /**
  * Zod schema for the sidecar header. All fields are required in v1 so
@@ -92,13 +110,15 @@ const APPLY_UPDATE_TIMEOUT_MS = 1000;
  * - `clientIdToWriter`: optional map for the future attribution-clean-up
  *   feature (out-of-scope for v1, included as a forward-compat hint).
  */
-const SidecarHeaderSchema = z.object({
-  yjsVersion: z.string(),
-  formatVariant: z.literal('v1'),
-  schemaVersion: z.number().int(),
-  writtenAt: z.string(),
-  clientIdToWriter: z.record(z.string(), z.string()).optional(),
-});
+const SidecarHeaderSchema = z
+  .object({
+    yjsVersion: z.string(),
+    formatVariant: z.literal('v1'),
+    schemaVersion: z.number().int(),
+    writtenAt: z.string(),
+    clientIdToWriter: z.record(z.string(), z.string()).optional(),
+  })
+  .loose();
 
 type SidecarHeader = z.infer<typeof SidecarHeaderSchema>;
 
@@ -128,7 +148,7 @@ function withLengthPrefix(header: Buffer, body: Uint8Array): Buffer {
  */
 export async function writeSidecar(contentDir: string, docName: string, doc: Y.Doc): Promise<void> {
   const path = sidecarPathFor(contentDir, docName);
-  await mkdir(dirname(path), { recursive: true });
+  await tracedMkdir(dirname(path), { recursive: true });
   const header: SidecarHeader = {
     yjsVersion: CURRENT_YJS_VERSION,
     formatVariant: CURRENT_FORMAT_VARIANT,
@@ -141,12 +161,12 @@ export async function writeSidecar(contentDir: string, docName: string, doc: Y.D
 
   const tmpPath = `${path}.tmp.${crypto.randomUUID()}`;
   try {
-    await writeFile(tmpPath, full);
-    await rename(tmpPath, path);
+    await tracedWriteFile(tmpPath, full);
+    await tracedRename(tmpPath, path);
   } catch (err) {
     // Best-effort cleanup of the orphaned tmp file.
     try {
-      await unlink(tmpPath);
+      await tracedUnlink(tmpPath);
     } catch {
       // Already gone, or permissions — nothing more we can do.
     }
@@ -168,7 +188,7 @@ interface SidecarReadResult {
   header: SidecarHeader;
   bodyBytes: Uint8Array;
   /**
-   * Apply the sidecar body to `doc`, wrapped in a 1s timeout + try/catch.
+   * Apply the sidecar body to `doc`, wrapped in try/catch.
    * Resolves to `true` on clean apply, `false` on timeout or throw.
    * Commit 6 uses the return value to decide between "proceed with
    * post-apply assertion" and "delete sidecar, fall through to markdown."
@@ -238,24 +258,11 @@ export async function readSidecar(
   const bodyBytes = new Uint8Array(bytes.subarray(4 + headerLen));
 
   const applyFn = async (doc: Y.Doc): Promise<boolean> => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
     try {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          Y.applyUpdate(doc, bodyBytes);
-          resolve();
-        }),
-        new Promise<void>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(new Error('sidecar applyUpdate exceeded timeout'));
-          }, APPLY_UPDATE_TIMEOUT_MS);
-        }),
-      ]);
+      Y.applyUpdate(doc, bodyBytes);
       return true;
     } catch {
       return false;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   };
 
@@ -270,7 +277,7 @@ export async function readSidecar(
 export async function deleteSidecar(contentDir: string, docName: string): Promise<void> {
   const path = sidecarPathFor(contentDir, docName);
   try {
-    await unlink(path);
+    await tracedUnlink(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return;
@@ -293,10 +300,10 @@ export async function deleteSidecarsForBranch(contentDir: string): Promise<void>
   if (!existsSync(dir)) return;
   // Blow away the entire ystate/ directory. Faster and simpler than
   // readdir + unlink per entry, and tolerant of subdirectories.
-  await rm(dir, { recursive: true, force: true });
+  await tracedRm(dir, { recursive: true, force: true });
   // Recreate the empty dir so subsequent writeSidecar calls don't race
   // on mkdir creation under concurrent L1 flushes.
-  await mkdir(dir, { recursive: true });
+  await tracedMkdir(dir, { recursive: true });
 }
 
 /**

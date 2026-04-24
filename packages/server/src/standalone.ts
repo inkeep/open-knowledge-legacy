@@ -294,7 +294,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     // This closes attribution-forgery on the single-user loopback deployment
     // without requiring a signed token. When multi-principal support is ever
     // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
-    const principalAuthExtension: Extension = {
+    const principalAuthExtension: Extension & { __kind: 'principal-auth' } = {
+      // Named marker so test code can find THIS extension specifically rather
+      // than "the first extension with an onAuthenticate hook" — future
+      // additions of other onAuthenticate-carrying extensions won't silently
+      // break identity-based extraction.
+      __kind: 'principal-auth',
       async onAuthenticate(payload) {
         const tokenStr = payload.token;
         // Route the parse through the Zod schema so the v3→v4 forward-compat
@@ -1180,6 +1185,18 @@ export function createServer(options: ServerOptions): ServerInstance {
       );
       degraded.push('cc1-push');
     }
+
+    // Reset branch-scoped state to match THIS project's current HEAD before
+    // anything reads/writes it. `persistence.activeBranch` and the
+    // `BacklinkIndex.activeBranch` are mutable state; in single-process test
+    // runners (bun test) these leak across test files, so a prior test that
+    // triggered `switchReconciledBaseScope` leaves state at the wrong branch
+    // for the next server's reads. Detecting the actual HEAD here and
+    // normalizing both scopes in lock-step closes the leak.
+    const gitDirForInit = resolveGitDir(projectDir);
+    const startupBranch = gitDirForInit ? (readBranchFromHead(gitDirForInit) ?? 'main') : 'main';
+    switchReconciledBaseScope(startupBranch);
+    backlinkIndex.switchBranch(startupBranch);
 
     // Start file watcher (with content filter for gitignore + config exclude)
     try {
