@@ -5,13 +5,6 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -20,9 +13,9 @@ import { cn } from '@/lib/utils';
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = '18rem';
-const SIDEBAR_WIDTH_MOBILE = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = '\\';
+const SIDEBAR_PUSH_PULSE_MS = 700;
 
 type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -34,6 +27,7 @@ type SidebarContextProps = {
   setOpenMobile: OpenHandler;
   isMobile: boolean;
   toggleSidebar: () => void;
+  showPushPulse: boolean;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -61,7 +55,9 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void;
 }) {
   const isMobile = useIsMobile();
-  const [openMobile, setOpenMobile] = React.useState(false);
+  const [openMobile, _setOpenMobile] = React.useState(false);
+  const [showPushPulse, setShowPushPulse] = React.useState(false);
+  const pulseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -80,9 +76,21 @@ function SidebarProvider({
     document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
   };
 
+  // Wrap setOpenMobile to dispatch a synthetic Escape after the state flushes,
+  // so editor popups (BubbleMenu, suggestion-floating-ui, Radix DropdownMenu)
+  // dismiss before the 200ms slide animation starts. floating-ui's autoUpdate
+  // does not watch transform changes, so any stale popup would render at the
+  // pre-translate anchor mid-slide.
+  const setOpenMobile: OpenHandler = (value) => {
+    _setOpenMobile(value);
+    queueMicrotask(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+  };
+
   // Helper to toggle the sidebar.
   function toggleSidebar() {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
+    return isMobile ? setOpenMobile((openMobile) => !openMobile) : setOpen((open) => !open);
   }
 
   // Adds a keyboard shortcut to toggle the sidebar.
@@ -101,9 +109,74 @@ function SidebarProvider({
     toggleSidebar,
   ]);
 
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? 'expanded' : 'collapsed';
+  // ESC dismisses the small-width sidebar. Defer to any open Radix dialog so
+  // its DismissableLayer captures ESC first (CommandPalette, AuthModal, etc.).
+  React.useEffect(() => {
+    if (!isMobile || !openMobile) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const openDialog = document.querySelector(
+        '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"]',
+      );
+      if (openDialog) return;
+      setOpenMobile(false);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [
+    isMobile,
+    openMobile,
+    // biome-ignore lint/correctness/useExhaustiveDependencies: setOpenMobile is stable per React Compiler
+    setOpenMobile,
+  ]);
+
+  // Carry desktop sidebar state across the boundary on resize DOWN. The UP
+  // direction is a no-op — the React `open` state is already the active state.
+  // User actions taken at small width are intentionally not propagated back.
+  const prevIsMobileRef = React.useRef(isMobile);
+  React.useEffect(() => {
+    if (!prevIsMobileRef.current && isMobile) {
+      _setOpenMobile(open);
+    }
+    prevIsMobileRef.current = isMobile;
+  }, [isMobile, open]);
+
+  // Pulse-hint on hash change while sidebar is open at small width. Hash
+  // changes fire when the user picks a file in the tree, clicks a wiki-link,
+  // or any other route change — all signal "doc changed, you can dismiss the
+  // sidebar to read it." Honors prefers-reduced-motion.
+  React.useEffect(() => {
+    if (!isMobile || !openMobile) return;
+    const onHashChange = () => {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+      setShowPushPulse(true);
+      pulseTimerRef.current = setTimeout(() => {
+        setShowPushPulse(false);
+        pulseTimerRef.current = null;
+      }, SIDEBAR_PUSH_PULSE_MS);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => {
+      window.removeEventListener('hashchange', onHashChange);
+      if (pulseTimerRef.current) {
+        clearTimeout(pulseTimerRef.current);
+        pulseTimerRef.current = null;
+      }
+      setShowPushPulse(false);
+    };
+  }, [isMobile, openMobile]);
+
+  // The sidebar's *active* open state depends on the breakpoint: at small
+  // width, openMobile drives it; at desktop, the cookie-style `open` does.
+  // Consumers (e.g. EditorHeader's trigger tooltip) need the active value.
+  const state = isMobile
+    ? openMobile
+      ? 'expanded'
+      : 'collapsed'
+    : open
+      ? 'expanded'
+      : 'collapsed';
 
   return (
     <SidebarContext.Provider
@@ -115,6 +188,7 @@ function SidebarProvider({
         openMobile,
         setOpenMobile,
         toggleSidebar,
+        showPushPulse,
       }}
     >
       <div
@@ -144,14 +218,13 @@ function Sidebar({
   collapsible = 'offcanvas',
   className,
   children,
-  dir,
   ...props
 }: React.ComponentProps<'div'> & {
   side?: 'left' | 'right';
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, openMobile } = useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -170,28 +243,46 @@ function Sidebar({
   }
 
   if (isMobile) {
+    // Push-mode: inline (no Portal, no Sheet, no backdrop). The sidebar slides
+    // in via transform on a position:fixed container. SidebarInset reads
+    // `peer-data-[mobile=true][data-state=expanded]` and translates with the
+    // matching width — see SidebarInset below. Crucially, no flex-occupying
+    // gap element here, so SidebarInset retains full viewport width before
+    // the translate is applied (translate-not-reflow).
+    const mobileState = openMobile ? 'expanded' : 'collapsed';
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          dir={dir}
-          data-sidebar="sidebar"
-          data-slot="sidebar"
-          data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
-          side={side}
+      <div
+        className="group peer text-sidebar-foreground"
+        data-state={mobileState}
+        data-variant={variant}
+        data-side={side}
+        data-slot="sidebar"
+        data-mobile="true"
+      >
+        <div
+          data-slot="sidebar-container"
+          data-side={side}
+          className={cn(
+            'fixed inset-y-0 z-30 flex h-svh w-(--sidebar-width)',
+            'transition-transform duration-200 ease-linear motion-reduce:transition-none',
+            'data-[side=left]:left-0 data-[side=right]:right-0',
+            // Closed → off-canvas; open → in place. Default state is closed.
+            'group-data-[state=collapsed]:data-[side=left]:-translate-x-full',
+            'group-data-[state=collapsed]:data-[side=right]:translate-x-full',
+            variant === 'floating' || variant === 'inset' ? 'p-2' : '',
+            className,
+          )}
+          {...props}
         >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
-          </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
+          <div
+            data-sidebar="sidebar"
+            data-slot="sidebar-inner"
+            className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          >
+            {children}
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -288,12 +379,33 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<'main'>) {
+function SidebarInset({ className, onClick, ...props }: React.ComponentProps<'main'>) {
+  const { isMobile, openMobile, setOpenMobile, showPushPulse } = useSidebar();
+
+  const handleClick: React.MouseEventHandler<HTMLElement> = (event) => {
+    onClick?.(event);
+    if (!isMobile || !openMobile) return;
+    const target = event.target as HTMLElement | null;
+    // The trigger lives inside the inset's DOM (EditorHeader); its own onClick
+    // handles toggling. Don't double-fire.
+    if (target?.closest('[data-sidebar="trigger"]')) return;
+    setOpenMobile(false);
+  };
+
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is the window-level ESC listener in SidebarProvider; a noop onKeyDown here would create a false affordance on a non-focusable landmark
     <main
       data-slot="sidebar-inset"
+      data-push-pulse={showPushPulse ? '' : undefined}
+      onClick={handleClick}
       className={cn(
         'relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
+        // Push-mode translate: when peer sidebar is small-width AND open,
+        // translate the inset right by the sidebar width. The inset retains
+        // its intrinsic width — content on the right slides off-screen.
+        'transition-transform duration-200 ease-linear motion-reduce:transition-none',
+        'peer-data-[mobile=true]:peer-data-[state=expanded]:translate-x-(--sidebar-width)',
+        // Pulse hint plays via the data-push-pulse attribute, defined in globals.css.
         className,
       )}
       {...props}

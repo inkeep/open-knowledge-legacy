@@ -132,6 +132,33 @@
   --animate-agent-flash: agent-flash 2s var(--ease-out-strong) forwards;
   --animate-agent-breathing: agent-breathing 2.4s ease-in-out infinite;
   --animate-undo-ready: undo-ready 600ms var(--ease-out-strong) forwards;
+
+  @keyframes sidebar-push-pulse {
+    0% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+    25% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0.4);
+    }
+    100% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+  }
+
+  --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
+}
+
+/* Push-mode pulse hint — plays once when an in-sidebar action (file pick,
+   wiki-link follow) lands while the sidebar is open at small width.
+   Honors prefers-reduced-motion. The selector targets the SidebarInset's
+   data-push-pulse attribute set by SidebarProvider. */
+[data-slot="sidebar-inset"][data-push-pulse] {
+  animation: var(--animate-sidebar-push-pulse);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar-inset"][data-push-pulse] {
+    animation: none;
+  }
 }
 
 /* Base styles */
