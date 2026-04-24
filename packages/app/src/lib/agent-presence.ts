@@ -18,16 +18,6 @@ import type { AgentPresenceEntry } from '@inkeep/open-knowledge-core';
 /** Awareness entries older than this are filtered out. */
 export const AGENT_PRESENCE_STALE_MS = 5_000;
 
-/** Debounce window applied to awareness change events before picking primary. */
-export const AGENT_PRESENCE_DEBOUNCE_MS = 300;
-
-/**
- * Window during which nav is suppressed after a user keystroke. Conservative
- * default — don't yank focus while the user is mid-edit. Tune down if users
- * report "it's too slow to follow."
- */
-export const AGENT_PRESENCE_TYPING_GUARD_MS = 3_000;
-
 /**
  * Minimal Yjs awareness shape needed by the helpers — keeps them testable
  * without importing the full `y-protocols/awareness` module.
@@ -110,27 +100,4 @@ export function pickAgentsForDoc(
     }
   }
   return { current, crossDoc };
-}
-
-/**
- * Pick the single doc the browser should navigate to, given the current
- * awareness snapshot. Reads the latest-ts non-stale `agentPresence` entry's
- * `currentDoc`. Returns `null` when no live presence exists. Behavior
- * parity with the pre-migration `pickPrimary` over `agentFocus` — latest-ts
- * wins, staleness filter matches.
- */
-export function pickPrimary(awareness: AgentPresenceAwareness, now: number): string | null {
-  const entries: AgentPresenceEntry[] = [];
-  for (const state of awareness.getStates().values()) {
-    const presence = state.agentPresence;
-    if (!presence) continue;
-    for (const entry of Object.values(presence)) {
-      if (!entry.currentDoc) continue;
-      if (now - entry.ts >= AGENT_PRESENCE_STALE_MS) continue;
-      entries.push(entry);
-    }
-  }
-  if (entries.length === 0) return null;
-  entries.sort((a, b) => b.ts - a.ts);
-  return entries[0].currentDoc;
 }

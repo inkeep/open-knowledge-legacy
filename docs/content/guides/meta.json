@@ -11,6 +11,7 @@
     "open-in-agent-desktop",
     "content-filtering",
     "timeline",
+    "agent-activity-panel",
     "collaboration-recovery"
   ]
 }

@@ -60,20 +60,8 @@ declare namespace globalThis {
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
   /**
-   * Test-only hook: inject a fake agent-presence awareness state into the
-   * `__system__` provider, simulating a remote agent peer writing to
-   * `docName`. Fires the awareness 'change' event which triggers
-   * SystemDocSubscriber's debounced nav check → hash change. See
-   * `SystemDocSubscriber.tsx` for the injected state shape (matches
-   * `AgentPresenceEntry`).
-   */
-  var __test_injectAgentPresence: ((docName: string) => boolean) | undefined;
-  /**
    * Test-only hook: set the pinned doc via the DocumentContext API without
-   * reaching into `localStorage` internals. Playwright tests that need to
-   * suppress agent-driven auto-nav call this instead of writing
-   * `localStorage.setItem('ok-pin-v1', ...)` + reloading the page. Pass
-   * `null` to unpin.
+   * reaching into `localStorage` internals. Pass `null` to unpin.
    */
   var __test_setPin: ((docName: string | null) => void) | undefined;
 }
