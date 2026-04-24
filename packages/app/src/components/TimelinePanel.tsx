@@ -179,9 +179,10 @@ interface WipGroupProps {
   defaultExpanded: boolean;
   selectedSha?: string;
   onSelect?: (entry: TimelineEntry) => void;
+  isDark: boolean;
 }
 
-function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupProps) {
+function WipGroup({ entries, defaultExpanded, selectedSha, onSelect, isDark }: WipGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (entries.length === 0) return null;
@@ -206,6 +207,7 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupP
             entry={entry}
             selected={entry.sha === selectedSha}
             onSelect={onSelect}
+            isDark={isDark}
           />
         ))}
     </div>
@@ -340,11 +342,10 @@ interface EntryRowProps {
   selected: boolean;
   onSelect?: (entry: TimelineEntry) => void;
   prominent?: boolean;
+  isDark: boolean;
 }
 
-function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProps) {
-  const { resolvedTheme } = useTheme();
-  const isDark = resolvedTheme === 'dark';
+function EntryRow({ entry, selected, onSelect, prominent = false, isDark }: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
@@ -440,6 +441,8 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
 export function TimelineContent({ docName, onEntrySelect, selectedSha }: TimelineContentProps) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -574,6 +577,7 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                 entry={entry}
                 selected={entry.sha === selectedSha}
                 onSelect={onEntrySelect}
+                isDark={isDark}
               />
             ))}
           </div>
@@ -595,6 +599,7 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                     selected={group.entry.sha === selectedSha}
                     onSelect={onEntrySelect}
                     prominent
+                    isDark={isDark}
                   />
                 );
               }
@@ -605,6 +610,7 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                   defaultExpanded={group.isPreCheckpoint}
                   selectedSha={selectedSha}
                   onSelect={onEntrySelect}
+                  isDark={isDark}
                 />
               );
             })}

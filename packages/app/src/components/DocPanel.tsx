@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 export type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph' | 'timeline';
 
-const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
+export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', icon: ListTree },
   { id: 'backlinks', label: 'Backlinks', icon: CornerDownLeft },
   { id: 'forward-links', label: 'Outgoing Links', icon: CornerUpRight },

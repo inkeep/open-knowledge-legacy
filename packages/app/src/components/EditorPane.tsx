@@ -247,8 +247,8 @@ export function EditorPane() {
                 <AlertDialogTitle>Restore this version?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This will replace the current document content with the version from{' '}
-                  {formatRelativeTime(previewEntry.timestamp)}. You can undo this by restoring a
-                  previous version from the timeline.
+                  {formatRelativeTime(previewEntry.timestamp)}. Your current content is already
+                  saved in the timeline — you can restore it anytime.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
