@@ -76,6 +76,9 @@ const EXEMPT_HANDLERS = new Set([
   'handleTestReset',
   'handlePrincipal',
   'handleInstalledAgentsRoute',
+  // GET /api/server-info — identity-free readonly endpoint surfacing the
+  // per-process serverInstanceId for CRDT restart-recovery defense.
+  'handleServerInfo',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
