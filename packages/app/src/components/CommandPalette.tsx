@@ -167,7 +167,7 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             data-testid="command-palette-install-claude-desktop"
           >
             <Download />
-            <span>Install in Claude Desktop…</span>
+            <span>Install for Claude Chat & Cowork (Desktop App)…</span>
           </CommandItem>
         </CommandGroup>
 

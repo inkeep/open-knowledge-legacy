@@ -1,14 +1,6 @@
-import {
-  Download,
-  FolderPlus,
-  FoldVertical,
-  ListCollapse,
-  SquarePen,
-  UnfoldVertical,
-} from 'lucide-react';
-import { useRef, useState } from 'react';
+import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
+import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
-import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
@@ -42,7 +34,6 @@ function FileSidebarInner() {
   // counter. Header buttons call methods directly; no useEffect on the child
   // side, no "did-I-already-handle-this-seq" bookkeeping. See FileTree.tsx.
   const fileTreeRef = useRef<FileTreeHandle | null>(null);
-  const [installDialogOpen, setInstallDialogOpen] = useState(false);
 
   return (
     <Sidebar variant="inset">
@@ -130,30 +121,6 @@ function FileSidebarInner() {
           </SidebarMenu>
         ) : null}
         <UpdateNotices />
-        {/*
-          Cowork install CTA — SPEC 2026-04-24 Ship 1e/1f FR9-FR13. Small
-          ghost button in the footer; low visual noise, always reachable on
-          both web and Electron. The dialog itself is runtime-branched:
-          Electron does download + shell.openPath handoff, web triggers
-          browser download for double-click. An alternative entry point is
-          the URL hash `#install-claude-desktop` handled by App.tsx's
-          InstallInClaudeDesktopTrigger.
-        */}
-        <div className="flex justify-center px-3 pb-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => setInstallDialogOpen(true)}
-          >
-            <Download aria-hidden="true" className="h-3 w-3" />
-            Install in Claude Desktop
-          </Button>
-        </div>
-        <InstallInClaudeDesktopDialog
-          open={installDialogOpen}
-          onOpenChange={setInstallDialogOpen}
-        />
       </SidebarFooter>
     </Sidebar>
   );

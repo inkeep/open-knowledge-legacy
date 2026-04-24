@@ -517,7 +517,11 @@ describe('runInit', () => {
       const result = await runInitForTest();
       const output = formatInitResult(result, testDir);
 
-      expect(output).toContain('Claude Desktop detected. For Cowork:');
+      // Hint names both the Desktop App (so users know the target) and
+      // Chat & Cowork (so they don't think it's a Claude Code duplicate).
+      expect(output).toContain('Claude Desktop App detected.');
+      expect(output).toContain('Claude Chat & Cowork');
+      expect(output).toContain('ok install-skill');
       expect(output).toContain(
         'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork',
       );

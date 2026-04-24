@@ -27,7 +27,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
-import { warning } from '../ui/colors.ts';
+import { accent, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -793,14 +793,18 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   }
 
   // Cowork install hint (SPEC 2026-04-24 FR5 / D12). Surfaced only when
-  // Claude Desktop's config dir exists on this machine. `npx skills` covers
-  // Claude Code but not Claude Desktop / Cowork — those need a manual install
-  // via the `.skill` file association (download + double-click).
+  // Claude Desktop App's config dir exists on this machine. `npx skills`
+  // covers Claude Code (including the Code tab inside the Desktop App) but
+  // not Claude Chat or Claude Cowork modes — those read from a separate,
+  // isolated Skills list and need a manual `.skill` install.
   if (result.claudeDesktopDetected) {
     const pinnedZipUrl = `https://github.com/inkeep/open-knowledge/releases/download/v${PACKAGE_VERSION}/openknowledge.skill`;
     const docsUrl = 'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork';
     lines.push('');
-    lines.push(`Claude Desktop detected. For Cowork: ${docsUrl}  •  ZIP: ${pinnedZipUrl}`);
+    lines.push(
+      `Claude Desktop App detected. To enable in Claude Chat & Cowork: run ${accent('ok install-skill')} or see ${docsUrl}`,
+    );
+    lines.push(`  (Direct download: ${pinnedZipUrl})`);
   }
 
   // Content preview block (between MCP and Next steps)

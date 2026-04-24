@@ -12,29 +12,28 @@ import {
 } from '@/components/ui/dialog';
 
 /**
- * `InstallInClaudeDesktopDialog` — concierge for installing the Open Knowledge
- * skill into Claude Desktop / Cowork. Implements SPEC 2026-04-24 FR9-FR14.
+ * `InstallInClaudeDesktopDialog` — concierge for installing the Open
+ * Knowledge skill for **Claude Chat & Cowork** inside the **Claude Desktop
+ * App**. Distinct from Claude Code (CLI / Code tab) which is already covered
+ * by `ok init`'s `npx skills add` flow.
  *
- * Two-click install relies on Claude.app's `.skill` `CFBundleDocumentType` (D21):
+ * Implements SPEC 2026-04-24 FR9-FR14. Two-click install via the `.skill`
+ * `CFBundleDocumentType` registered by Claude.app (D21):
  *
- *   1. User clicks "Install" in this dialog → we (Electron) download the pinned
- *      `openknowledge.skill` to ~/Downloads and `shell.openPath(...)` routes it
- *      to Claude Desktop via the OS file association. Web mode: trigger a
- *      browser download; user double-clicks the file in their downloads folder.
- *   2. Claude Desktop's own native install dialog appears; user clicks Install
- *      there. Our dialog transitions to a "follow prompts in Claude" state.
+ *   1. User clicks "Install" in this dialog → we (Electron) download the
+ *      `openknowledge.skill` to ~/Downloads and `shell.openPath(...)` routes
+ *      it to the Claude Desktop App via the OS file association. Web mode:
+ *      trigger a browser download; user double-clicks the file in their
+ *      downloads folder.
+ *   2. The Claude Desktop App's own native install dialog appears; user
+ *      clicks Install there. Our dialog transitions to a "follow prompts in
+ *      Claude" state.
  *
  * Runtime branches on `'okDesktop' in window`:
- *   - Electron: calls `window.okDesktop.skill.downloadAndOpen(pinnedUrl)` which
- *     resolves once Claude has been handed the file. Renderer treats resolve as
- *     "handoff succeeded" and shows the "follow prompts in Claude" state.
- *   - Web: anchor-download the always-latest release asset. No handoff — user
- *     completes the install themselves.
- *
- * Mount pattern: the dialog is kept closed by default; parent controls via
- * `open` / `onOpenChange` like other OK dialogs (see SeedDialog precedent).
- * Trigger surfaces (menu item, hash route, in-app CTA) are a follow-up —
- * this component exposes the prop-controlled visibility the trigger wires up.
+ *   - Electron: `window.okDesktop.skill.downloadAndOpen(pinnedUrl)` resolves
+ *     once Claude has been handed the file.
+ *   - Web: anchor-download the always-latest release asset. No handoff —
+ *     user completes the install themselves.
  */
 
 const LATEST_RELEASE_ASSET_URL =
@@ -87,7 +86,7 @@ export function InstallInClaudeDesktopDialog({
         kind: 'error',
         message:
           result.reason === 'open-failed'
-            ? `Claude Desktop didn't open the file. Is it installed? (${msg})`
+            ? `The Claude Desktop App didn't open the file. Is it installed? (${msg})`
             : `${result.reason}: ${msg}`,
       });
     }
@@ -116,16 +115,15 @@ export function InstallInClaudeDesktopDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Download aria-hidden="true" className="h-4 w-4" />
-            Install in Claude Desktop
+            Install for Claude Chat & Cowork
           </DialogTitle>
           <DialogDescription>
-            Open Knowledge isn't installable via <code>npx skills add</code> in Claude Desktop or
-            Cowork — Anthropic gates custom skills behind a manual upload. We ship a{' '}
-            <code>.skill</code> file that Claude Desktop opens natively on double-click.{' '}
+            Adds the Open Knowledge skill to the <strong>Claude Desktop App</strong> so it's
+            available in Claude Chat and Claude Cowork modes. (Claude Code users: no action needed —{' '}
+            <code>ok init</code> already installed it via <code>npx skills add</code>.){' '}
             <a href={DOCS_URL} className="underline" target="_blank" rel="noopener noreferrer">
-              Read the guide <ExternalLink aria-hidden="true" className="inline h-3 w-3" />
+              Full guide <ExternalLink aria-hidden="true" className="inline h-3 w-3" />
             </a>
-            .
           </DialogDescription>
         </DialogHeader>
 
@@ -138,16 +136,20 @@ export function InstallInClaudeDesktopDialog({
                 </li>
                 {isElectron ? (
                   <li>
-                    We'll download <code>openknowledge.skill</code> and open it with Claude Desktop
-                    automatically.
+                    We'll download <code>openknowledge.skill</code> and hand it off to the{' '}
+                    <strong>Claude Desktop App</strong> automatically.
                   </li>
                 ) : (
                   <li>
                     Your browser will download <code>openknowledge.skill</code>. Double-click it in
-                    your Downloads folder to hand it to Claude Desktop.
+                    your Downloads folder to hand it to the <strong>Claude Desktop App</strong>.
                   </li>
                 )}
-                <li>Confirm the install in Claude's native dialog.</li>
+                <li>Confirm the install in Claude's native install dialog.</li>
+                <li>
+                  Skill appears in <strong>Customize → Skills</strong> — available in Chat & Cowork
+                  sessions.
+                </li>
               </ol>
               {!isElectron && (
                 <p className="text-xs text-muted-foreground">
@@ -161,7 +163,8 @@ export function InstallInClaudeDesktopDialog({
           {phase.kind === 'downloading' && (
             <div className="flex items-center gap-2 text-sm">
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Downloading <code>openknowledge.skill</code> and handing off to Claude Desktop…
+              Downloading <code>openknowledge.skill</code> and handing off to the Claude Desktop
+              App…
             </div>
           )}
 
@@ -169,8 +172,8 @@ export function InstallInClaudeDesktopDialog({
             <div className="flex items-start gap-2 text-sm">
               <MousePointer2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
               <span>
-                Handed off to Claude Desktop. Follow the prompts in Claude's install dialog to
-                complete setup.
+                Handed off to the Claude Desktop App. Follow the prompts in Claude's install dialog
+                to complete setup — the skill becomes available in Chat & Cowork.
                 {phase.path && (
                   <span className="mt-1 block text-xs text-muted-foreground">
                     Saved to <code>{phase.path}</code>.
@@ -185,7 +188,8 @@ export function InstallInClaudeDesktopDialog({
               <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
               <span>
                 Download started. Find <code>openknowledge.skill</code> in your browser's downloads
-                and double-click it. Claude Desktop will open its install dialog.
+                and double-click it. The Claude Desktop App will open its install dialog — confirm
+                there to enable the skill for Chat & Cowork.
               </span>
             </div>
           )}

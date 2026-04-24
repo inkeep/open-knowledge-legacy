@@ -473,6 +473,17 @@ function refreshApplicationMenu() {
             }
           }
         : undefined,
+    // Ship 1g — Help → Install in Claude Desktop… opens the skill install
+    // dialog in the focused window via the same URL-hash trigger the command
+    // palette + docs link use. Falls back to iterating all BrowserWindows
+    // when no window is focused (e.g. menu clicked from the Dock).
+    openInstallSkillDialog: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      target.webContents.executeJavaScript(
+        "window.location.hash = '#install-claude-desktop'; undefined",
+      );
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
