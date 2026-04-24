@@ -30,6 +30,7 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
+  seedPoolServerInstanceId,
   wait,
 } from './test-harness';
 
@@ -65,6 +66,7 @@ describe('T9: External disk edit during server restart', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -103,17 +105,21 @@ describe('T9: External disk edit during server restart', () => {
     server = await server.killAndRestartOnSamePort({ downtimeMs: 300 });
     cleanups.unshift(() => server.shutdown());
 
-    // Client reconnects + re-syncs.
+    // Client reconnects + re-syncs. Pre-Commit-4 the fast-restart path kept
+    // the same provider; post-fix the authenticationFailed recycle fires
+    // and the active provider is fresh. Read the post-restart provider
+    // from the pool rather than the captured `firstProvider` reference.
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
-    // Fast-restart path: same provider should survive.
-    expect(pool.getActive()?.provider).toBe(firstProvider);
 
     await wait(500);
 
-    const postClientIds = clientIdsInDoc(firstProvider.document);
+    const activeEntry = pool.getActive();
+    if (!activeEntry) throw new Error('pool has no active entry post-restart');
+    const activeProvider = activeEntry.provider;
+    const postClientIds = clientIdsInDoc(activeProvider.document);
     const grewBy = postClientIds.size - preClientIds.size;
 
-    const postText = firstProvider.document.getText('source').toString();
+    const postText = activeProvider.document.getText('source').toString();
     const aSiblings = (postText.match(/\[\[a-only-sibling\]\]/g) ?? []).length;
     const bSiblings = (postText.match(/\[\[b-only-sibling\]\]/g) ?? []).length;
     const aHeading = (postText.match(/# Version A/g) ?? []).length;

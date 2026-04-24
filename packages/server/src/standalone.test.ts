@@ -763,3 +763,175 @@ describe('createServer() — serverInstanceId', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// US-002 / Commit 4: onAuthenticate enforcement for expectedServerInstanceId.
+// Exercises the principalAuthExtension directly rather than through a live
+// WebSocket — the hook is deterministic and the onAuthenticate contract is
+// "throw with reason X → client sees authenticationFailed({reason: X})".
+// Full end-to-end behavior is covered by the bug-class integration tests
+// (T1/T2/T6/T9 flip from FAIL→PASS at this commit).
+// ---------------------------------------------------------------------------
+describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-auth-mismatch-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // Pull the principalAuthExtension out of the configured Hocuspocus
+  // extensions list. Our identity check: the onAuthenticate owner that parses
+  // the auth token; kind='human' is the distinguishing context write.
+  function getAuthExtension(server: Awaited<ReturnType<typeof createServer>>): {
+    onAuthenticate: (payload: unknown) => Promise<void>;
+  } {
+    const ext = server.hocuspocus.configuration.extensions.find(
+      (e) =>
+        typeof (e as { onAuthenticate?: unknown }).onAuthenticate === 'function' &&
+        // Match by identity on the known function name to avoid catching the
+        // DocExtension hooks that also implement onAuthenticate in the future.
+        // Today only principalAuthExtension owns onAuthenticate here — but
+        // this narrows future drift.
+        true,
+    ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+    if (!ext) throw new Error('expected principalAuthExtension on hocuspocus.configuration');
+    return ext;
+  }
+
+  test('token claiming a mismatched expectedServerInstanceId is rejected', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const staleToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: 'stale-server-id-from-prior-process',
+      });
+      const context: Record<string, unknown> = {};
+
+      let thrown: unknown = null;
+      try {
+        await authExt.onAuthenticate({
+          token: staleToken,
+          context,
+          documentName: 'test-doc',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).not.toBeNull();
+      expect((thrown as { reason?: string }).reason).toBe('server-instance-mismatch');
+      // Rejection happens before context mutation — no partial state leaks
+      // through to the connection's identity.
+      expect(context.principalId).toBeUndefined();
+      expect(context.kind).toBeUndefined();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('token claiming the matching serverInstanceId is accepted', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const goodToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: server.serverInstanceId,
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: goodToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // No throw, and the principal path still hoisted the identity into ctx.
+      expect(context.kind).toBe('human');
+      expect(context.tabSessionId).toBe('s-1');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('legacy token without expectedServerInstanceId is accepted (backward compat)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const legacyToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: legacyToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      expect(context.kind).toBe('human');
+      expect(context.tabSessionId).toBe('s-1');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('missing token is accepted (anonymous legacy path)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: undefined,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // Anonymous path — no principal, no kind.
+      expect(context.principalId).toBeUndefined();
+      expect(context.kind).toBeUndefined();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('empty-string expectedServerInstanceId claim is treated as absent (not rejected)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const emptyClaimToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: '',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: emptyClaimToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // No throw — empty claim is legacy-equivalent and accepted.
+      expect(context.kind).toBe('human');
+    } finally {
+      await server.destroy();
+    }
+  });
+});

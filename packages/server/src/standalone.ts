@@ -10,6 +10,7 @@ import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
@@ -294,43 +295,62 @@ export function createServer(options: ServerOptions): ServerInstance {
     // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
     const principalAuthExtension: Extension = {
       async onAuthenticate(payload) {
-        try {
-          const tokenStr = payload.token;
-          if (!tokenStr) return;
-          const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
-          const ctx = payload.context as Record<string, unknown>;
-          if (typeof parsed.principalId === 'string') {
-            // Pin to loaded principal when the claim matches; ignore on mismatch.
-            if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
-              ctx.principalId = loadedPrincipal.id;
-            } else if (loadedPrincipal) {
-              // Claim doesn't match — log at warn and omit principalId so the
-              // write falls through to SERVICE_WRITER. Preserves observability
-              // without letting the claim through.
-              console.warn(
-                JSON.stringify({
-                  event: 'principal-token-mismatch',
-                  claimed: parsed.principalId,
-                  loaded: loadedPrincipal.id,
-                }),
-              );
-            }
-            // When loadedPrincipal is null (not yet loaded), accept the claim
-            // — the async load is best-effort and browser writes need a writer
-            // ID even in the brief pre-load window. Classified writer fallback
-            // happens via resolveWriterFromOrigin when loaded fields aren't
-            // available for display-name lookup.
-            else {
-              ctx.principalId = parsed.principalId;
-            }
-          }
-          if (typeof parsed.tabSessionId === 'string') {
-            ctx.tabSessionId = parsed.tabSessionId;
-          }
-          ctx.kind = 'human';
-        } catch {
-          // Invalid/missing token — connection proceeds without principal context
+        const tokenStr = payload.token;
+        // Route the parse through the Zod schema so the v3→v4 forward-compat
+        // story stays honest (fields we haven't seen yet survive via
+        // `.loose()`). Legacy untokened clients and malformed tokens both
+        // return `undefined` — we continue through the existing accept path.
+        const parsed = parseHocuspocusAuthToken(tokenStr);
+
+        // CRDT server-restart recovery (US-002 / Commit 4): if the client
+        // claimed a specific serverInstanceId and it doesn't match OUR
+        // instance ID, throw with `reason: 'server-instance-mismatch'` so
+        // the client's `authenticationFailed` handler can recycle all
+        // providers BEFORE any Yjs sync runs (which would merge ghost
+        // items under the stale clientID — the root cause the plan fixes).
+        // Empty-string claim is treated as absent (matches client-side
+        // `buildAuthToken` behavior). Legacy clients without the field
+        // are accepted unconditionally for backward compat.
+        const claimed = parsed?.expectedServerInstanceId;
+        if (typeof claimed === 'string' && claimed.length > 0 && claimed !== serverInstanceId) {
+          const err = new Error(
+            `server instance mismatch: client claimed ${claimed}, this server is ${serverInstanceId}`,
+          ) as Error & { reason: string };
+          err.reason = 'server-instance-mismatch';
+          throw err;
         }
+
+        if (!parsed) return;
+        const ctx = payload.context as Record<string, unknown>;
+        if (typeof parsed.principalId === 'string') {
+          // Pin to loaded principal when the claim matches; ignore on mismatch.
+          if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
+            ctx.principalId = loadedPrincipal.id;
+          } else if (loadedPrincipal) {
+            // Claim doesn't match — log at warn and omit principalId so the
+            // write falls through to SERVICE_WRITER. Preserves observability
+            // without letting the claim through.
+            console.warn(
+              JSON.stringify({
+                event: 'principal-token-mismatch',
+                claimed: parsed.principalId,
+                loaded: loadedPrincipal.id,
+              }),
+            );
+          }
+          // When loadedPrincipal is null (not yet loaded), accept the claim
+          // — the async load is best-effort and browser writes need a writer
+          // ID even in the brief pre-load window. Classified writer fallback
+          // happens via resolveWriterFromOrigin when loaded fields aren't
+          // available for display-name lookup.
+          else {
+            ctx.principalId = parsed.principalId;
+          }
+        }
+        if (typeof parsed.tabSessionId === 'string') {
+          ctx.tabSessionId = parsed.tabSessionId;
+        }
+        ctx.kind = 'human';
       },
     };
     hocuspocus.configuration.extensions.push(principalAuthExtension);

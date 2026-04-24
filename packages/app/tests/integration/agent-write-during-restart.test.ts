@@ -28,6 +28,7 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
+  seedPoolServerInstanceId,
   wait,
 } from './test-harness';
 
@@ -49,6 +50,7 @@ describe('T6: Agent write during restart', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -88,9 +90,11 @@ describe('T6: Agent write during restart', () => {
     server = await server.killAndRestartOnSamePort({ downtimeMs: 500 });
     cleanups.unshift(() => server.shutdown());
 
-    // Browser pool should re-sync same provider (fast-restart path).
+    // Browser pool re-syncs — same provider pre-Commit-4, fresh provider
+    // post-fix (US-002 recycle on server-instance-mismatch). Mechanism
+    // precondition dropped; the real assertion is "no duplication of
+    // PRE_RESTART_MARKER on disk" below.
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
-    expect(pool.getActive()?.provider).toBe(firstProvider);
 
     // Small settle so the reconnect sync (including any duplication) completes
     // before the next agent write lands on the server.

@@ -1484,6 +1484,12 @@ export async function createMultiClientContext(opts: {
   const pools: InstanceType<ProviderPoolCtor>[] = [];
   for (let i = 0; i < opts.clientCount; i++) {
     const pool = new ProviderPool(3, wsUrl, opts.recycleDebounceMs);
+    // Seed the per-pool instance-ID cache the same way DocumentContext does
+    // in production (US-001 / Commit 3). Without this, the server's
+    // onAuthenticate (US-002 / Commit 4) treats the pool as legacy and
+    // accepts stale-client reconnects — exactly what the bug-class tests
+    // are trying to guard against.
+    await seedPoolServerInstanceId(opts.server, pool);
     pool.open(opts.docName);
     pool.setActive(opts.docName);
     pools.push(pool);
@@ -1518,6 +1524,37 @@ export async function createMultiClientContext(opts: {
  * consecutive reads `settleMs` apart — ensures we don't sample a mid-debounce
  * state. Replacement for `await wait(1000)` before reading file content.
  */
+/**
+ * Fetch `/api/server-info` from a running server and seed the pool's
+ * `cachedServerInstanceId` — mirroring the DocumentContext boot flow that
+ * runs in the real browser. Integration tests that exercise the CRDT
+ * server-restart recovery defense MUST call this after constructing the
+ * pool; otherwise the pool sends anonymous claims and the server's
+ * `onAuthenticate` mismatch enforcement never fires.
+ *
+ * Returns the fetched serverInstanceId for convenience (tests that assert
+ * the claim landed correctly).
+ */
+export async function seedPoolServerInstanceId(
+  server: { port: number },
+  pool: {
+    setExpectedServerInstanceId: (id: string | null) => void;
+  },
+): Promise<string> {
+  const res = await fetch(`http://localhost:${server.port}/api/server-info`);
+  if (!res.ok) {
+    throw new Error(`seedPoolServerInstanceId: /api/server-info returned ${res.status}`);
+  }
+  const body = (await res.json()) as { serverInstanceId?: unknown };
+  if (typeof body.serverInstanceId !== 'string') {
+    throw new Error(
+      `seedPoolServerInstanceId: /api/server-info body missing string serverInstanceId`,
+    );
+  }
+  pool.setExpectedServerInstanceId(body.serverInstanceId);
+  return body.serverInstanceId;
+}
+
 export async function pollDiskContentStable(
   filePath: string,
   predicate: (content: string) => boolean,

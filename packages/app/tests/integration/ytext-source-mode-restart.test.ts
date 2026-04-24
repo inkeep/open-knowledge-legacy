@@ -24,6 +24,7 @@ import {
   clientIdsInDoc,
   createRestartableServer,
   pollUntil,
+  seedPoolServerInstanceId,
   serializeFragment,
   wait,
 } from './test-harness';
@@ -60,6 +61,7 @@ describe('T10: Y.Text (source-mode) duplication on restart', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -87,14 +89,20 @@ describe('T10: Y.Text (source-mode) duplication on restart', () => {
     cleanups.unshift(() => server.shutdown());
 
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
-    expect(pool.getActive()?.provider).toBe(firstProvider);
+    // Pre-Commit-4 this test held the same provider through the fast restart;
+    // post-fix the authenticationFailed recycle fires and `doc` points at a
+    // destroyed Y.Doc. Re-read from the pool's current active entry so
+    // post-restart assertions hit the live Y.Doc.
     await wait(500);
 
-    const postClientIds = clientIdsInDoc(doc);
+    const activeEntry = pool.getActive();
+    if (!activeEntry) throw new Error('pool has no active entry post-restart');
+    const postDoc = activeEntry.provider.document;
+    const postClientIds = clientIdsInDoc(postDoc);
 
     // Both surfaces: exactly once.
-    const postYtext = doc.getText('source').toString();
-    const postFrag = serializeFragment(doc.getXmlFragment('default'));
+    const postYtext = postDoc.getText('source').toString();
+    const postFrag = serializeFragment(postDoc.getXmlFragment('default'));
     const postSection1Text = (postYtext.match(/## Section 1/g) ?? []).length;
     const postSection1Frag = (postFrag.match(/## Section 1/g) ?? []).length;
     const postSection2Text = (postYtext.match(/## Section 2/g) ?? []).length;
@@ -131,6 +139,6 @@ describe('T10: Y.Text (source-mode) duplication on restart', () => {
     // Bridge invariant should still hold post-restart (a duplicated Y.Text
     // should serialize to duplicated XmlFragment, and vice versa — so if the
     // two sides DIFFER, there's a separate bug in the bridge sync).
-    assertBridgeInvariant(doc.getText('source'), doc.getXmlFragment('default'));
+    assertBridgeInvariant(postDoc.getText('source'), postDoc.getXmlFragment('default'));
   }, 30_000);
 });

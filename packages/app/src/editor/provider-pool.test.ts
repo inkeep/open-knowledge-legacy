@@ -672,6 +672,100 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// MECHANISM-ONLY tests for `authenticationFailed` → recycle-all wiring
+// (US-002 / Commit 4). These assert the pool's response to the specific
+// rejection reason; they do NOT verify that a real server restart produces a
+// duplication-free Y.Doc. That end-to-end behavior is covered by T1, T2, T6,
+// T9 in the integration test suite.
+// ---------------------------------------------------------------------------
+describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-mismatch')", () => {
+  test("reason 'server-instance-mismatch' recycles every pool entry", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+
+    const e1 = pool.open('doc1');
+    const e2 = pool.open('doc2');
+    const e3 = pool.open('doc3');
+    if (!e1 || !e2 || !e3) throw new Error('expected entries');
+    pool.setActive('doc1');
+    const originalProvider = e1.provider;
+
+    // Simulate the server's reject on the active doc's provider.
+    e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+
+    // Active doc re-opens with a fresh provider (preserving activeDocName);
+    // non-active docs are destroyed — the user navigating to them later
+    // will get a fresh provider on next open(), which is exactly what we
+    // want (no stale Y.Doc from the prior server incarnation ever merges
+    // with fresh server state).
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.has('doc2')).toBe(false);
+    expect(pool.has('doc3')).toBe(false);
+    const postE1 = pool.entries.get('doc1');
+    expect(postE1?.provider).not.toBe(originalProvider);
+    expect(pool.getActiveDocName()).toBe('doc1');
+  });
+
+  test("reason 'server-instance-mismatch' nulls the cached instance ID", () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+
+    // The re-opened provider's token must NOT carry the old claim — that's
+    // the whole point of the recycle. HocuspocusProvider defaults token to
+    // `null` when not passed, so we accept null OR undefined; the only
+    // failure mode is a string containing the stale serverInstanceId.
+    const replaced = pool.entries.get('doc1');
+    if (!replaced) throw new Error('expected replaced entry');
+    const resolved = replaced.provider.configuration.token;
+    if (typeof resolved === 'string') {
+      const parsed = JSON.parse(resolved) as Record<string, unknown>;
+      expect(parsed.expectedServerInstanceId).toBeUndefined();
+    }
+    // Re-seeding via the post-mismatch boot would only happen via a fresh
+    // GET /api/server-info in prod — this is mechanism, not that flow.
+  });
+
+  test('other reasons do not trigger recycle', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+    const originalProvider = entry.provider;
+
+    entry.provider.emit('authenticationFailed', { reason: 'permission-denied' });
+
+    expect(pool.getActive()?.provider).toBe(originalProvider);
+    // Cache is preserved for other reasons.
+    const resolved = originalProvider.configuration.token as unknown;
+    expect(resolved).toBeDefined();
+  });
+
+  test('second mismatch event is a no-op after cache is cleared (idempotence)', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    const postFirstEntry = pool.entries.get('doc1');
+    if (!postFirstEntry) throw new Error('expected post-first entry');
+    const postFirstProvider = postFirstEntry.provider;
+
+    // A stale sibling's event arriving after cache is null must not churn.
+    postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    const postSecond = pool.entries.get('doc1');
+    expect(postSecond?.provider).toBe(postFirstProvider);
+  });
+});
+
 describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
   beforeEach(() => {
     __resetSyncPromiseCache();

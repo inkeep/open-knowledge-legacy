@@ -8,6 +8,7 @@ import {
   pollDiskContentStable,
   pollUntil,
   type RestartableServer,
+  seedPoolServerInstanceId,
   wait,
 } from './test-harness';
 
@@ -95,6 +96,7 @@ describe('ProviderPool reconnects', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
     const firstProvider = await seedAndSyncSingleClient(server, pool, 'test-doc');
 
@@ -148,8 +150,9 @@ describe('ProviderPool reconnects', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
-    const firstProvider = await seedAndSyncSingleClient(server, pool, 'test-doc');
+    await seedAndSyncSingleClient(server, pool, 'test-doc');
 
     // Baseline on disk.
     const baseline = readFileSync(join(server.contentDir, 'test-doc.md'), 'utf-8');
@@ -166,22 +169,27 @@ describe('ProviderPool reconnects', () => {
     const preRestartClientIds = new Set(pool.getActive()?.provider.document.store.clients.keys());
 
     // Fast restart — 500ms downtime, well under RECYCLE_DEBOUNCE_MS = 4000.
-    // The pool's pending recycle timer is cancelled by onSynced when the
-    // client reconnects, keeping the stale Y.Doc alive.
+    // Pre-fix the pool's pending recycle timer would have been cancelled by
+    // onSynced and the stale Y.Doc would survive. Post-fix (US-002 / Commit
+    // 4), the server's onAuthenticate rejects on server-instance-mismatch,
+    // the client's authenticationFailed handler fires, and every pool entry
+    // recycles BEFORE Yjs sync can merge ghost state. Either way the test's
+    // real assertion — no content duplication on disk — is the behavior we
+    // care about.
     server = await server.killAndRestartOnSamePort({ downtimeMs: 500 });
     cleanups.unshift(() => server.shutdown());
 
-    // Wait for the SAME provider instance to re-sync (no recycle).
+    // Wait for the pool to resume a synced active provider — whether same
+    // or fresh (post-fix recycle). The identity check at line 183 used to
+    // gate this test on "bug-class reached," but the fix makes recycling
+    // mandatory; a fresh provider is now the correct post-restart shape.
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
 
-    // Load-bearing pre-condition for the bug manifestation: if the pool DID
-    // recycle (e.g. restart took longer than expected), the scenario under test
-    // did not happen — the assertion below becomes a false negative.
-    expect(pool.getActive()?.provider).toBe(firstProvider);
-
-    // Mechanism-level signal: the client's clientID set grew (it learned about
-    // the server's fresh clientID post-restart). This is the structural
-    // footprint of the bug — the merge union accepted foreign Items.
+    // Mechanism-level observability: pre-fix the client's clientID set grew
+    // (it learned about the server's fresh clientID post-restart). Post-fix
+    // the client's Y.Doc has been replaced entirely, so its clientID set
+    // reflects the new Y.Doc's clientID — which is itself post-restart. The
+    // log stays for debugging; no assertion on same-provider.
     const postRestartClientIds = new Set(pool.getActive()?.provider.document.store.clients.keys());
     const grewBy = postRestartClientIds.size - preRestartClientIds.size;
     console.log('[REPRO] clientID set', {
@@ -266,6 +274,7 @@ describe('ProviderPool reconnects', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+    await seedPoolServerInstanceId(server, pool);
 
     const firstProvider = await seedAndSyncSingleClient(server, pool, 'test-doc');
 
@@ -300,8 +309,15 @@ describe('ProviderPool reconnects', () => {
     // Wait for re-sync.
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
 
-    // Provider must be the same (unsynced-changes path never recycles).
-    expect(pool.getActive()?.provider).toBe(firstProvider);
+    // Pre-fix mechanism precondition was `expect(pool.getActive()?.provider).toBe(firstProvider)`
+    // — the unsynced-changes disconnect path never recycled. Post-Commit-4,
+    // the authenticationFailed handler recycles unconditionally, losing the
+    // unsynced edit (this is the "degraded path" the plan calls out as
+    // out-of-scope for v1 and expects to remain FAIL at this commit). The
+    // behavior assertion below (marker count = 1) is what flips PASS at
+    // Commit 6 when the server-side sidecar preserves the edit across
+    // restart; the client then syncs from sidecar-restored state and sees
+    // its own marker again.
 
     // The local edit survives in the client's Y.Doc.
     await pollUntil(

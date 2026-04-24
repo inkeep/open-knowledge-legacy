@@ -101,10 +101,11 @@ describe('T2: Multi-client fast restart', () => {
       50,
     );
 
-    // Mechanism precondition: no pool recycled (all same provider refs).
-    for (let i = 0; i < ctx.pools.length; i++) {
-      expect(ctx.pools[i].getActive()?.provider).toBe(initialProviders[i]);
-    }
+    // Pre-Commit-4 this test required `pool.getActive()?.provider === initialProviders[i]`
+    // (the disconnect-debounce window absorbed the restart, keeping the stale Y.Doc).
+    // Post-fix the authenticationFailed → recycle defense makes the fresh provider
+    // the correct shape. The behavior assertion below (no duplicated markers on
+    // disk) is the PR-level gate; mechanism preconditions are informational only.
 
     // Capture post-restart clientID sets.
     const postRestartClientIdSets = ctx.pools.map((p) => {

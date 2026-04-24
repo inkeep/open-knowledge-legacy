@@ -343,15 +343,58 @@ export class ProviderPool {
       }
     };
 
+    // CRDT server-restart recovery (US-002 / Commit 4): when the server's
+    // `onAuthenticate` throws with `reason: 'server-instance-mismatch'`, it
+    // means OUR Y.Doc carries ghost items from a prior server incarnation —
+    // Yjs sync is about to merge them additively under a fresh clientID and
+    // the document will duplicate. Null the cached ID so the next open()
+    // sends an empty claim (legacy path), then recycle every pool entry so
+    // each doc gets a fresh Y.Doc before sync. Other rejection reasons
+    // (future auth failures, etc.) are left to bubble through as
+    // syncPromise rejection — no recycle.
+    //
+    // Idempotence: after a server restart, every open provider fires its
+    // own authenticationFailed event in quick succession. The first one to
+    // arrive takes the recycle path; subsequent events find
+    // `cachedServerInstanceId` already null and short-circuit. Without the
+    // null-guard we'd recycle N² times (each event triggers N recycles,
+    // each recycle creates a fresh provider which itself may fire the
+    // event if the server rejects again — though in practice the second
+    // generation of providers carry no claim and the server accepts them).
+    const onAuthenticationFailed = ({ reason }: { reason: string }) => {
+      if (reason !== 'server-instance-mismatch') return;
+      if (this.cachedServerInstanceId === null) return;
+      this.cachedServerInstanceId = null;
+      this.recycleAllEntries();
+    };
+
     provider.on('status', onStatus);
     provider.on('synced', onSynced);
     provider.on('disconnect', onDisconnect);
+    provider.on('authenticationFailed', onAuthenticationFailed);
 
     this.entries.set(docName, entry);
     this.touch(docName);
     this.notify();
 
     return entry;
+  }
+
+  /**
+   * Recycle every pool entry by calling `recycleDisconnectedEntry` for each.
+   * Used by the `authenticationFailed` handler on `server-instance-mismatch`
+   * — every provider in the pool is bound to a Y.Doc that merged items under
+   * the old server's clientID, so all of them must restart from a fresh
+   * Y.Doc before Yjs sync runs.
+   *
+   * Snapshot the keys first so mutations in `recycleDisconnectedEntry` (which
+   * deletes + re-opens the active doc) don't disturb the iteration.
+   */
+  private recycleAllEntries(): void {
+    const docNames = Array.from(this.entries.keys());
+    for (const docName of docNames) {
+      this.recycleDisconnectedEntry(docName);
+    }
   }
 
   /**
