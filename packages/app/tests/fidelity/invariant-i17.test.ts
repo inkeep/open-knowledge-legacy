@@ -43,6 +43,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,7 +130,6 @@ describe('I17 — content-visibility STOP rule (AGENTS.md Precedent #30)', () =>
     // file that USES `<NodeViewContent>` as a JSX element (not just
     // references it in comments). If a new NodeView lands without being
     // added to the list, this test catches it.
-    const { execSync } = require('node:child_process');
     // Match the literal JSX opening tag — `<NodeViewContent` followed by
     // ` `, `>`, or `/>`. Comments with plain prose like "…NodeViewContent…"
     // are excluded.

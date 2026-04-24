@@ -110,7 +110,7 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     kind: 'content',
     specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
     regressionTestRef:
-      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+      'packages/app/tests/integration/jsx-schema-narrowing-safety.test.ts (SH05: pre-narrowing jsxInline materialization) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },
   {
     nodeType: 'jsxInline',
@@ -118,7 +118,7 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     attrName: 'attributes',
     specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
     regressionTestRef:
-      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+      'packages/app/tests/integration/jsx-schema-narrowing-safety.test.ts (SH05: pre-narrowing jsxInline materialization) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },
   {
     nodeType: 'jsxInline',
@@ -126,7 +126,7 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     attrName: 'sourceRaw',
     specRef: 'specs/2026-04-14-component-blocks-v2/SPEC.md §FR-4 / NG14',
     regressionTestRef:
-      'packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (inline-context + jsxInline-specific SH05)',
+      'packages/app/tests/integration/jsx-schema-narrowing-safety.test.ts (SH05: pre-narrowing jsxInline materialization) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },
   // M4 (CB-v2 MD-Foundation pre-QA review): drop the legacy `content` attr
   // on `jsxComponent`. It was dead storage — duplicated on every node but

@@ -129,9 +129,21 @@ describe('builtInComponents manifest', () => {
     // retracted on this branch). The surviving 5-pack descriptors ship without
     // `emptyChildName` — they render standalone, not as compound parents.
     // NG19 preserves the compound-tier revival path via PR #165 branch.
+    //
+    // Gate for A11Y07: the `.jsx-empty-child-placeholder` affordance (and
+    // its keyboard-activation coverage) only fires when a descriptor declares
+    // `emptyChildName`. `packages/app/tests/a11y/component-blocks.e2e.ts`
+    // carries `A11Y07` as `test.skip` while no such descriptor ships. If this
+    // assertion fails, a compound parent has landed — **re-enable A11Y07**
+    // so the keyboard-activation invariant gets live coverage again.
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
-    expect(names).toEqual([]);
+    expect(
+      names,
+      names.length > 0
+        ? `Compound descriptor(s) with emptyChildName detected: ${names.join(', ')}. Re-enable A11Y07 in packages/app/tests/a11y/component-blocks.e2e.ts.`
+        : undefined,
+    ).toEqual([]);
   });
 
   test('Callout has GFM 5-type enum values for type prop', () => {

@@ -106,17 +106,17 @@ afterAll(async () => {
 // ── Tests ────────────────────────────────────────────────────────────────
 
 describe('SelectionStatePlugin integration', () => {
-  test('T1: top-level NodeSelection on Card produces single-entry ancestorChain', async () => {
+  test('T1: top-level NodeSelection on a 5-pack descriptor produces single-entry ancestorChain', async () => {
     const client = await createTestClient(server.port);
     try {
-      await agentWriteMd(server.port, '<Card title="Hello" />\n', {
+      await agentWriteMd(server.port, '<Callout type="note" title="Hello" />\n', {
         position: 'replace',
         docName: client.docName,
       });
       await wait(300);
 
       const editorState = fragmentToEditorState(client.fragment);
-      const pos = findJsxComponentPos(editorState, 'Card');
+      const pos = findJsxComponentPos(editorState, 'Callout');
       expect(pos).toBeGreaterThanOrEqual(0);
 
       const withSelection = editorState.apply(
@@ -125,7 +125,7 @@ describe('SelectionStatePlugin integration', () => {
       const sel = selectionStatePluginKey.getState(withSelection);
       expect(sel?.selectedBlockId).not.toBeNull();
       expect(sel?.ancestorChain).toHaveLength(1);
-      expect(sel?.ancestorChain[0].componentName).toBe('Card');
+      expect(sel?.ancestorChain[0].componentName).toBe('Callout');
 
       // Bridge invariant: plugin is read-only; fragment untouched.
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -134,27 +134,31 @@ describe('SelectionStatePlugin integration', () => {
     }
   });
 
-  test('T2: nested Cards<Card> — ancestorChain reflects outer→inner order', async () => {
+  test('T2: nested Callout<Accordion> — ancestorChain reflects outer→inner order', async () => {
     const client = await createTestClient(server.port);
     try {
-      await agentWriteMd(server.port, '<Cards>\n  <Card title="Inner" />\n</Cards>\n', {
-        position: 'replace',
-        docName: client.docName,
-      });
+      await agentWriteMd(
+        server.port,
+        '<Callout type="note">\n  <Accordion title="Inner" />\n</Callout>\n',
+        {
+          position: 'replace',
+          docName: client.docName,
+        },
+      );
       await wait(300);
 
       const editorState = fragmentToEditorState(client.fragment);
-      const cardPos = findJsxComponentPos(editorState, 'Card');
-      expect(cardPos).toBeGreaterThanOrEqual(0);
+      const innerPos = findJsxComponentPos(editorState, 'Accordion');
+      expect(innerPos).toBeGreaterThanOrEqual(0);
 
       const withSelection = editorState.apply(
-        editorState.tr.setSelection(NodeSelection.create(editorState.doc, cardPos)),
+        editorState.tr.setSelection(NodeSelection.create(editorState.doc, innerPos)),
       );
       const sel = selectionStatePluginKey.getState(withSelection);
       expect(sel?.ancestorChain).toHaveLength(2);
-      expect(sel?.ancestorChain[0].componentName).toBe('Cards');
-      expect(sel?.ancestorChain[1].componentName).toBe('Card');
-      // selectedBlockId is the innermost (Card).
+      expect(sel?.ancestorChain[0].componentName).toBe('Callout');
+      expect(sel?.ancestorChain[1].componentName).toBe('Accordion');
+      // selectedBlockId is the innermost (Accordion).
       expect(sel?.selectedBlockId).toBe(sel?.ancestorChain[1].bridgeId);
 
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -166,14 +170,14 @@ describe('SelectionStatePlugin integration', () => {
   test('T3: delete-selection transitions state to empty ancestorChain', async () => {
     const client = await createTestClient(server.port);
     try {
-      await agentWriteMd(server.port, '<Card title="Delete me" />\n', {
+      await agentWriteMd(server.port, '<Callout type="note" title="Delete me" />\n', {
         position: 'replace',
         docName: client.docName,
       });
       await wait(300);
 
       const editorState = fragmentToEditorState(client.fragment);
-      const cardPos = findJsxComponentPos(editorState, 'Card');
+      const cardPos = findJsxComponentPos(editorState, 'Callout');
       expect(cardPos).toBeGreaterThanOrEqual(0);
 
       const withSelection = editorState.apply(
@@ -228,14 +232,14 @@ describe('SelectionStatePlugin integration', () => {
   test('T5: SELECTION_ORIGIN_META_KEY override stamps selectionOrigin programmatic', async () => {
     const client = await createTestClient(server.port);
     try {
-      await agentWriteMd(server.port, '<Card title="Meta test" />\n', {
+      await agentWriteMd(server.port, '<Callout type="note" title="Meta test" />\n', {
         position: 'replace',
         docName: client.docName,
       });
       await wait(300);
 
       const editorState = fragmentToEditorState(client.fragment);
-      const pos = findJsxComponentPos(editorState, 'Card');
+      const pos = findJsxComponentPos(editorState, 'Callout');
       expect(pos).toBeGreaterThanOrEqual(0);
 
       const tr = editorState.tr

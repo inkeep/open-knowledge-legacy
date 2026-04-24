@@ -116,7 +116,6 @@ function PropControl({
             id={boolId}
             checked={Boolean(value)}
             onCheckedChange={(checked) => onChange(checked)}
-            aria-label={boolLabel}
           />
         </div>
       );
