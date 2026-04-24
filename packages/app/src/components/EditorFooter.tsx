@@ -5,7 +5,6 @@ interface EditorFooterProps {
 }
 
 export function EditorFooter({ stats }: EditorFooterProps) {
-  const tokenLabel = stats.tokens === null ? '—' : stats.tokens.toLocaleString();
   return (
     <section
       aria-label="Document statistics"
@@ -17,7 +16,9 @@ export function EditorFooter({ stats }: EditorFooterProps) {
       <span>
         <span className="tabular-nums">{stats.chars.toLocaleString()}</span> chars
       </span>
-      <span className="tabular-nums">{tokenLabel} tokens</span>
+      <span>
+        ~<span className="tabular-nums">{stats.tokens.toLocaleString()}</span> tokens
+      </span>
     </section>
   );
 }

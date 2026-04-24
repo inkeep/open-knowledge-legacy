@@ -3,24 +3,24 @@ import { computeBodyStats } from './document-stats';
 
 describe('computeBodyStats', () => {
   test('empty string returns zeros', () => {
-    expect(computeBodyStats('')).toEqual({ words: 0, chars: 0 });
+    expect(computeBodyStats('')).toEqual({ words: 0, chars: 0, tokens: 0 });
   });
 
   test('plain text without frontmatter', () => {
-    expect(computeBodyStats('hello world foo')).toEqual({ words: 3, chars: 15 });
+    expect(computeBodyStats('hello world foo')).toEqual({ words: 3, chars: 15, tokens: 4 });
   });
 
   test('frontmatter excluded from words and chars', () => {
     const md = '---\ntitle: Test\n---\nhello world';
-    expect(computeBodyStats(md)).toEqual({ words: 2, chars: 11 });
+    expect(computeBodyStats(md)).toEqual({ words: 2, chars: 11, tokens: 3 });
   });
 
   test('whitespace-only body returns zero', () => {
-    expect(computeBodyStats('   \n\n  \t  ')).toEqual({ words: 0, chars: 0 });
+    expect(computeBodyStats('   \n\n  \t  ')).toEqual({ words: 0, chars: 0, tokens: 0 });
   });
 
   test('single word', () => {
-    expect(computeBodyStats('hello')).toEqual({ words: 1, chars: 5 });
+    expect(computeBodyStats('hello')).toEqual({ words: 1, chars: 5, tokens: 2 });
   });
 
   test('multiline text counts words across lines', () => {
@@ -35,6 +35,7 @@ describe('computeBodyStats', () => {
     expect(computeBodyStats('---\ntitle: Test\ntags: [a, b]\n---\n')).toEqual({
       words: 0,
       chars: 0,
+      tokens: 0,
     });
   });
 

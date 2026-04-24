@@ -1,22 +1,11 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { useEffect, useRef, useState } from 'react';
-import {
-  computeBodyStats,
-  type DocumentStats,
-  EMPTY_STATS,
-  TOKEN_SIZE_LIMIT,
-} from '@/lib/document-stats';
-import { tokenEncode } from '@/lib/tiktoken-lazy';
+import { computeBodyStats, type DocumentStats, EMPTY_STATS } from '@/lib/document-stats';
 
 /**
  * Debounce window for recomputing stats. Observers fire on every Y.Text
- * transaction (local AND remote — precedent §"transaction.local semantics"),
- * so bounded rate is load-bearing during agent writes / multi-client typing.
- *
- * Body stats are cheap and computed every tick; token encoding is expensive
- * and additionally size-gated + deferred via idle callback. The hook does not
- * block the editor on token work — the UI renders "—" for tokens until the
- * idle pass lands.
+ * transaction (local AND remote), so bounded rate is load-bearing during
+ * agent writes / multi-client typing.
  */
 const STATS_DEBOUNCE_MS = 300;
 
@@ -42,7 +31,6 @@ export function useDocumentStats(
   const [stats, setStats] = useState<DocumentStats>(EMPTY_STATS);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleCancelRef = useRef<(() => void) | null>(null);
-  const encodeSeqRef = useRef(0);
 
   useEffect(() => {
     if (!provider || !activeDocName) {
@@ -54,29 +42,10 @@ export function useDocumentStats(
     let cancelled = false;
 
     function compute() {
-      if (cancelled) return;
-      const fullText = ytext.toString();
-      const body = computeBodyStats(fullText);
-
-      // Commit cheap body stats immediately so the UI reflects every edit.
-      // Tokens start as null (shown as "—") and resolve after the idle pass.
-      setStats({ ...body, tokens: null });
-
-      // Size gate: skip token work on large docs to keep the main thread free.
-      if (fullText.length > TOKEN_SIZE_LIMIT) return;
-
-      // Cancel any in-flight idle pass — only the latest input matters.
       idleCancelRef.current?.();
-      const seq = ++encodeSeqRef.current;
-      idleCancelRef.current = scheduleIdle(async () => {
-        try {
-          const ids = await tokenEncode(fullText);
-          if (cancelled || seq !== encodeSeqRef.current) return;
-          setStats((prev) => ({ ...prev, tokens: ids.length }));
-        } catch {
-          if (cancelled || seq !== encodeSeqRef.current) return;
-          setStats((prev) => ({ ...prev, tokens: null }));
-        }
+      idleCancelRef.current = scheduleIdle(() => {
+        if (cancelled) return;
+        setStats(computeBodyStats(ytext.toString()));
       });
     }
 
