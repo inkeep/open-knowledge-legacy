@@ -49,10 +49,20 @@ export function defaultInitialDir(activeDocName: string | null): string {
   return slash > 0 ? activeDocName.slice(0, slash) : '';
 }
 
+/**
+ * Admitted doc extensions — see `packages/server/src/doc-extensions.ts` for
+ * the server-side canonical list. Kept inline on the client side to avoid
+ * cross-package imports from a UI helper.
+ */
+function hasSupportedExt(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.mdx');
+}
+
 /** Compose the final path for an inline file creation. */
 export function composeInlineFilePath(parentDir: string, name: string): string {
   const trimmed = name.trim();
-  const file = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+  const file = hasSupportedExt(trimmed) ? trimmed : `${trimmed}.md`;
   return parentDir ? `${parentDir}/${file}` : file;
 }
 
@@ -64,7 +74,7 @@ export function composeInlineFilePath(parentDir: string, name: string): string {
 export function composeInlineFolderPath(parentDir: string, name: string): string {
   const trimmed = name.trim();
   if (trimmed.includes('/')) {
-    const file = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+    const file = hasSupportedExt(trimmed) ? trimmed : `${trimmed}.md`;
     return parentDir ? `${parentDir}/${file}` : file;
   }
   return parentDir ? `${parentDir}/${trimmed}/index.md` : `${trimmed}/index.md`;

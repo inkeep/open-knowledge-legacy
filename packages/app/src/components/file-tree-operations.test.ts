@@ -35,6 +35,11 @@ describe('file-tree-operations', () => {
     expect(normalizeRenameValue('folder', 'renamed.md')).toBe('renamed.md');
   });
 
+  test('normalizeRenameValue strips .mdx suffix for files', () => {
+    expect(normalizeRenameValue('file', 'renamed.mdx')).toBe('renamed');
+    expect(normalizeRenameValue('folder', 'renamed.mdx')).toBe('renamed.mdx');
+  });
+
   test('isValidNodeName rejects path separators and dot segments', () => {
     expect(isValidNodeName('valid-name')).toBe(true);
     expect(isValidNodeName('nested/name')).toBe(false);

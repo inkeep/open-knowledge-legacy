@@ -26,7 +26,15 @@ export function resolveInternalHref(
   const cleanPath = (pathPart.split('?')[0] ?? '').trim();
   if (!cleanPath) return null;
 
-  const withoutExt = cleanPath.endsWith('.md') ? cleanPath.slice(0, -3) : cleanPath;
+  // Strip the canonical doc extensions (see packages/server/src/doc-extensions.ts
+  // for the server-side source of truth — core can't import from server, so
+  // the list is inlined here and kept narrow: .md + .mdx).
+  const lower = cleanPath.toLowerCase();
+  const withoutExt = lower.endsWith('.mdx')
+    ? cleanPath.slice(0, -4)
+    : lower.endsWith('.md')
+      ? cleanPath.slice(0, -3)
+      : cleanPath;
   const dirParts = sourceDocName.includes('/') ? sourceDocName.split('/').slice(0, -1) : [];
 
   for (const seg of withoutExt.split('/')) {

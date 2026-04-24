@@ -10,7 +10,10 @@ export type FileTreeTarget = Pick<TreeNode, 'kind' | 'path' | 'name'>;
 export function normalizeRenameValue(kind: TreeNode['kind'], value: string): string {
   const trimmed = value.trim();
   if (kind === 'file') {
-    return trimmed.replace(/\.md$/i, '');
+    // Strips either supported doc extension so the rename dialog shows the
+    // bare name; re-appended by the write path per the file's current ext
+    // (precedence: .mdx wins — see `packages/server/src/doc-extensions.ts`).
+    return trimmed.replace(/\.(mdx|md)$/i, '');
   }
   return trimmed;
 }

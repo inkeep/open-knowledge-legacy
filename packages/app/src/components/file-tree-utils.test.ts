@@ -235,6 +235,14 @@ describe('composeInlineFilePath', () => {
     expect(composeInlineFilePath('', 'note.md')).toBe('note.md');
   });
 
+  test('does not double-append when user types .mdx filename', () => {
+    expect(composeInlineFilePath('', 'note.mdx')).toBe('note.mdx');
+  });
+
+  test('preserves .mdx when nested in a folder', () => {
+    expect(composeInlineFilePath('docs', 'guide.mdx')).toBe('docs/guide.mdx');
+  });
+
   test('prepends parentDir with slash', () => {
     expect(composeInlineFilePath('docs', 'guide')).toBe('docs/guide.md');
   });

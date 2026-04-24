@@ -33,6 +33,21 @@ describe('resolveInternalHref', () => {
     });
   });
 
+  test('resolves links with .mdx extension stripped', () => {
+    expect(resolveInternalHref('./other.mdx', 'notes')).toEqual({
+      docName: 'other',
+      anchor: null,
+    });
+    expect(resolveInternalHref('../sibling/component.mdx', 'folder/page')).toEqual({
+      docName: 'sibling/component',
+      anchor: null,
+    });
+    expect(resolveInternalHref('./page.mdx#section', 'notes')).toEqual({
+      docName: 'page',
+      anchor: 'section',
+    });
+  });
+
   test('returns null for external, absolute, and anchor-only hrefs', () => {
     expect(resolveInternalHref('https://example.com', 'notes')).toBeNull();
     expect(resolveInternalHref('mailto:foo@bar.com', 'notes')).toBeNull();

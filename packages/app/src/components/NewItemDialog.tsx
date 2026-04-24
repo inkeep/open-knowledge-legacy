@@ -37,7 +37,9 @@ export function validatePath(value: string): string | null {
 }
 
 export function ensureMdExtension(name: string): string {
-  return name.endsWith('.md') ? name : `${name}.md`;
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.md') || lower.endsWith('.mdx')) return name;
+  return `${name}.md`;
 }
 
 /**
@@ -183,7 +185,7 @@ export function NewItemDialog({
         setErrorField('form');
         return;
       }
-      const docName = data.docName ?? path.replace(/\.md$/, '');
+      const docName = data.docName ?? path.replace(/\.(mdx|md)$/, '');
       onOpenChange(false);
       window.location.hash = `#/${docName}`;
       addPage(docName);

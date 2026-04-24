@@ -1019,7 +1019,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const docName = data.docName ?? path.replace(/\.md$/, '');
+      const docName = data.docName ?? path.replace(/\.(mdx|md)$/, '');
       setCreatingItem(null);
       setCreatingValue('');
       setCreatingError(null);
