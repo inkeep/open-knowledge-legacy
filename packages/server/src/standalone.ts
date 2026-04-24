@@ -356,6 +356,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       hocuspocus,
       sessionManager,
       contentDir,
+      contentFilter,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,

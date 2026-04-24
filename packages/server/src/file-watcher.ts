@@ -724,7 +724,13 @@ async function handleRawEvents(
 
     updateFileIndex(event, fileIndex);
 
-    if (contentFilter) {
+    // Update the content filter's dirCount only for external changes. Self-
+    // writes (e.g. `/api/create-page`, agent-write, persistence store) call
+    // `contentFilter.incrementMdDir` synchronously at their own write site
+    // so sibling assets dropped immediately after can pass the filter's
+    // `ASSET_EXTENSIONS + dirCount > 0` rule without racing this async
+    // watcher callback. Incrementing here on self-writes would double-count.
+    if (contentFilter && !isSelf) {
       switch (event.kind) {
         case 'create':
           contentFilter.incrementMdDir(dirname(event.docName));

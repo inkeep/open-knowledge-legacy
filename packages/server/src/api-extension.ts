@@ -755,6 +755,21 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * Shared content filter. Threaded so `/api/create-page` can synchronously
+   * call `incrementMdDir(dirname(path))` after the file write, eliminating
+   * the window where a freshly-created doc's sibling assets get excluded by
+   * the filter's `ASSET_EXTENSIONS` + `dirCount.get(normalizedDir) > 0`
+   * rule because the file watcher hasn't processed the create event yet.
+   * Without this, a dropped sibling asset (PNG/PDF) requested via sirv
+   * falls through to the Vite SPA fallback and is served as `text/html`.
+   * Optional — when absent, the watcher's async `incrementMdDir` call
+   * remains the only path (pre-fix behavior).
+   */
+  contentFilter?: {
+    incrementMdDir: (dir: string) => void;
+    decrementMdDir: (dir: string) => void;
+  };
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /** Accessor for the alias map (alias docName → canonical docName). */
@@ -954,6 +969,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     projectDir,
     getPrincipal,
     installedAgentsProbe,
+    contentFilter,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
@@ -3712,6 +3728,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
+      // Synchronously bump the content filter's sibling-asset dirCount so any
+      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
+      // rule. The file watcher's `create` event will also increment later,
+      // which would double-count — so we also `registerWrite` to mark this
+      // as a self-write, and the watcher skips its own `incrementMdDir` on
+      // self-writes. See file-watcher.ts for the paired logic.
+      if (contentFilter) {
+        contentFilter.incrementMdDir(dirname(docName));
+      }
+      registerWrite(fullPath, contentHash(initialContent));
       recordContributor(
         docName,
         createPageAgentId,
