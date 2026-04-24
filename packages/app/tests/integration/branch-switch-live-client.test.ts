@@ -30,8 +30,12 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HocuspocusProvider } from '@hocuspocus/provider';
 import { ensureProjectGit } from '@inkeep/open-knowledge-server';
+import * as Y from 'yjs';
+import { handleBranchSwitched } from '../../src/editor/branch-invalidation';
 import { ProviderPool } from '../../src/editor/provider-pool';
+import { parseCC1BranchSwitched, SYSTEM_DOC_NAME } from '../../src/lib/cc1';
 import {
   clientIdsInDoc,
   createRestartableServer,
@@ -122,6 +126,49 @@ describe('T5: Branch switch while tab open', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+
+    // Mirror `SystemDocSubscriber` in production: a minimal __system__ provider
+    // that routes CC1 `branch-switched` payloads into `handleBranchSwitched`.
+    // We don't mount the real React component here because the test runs in
+    // bun (not jsdom), and the mechanism — CC1 parse + pool invalidation —
+    // is the same code path.
+    const systemDoc = new Y.Doc();
+    const systemProvider = new HocuspocusProvider({
+      url: `ws://localhost:${server.port}/collab`,
+      name: SYSTEM_DOC_NAME,
+      document: systemDoc,
+      onStateless: ({ payload }: { payload: string }) => {
+        const switched = parseCC1BranchSwitched(payload);
+        if (switched) {
+          void handleBranchSwitched(pool, switched.branch);
+        }
+      },
+    });
+    cleanups.push(async () => {
+      systemProvider.destroy();
+      systemDoc.destroy();
+    });
+
+    // Record every `indexedDB.deleteDatabase` call so the post-switch
+    // assertion can confirm the client-side invalidation path fired. Without
+    // this spy the test could pass by accident whenever the content just
+    // happens to re-converge, without proving the invalidation mechanism ran.
+    const originalDeleteDatabase = indexedDB.deleteDatabase.bind(indexedDB);
+    const deletedDbs: string[] = [];
+    type DeleteDatabaseFn = typeof indexedDB.deleteDatabase;
+    (indexedDB as { deleteDatabase: DeleteDatabaseFn }).deleteDatabase = ((
+      name: string,
+      options?: IDBDatabaseInfo,
+    ) => {
+      deletedDbs.push(name);
+      return (originalDeleteDatabase as (n: string, o?: IDBDatabaseInfo) => IDBOpenDBRequest)(
+        name,
+        options,
+      );
+    }) as DeleteDatabaseFn;
+    cleanups.push(() => {
+      (indexedDB as { deleteDatabase: DeleteDatabaseFn }).deleteDatabase = originalDeleteDatabase;
+    });
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -218,5 +265,14 @@ describe('T5: Branch switch while tab open', () => {
     // indicate stale scaffolding or a reintroduced sidecar write path.
     const ystateDir = join(contentDir, '.open-knowledge', 'ystate');
     expect(existsSync(ystateDir)).toBe(false);
+
+    // Client-side invalidation fired: `handleBranchSwitched` called
+    // `clearData()` on the pool's active persistence, which deletes the
+    // `ok-ydoc:test-doc` IndexedDB database. The branch-switched CC1 signal
+    // rides the __system__ doc's stateless channel and travels
+    // independently of the main doc's sync round-trip, so poll to absorb
+    // the handshake latency.
+    await pollUntil(() => deletedDbs.includes('ok-ydoc:test-doc'), 10_000, 50);
+    expect(deletedDbs).toContain('ok-ydoc:test-doc');
   }, 45_000);
 });

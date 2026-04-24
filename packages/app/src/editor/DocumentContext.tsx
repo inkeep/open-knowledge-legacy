@@ -5,6 +5,7 @@ import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { mark } from '@/lib/perf';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
+import { handleBranchSwitched } from './branch-invalidation';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 import { tabSessionId } from './tab-identity';
@@ -113,6 +114,15 @@ interface DocumentContextValue {
    * clears the claim (used by the auth-failure recycle path in Commit 4).
    */
   updateServerInstanceId: (id: string | null) => void;
+  /**
+   * Invalidate every open provider's IndexedDB persistence and recycle
+   * the providers. Called by `SystemDocSubscriber` on every `__system__`
+   * CC1 `branch-switched` broadcast so the client discards content
+   * authored against the previous branch and re-syncs from the
+   * markdown-rebuilt post-switch state. Delegates to
+   * `handleBranchSwitched` in `branch-invalidation.ts`.
+   */
+  onBranchSwitched: (branch: string) => Promise<void>;
   /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
@@ -477,6 +487,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
       p.setExpectedServerInstanceId(id);
+    },
+    onBranchSwitched: async (branch: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      await handleBranchSwitched(p, branch);
     },
     collabUrl,
     collabTerminal,

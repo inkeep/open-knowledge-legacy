@@ -10,31 +10,46 @@ import {
   type AgentPresenceAwareness,
   pickPrimary,
 } from '@/lib/agent-presence';
-import { parseCC1ServerInfo, parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
+import {
+  parseCC1BranchSwitched,
+  parseCC1ServerInfo,
+  parseCC1Signal,
+  SYSTEM_DOC_NAME,
+} from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { activeDocName, pinnedDoc, collabUrl, setSystemProvider, updateServerInstanceId } =
-    useDocumentContext();
+  const {
+    activeDocName,
+    pinnedDoc,
+    collabUrl,
+    setSystemProvider,
+    updateServerInstanceId,
+    onBranchSwitched,
+  } = useDocumentContext();
   // Hold activeDocName + pinnedDoc in refs so the awareness handler reads the
   // latest without needing to recreate the provider on every change. Writing
   // refs in effects (not during render) keeps React Compiler happy.
   const activeDocRef = useRef<string | null>(activeDocName);
   const pinnedDocRef = useRef<string | null>(pinnedDoc);
-  // Same rationale for `updateServerInstanceId` — it's re-created each
-  // render by DocumentContext's `value` literal, so capturing it by
-  // closure inside the provider's `onStateless` handler would tie the
-  // main effect's lifecycle to every render. The ref reads the current
-  // setter lazily inside the handler, keeping the effect's deps stable.
+  // Same rationale for `updateServerInstanceId` + `onBranchSwitched` — each
+  // re-created per render by DocumentContext's `value` literal. Capturing
+  // them by closure inside `onStateless` would tie the main effect's
+  // lifecycle to every render; the refs read the current dispatchers
+  // lazily inside the handler, keeping the effect's deps stable.
   const updateServerInstanceIdRef = useRef(updateServerInstanceId);
+  const onBranchSwitchedRef = useRef(onBranchSwitched);
   useEffect(() => {
     activeDocRef.current = activeDocName;
   }, [activeDocName]);
   useEffect(() => {
     updateServerInstanceIdRef.current = updateServerInstanceId;
   }, [updateServerInstanceId]);
+  useEffect(() => {
+    onBranchSwitchedRef.current = onBranchSwitched;
+  }, [onBranchSwitched]);
   // Track the just-unpinned moment so we can immediately nav to the current
   // primary without waiting for the next awareness change. Runs after the
   // main effect has wired the provider/listener.
@@ -69,11 +84,16 @@ export function SystemDocSubscriber() {
         // instance ID (plus idempotent re-broadcasts). Route those through
         // the pool's cached-ID setter BEFORE falling through to the
         // derived-view channel parser so both payload shapes coexist on the
-        // single __system__ stateless channel. The two parsers are mutually
-        // exclusive by `ch` — no payload can match both.
+        // single __system__ stateless channel. The three parsers below are
+        // mutually exclusive by `ch` — no payload can match more than one.
         const serverInfo = parseCC1ServerInfo(payload);
         if (serverInfo) {
           updateServerInstanceIdRef.current(serverInfo.serverInstanceId);
+          return;
+        }
+        const branchSwitched = parseCC1BranchSwitched(payload);
+        if (branchSwitched) {
+          void onBranchSwitchedRef.current(branchSwitched.branch);
           return;
         }
         const signal = parseCC1Signal(payload);

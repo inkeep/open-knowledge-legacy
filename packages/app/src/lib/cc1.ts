@@ -77,6 +77,51 @@ export function parseCC1ServerInfo(payload: string): CC1ServerInfoSignal | null 
   return { serverInstanceId: parsed.serverInstanceId };
 }
 
+/**
+ * CC1 channel mirror of `packages/server/src/cc1-broadcast.ts`'s
+ * `CC1_CHANNEL_BRANCH_SWITCHED`. The server emits this broadcast on
+ * cross-branch normalization so live clients can invalidate their
+ * IndexedDB persistence caches — pre-switch CRDT items are semantically
+ * stale against the new branch's markdown-rebuilt state.
+ */
+export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched';
+
+/**
+ * Shape consumers receive for a successfully-parsed `branch-switched`
+ * broadcast. Carries only the fields call-sites act on; unknown wire
+ * fields are dropped, which keeps the parse result forward-compatible
+ * without tying consumers to future additions.
+ */
+interface CC1BranchSwitchedSignal {
+  branch: string;
+}
+
+/**
+ * Try to parse a `__system__` stateless payload as a CC1 `branch-switched`
+ * broadcast. Returns the branch name payload or `null` when the message
+ * is on a different channel, malformed, or missing the `branch` field.
+ *
+ * Called from `SystemDocSubscriber` alongside `parseCC1ServerInfo` and
+ * `parseCC1Signal`. All three parsers are mutually exclusive by channel —
+ * no payload can match more than one. Structural over-match is fine:
+ * unknown fields pass through because the parser reads only the fields
+ * it recognizes (forward-compat; mirrors the `.loose()` zod idiom used
+ * by the server-side auth-token schema).
+ */
+export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedSignal | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed)) return null;
+  if (parsed.v !== CC1_CONTRACT_VERSION) return null;
+  if (parsed.ch !== CC1_CHANNEL_BRANCH_SWITCHED) return null;
+  if (typeof parsed.branch !== 'string') return null;
+  return { branch: parsed.branch };
+}
+
 export function defaultCollabWsUrl(): string {
   if (typeof location === 'undefined') {
     return 'ws://localhost/collab';

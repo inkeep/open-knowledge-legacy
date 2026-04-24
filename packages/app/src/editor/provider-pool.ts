@@ -503,15 +503,17 @@ export class ProviderPool {
 
   /**
    * Recycle every pool entry by calling `recycleDisconnectedEntry` for each.
-   * Used by the `authenticationFailed` handler on `server-instance-mismatch`
-   * — every provider in the pool is bound to a Y.Doc that merged items under
+   * Called by the `authenticationFailed` handler on `server-instance-mismatch`
+   * (every provider in the pool is bound to a Y.Doc that merged items under
    * the old server's clientID, so all of them must restart from a fresh
-   * Y.Doc before Yjs sync runs.
+   * Y.Doc before Yjs sync runs) and by `branch-invalidation.ts` on CC1
+   * `branch-switched` (every provider's Y.Doc reflects a stale branch's
+   * content).
    *
    * Snapshot the keys first so mutations in `recycleDisconnectedEntry` (which
    * deletes + re-opens the active doc) don't disturb the iteration.
    */
-  private recycleAllEntries(): void {
+  recycleAllEntries(): void {
     const docNames = Array.from(this.entries.keys());
     for (const docName of docNames) {
       this.recycleDisconnectedEntry(docName);
