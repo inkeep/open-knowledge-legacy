@@ -357,8 +357,17 @@ export interface FileTreeHandle {
   collapseAll(): void;
 }
 
+/**
+ * Must be mounted inside a `SidebarProvider` — `useSidebar()` throws otherwise.
+ * Today only `FileSidebar` mounts it, which is always inside the provider.
+ */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
+  const { notifySidebarFileSelected } = useSidebar();
+  function navigateToWithPulse(targetPath: string) {
+    navigateTo(targetPath);
+    notifySidebarFileSelected();
+  }
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -804,7 +813,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (suppressSelectionRef.current) return;
       const selected = selectedPaths[0];
       if (!selected) return;
-      navigateTo(treePathToAppPath(selected));
+      navigateToWithPulse(treePathToAppPath(selected));
     };
     handleRenameRef.current = (event) => {
       void handleTreeRename(event);

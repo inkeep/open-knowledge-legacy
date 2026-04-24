@@ -1,6 +1,6 @@
 import type { ParsedCheckpoint, ShadowContributor } from '../shadow-repo-layout.ts';
 
-export type { ParsedCheckpoint, ShadowContributor };
+export type { ShadowContributor };
 
 /** Entry type classification — derived from shadow repo commit message prefix. */
 export type EntryType = 'checkpoint' | 'wip' | 'upstream';

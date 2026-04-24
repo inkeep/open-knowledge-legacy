@@ -2,15 +2,19 @@
 /**
  * Rasterize packages/app/public/favicon.svg → packages/desktop/build/icon.png.
  *
- * Output is a 512×512 PNG — the size electron-builder wants for macOS .icns
- * generation (M2) and the size `app.dock.setIcon()` prefers in dev mode. The
- * committed PNG lets developers run `bun run dev` and see the real icon in
- * the Dock without a build step; CI / M2 packaging re-run this script so the
- * PNG always tracks the SVG.
+ * Output is a 1024×1024 PNG. electron-builder generates the macOS .icns from
+ * it at package time; the same PNG feeds `app.dock.setIcon()` in dev mode.
  *
- * No-op if the PNG is already up-to-date (mtime-based check). Pure-JS
- * rasterizer (@resvg/resvg-js) — no system deps, works on macOS / Linux /
- * Windows / CI containers.
+ * The favicon is composited onto a macOS-style squircle background so the
+ * app icon reads at the same apparent size as other Dock apps. A bare
+ * transparent-background PNG renders ~80% canvas-filling, while peer Dock
+ * icons have a solid squircle that fills 100% of the canvas with a logo at
+ * ~55-60% inside — so ours looked oversized without the squircle.
+ *
+ * Stale check compares the PNG against both the SVG and this script, so
+ * design tweaks here invalidate the cache without needing to touch the SVG.
+ *
+ * Pure-JS rasterizer (@resvg/resvg-js) — no system deps.
  */
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -19,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { Resvg } from '@resvg/resvg-js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const scriptPath = fileURLToPath(import.meta.url);
 const svgPath = resolve(__dirname, '..', '..', 'app', 'public', 'favicon.svg');
 const outDir = resolve(__dirname, '..', 'build');
 const outPath = join(outDir, 'icon.png');
@@ -26,8 +31,9 @@ const outPath = join(outDir, 'icon.png');
 function isStale() {
   try {
     const svgMtime = statSync(svgPath).mtimeMs;
+    const scriptMtime = statSync(scriptPath).mtimeMs;
     const pngMtime = statSync(outPath).mtimeMs;
-    return pngMtime < svgMtime;
+    return pngMtime < Math.max(svgMtime, scriptMtime);
   } catch {
     return true;
   }
@@ -38,30 +44,40 @@ if (!isStale()) {
   process.exit(0);
 }
 
-// Expand the outer <svg>'s viewBox to add transparent padding around the
-// artwork. macOS HIG convention: app-icon content occupies ~80% of the
-// canvas (≈10% margin each side). Done at rasterize time (not on the SVG
-// source) because favicon.svg is also the browser favicon in
-// packages/app/index.html, where extra padding is unwanted.
-const PAD_RATIO = 0.1;
+// Canvas size — 1024² is the modern macOS app-icon source size. electron-
+// builder resamples down to 512/256/128/… for the .icns slices.
+const CANVAS = 1024;
+// Squircle radius — at ~22.3% of the side a rounded-rect reads visually
+// identical to the official macOS super-ellipse mask at Dock sizes.
+const RADIUS = 228;
+// Brand's `blue-dark` (#29325c in packages/app/src/globals.css). Matches the
+// "Open Knowledge" tab look in the editor shell so the Dock icon is
+// recognisable alongside the running app.
+const BG = '#29325c';
+// Logo occupies the inner ~60% of the canvas so apparent size matches
+// Dock peers (Zoom, Slack, etc. render their wordmarks at 55–60%).
+const LOGO_SIZE = Math.round(CANVAS * 0.6);
+const LOGO_POS = Math.round((CANVAS - LOGO_SIZE) / 2);
+
 const rawSvg = readFileSync(svgPath, 'utf8');
-const paddedSvg = rawSvg.replace(
-  /viewBox="(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)"/,
-  (_m, x, y, w, h) => {
-    const wn = Number(w);
-    const hn = Number(h);
-    const nx = Number(x) - wn * PAD_RATIO;
-    const ny = Number(y) - hn * PAD_RATIO;
-    const nw = wn * (1 + 2 * PAD_RATIO);
-    const nh = hn * (1 + 2 * PAD_RATIO);
-    return `viewBox="${nx} ${ny} ${nw} ${nh}"`;
-  },
+
+// Re-scope the favicon inside a nested <svg> element so its coordinate
+// system stays confined to the logo region of the 1024² canvas.
+const nestedFavicon = rawSvg.replace(
+  /<svg[^>]*>/,
+  `<svg x="${LOGO_POS}" y="${LOGO_POS}" width="${LOGO_SIZE}" height="${LOGO_SIZE}" viewBox="0 0 78 80" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`,
 );
-if (paddedSvg === rawSvg) {
-  throw new Error('[rasterize-icon] failed to rewrite viewBox — unexpected SVG shape');
+if (nestedFavicon === rawSvg) {
+  throw new Error('[rasterize-icon] failed to rewrite outer <svg> — unexpected favicon shape');
 }
-const resvg = new Resvg(paddedSvg, {
-  fitTo: { mode: 'width', value: 512 },
+
+const composite = `<svg width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CANVAS}" height="${CANVAS}" rx="${RADIUS}" ry="${RADIUS}" fill="${BG}"/>
+  ${nestedFavicon}
+</svg>`;
+
+const resvg = new Resvg(composite, {
+  fitTo: { mode: 'width', value: CANVAS },
   background: 'rgba(0, 0, 0, 0)',
 });
 const png = resvg.render().asPng();

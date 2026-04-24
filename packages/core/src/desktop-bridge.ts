@@ -116,6 +116,45 @@ export interface OkUpdateStuckHintInfo {
 }
 
 /**
+ * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
+ * Mirrors `EditorId` in `packages/cli/src/commands/editors.ts`. Duplicated
+ * across the three bridge-contract copies (desktop, core, app) and caught
+ * by the M1 invariant test if any copy diverges.
+ */
+export type OkMcpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/**
+ * Payload delivered to `mcpWiring.onShow` subscribers on first-launch MCP
+ * consent. Every editor in `ALL_EDITOR_IDS` appears; `detected: true`
+ * preselects the checkbox in `<McpConsentDialog>` per D-M6-R4 (OQ-14 DIRECTED).
+ * `willReplace: true` signals that the editor has an existing OK-managed
+ * entry that Add would overwrite — surfaced per-row so long-time CLI users
+ * aren't surprised to find their pre-existing entry stomped (Pass 1 Major #8).
+ */
+export interface OkMcpWiringShowPayload {
+  readonly detectedEditors: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly detected: boolean;
+    readonly willReplace: boolean;
+  }[];
+}
+
+/**
+ * Result shape for `mcpWiring.confirm` / `skip`. `ok:false` surfaces only when
+ * `writeUserMcpConfigs` throws — per-editor failures still resolve `ok:true`
+ * and are surfaced to operator logs via structured `mcp-wiring-write-failed`
+ * events (per OQ-19 deferred-marker semantics).
+ */
+export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+
+/**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
  * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
  * (identical field set). Duplicated here (not imported) because core has no
@@ -131,6 +170,62 @@ export interface OkKeyringSmokeResult {
   durationMs?: number;
   timestamp: string;
 }
+
+/**
+ * Seed scaffolder shapes duplicated structurally (same rationale as
+ * `OkKeyringSmokeResult` above — avoids pulling the server package into
+ * core's compilation tree). Structural shape tracks
+ * `@inkeep/open-knowledge-server`'s `ScaffoldPlan` / `ApplyResult` /
+ * `ApplyError` / `FileEntry` / `SkipEntry` / `ConfigEdit` / `FolderRule`.
+ */
+export interface OkFolderRule {
+  match: string;
+  frontmatter: {
+    title?: string;
+    description?: string;
+    tags?: string[];
+  };
+}
+export interface OkScaffoldFileEntry {
+  path: string;
+  kind: 'folder' | 'file';
+  contentPreview?: string;
+}
+export interface OkScaffoldSkipEntry {
+  path: string;
+  reason: 'already-exists' | 'user-content' | 'glob-collision';
+}
+export interface OkScaffoldConfigEdit {
+  configPath: string;
+  folderMatch: string;
+  entry: OkFolderRule;
+}
+export interface OkScaffoldPlan {
+  created: OkScaffoldFileEntry[];
+  skipped: OkScaffoldSkipEntry[];
+  configEdits: OkScaffoldConfigEdit[];
+  warnings: string[];
+}
+export interface OkScaffoldApplyError {
+  path: string;
+  error: string;
+}
+export interface OkScaffoldApplyResult {
+  applied: number;
+  errors: OkScaffoldApplyError[];
+  durationMs: number;
+}
+
+export interface OkSeedError {
+  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  message: string;
+}
+export type OkSeedPlanResult =
+  | { ok: true; plan: OkScaffoldPlan }
+  | { ok: false; error: OkSeedError };
+export type OkSeedApplyResult =
+  | { ok: true; result: OkScaffoldApplyResult }
+  | { ok: false; error: OkSeedError };
 
 /**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
@@ -265,12 +360,41 @@ export interface OkDesktopBridge {
   };
 
   /**
+   * `ok seed` scaffolder surface consumed by the FileSidebar + menu.
+   * `plan()` is read-only and returns what the scaffolder would write;
+   * `apply(plan)` performs the writes. Mirrors the shadcn-3.0 shared-
+   * implementation pattern — same functions run under the Commander CLI
+   * (`ok seed`). See SPEC 2026-04-23-ok-seed-scaffold.
+   */
+  seed: {
+    plan(): Promise<OkSeedPlanResult>;
+    apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
+
+  /**
    * Auto-update control surface. M3 AC18 / D3 revised: Toast A's "Relaunch
    * now" button calls `relaunchNow()` which invokes
    * `autoUpdater.quitAndInstall()` in main.
    */
   update: {
     relaunchNow(): Promise<void>;
+  };
+
+  /**
+   * M6b first-launch MCP consent surface. Renderer mounts `<McpConsentDialog>`
+   * when `onShow` fires; calls `confirm` / `skip` on user action; calls
+   * `signalReady()` once on app mount so main knows a renderer is subscribed
+   * (D-M6-R10 mount-ack handshake).
+   */
+  mcpWiring: {
+    /** Subscribe to the consent-dialog-show event. Returns unsubscribe. */
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;
+    /** Fire a one-way mount-ack event so main's whenRendererReady gate opens. */
+    signalReady(): void;
+    /** User clicked Add. `editorIds` is the subset the user checked. */
+    confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
+    /** User clicked Skip (or pressed ESC). */
+    skip(): Promise<OkMcpWiringResult>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

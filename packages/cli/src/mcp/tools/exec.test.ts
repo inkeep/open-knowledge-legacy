@@ -7,8 +7,30 @@ import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-kno
 import simpleGit from 'simple-git';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
-import { buildExecResult, type ExecStructuredResult } from './exec.ts';
+import { buildExecResult, DESCRIPTION, type ExecStructuredResult } from './exec.ts';
 import { buildReadResult } from './read-document.ts';
+
+describe('exec DESCRIPTION — STOP-rule anchoring (SPEC 2026-04-22 FR4 / US-007 / QA-009)', () => {
+  test('total length fits Claude Code per-tool 2 KB cap', () => {
+    expect(DESCRIPTION.length).toBeLessThanOrEqual(2048);
+  });
+
+  test('first 500 bytes contain STOP + (Read|Grep|Glob) + (.md|markdown)', () => {
+    const head = DESCRIPTION.substring(0, 500);
+    expect(head).toContain('STOP');
+    const mentionsNativeTool =
+      head.includes('Read') || head.includes('Grep') || head.includes('Glob');
+    expect(mentionsNativeTool).toBe(true);
+    const mentionsMarkdown = head.includes('.md') || head.includes('markdown');
+    expect(mentionsMarkdown).toBe(true);
+  });
+
+  test('preserves pre-existing description shape (allowlist + cwd + examples)', () => {
+    expect(DESCRIPTION).toContain('Allowlist: cat, ls, grep, find');
+    expect(DESCRIPTION).toContain('cwd:');
+    expect(DESCRIPTION).toContain('Examples:');
+  });
+});
 
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 

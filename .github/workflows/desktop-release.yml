@@ -61,9 +61,10 @@ concurrency:
 
 jobs:
   build-and-publish-macos:
-    # macos-14 = Apple Silicon. Required for the Universal DMG lipo merge
-    # (arm64 + x64 → universal) per parent SPEC D29.
-    runs-on: macos-14
+    # macos-26 = Apple Silicon (Tahoe). Required for the Universal DMG lipo
+    # merge (arm64 + x64 → universal) and for the macOS 26 icon generation
+    # toolchain.
+    runs-on: macos-26
     # 45 min budget — same as desktop-build.yml. Signed builds add 2-5 min
     # of notary round-trip over the unsigned path; 45 min leaves headroom
     # for cold caches and notary queue spikes.

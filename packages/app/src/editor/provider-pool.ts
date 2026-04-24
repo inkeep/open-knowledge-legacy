@@ -2,6 +2,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { mark } from '../lib/perf/mark';
+import { appendTraceContextToCollabUrl } from './collab-otel';
 import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
@@ -172,7 +173,10 @@ export class ProviderPool {
     }
 
     const provider = new HocuspocusProvider({
-      url: this.wsUrl,
+      // OTel trace context propagation for the WebSocket handshake. The
+      // browser's WebSocket API cannot set request headers, so traceparent
+      // rides in the query string. No-op when OTel is disabled.
+      url: appendTraceContextToCollabUrl(this.wsUrl),
       name: docName,
       forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
       ...(this.tabIdentity !== null ? { token: JSON.stringify(this.tabIdentity) } : {}),

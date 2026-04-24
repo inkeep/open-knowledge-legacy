@@ -73,3 +73,4 @@ packages/core/tests/perf/results.*.json
 # boot paths still create this directory; it's per-workspace runtime state
 # and must never be committed.
 .openknowledge/
+.vercel

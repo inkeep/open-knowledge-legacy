@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import {
+  buildWorkflowFrame,
   type ConfigOrResolver,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectConfigContext,
@@ -24,11 +25,23 @@ import {
 } from './shared.ts';
 
 function buildBody(topic: string, contentDir: string): string {
-  return `Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
+  return `${buildWorkflowFrame('consolidate')}Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
 
 Topic: ${topic}
 
 The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
+
+## STOP gate: has a decision actually been made?
+
+Consolidation is **promotion, not creation**. If the team hasn't decided, the resulting "canonical" article lies about the team's state of understanding — future agents read it, act on it, and the false certainty compounds.
+
+Before any write, confirm out loud with the user:
+
+- **What is the actual decision?** (e.g., "We chose Yjs for CRDT" — not "Yjs is one option")
+- **What alternatives were considered and rejected?** (these go in "Alternatives considered," not as equals)
+- **What's the rationale the team used?** (not your reconstruction from sources)
+
+If the decision is still open, **do not consolidate**. Return and tell the user: "The research is still provisional. When the team decides, re-invoke \`consolidate\` with the outcome." Then stop.
 
 ## When to use this workflow
 
@@ -63,15 +76,9 @@ Locate research articles on this topic:
 
 If there is no research to consolidate, stop. Consolidation is promotion, not creation. Run \`research\` first.
 
-### 2. Confirm the decision
+### 2. Re-confirm the decision (you already ran the STOP gate above)
 
-Before writing, confirm with the developer:
-
-- **What is the actual decision?** (e.g., "We chose Yjs for CRDT" — not "Yjs is one option")
-- **What alternatives were considered and rejected?** (these get mentioned in trade-offs, not as equal options)
-- **What's the rationale the team actually used?** (not your reconstruction from sources — ask if unclear)
-
-If the decision is not yet made, **do not consolidate**. Return and tell the developer to either (a) make the decision first, or (b) keep the research as provisional.
+You already confirmed the decision at the STOP gate at the top of this workflow. This step is a brief re-check after loading the research in Step 1 — occasionally the research surfaces something that makes the "decision" look less decided than the user initially claimed (e.g., an un-rebutted open question, an alternative they forgot about). If the loaded research reveals that, pause and re-confirm with the user before writing.
 
 ### 3. Write the canonical article
 
@@ -165,8 +172,7 @@ superseded_by: <path-to-new-canonical-article>.md
 - **Don't delete research articles** — they are the trail; keep them with a \`superseded_by\` marker
 - **Don't rewrite research prose verbatim** — canonical articles have a different voice (direct, decided) than research (exploratory, provisional)
 - **Don't skip the supersedes / superseded_by links** — the audit trail matters for future readers
-
-Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
+`;
 }
 
 export const DESCRIPTION = [

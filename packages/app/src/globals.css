@@ -132,6 +132,33 @@
   --animate-agent-flash: agent-flash 2s var(--ease-out-strong) forwards;
   --animate-agent-breathing: agent-breathing 2.4s ease-in-out infinite;
   --animate-undo-ready: undo-ready 600ms var(--ease-out-strong) forwards;
+
+  @keyframes sidebar-push-pulse {
+    0% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+    25% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0.4);
+    }
+    100% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+  }
+
+  --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
+}
+
+/* Push-mode pulse hint — plays once when an in-sidebar action (file pick,
+   wiki-link follow) lands while the sidebar is open at small width.
+   Honors prefers-reduced-motion. The selector targets the SidebarInset's
+   data-push-pulse attribute set by SidebarProvider. */
+[data-slot="sidebar-inset"][data-push-pulse] {
+  animation: var(--animate-sidebar-push-pulse);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar-inset"][data-push-pulse] {
+    animation: none;
+  }
 }
 
 /* Base styles */
@@ -217,6 +244,16 @@
 }
 
 /* OK Blob mascot */
+
+/* 3D wrapper — hosts perspective + cursor-following rotateX/rotateY so the
+   head can tilt independently of the click-bounce transform on .ok-blob-group.
+   Inline-flex avoids inline-block whitespace gaps. */
+.ok-blob-3d-wrapper {
+  display: inline-flex;
+  perspective: 400px;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
 
 /* Group wrapper — the click bounce animates the group so body + eyes squish together. */
 .ok-blob-group {

@@ -1,0 +1,62 @@
+# OTel Collector config — receives OTLP from app + browser, fans out to LGTM stack.
+#
+# Browsers REQUIRE the CORS block on the HTTP receiver. Without it, OTLP from
+# the frontend fails preflight silently.
+#
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "http://localhost:*"
+            - "http://127.0.0.1:*"
+          allowed_headers: ["*"]
+
+processors:
+  batch:
+    timeout: 2s
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+
+exporters:
+  # Traces → Tempo over native OTLP/gRPC
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Logs → Loki 3.x native OTLP ingest at /otlp (NOT the deprecated `loki` exporter).
+  # Do not append /v1/logs — Loki's OTLP endpoint strips the signal path internally.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+  # Metrics → Prometheus scrape target (pull model).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Debug: print spans/logs to the collector's stdout. Uncomment if you want
+  # to tail `docker compose logs otel-collector` to see incoming data.
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, debug]

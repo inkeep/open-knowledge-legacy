@@ -5,13 +5,6 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -20,9 +13,9 @@ import { cn } from '@/lib/utils';
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = '18rem';
-const SIDEBAR_WIDTH_MOBILE = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = '\\';
+const SIDEBAR_ID = 'app-file-sidebar';
 
 type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -34,6 +27,15 @@ type SidebarContextProps = {
   setOpenMobile: OpenHandler;
   isMobile: boolean;
   toggleSidebar: () => void;
+  showPushPulse: boolean;
+  setShowPushPulse: React.Dispatch<React.SetStateAction<boolean>>;
+  /**
+   * Trigger a one-shot pulse-hint on SidebarInset's visible left edge after a
+   * file is selected in the file tree at small width. Caller-driven so the
+   * pulse is scoped to in-sidebar selection (not every hashchange — wiki-link
+   * clicks inside the document body must not trigger it).
+   */
+  notifySidebarFileSelected: () => void;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -62,6 +64,7 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
+  const [showPushPulse, setShowPushPulse] = React.useState(false);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -82,7 +85,17 @@ function SidebarProvider({
 
   // Helper to toggle the sidebar.
   function toggleSidebar() {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
+    return isMobile ? setOpenMobile((openMobile) => !openMobile) : setOpen((open) => !open);
+  }
+
+  // Pulse-hint is fired by FileTree's navigateTo (not on every hashchange) so
+  // wiki-link clicks inside the document body, back/forward navigation, and
+  // agent-driven nav don't trigger a noise pulse. Skip when reduced motion is
+  // requested. CSS owns timing — onAnimationEnd on SidebarInset clears the flag.
+  function notifySidebarFileSelected() {
+    if (!isMobile || !openMobile) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setShowPushPulse(true);
   }
 
   // Adds a keyboard shortcut to toggle the sidebar.
@@ -97,13 +110,57 @@ function SidebarProvider({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
+    // biome-ignore lint/correctness/useExhaustiveDependencies: toggleSidebar is a locally-defined closure with no captured render-dependent values; re-subscribing every render would be wasteful but correct
     toggleSidebar,
   ]);
 
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? 'expanded' : 'collapsed';
+  // ESC dismisses the small-width sidebar. Run in CAPTURE phase on window so
+  // we observe the open-layer DOM state BEFORE Radix's DismissableLayer
+  // (capture phase on document) flips data-state="open" → "closed". A bubble-
+  // phase listener races: by the time it runs, the layer is already closed
+  // and our defer-to-dialog check fails to see it.
+  React.useEffect(() => {
+    if (!isMobile || !openMobile) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // Match Dialog/AlertDialog (role="dialog"/"alertdialog"), DropdownMenu/
+      // ContextMenu/Menubar (role="menu"), Combobox/Listbox (role="listbox"),
+      // and Popover content (rendered inside data-radix-popper-content-wrapper).
+      const openLayer = document.querySelector(
+        '[data-state="open"][role="dialog"], ' +
+          '[data-state="open"][role="alertdialog"], ' +
+          '[data-state="open"][role="menu"], ' +
+          '[data-state="open"][role="listbox"], ' +
+          '[data-radix-popper-content-wrapper] [data-state="open"]',
+      );
+      if (openLayer) return;
+      setOpenMobile(false);
+    };
+    window.addEventListener('keydown', onEscape, { capture: true });
+    return () => window.removeEventListener('keydown', onEscape, { capture: true });
+  }, [isMobile, openMobile]);
+
+  // Carry desktop sidebar state across the boundary on resize DOWN. The UP
+  // direction is a no-op — the React `open` state is already the active state.
+  // User actions taken at small width are intentionally not propagated back.
+  const prevIsMobileRef = React.useRef(isMobile);
+  React.useEffect(() => {
+    if (!prevIsMobileRef.current && isMobile) {
+      setOpenMobile(open);
+    }
+    prevIsMobileRef.current = isMobile;
+  }, [isMobile, open]);
+
+  // The sidebar's *active* open state depends on the breakpoint: at small
+  // width, openMobile drives it; at desktop, the cookie-style `open` does.
+  // Consumers (e.g. EditorHeader's trigger tooltip) need the active value.
+  const state = isMobile
+    ? openMobile
+      ? 'expanded'
+      : 'collapsed'
+    : open
+      ? 'expanded'
+      : 'collapsed';
 
   return (
     <SidebarContext.Provider
@@ -115,6 +172,9 @@ function SidebarProvider({
         openMobile,
         setOpenMobile,
         toggleSidebar,
+        showPushPulse,
+        setShowPushPulse,
+        notifySidebarFileSelected,
       }}
     >
       <div
@@ -144,14 +204,13 @@ function Sidebar({
   collapsible = 'offcanvas',
   className,
   children,
-  dir,
   ...props
 }: React.ComponentProps<'div'> & {
   side?: 'left' | 'right';
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, openMobile } = useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -170,28 +229,48 @@ function Sidebar({
   }
 
   if (isMobile) {
+    // Push-mode: inline (no Portal, no Sheet, no backdrop). The sidebar slides
+    // in via transform on a position:fixed container. SidebarInset reads
+    // `peer-data-[mobile=true][data-state=expanded]` and translates with the
+    // matching width — see SidebarInset below. Crucially, no flex-occupying
+    // gap element here, so SidebarInset retains full viewport width before
+    // the translate is applied (translate-not-reflow).
+    const mobileState = openMobile ? 'expanded' : 'collapsed';
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          dir={dir}
-          data-sidebar="sidebar"
-          data-slot="sidebar"
-          data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
-          side={side}
+      <div
+        className="group peer text-sidebar-foreground"
+        data-state={mobileState}
+        data-variant={variant}
+        data-side={side}
+        data-slot="sidebar"
+        data-mobile="true"
+      >
+        <nav
+          id={SIDEBAR_ID}
+          aria-label="File sidebar"
+          data-slot="sidebar-container"
+          data-side={side}
+          className={cn(
+            'fixed inset-y-0 z-30 flex h-svh w-(--sidebar-width)',
+            'transition-transform duration-200 ease-linear motion-reduce:transition-none',
+            'data-[side=left]:left-0 data-[side=right]:right-0',
+            // Closed → off-canvas; open → in place. Default state is closed.
+            'group-data-[state=collapsed]:data-[side=left]:-translate-x-full',
+            'group-data-[state=collapsed]:data-[side=right]:translate-x-full',
+            variant === 'floating' || variant === 'inset' ? 'p-2' : '',
+            className,
+          )}
+          {...props}
         >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
-          </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
+          <div
+            data-sidebar="sidebar"
+            data-slot="sidebar-inner"
+            className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          >
+            {children}
+          </div>
+        </nav>
+      </div>
     );
   }
 
@@ -242,7 +321,7 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, state } = useSidebar();
 
   return (
     <Button
@@ -250,6 +329,8 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon-sm"
+      aria-expanded={state === 'expanded'}
+      aria-controls={SIDEBAR_ID}
       className={cn(className)}
       onClick={(event) => {
         onClick?.(event);
@@ -288,12 +369,49 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<'main'>) {
+function SidebarInset({
+  className,
+  onClick,
+  onAnimationEnd,
+  ...props
+}: React.ComponentProps<'main'>) {
+  const { isMobile, openMobile, setOpenMobile, showPushPulse, setShowPushPulse } = useSidebar();
+
+  const handleClick: React.MouseEventHandler<HTMLElement> = (event) => {
+    onClick?.(event);
+    if (event.defaultPrevented) return;
+    if (!isMobile || !openMobile) return;
+    const target = event.target as HTMLElement | null;
+    // The trigger lives inside the inset's DOM (EditorHeader); its own onClick
+    // handles toggling. Don't double-fire.
+    if (target?.closest('[data-sidebar="trigger"]')) return;
+    setOpenMobile(false);
+  };
+
+  // CSS owns the pulse duration — clearing on animationend keeps TS state in
+  // sync with the CSS keyframe regardless of future timing tweaks. The
+  // animationName guard avoids racing with other animations on this element.
+  const handleAnimationEnd: React.AnimationEventHandler<HTMLElement> = (event) => {
+    onAnimationEnd?.(event);
+    if (event.animationName === 'sidebar-push-pulse') {
+      setShowPushPulse(false);
+    }
+  };
+
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is handled by SidebarProvider's window-level Escape keydown listener (the useEffect gated on `isMobile && openMobile`); a noop onKeyDown here would create a false affordance on a non-focusable landmark
     <main
       data-slot="sidebar-inset"
+      data-push-pulse={showPushPulse ? '' : undefined}
+      onClick={handleClick}
+      onAnimationEnd={handleAnimationEnd}
       className={cn(
         'relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
+        // Push-mode translate: when peer sidebar is small-width AND open,
+        // translate the inset right by the sidebar width. The inset retains
+        // its intrinsic width — content on the right slides off-screen.
+        'transition-transform duration-200 ease-linear motion-reduce:transition-none',
+        'peer-data-[mobile=true]:peer-data-[state=expanded]:translate-x-(--sidebar-width)',
         className,
       )}
       {...props}

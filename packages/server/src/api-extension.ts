@@ -74,6 +74,15 @@ import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
+import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import {
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_HTTP_ROUTE,
+  ATTR_URL_PATH,
+  ATTR_URL_SCHEME,
+  ATTR_USER_AGENT_ORIGINAL,
+} from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
 import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
@@ -124,6 +133,7 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import { applySeed, planSeed, type ScaffoldPlan, SeedPrerequisiteError } from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
@@ -137,7 +147,23 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
+import { getMeter, getTracer } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
+
+// Cache the HTTP duration histogram at module scope — lazy-init at first use
+// so the meter is a real meter (post-`initTelemetry`), not the pre-init no-op.
+// Recreating the histogram every request allocates + registers a fresh
+// instrument on every hit (PR review finding 2026-04-24).
+let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
+  if (!_httpDurationHist) {
+    _httpDurationHist = getMeter().createHistogram('http.server.request.duration', {
+      description: 'HTTP server request duration in seconds',
+      unit: 's',
+    });
+  }
+  return _httpDurationHist;
+}
 
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
@@ -5129,6 +5155,67 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
+  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
+  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
+  //
+  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
+  // three surfaces share `planSeed` / `applySeed` from the server seed module.
+  // Gated on `checkLocalOpSecurity` because the operation mutates the local
+  // filesystem; same contract as /api/local-op/* and /api/installed-agents.
+
+  async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const plan = await planSeed({ projectDir: contentDir });
+      json(res, 200, { ok: true, plan });
+    } catch (err) {
+      if (err instanceof SeedPrerequisiteError) {
+        json(res, 200, {
+          ok: false,
+          error: { kind: 'prerequisite-missing', message: err.message },
+        });
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
+  async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let plan: ScaffoldPlan;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { plan?: unknown };
+      if (!parsed.plan || typeof parsed.plan !== 'object') {
+        json(res, 400, { ok: false, error: 'Missing or invalid plan' });
+        return;
+      }
+      plan = parsed.plan as ScaffoldPlan;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await applySeed(plan, { projectDir: contentDir });
+      json(res, 200, { ok: true, result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5214,6 +5301,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/seed/plan': handleSeedPlan,
+    '/api/seed/apply': handleSeedApply,
   };
 
   if (enableTestRoutes) {
@@ -5258,7 +5347,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             response.setHeader('Vary', 'Origin');
           }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          // Allow OTel W3C trace-context propagation from the browser SDK.
+          response.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, traceparent, tracestate, baggage',
+          );
         }
         // OPTIONS preflight — short-circuit with 204 + the headers above.
         if (request.method === 'OPTIONS') {
@@ -5268,29 +5361,73 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Static routes
-      const handler = routes[url];
-      if (handler) {
-        await handler(request, response);
-        return;
-      }
+      // Only /api/* gets a server span. Non-API routes (static file serving,
+      // Hocuspocus's own paths) fall through silently.
+      if (!url.startsWith('/api/')) return;
 
-      // Dynamic routes
-      if (url.startsWith('/api/rescue/')) {
-        const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
-        if (docName) {
-          await handleRescueGet(request, response, docName);
-        }
-        return;
-      }
+      // Extract incoming trace context (W3C traceparent header) so this server
+      // span attaches as a child of the browser-initiated trace.
+      const extractedCtx = propagation.extract(context.active(), request.headers);
+      const method = request.method ?? 'GET';
+      // Normalize route for low-cardinality metric labels. `:id` placeholders
+      // replace dynamic segments; anything else collapses to the URL prefix.
+      let routeTemplate = url;
+      if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
+      else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
 
-      if (url.startsWith('/api/history/')) {
-        const sha = decodeURIComponent(url.slice('/api/history/'.length));
-        if (sha) {
-          await handleHistoryVersion(request, response, sha);
-        }
-        return;
-      }
+      const tracer = getTracer();
+      const started = Date.now();
+      await context.with(extractedCtx, () =>
+        tracer.startActiveSpan(
+          `HTTP ${method} ${routeTemplate}`,
+          {
+            kind: SpanKind.SERVER,
+            attributes: {
+              [ATTR_HTTP_REQUEST_METHOD]: method,
+              [ATTR_HTTP_ROUTE]: routeTemplate,
+              [ATTR_URL_PATH]: url,
+              [ATTR_URL_SCHEME]: 'http',
+              [ATTR_USER_AGENT_ORIGINAL]: request.headers['user-agent'] ?? '',
+            },
+          },
+          async (span) => {
+            try {
+              // Static routes
+              const handler = routes[url];
+              if (handler) {
+                await handler(request, response);
+              } else if (url.startsWith('/api/rescue/')) {
+                const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
+                if (docName) await handleRescueGet(request, response, docName);
+              } else if (url.startsWith('/api/history/')) {
+                const sha = decodeURIComponent(url.slice('/api/history/'.length));
+                if (sha) await handleHistoryVersion(request, response, sha);
+              }
+
+              const status = response.statusCode;
+              span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, status);
+              if (status >= 500) {
+                span.setStatus({ code: SpanStatusCode.ERROR, message: `status ${status}` });
+              }
+            } catch (err) {
+              span.recordException(err as Error);
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: err instanceof Error ? err.message : String(err),
+              });
+              throw err;
+            } finally {
+              span.end();
+              const durSec = (Date.now() - started) / 1000;
+              httpDurationHist().record(durSec, {
+                [ATTR_HTTP_REQUEST_METHOD]: method,
+                [ATTR_HTTP_ROUTE]: routeTemplate,
+                [ATTR_HTTP_RESPONSE_STATUS_CODE]: response.statusCode,
+              });
+            }
+          },
+        ),
+      );
     },
   };
 }

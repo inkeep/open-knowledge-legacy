@@ -13,17 +13,20 @@
  * directories for tools that are not installed.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { ensureProjectGit, ProjectGitInitError } from '@inkeep/open-knowledge-server';
+import { dirname, join, relative, resolve } from 'node:path';
+import {
+  ensureProjectGit,
+  type InstallUserSkillOptions,
+  type InstallUserSkillResult,
+  installUserSkill,
+  ProjectGitInitError,
+} from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
-import {
-  initContent,
-  type RootInstructionResult,
-  upsertRootInstructions,
-} from '../content/init.ts';
+import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -110,7 +113,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Types
 // ---------------------------------------------------------------------------
 
-interface EditorMcpResult {
+export interface EditorMcpResult {
   editorId: EditorId;
   label: string;
   action: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
@@ -131,12 +134,16 @@ interface InitCommandOptions {
   /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
   devMcp?: boolean;
   editors?: EditorId[];
-  /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
-  rootInstructions?: boolean;
   /** Override home directory (test-only, for global editor config paths). */
   home?: string;
   /** Override the current CLI entry path (test-only; used by --dev-mcp). */
   cliEntryPath?: string;
+  /**
+   * Inject a pre-fabricated `installUserSkill` implementation (test hook).
+   * Production callers omit this and hit the real `installUserSkill` from
+   * `@inkeep/open-knowledge-server`. Introduced per SPEC 2026-04-22 FR6.
+   */
+  installUserSkill?: (opts?: InstallUserSkillOptions) => Promise<InstallUserSkillResult>;
 }
 
 interface InitCommandResult {
@@ -146,8 +153,12 @@ interface InitCommandResult {
   editors: EditorMcpResult[];
   /** Legacy project-local MCP configs left in place after global init. */
   legacyProjectConfigs: LegacyProjectConfigResult[];
-  /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
-  rootInstructions: RootInstructionResult[];
+  /**
+   * Result of the user-global Agent Skill install step (SPEC 2026-04-22 FR6).
+   * `undefined` only when `content` scaffolding failed before the install
+   * step could run.
+   */
+  skillInstall?: InstallUserSkillResult;
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
@@ -246,6 +257,9 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       configurations: configs,
     };
     writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
+    // Main's #282 refactor fixed the dead ternary my review-fix also targeted
+    // (W1) by distinguishing 'merged' (existing entry updated) from 'created'
+    // (new entry). Main's version is strictly more informative — keep it.
     return { action: existingIdx >= 0 ? 'merged' : 'created', configPath };
   } catch (err) {
     return {
@@ -269,7 +283,17 @@ function isEditorTargetAvailable(target: EditorMcpTarget, cwd: string, home?: st
   }
 }
 
-function writeEditorMcpConfig(
+/**
+ * Per-editor MCP config writer. Exported (US-006) so `@inkeep/open-knowledge`
+ * consumers — specifically Electron main's M6b first-launch consent flow via
+ * `writeUserMcpConfigs` — can invoke the same write logic that the terminal-
+ * origin `ok init` command uses. The `installOptions.skipAvailabilityCheck`
+ * flag distinguishes the two call sites: `ok init` enforces
+ * `isEditorTargetAvailable` so users don't get empty config dirs for editors
+ * they haven't installed; the M6b consent flow bypasses the check because
+ * the user explicitly toggled the editor checkbox in the dialog.
+ */
+export function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
   installOptions: McpInstallOptions,
@@ -290,7 +314,10 @@ function writeEditorMcpConfig(
     };
   }
 
-  if (!isEditorTargetAvailable(target, cwd, home)) {
+  // M6b bypass (US-006): the consent dialog showed the editor's checkbox and
+  // the user explicitly toggled it. Skipping on `isEditorTargetAvailable` would
+  // silently drop their choice — treat the click as the consent.
+  if (!installOptions.skipAvailabilityCheck && !isEditorTargetAvailable(target, cwd, home)) {
     return {
       editorId: target.id,
       label: target.label,
@@ -379,6 +406,118 @@ function collectLegacyProjectConfig(
 }
 
 // ---------------------------------------------------------------------------
+// User-scoped MCP config writer (Electron main entry, NOT CLI `ok init`)
+// ---------------------------------------------------------------------------
+
+export interface UserMcpConfigsOptions {
+  /**
+   * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
+   * is responsible for filtering out editors whose existing entry is a
+   * customized shape that should be preserved — those are classified via
+   * `readExistingMcpEntry` + `computeForce` and excluded from this array
+   * BEFORE the call. This function unconditionally overwrites every editor
+   * it receives (aligning with main's `writeEditorMcpConfig` always-rewrite
+   * semantic from PR #282 / "installs stay aligned with current defaults").
+   */
+  editors: EditorId[];
+  /**
+   * Absolute path to the MCP-spawning CLI binary. Written into every editor's
+   * entry as `{ command: cliPath, args: ['mcp'] }`. When unset, falls back to
+   * the canonical `{command:'npx', args:['@inkeep/open-knowledge','mcp']}` shape.
+   */
+  cliPath?: string;
+  /** Override `$HOME` for resolving user-scoped config paths (test hook). */
+  home?: string;
+}
+
+/**
+ * Write MCP config entries for a set of editors without any of `runInit`'s
+ * project-scoped side effects.
+ *
+ * Specifically does NOT run:
+ *   - `ensureProjectGit` — would `git init` wherever `cwd` is (packaged Electron
+ *     apps have `process.cwd() === '/'` by default)
+ *   - `initContent` — scaffolds `.open-knowledge/` in a project
+ *   - `scaffoldLaunchJson` — writes `.claude/launch.json`
+ *   - `upsertRootInstructions` — mutates `AGENTS.md` / `CLAUDE.md`
+ *   - `collectLegacyProjectConfig` — scans for `.mcp.json` / `.cursor/mcp.json`
+ *
+ * Per D-M6-R8, this is the entry point Electron main's first-launch MCP
+ * consent flow calls after the user clicks Add. The terminal-invoked `ok init`
+ * path still uses `runInit` and never sets `cliPath`, so backward compatibility
+ * of the `{command:'npx',...}` shape is preserved.
+ *
+ * Bypasses `isEditorTargetAvailable` via `skipAvailabilityCheck: true` — the
+ * user explicitly toggled the editor checkbox; their click IS the consent,
+ * so skip-on-missing would silently drop their selection.
+ */
+export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<EditorMcpResult[]> {
+  const targets = resolveEditorTargets(opts.editors);
+  const installOptions: McpInstallOptions = {
+    mode: 'published',
+    cliPath: opts.cliPath,
+    skipAvailabilityCheck: true,
+  };
+  // `cwd` is empty — every user-scoped target ignores it (each editor's
+  // `configPath` + `serverName` resolves from `home` or a constant).
+  return targets.map((target) => writeEditorMcpConfig(target, '', installOptions, opts.home));
+}
+
+/**
+ * Read a single editor's existing MCP server entry for use with
+ * `computeForce`-style classification (M6b). Reads the user-scoped config
+ * (format-aware — JSON or TOML), looks up `config[topLevelKey][serverName]`,
+ * and returns it as a plain object. Returns `null` when the config file is
+ * absent, unreadable, unparseable, or has no entry for this editor's
+ * server name.
+ *
+ * **Never-throws contract (load-bearing — Pass 0 Major #13):** the M6b
+ * first-launch consent flow MUST be able to classify every selected editor
+ * without aborting on one malformed config. A corrupt user config (e.g.,
+ * stale `~/.codex/config.toml` from a half-completed third-party edit) on
+ * ANY selected editor would otherwise crash `confirmHandler`, leave the
+ * marker absent, and create an infinite dialog re-fire loop on the user's
+ * machine. Every reachable failure path here returns `null`:
+ *   - configPath() throws → null (platform-mismatched target, e.g.
+ *     Claude Desktop on Linux)
+ *   - readJson/readToml throws → null (unparseable config)
+ *   - top-level mcpServers/servers/mcp_servers key absent → null
+ *   - top-level key value not a plain object → null (e.g., array)
+ *   - server entry value not a plain object → null (e.g., bare string)
+ *
+ * Note: `null` deliberately conflates "absent" with "malformed" — both mean
+ * "no compatible existing entry to merge into" from `computeForce`'s
+ * perspective. The downstream `writeEditorMcpConfig` re-reads via the same
+ * format-aware parser and would itself throw on truly corrupt files; that
+ * write-side error path is what surfaces the corruption to the user via
+ * the `mcp-wiring-write-failed` event in `mcp-wiring.ts` (Pass 0 Critical
+ * #1's toast contract).
+ */
+export function readExistingMcpEntry(
+  target: EditorMcpTarget,
+  cwd: string,
+  home?: string,
+): Record<string, unknown> | null {
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch {
+    return null;
+  }
+  let config: Record<string, unknown>;
+  try {
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
+  } catch {
+    return null;
+  }
+  const servers = config[target.topLevelKey];
+  if (!isObject(servers)) return null;
+  const existing = servers[target.serverName(cwd)];
+  if (!isObject(existing)) return null;
+  return existing;
+}
+
+// ---------------------------------------------------------------------------
 // Core init logic
 // ---------------------------------------------------------------------------
 
@@ -405,7 +544,6 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
       contentSkipped: [],
       editors: [],
       legacyProjectConfigs: [],
-      rootInstructions: [],
       didGitInit: gitResult.didInit,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
@@ -453,15 +591,17 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const launchJson =
     hasClaude && options.mcp !== false ? scaffoldLaunchJson(cwd, installOptions) : undefined;
 
-  // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
-  const extraInstructionFiles = availableTargets
-    .map((t) => t.instructionsPath?.(cwd))
-    .filter((p): p is string => p !== undefined)
-    .map((p) => (isAbsolute(p) ? relative(cwd, p) : p));
-  const rootInstructions =
-    options.rootInstructions === false
-      ? []
-      : upsertRootInstructions(cwd, true, extraInstructionFiles);
+  // Per SPEC 2026-04-22 (D2 LOCKED / FR1): `ok init` no longer writes
+  // to root AGENTS.md / CLAUDE.md. Behavioral guidance ships via (1)
+  // compressed MCP instructions handshake, (2) per-tool MCP tool
+  // descriptions, and (3) the user-global Agent Skill installed via
+  // `installUserSkill` from @inkeep/open-knowledge-server.
+
+  // 4. Install the user-global Agent Skill (SPEC FR6 / D17). Non-fatal per
+  // D6 — init exits 0 even on install failure; users see a warning + a
+  // manual-install hint in the summary.
+  const installSkill = options.installUserSkill ?? installUserSkill;
+  const skillInstall = await installSkill({ home: options.home });
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const defaultAction: EditorMcpResult['action'] =
@@ -477,8 +617,8 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     contentSkipped: contentResult.skipped,
     editors: editorResults,
     legacyProjectConfigs,
-    rootInstructions,
     launchJson,
+    skillInstall,
     didGitInit: gitResult.didInit,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
@@ -610,30 +750,30 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     );
   }
 
-  // Root instructions (AGENTS.md) summary
-  if (result.rootInstructions.length > 0) {
-    const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
-    if (visible.length > 0) {
-      lines.push('');
-      lines.push('Root instructions:');
-      for (const r of visible) {
-        const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
-        const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
-        switch (r.action) {
-          case 'created':
-            lines.push(`  ${r.file}${pad}${rel}  created`);
-            break;
-          case 'appended':
-            lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
-            break;
-          case 'replaced':
-            lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section`);
-            break;
-          case 'skipped-existing':
-            lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
-            break;
-        }
-      }
+  // Root instructions (AGENTS.md) summary — removed per SPEC 2026-04-22
+  // (D2 LOCKED / FR1). `runInit` no longer writes to root AGENTS.md /
+  // CLAUDE.md; skill-install replaces it. Output block deleted along with
+  // the upstream behavior.
+
+  // User-global skill install summary (SPEC 2026-04-22 FR6 / D17)
+  if (result.skillInstall) {
+    lines.push('');
+    lines.push('User-global skill:');
+    switch (result.skillInstall) {
+      case 'installed':
+        lines.push('  open-knowledge  installed to detected agent hosts via `npx skills`');
+        break;
+      case 'skip-current':
+        lines.push('  open-knowledge  already installed at current version');
+        break;
+      case 'failed':
+        lines.push(
+          `  ${warning('open-knowledge  install failed — MCP still configured; run manually:')}`,
+        );
+        lines.push(
+          `  ${warning("  npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy")}`,
+        );
+        break;
     }
   }
 
@@ -656,10 +796,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push('Next steps:');
     lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
     lines.push('  2. Approve the MCP server when prompted');
-    lines.push('  3. The knowledge base is ready — use the three workflow tools:');
-    lines.push('     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase');
-    lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
-    lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
+    lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
+    lines.push('     - ok seed');
+    lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
+    lines.push('     - mcp__open-knowledge__ingest      — capture an external source');
+    lines.push('     - mcp__open-knowledge__research    — gather sources and write findings');
+    lines.push('     - mcp__open-knowledge__consolidate — promote research to canonical articles');
   }
 
   return lines.join('\n');

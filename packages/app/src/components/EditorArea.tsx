@@ -1,12 +1,13 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel } from '@/components/DocPanel';
+import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
+import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -25,6 +26,8 @@ interface EditorAreaProps {
   previewEntry: TimelineEntry | null;
   diffLayout: DiffLayout;
   onNoDiff?: () => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
 }
 
 export function EditorArea(props: EditorAreaProps) {
@@ -35,7 +38,14 @@ export function EditorArea(props: EditorAreaProps) {
   );
 }
 
-function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
+function EditorAreaInner({
+  editorMode,
+  previewEntry,
+  diffLayout,
+  onNoDiff,
+  onEntrySelect,
+  selectedSha,
+}: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
@@ -65,6 +75,9 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
+
+  // Lifted activeTab state — DocPanel is controlled (spec D2).
+  const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -178,12 +191,7 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
     if (hashDoc !== null) {
       return <EditorSkeleton />;
     }
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
-        <OkBlob size={80} />
-        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      </div>
-    );
+    return <EmptyEditorState />;
   }
 
   const isDiffMode = editorMode === 'diff';
@@ -321,7 +329,14 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
             <SheetHeader className="sr-only">
               <SheetTitle>Document panel</SheetTitle>
             </SheetHeader>
-            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+            <DocPanel
+              docName={activeDocName}
+              isSourceMode={isSourceMode}
+              activeTab={activeTab}
+              onActiveTabChange={setActiveTab}
+              onEntrySelect={onEntrySelect}
+              selectedSha={selectedSha}
+            />
           </SheetContent>
         </Sheet>
       </div>
@@ -349,9 +364,44 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
           className="flex flex-col bg-muted/20"
         >
-          <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          <DocPanel
+            docName={activeDocName}
+            isSourceMode={isSourceMode}
+            activeTab={activeTab}
+            onActiveTabChange={setActiveTab}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
+    </div>
+  );
+}
+
+/**
+ * Landing state when no document is selected. Shows the OkBlob plus an
+ * optional CTA to initialize the Karpathy three-layer knowledge-base
+ * structure (`external-sources/`, `research/`, `articles/` + log.md + matching
+ * `config.yml` `folders:` entries). Works in both the Electron desktop app
+ * and the web editor — the SeedDialog internally routes to IPC when
+ * `window.okDesktop` is present, otherwise to the `/api/seed/*` HTTP
+ * endpoints.
+ */
+function EmptyEditorState() {
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <OkBlob size={80} />
+      <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+      <div className="flex flex-col items-center gap-2">
+        <Button variant="outline" onClick={() => setSeedDialogOpen(true)}>
+          <BrainCircuit aria-hidden="true" className="h-4 w-4" />
+          Initialize LLM brain
+        </Button>
+        <span className="text-xs text-muted-foreground">Optional starter structure</span>
+      </div>
+      <SeedDialog open={seedDialogOpen} onOpenChange={setSeedDialogOpen} />
     </div>
   );
 }

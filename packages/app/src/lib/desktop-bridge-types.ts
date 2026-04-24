@@ -19,6 +19,53 @@
  * fall through to the existing /api/config poll path.
  */
 
+/** Seed scaffolder shapes — structurally duplicated from
+ * `@inkeep/open-knowledge-server`'s seed module. See core's desktop-bridge.ts
+ * for rationale (avoids pulling server into the app compilation tree). */
+export interface OkFolderRule {
+  match: string;
+  frontmatter: { title?: string; description?: string; tags?: string[] };
+}
+export interface OkScaffoldFileEntry {
+  path: string;
+  kind: 'folder' | 'file';
+  contentPreview?: string;
+}
+export interface OkScaffoldSkipEntry {
+  path: string;
+  reason: 'already-exists' | 'user-content' | 'glob-collision';
+}
+export interface OkScaffoldConfigEdit {
+  configPath: string;
+  folderMatch: string;
+  entry: OkFolderRule;
+}
+export interface OkScaffoldPlan {
+  created: OkScaffoldFileEntry[];
+  skipped: OkScaffoldSkipEntry[];
+  configEdits: OkScaffoldConfigEdit[];
+  warnings: string[];
+}
+export interface OkScaffoldApplyError {
+  path: string;
+  error: string;
+}
+export interface OkScaffoldApplyResult {
+  applied: number;
+  errors: OkScaffoldApplyError[];
+  durationMs: number;
+}
+export interface OkSeedError {
+  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  message: string;
+}
+export type OkSeedPlanResult =
+  | { ok: true; plan: OkScaffoldPlan }
+  | { ok: false; error: OkSeedError };
+export type OkSeedApplyResult =
+  | { ok: true; result: OkScaffoldApplyResult }
+  | { ok: false; error: OkSeedError };
+
 export type OkDesktopMode = 'editor' | 'navigator';
 
 export interface OkDesktopConfig {
@@ -62,6 +109,35 @@ export interface OkWhatsNewInfo {
 export interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
+
+/**
+ * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
+ * Mirrors the canonical `EditorId` + desktop / core copies; drift caught
+ * by the M1 invariant drift catcher.
+ */
+export type OkMcpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Payload passed to `mcpWiring.onShow` subscribers. `willReplace: true`
+ *  signals the editor has an existing OK-managed MCP entry (canonical npx,
+ *  `-y` variant, or prior cliPath shape) that Add would overwrite (Pass 1
+ *  Major #8). */
+export interface OkMcpWiringShowPayload {
+  readonly detectedEditors: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly detected: boolean;
+    readonly willReplace: boolean;
+  }[];
+}
+
+/** Result shape for `mcpWiring.confirm` / `skip`. */
+export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
@@ -131,8 +207,18 @@ export interface OkDesktopBridge {
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
   };
+  seed: {
+    plan(): Promise<OkSeedPlanResult>;
+    apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
   update: {
     relaunchNow(): Promise<void>;
+  };
+  mcpWiring: {
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;
+    signalReady(): void;
+    confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
+    skip(): Promise<OkMcpWiringResult>;
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;

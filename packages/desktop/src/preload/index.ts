@@ -23,6 +23,7 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
   OkDesktopBridge,
   OkDesktopConfig,
+  OkMcpWiringShowPayload,
   OkMenuAction,
   OkUpdateDownloadedInfo,
   OkUpdateStuckHintInfo,
@@ -125,8 +126,30 @@ const bridge: OkDesktopBridge = {
     close: () => invoke('ok:project:close'),
   },
 
+  seed: {
+    plan: () => invoke('ok:seed:plan'),
+    apply: (plan) => invoke('ok:seed:apply', plan),
+  },
+
   update: {
     relaunchNow: () => invoke('ok:update:relaunch-now'),
+  },
+
+  mcpWiring: {
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void) {
+      const listener = (_event: IpcRendererEvent, payload: OkMcpWiringShowPayload) => cb(payload);
+      ipcRenderer.on('ok:mcp-wiring:show', listener);
+      return () => ipcRenderer.removeListener('ok:mcp-wiring:show', listener);
+    },
+    signalReady: () => {
+      // Fire-and-forget: render doesn't need the resolved result. We invoke
+      // (not send) so it composes through the typed `createInvoker`
+      // wrapper and clears D19 enforcement. Any rejection is swallowed —
+      // a missing handler during teardown is expected, not a programmer error.
+      invoke('ok:mcp-wiring:renderer-ready').catch(() => {});
+    },
+    confirm: (editorIds) => invoke('ok:mcp-wiring:confirm', { editorIds }),
+    skip: () => invoke('ok:mcp-wiring:skip'),
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',
