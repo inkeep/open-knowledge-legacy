@@ -19,6 +19,11 @@ export {
   safeSubdir,
 } from './api-extension.ts';
 export {
+  type HocuspocusAuthToken,
+  HocuspocusAuthTokenSchema,
+  parseHocuspocusAuthToken,
+} from './auth-token-schema.ts';
+export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,

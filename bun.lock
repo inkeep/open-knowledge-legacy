@@ -304,6 +304,7 @@
         "simple-git": "^3.36.0",
         "ws": "^8.20.0",
         "yjs": "^13.6.30",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@types/picomatch": "^4.0.3",
