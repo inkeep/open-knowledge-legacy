@@ -16,10 +16,7 @@
  */
 import type * as React from 'react';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
-
-if (typeof window !== 'undefined') {
-  void import('react-diff-view/style/index.css');
-}
+import 'react-diff-view/style/index.css';
 
 interface ActivityPanelDiffViewProps {
   diff: string;
