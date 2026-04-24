@@ -12,6 +12,15 @@ export interface PageMeta {
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
+  /**
+   * Slug-keyed index mapping `toWikiLinkSlug(docName)` → original docName.
+   * First-wins on slug collision. Used by navigation / resolution paths so
+   * a dropped `.md` file carrying a lowercased-slug target
+   * (e.g. `casecheck123`) resolves against a case-preserved cache entry
+   * (e.g. `CaseCheck123`). Without this, `pages.has(slug)` fails every
+   * time on non-slug-form docNames.
+   */
+  pagesBySlug: ReadonlyMap<string, string>;
   /** Display titles returned by `/api/pages`, keyed by docName. */
   pageTitles: ReadonlyMap<string, string>;
   /** File metadata (size, modified) returned by `/api/pages`, keyed by docName. */
@@ -165,6 +174,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
   const folderPaths = deriveKnownFolderPaths(pages);
+  const pagesBySlug = buildPagesBySlugIndex(pages, toWikiLinkSlug);
 
   // Publish to the page-list-cache side-channel so plain-DOM chip consumers
   // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
@@ -175,16 +185,22 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   // path — dropped `.md` files carry lowercased slugs as targets; the
   // index bridges that to the case-preserved / non-slug-form cache entries.
   useEffect(() => {
-    setPageListCache({
-      pages,
-      folderPaths,
-      pagesBySlug: buildPagesBySlugIndex(pages, toWikiLinkSlug),
-    });
-  }, [pages, folderPaths]);
+    setPageListCache({ pages, folderPaths, pagesBySlug });
+  }, [pages, folderPaths, pagesBySlug]);
 
   return (
     <PageListContext
-      value={{ pages, pageTitles, pageMeta, folderPaths, loading, error, refetch, addPage }}
+      value={{
+        pages,
+        pagesBySlug,
+        pageTitles,
+        pageMeta,
+        folderPaths,
+        loading,
+        error,
+        refetch,
+        addPage,
+      }}
     >
       {children}
     </PageListContext>

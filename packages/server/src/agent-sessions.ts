@@ -28,6 +28,7 @@ import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import { setActiveSpanAttributes, withSpanSync } from './telemetry.ts';
 
 const log = getLogger('agent-sessions');
 
@@ -98,6 +99,28 @@ export function applyAgentMarkdownWrite(
    * path before PM dispatch. Omit in tests that don't exercise the embed
    * path — the handler falls back to literal target.
    */
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
+): void {
+  withSpanSync(
+    'agent.applyAgentMarkdownWrite',
+    {
+      attributes: {
+        'doc.name': document.name,
+        'agent.write_position': position,
+        'agent.markdown.bytes': markdown.length,
+      },
+    },
+    () => applyAgentMarkdownWriteInner(document, markdown, position, embedResolver),
+  );
+}
+
+function applyAgentMarkdownWriteInner(
+  document: Document,
+  markdown: string,
+  position: 'append' | 'prepend' | 'replace',
   embedResolver?: {
     resolveEmbed: (basename: string, sourcePath: string) => string | null;
     sourcePath: string;
@@ -194,6 +217,23 @@ export function applyAgentMarkdownWrite(
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
  */
 export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): boolean {
+  return withSpanSync(
+    'agent.applyAgentUndo',
+    {
+      attributes: {
+        'doc.name': session.dc.document.name,
+        'agent.undo_scope': scope,
+      },
+    },
+    () => {
+      const undone = applyAgentUndoInner(session, scope);
+      setActiveSpanAttributes({ 'agent.undo_effective': undone });
+      return undone;
+    },
+  );
+}
+
+function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');

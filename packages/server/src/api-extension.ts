@@ -85,6 +85,15 @@ import {
 
 export { extractPageTitle } from './page-identity.ts';
 
+import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import {
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_HTTP_ROUTE,
+  ATTR_URL_PATH,
+  ATTR_URL_SCHEME,
+  ATTR_USER_AGENT_ORIGINAL,
+} from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
 import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
@@ -148,7 +157,23 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
+import { getMeter, getTracer } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
+
+// Cache the HTTP duration histogram at module scope — lazy-init at first use
+// so the meter is a real meter (post-`initTelemetry`), not the pre-init no-op.
+// Recreating the histogram every request allocates + registers a fresh
+// instrument on every hit (PR review finding 2026-04-24).
+let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
+  if (!_httpDurationHist) {
+    _httpDurationHist = getMeter().createHistogram('http.server.request.duration', {
+      description: 'HTTP server request duration in seconds',
+      unit: 's',
+    });
+  }
+  return _httpDurationHist;
+}
 
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
@@ -701,7 +726,19 @@ async function renameTrackedPathInGit(
 
   return await withParentLock(async () => {
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    // `ls-files` throws `GitError: fatal: not a git repository` when
+    // projectDir isn't a git checkout — normal in test tmpdirs and in Vite
+    // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
+    // so the caller falls back to `fs.renameSync`. Any other git failure
+    // (permission denied, corrupted index) also falls through to fs rename
+    // rather than 500ing the /api/rename handler.
+    let tracked = '';
+    try {
+      tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git ls-files failed, falling back to fs rename:', err);
+      return false;
+    }
     if (!tracked) return false;
     mkdirSync(dirname(destinationPath), { recursive: true });
     try {
@@ -5715,7 +5752,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             response.setHeader('Vary', 'Origin');
           }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          // Allow OTel W3C trace-context propagation from the browser SDK.
+          response.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, traceparent, tracestate, baggage',
+          );
         }
         // OPTIONS preflight — short-circuit with 204 + the headers above.
         if (request.method === 'OPTIONS') {
@@ -5754,29 +5795,74 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Static routes
-      const handler = routes[url];
-      if (handler) {
-        await handler(request, response);
-        return;
-      }
+      // Only /api/* gets a server span. Non-API routes (static file serving,
+      // Hocuspocus's own paths) fall through silently. (Route dispatch
+      // happens inside the OTel active-span block below.)
+      if (!url.startsWith('/api/')) return;
 
-      // Dynamic routes
-      if (url.startsWith('/api/rescue/')) {
-        const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
-        if (docName) {
-          await handleRescueGet(request, response, docName);
-        }
-        return;
-      }
+      // Extract incoming trace context (W3C traceparent header) so this server
+      // span attaches as a child of the browser-initiated trace.
+      const extractedCtx = propagation.extract(context.active(), request.headers);
+      const method = request.method ?? 'GET';
+      // Normalize route for low-cardinality metric labels. `:id` placeholders
+      // replace dynamic segments; anything else collapses to the URL prefix.
+      let routeTemplate = url;
+      if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
+      else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
 
-      if (url.startsWith('/api/history/')) {
-        const sha = decodeURIComponent(url.slice('/api/history/'.length));
-        if (sha) {
-          await handleHistoryVersion(request, response, sha);
-        }
-        return;
-      }
+      const tracer = getTracer();
+      const started = Date.now();
+      await context.with(extractedCtx, () =>
+        tracer.startActiveSpan(
+          `HTTP ${method} ${routeTemplate}`,
+          {
+            kind: SpanKind.SERVER,
+            attributes: {
+              [ATTR_HTTP_REQUEST_METHOD]: method,
+              [ATTR_HTTP_ROUTE]: routeTemplate,
+              [ATTR_URL_PATH]: url,
+              [ATTR_URL_SCHEME]: 'http',
+              [ATTR_USER_AGENT_ORIGINAL]: request.headers['user-agent'] ?? '',
+            },
+          },
+          async (span) => {
+            try {
+              // Static routes
+              const handler = routes[url];
+              if (handler) {
+                await handler(request, response);
+              } else if (url.startsWith('/api/rescue/')) {
+                const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
+                if (docName) await handleRescueGet(request, response, docName);
+              } else if (url.startsWith('/api/history/')) {
+                const sha = decodeURIComponent(url.slice('/api/history/'.length));
+                if (sha) await handleHistoryVersion(request, response, sha);
+              }
+
+              const status = response.statusCode;
+              span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, status);
+              if (status >= 500) {
+                span.setStatus({ code: SpanStatusCode.ERROR, message: `status ${status}` });
+              }
+            } catch (err) {
+              span.recordException(err as Error);
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: err instanceof Error ? err.message : String(err),
+              });
+              throw err;
+            } finally {
+              span.end();
+              const durSec = (Date.now() - started) / 1000;
+              httpDurationHist().record(durSec, {
+                [ATTR_HTTP_REQUEST_METHOD]: method,
+                [ATTR_HTTP_ROUTE]: routeTemplate,
+                [ATTR_HTTP_RESPONSE_STATUS_CODE]: response.statusCode,
+              });
+            }
+          },
+        ),
+      );
     },
   };
 }

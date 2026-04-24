@@ -7,8 +7,8 @@
  * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
-import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
-import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
@@ -37,6 +37,7 @@ import {
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
+import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
@@ -54,6 +55,7 @@ import {
   SERVICE_WRITER,
   shadowGit,
 } from './shadow-repo.ts';
+import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 
 const log = getLogger('persistence');
 
@@ -272,6 +274,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   let pendingAfterCommit = false;
 
   async function commitToWipRef(): Promise<void> {
+    ensureHistograms();
+    const started = Date.now();
+    return withSpan('persistence.commitToWipRef', undefined, async () => {
+      const result = await commitToWipRefInner();
+      return result;
+    }).finally(() => {
+      commitDurationHist?.record((Date.now() - started) / 1000);
+    });
+  }
+
+  async function commitToWipRefInner(): Promise<void> {
     // Read shadow ref at commit time (not construction time) so deferred init propagates
     const shadow = shadowRef?.current;
     if (shadow) {
@@ -471,11 +484,30 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       }
     } finally {
       try {
-        unlinkSync(tmpIndex);
+        tracedUnlinkSync(tmpIndex);
       } catch {
         // ignore cleanup failure
       }
     }
+  }
+
+  /**
+   * Exponential backoff delay for the next commit attempt.
+   *
+   * Happy path (0 failures): fires at `commitDebounceMs` exactly — matches
+   * the pre-backoff behavior that tests + callers depend on.
+   *
+   * Under sustained git lock contention (N consecutive failures),
+   * multiplies by `2^min(N, 5)` and adds 0–25% jitter. Cap at 5 doublings
+   * ⇒ 32× base (e.g., 30s base → 16min ceiling). Jitter decorrelates
+   * retry storms if multiple processes hit the same lock.
+   */
+  function computeCommitDelay(failures: number): number {
+    if (failures <= 0) return commitDebounceMs;
+    const exponent = Math.min(failures, 5);
+    const multiplier = 2 ** exponent;
+    const jitter = Math.random() * 0.25 * commitDebounceMs;
+    return commitDebounceMs * multiplier + jitter;
   }
 
   function scheduleGitCommit(): void {
@@ -495,7 +527,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           scheduleGitCommit();
         }
       });
-    }, commitDebounceMs);
+    }, computeCommitDelay(consecutiveGitFailures));
   }
 
   /** Flush pending L1 writes by forcing the Hocuspocus store cycle. */
@@ -521,87 +553,121 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
+  // Lazy-init histograms; safe to call in every hook. Meter is a no-op when OTel
+  // SDK is disabled, so allocations are essentially free.
+  let loadDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+  let storeDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+  let commitDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+  function ensureHistograms(): void {
+    if (loadDurationHist) return;
+    const meter = getMeter();
+    loadDurationHist = meter.createHistogram('ok.persistence.load.duration', {
+      description: 'Duration of persistence.onLoadDocument in seconds',
+      unit: 's',
+    });
+    storeDurationHist = meter.createHistogram('ok.persistence.store.duration', {
+      description: 'Duration of persistence.onStoreDocument in seconds',
+      unit: 's',
+    });
+    commitDurationHist = meter.createHistogram('ok.persistence.git_commit.duration', {
+      description: 'Duration of commitToWipRef drain in seconds',
+      unit: 's',
+    });
+  }
+
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
-      log.info(
-        { documentName, connections: document.getConnectionsCount?.() ?? '?' },
-        `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
-      );
-      const filePath = safeContentPath(documentName, contentDir);
-      if (!existsSync(filePath)) return;
-
-      try {
-        const canonical = realpathSync(filePath);
-        if (!isWithinContentDir(canonical, contentDir)) {
-          console.warn(
-            `[persistence] symlink-escape on load: ${filePath} → ${canonical}, refusing`,
+      ensureHistograms();
+      const started = Date.now();
+      return withSpan(
+        'persistence.onLoadDocument',
+        { attributes: { 'doc.name': documentName } },
+        async () => {
+          log.info(
+            { documentName, connections: document.getConnectionsCount?.() ?? '?' },
+            `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
           );
-          return;
-        }
-      } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code === 'ELOOP') {
-          console.warn(`[persistence] Symlink cycle on load: ${filePath}, refusing`);
-          return;
-        }
-      }
+          const filePath = safeContentPath(documentName, contentDir);
+          if (!existsSync(filePath)) return;
 
-      const raw = readFileSync(filePath, 'utf-8');
-      const { frontmatter, body } = stripFrontmatter(raw);
+          try {
+            const canonical = realpathSync(filePath);
+            if (!isWithinContentDir(canonical, contentDir)) {
+              console.warn(
+                `[persistence] symlink-escape on load: ${filePath} → ${canonical}, refusing`,
+              );
+              return;
+            }
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code;
+            if (code === 'ELOOP') {
+              console.warn(`[persistence] Symlink cycle on load: ${filePath}, refusing`);
+              return;
+            }
+          }
 
-      if (frontmatter) {
-        frontmatterCache.set(documentName, frontmatter);
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
-      }
+          const raw = readFileSync(filePath, 'utf-8');
+          const { frontmatter, body } = stripFrontmatter(raw);
 
-      // parseWithFallback — never throws (R6). On parse failure with position
-      // info, degrades to block-level rawMdxFallback preserving surrounding
-      // structure. On position-less error, splits at blank-line boundaries
-      // per-block. Only falls through to whole-doc raw text when every block
-      // fails — strictly better than parse() throwing on broken MDX.
-      const parseOpts = options?.resolveEmbed
-        ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
-        : undefined;
-      const json = mdManager.parseWithFallback(body, parseOpts);
+          if (frontmatter) {
+            frontmatterCache.set(documentName, frontmatter);
+            const metaMap = document.getMap('metadata');
+            metaMap.set('frontmatter', frontmatter);
+          }
 
-      const xmlFragment = document.getXmlFragment('default');
-      log.info(
-        { documentName, fragmentLength: xmlFragment.length },
-        `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
-      );
-      if (xmlFragment.length === 0) {
-        const pmNode = schema.nodeFromJSON(json);
-        updateYFragment(document, xmlFragment, pmNode, {
-          mapping: new Map(),
-          isOMark: new Map(),
-        });
-        log.info(
-          { filePath, children: xmlFragment.length },
-          `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
-        );
-        // Watch for unexpected mutations
-        xmlFragment.observeDeep(() => {
+          // parseWithFallback — never throws (R6). On parse failure with position
+          // info, degrades to block-level rawMdxFallback preserving surrounding
+          // structure. On position-less error, splits at blank-line boundaries
+          // per-block. Only falls through to whole-doc raw text when every block
+          // fails — strictly better than parse() throwing on broken MDX.
+          const parseOpts = options?.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+            : undefined;
+          const json = mdManager.parseWithFallback(body, parseOpts);
+
+          const xmlFragment = document.getXmlFragment('default');
           log.info(
             { documentName, fragmentLength: xmlFragment.length },
-            `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
+            `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
           );
-        });
-      } else {
-        log.info(
-          { documentName, children: xmlFragment.length },
-          `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
-        );
-      }
-      // Use normalized serialization as the base so onStoreDocument doesn't
-      // false-positive on the first store after load. Raw file content may
-      // differ from TipTap's output (blank lines, trailing newlines, list
-      // formatting) without any actual content change.
-      const normalizedBody = mdManager.serialize(
-        yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-      );
-      setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+          if (xmlFragment.length === 0) {
+            const pmNode = schema.nodeFromJSON(json);
+            updateYFragment(document, xmlFragment, pmNode, {
+              mapping: new Map(),
+              isOMark: new Map(),
+            });
+            log.info(
+              { filePath, children: xmlFragment.length },
+              `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
+            );
+            // Watch for unexpected mutations
+            xmlFragment.observeDeep(() => {
+              log.info(
+                { documentName, fragmentLength: xmlFragment.length },
+                `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
+              );
+            });
+          } else {
+            log.info(
+              { documentName, children: xmlFragment.length },
+              `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
+            );
+          }
+          // Use normalized serialization as the base so onStoreDocument doesn't
+          // false-positive on the first store after load. Raw file content may
+          // differ from TipTap's output (blank lines, trailing newlines, list
+          // formatting) without any actual content change.
+          const normalizedBody = mdManager.serialize(
+            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+          );
+          setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+        },
+      ).finally(() => {
+        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
+        // would blow up Prometheus label storage at scale. The span carries it.
+        loadDurationHist?.record((Date.now() - started) / 1000);
+      });
     },
 
     async onStoreDocument({
@@ -612,164 +678,179 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }) {
       if (isSystemDoc(documentName)) return;
       if (isBatchInProgress()) return;
+      ensureHistograms();
+      const started = Date.now();
+      return withSpan(
+        'persistence.onStoreDocument',
+        { attributes: { 'doc.name': documentName } },
+        async () => {
+          const xmlFragment = document.getXmlFragment('default');
+          const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
 
-      const xmlFragment = document.getXmlFragment('default');
-      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
+          const body = mdManager.serialize(json);
+          const metaMap = document.getMap('metadata');
+          const fmFromDoc = metaMap.get('frontmatter');
+          const frontmatter =
+            typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
+          const markdown = prependFrontmatter(frontmatter, body);
 
-      const body = mdManager.serialize(json);
-      const metaMap = document.getMap('metadata');
-      const fmFromDoc = metaMap.get('frontmatter');
-      const frontmatter =
-        typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
-      const markdown = prependFrontmatter(frontmatter, body);
+          // Skip the write when the serialized output matches the load-time
+          // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
+          // including the first-pass observer sync that populates Y.Text from the
+          // freshly-loaded XmlFragment — that mutation is semantically a no-op
+          // but would otherwise rewrite the file in normalized form (padded
+          // tables, added backslash-escapes, etc.), polluting the user's git
+          // working tree on mere file open.
+          //
+          // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
+          // an empty <paragraph> to Y.XmlFragment on every editor mount. That
+          // serializes to extra trailing newlines — byte-unequal to currentBase
+          // but semantically identical. Reusing normalizeBridge (the canonical
+          // bridge-invariant normalization — trim per-line whitespace, collapse
+          // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
+          // consistent with server-observers.ts + the test-harness. Catching this
+          // class as a no-op skips both the disk write AND the principal
+          // safety-net below, preventing phantom commits attributed to the
+          // browser's principal when a later agent write triggers the L2 fan-out.
+          const currentBase = getReconciledBase(documentName);
+          const markdownSemanticallyUnchanged =
+            currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
+          if (markdownSemanticallyUnchanged) {
+            if (contributorCount() > 0) scheduleGitCommit();
+            return;
+          }
 
-      // Skip the write when the serialized output matches the load-time
-      // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
-      // including the first-pass observer sync that populates Y.Text from the
-      // freshly-loaded XmlFragment — that mutation is semantically a no-op
-      // but would otherwise rewrite the file in normalized form (padded
-      // tables, added backslash-escapes, etc.), polluting the user's git
-      // working tree on mere file open.
-      //
-      // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
-      // an empty <paragraph> to Y.XmlFragment on every editor mount. That
-      // serializes to extra trailing newlines — byte-unequal to currentBase
-      // but semantically identical. Reusing normalizeBridge (the canonical
-      // bridge-invariant normalization — trim per-line whitespace, collapse
-      // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
-      // consistent with server-observers.ts + the test-harness. Catching this
-      // class as a no-op skips both the disk write AND the principal
-      // safety-net below, preventing phantom commits attributed to the
-      // browser's principal when a later agent write triggers the L2 fan-out.
-      const currentBase = getReconciledBase(documentName);
-      const markdownSemanticallyUnchanged =
-        currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
-      if (markdownSemanticallyUnchanged) {
-        if (contributorCount() > 0) scheduleGitCommit();
-        return;
-      }
+          // Thread origin → contributor tracker (D31, D32, FR-16).
+          // This is a safety-net for writes that bypass api-extension.ts handlers.
+          // Agent write handlers already call recordContributor explicitly; this
+          // handles human-browser connection writes (US-024) and any other origin
+          // that doesn't go through a handler. Gated on `markdown !== currentBase`
+          // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
+          // not record the principal, so the L2 fan-out no longer attributes
+          // phantom commits to the browser alongside a legitimate agent write.
+          const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
+          if (writer && writer.id !== SERVICE_WRITER.id) {
+            // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
+            // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
+            // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
+            // the handler-path entry is in the tracker by the time we get here.
+            // The safety-net only fills in for writes that never pass through an
+            // /api/* handler — specifically browser-principal writes (US-024,
+            // `source: 'connection'`). Skipping when the entry already exists
+            // guarantees the stub `Agent (<short>)` displayName can never
+            // overwrite the handler's rich identity under any ordering edge case
+            // (post-restart replay, test harness, future extension ordering changes).
+            if (!hasContributor(writer.id)) {
+              recordContributor(documentName, writer.id, writer.name, writer.id);
+            }
+            // else: entry exists with rich handler-path identity; keep it untouched.
+            // The docs Set is still correct because the handler path recorded this
+            // docName already when it fired recordContributor for this write.
+          }
 
-      // Thread origin → contributor tracker (D31, D32, FR-16).
-      // This is a safety-net for writes that bypass api-extension.ts handlers.
-      // Agent write handlers already call recordContributor explicitly; this
-      // handles human-browser connection writes (US-024) and any other origin
-      // that doesn't go through a handler. Gated on `markdown !== currentBase`
-      // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
-      // not record the principal, so the L2 fan-out no longer attributes
-      // phantom commits to the browser alongside a legitimate agent write.
-      const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
-      if (writer && writer.id !== SERVICE_WRITER.id) {
-        // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
-        // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
-        // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
-        // the handler-path entry is in the tracker by the time we get here.
-        // The safety-net only fills in for writes that never pass through an
-        // /api/* handler — specifically browser-principal writes (US-024,
-        // `source: 'connection'`). Skipping when the entry already exists
-        // guarantees the stub `Agent (<short>)` displayName can never
-        // overwrite the handler's rich identity under any ordering edge case
-        // (post-restart replay, test harness, future extension ordering changes).
-        if (!hasContributor(writer.id)) {
-          recordContributor(documentName, writer.id, writer.name, writer.id);
-        }
-        // else: entry exists with rich handler-path identity; keep it untouched.
-        // The docs Set is still correct because the handler path recorded this
-        // docName already when it fired recordContributor for this write.
-      }
+          // Debug: detect duplication before writing
+          if (currentBase && markdown.length > currentBase.length * 1.5) {
+            log.warn(
+              { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
+              `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
+            );
+            log.warn(
+              { documentName, children: document.getXmlFragment('default').length },
+              `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
+            );
+          }
 
-      // Debug: detect duplication before writing
-      if (currentBase && markdown.length > currentBase.length * 1.5) {
-        log.warn(
-          { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
-          `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
-        );
-        log.warn(
-          { documentName, children: document.getXmlFragment('default').length },
-          `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
-        );
-      }
+          const requestedPath = safeContentPath(documentName, contentDir);
+          await tracedMkdir(dirname(requestedPath), { recursive: true });
 
-      const requestedPath = safeContentPath(documentName, contentDir);
-      await mkdir(dirname(requestedPath), { recursive: true });
-
-      let canonicalPath: string;
-      try {
-        canonicalPath = await realpath(requestedPath);
-      } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') {
-          let isBrokenSymlink = false;
+          let canonicalPath: string;
           try {
-            isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
-          } catch (lstatErr) {
-            if ((lstatErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-              log.warn(
-                { err: lstatErr, path: requestedPath },
-                '[persistence] lstat failed during broken-symlink check',
-              );
+            canonicalPath = await realpath(requestedPath);
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') {
+              let isBrokenSymlink = false;
+              try {
+                isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
+              } catch (lstatErr) {
+                if ((lstatErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+                  log.warn(
+                    { err: lstatErr, path: requestedPath },
+                    '[persistence] lstat failed during broken-symlink check',
+                  );
+                }
+              }
+              if (isBrokenSymlink) {
+                console.warn(`[persistence] broken-symlink fallback`, {
+                  docName: documentName,
+                  reason: 'broken-symlink',
+                });
+              }
+              canonicalPath = requestedPath;
+            } else if (code === 'ELOOP') {
+              console.error(`[persistence] Symlink cycle at ${requestedPath}`);
+              throw new Error(`Symlink cycle detected at ${requestedPath}`);
+            } else {
+              throw e;
             }
           }
-          if (isBrokenSymlink) {
-            console.warn(`[persistence] broken-symlink fallback`, {
+
+          if (!isWithinContentDir(canonicalPath, contentDir)) {
+            const msg = `symlink-escape: ${requestedPath} resolves to ${canonicalPath} outside ${contentDir}`;
+            console.error(`[persistence] ${msg}`, {
               docName: documentName,
-              reason: 'broken-symlink',
+              originalPath: requestedPath,
+              canonical: canonicalPath,
+              contentDir,
+            });
+            throw new Error(msg);
+          }
+
+          const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
+          try {
+            await tracedWriteFile(tmpPath, markdown, 'utf-8');
+            await tracedRename(tmpPath, canonicalPath);
+            registerWrite(canonicalPath, contentHash(markdown));
+            // Increment disk-write counter after the atomic rename succeeds.
+            // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
+            // drops skipStoreHooks, observer writes trigger onStoreDocument
+            // and produce amplified disk writes per user/agent edit.
+            incrementPersistenceDiskWrite();
+          } catch (e) {
+            try {
+              tracedUnlinkSync(tmpPath);
+            } catch {
+              /* cleanup best-effort */
+            }
+            log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
+            throw e;
+          }
+          log.info(
+            { filePath: canonicalPath, bytes: markdown.length },
+            `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
+          );
+
+          // Update reconciled base after successful store
+          setReconciledBase(documentName, markdown);
+
+          if (backlinkIndex) {
+            backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
+            void backlinkIndex.saveToDisk().catch((err) => {
+              log.warn(
+                { err, documentName },
+                `[backlinks] Failed to persist cache for ${documentName}`,
+              );
             });
           }
-          canonicalPath = requestedPath;
-        } else if (code === 'ELOOP') {
-          console.error(`[persistence] Symlink cycle at ${requestedPath}`);
-          throw new Error(`Symlink cycle detected at ${requestedPath}`);
-        } else {
-          throw e;
-        }
-      }
 
-      if (!isWithinContentDir(canonicalPath, contentDir)) {
-        const msg = `symlink-escape: ${requestedPath} resolves to ${canonicalPath} outside ${contentDir}`;
-        console.error(`[persistence] ${msg}`, {
-          docName: documentName,
-          originalPath: requestedPath,
-          canonical: canonicalPath,
-          contentDir,
-        });
-        throw new Error(msg);
-      }
-
-      const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
-      try {
-        await writeFile(tmpPath, markdown, 'utf-8');
-        await rename(tmpPath, canonicalPath);
-        registerWrite(canonicalPath, contentHash(markdown));
-        // Increment disk-write counter after the atomic rename succeeds.
-        // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
-        // drops skipStoreHooks, observer writes trigger onStoreDocument
-        // and produce amplified disk writes per user/agent edit.
-        incrementPersistenceDiskWrite();
-      } catch (e) {
-        try {
-          unlinkSync(tmpPath);
-        } catch {
-          /* cleanup best-effort */
-        }
-        log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
-        throw e;
-      }
-      log.info(
-        { filePath: canonicalPath, bytes: markdown.length },
-        `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
-      );
-
-      // Update reconciled base after successful store
-      setReconciledBase(documentName, markdown);
-
-      if (backlinkIndex) {
-        backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
-        void backlinkIndex.saveToDisk().catch((err) => {
-          console.warn(`[backlinks] Failed to persist cache for ${documentName}:`, err);
-        });
-      }
-
-      scheduleGitCommit();
+          setActiveSpanAttributes({ 'persistence.bytes': markdown.length });
+          scheduleGitCommit();
+        },
+      ).finally(() => {
+        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
+        // would blow up Prometheus label storage at scale. The span carries it.
+        storeDurationHist?.record((Date.now() - started) / 1000);
+      });
     },
   };
 

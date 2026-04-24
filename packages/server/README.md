@@ -129,6 +129,19 @@ Classified writer IDs for non-attributable writes: `file-system` (disk reconcili
 
 The counters are the load-bearing signal for SS-1 (single-CRDT collapse) urgency calibration over the post-launch observation window.
 
+### OpenTelemetry instrumentation
+
+Optional OTel traces + metrics via `src/telemetry.ts` — off by default (`OTEL_SDK_DISABLED=true`). When enabled, every HTTP request, Hocuspocus hook, agent write, persistence debounce, shadow-repo commit, and fs write emits a span; pino log records carry `trace_id` / `span_id` / `trace_flags` for trace↔log correlation in Grafana.
+
+Canonical call sites:
+- `src/telemetry.ts` — `initTelemetry` / `shutdownTelemetry` / `withSpan` / `withSpanSync` / `setActiveSpanAttributes` / `getTracer` / `getMeter`. SDK 2.x (`BasicTracerProvider` + `AsyncLocalStorageContextManager`) — Bun-compatible.
+- `src/fs-traced.ts` — ONLY sanctioned path for instrumenting `writeFile` / `rename` / `mkdir` / `unlink` (async + `*Sync` variants). `@opentelemetry/instrumentation-fs` does NOT work under Bun (oven-sh/bun#6546) — use these wrappers.
+- `src/logger.ts` — pino `otelMixin` injects trace context into every log record. No manual plumbing needed.
+
+**To turn it on + see traces in Grafana:** full recipe is in [`docker/otel-dev/README.md`](../../docker/otel-dev/README.md) (Grafana + Tempo + Loki + Prometheus + OTel Collector via docker-compose). Three commands, zero third-party subscriptions.
+
+Full PRD: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](../../specs/2026-04-09-otel-instrumentation/SPEC.md).
+
 ---
 
 ## CC1 push-over-awareness — contract v1

@@ -187,6 +187,15 @@ export {
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
+  getMeter,
+  getTracer,
+  initTelemetry,
+  setActiveSpanAttributes,
+  shutdownTelemetry,
+  withSpan,
+  withSpanSync,
+} from './telemetry.ts';
+export {
   acquireUiLock,
   readUiLock,
   releaseUiLock,

@@ -27,6 +27,7 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** 30 minutes — matches SPEC §9 default threshold. */
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -143,6 +144,10 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const attachUi = opts.attachUiSibling ?? true;
   const idleMsOption = opts.idleShutdownMs;
   const log = opts.log ?? getLogger('boot');
+
+  // Initialize OpenTelemetry before any spans could be emitted. No-op when
+  // OTEL_SDK_DISABLED != 'false' (default — zero overhead when disabled).
+  initTelemetry();
 
   // Lazy-import node:http and ws so this module can be `import`'d in a browser-
   // like environment for typechecking without pulling network deps at parse time.
@@ -504,6 +509,9 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
       }
     } finally {
       await destroyHocuspocus();
+      // Flush pending spans/metrics LAST so the teardown sequence itself is
+      // observable. shutdownTelemetry is idempotent and has a 5s timeout.
+      await shutdownTelemetry();
     }
   };
 
