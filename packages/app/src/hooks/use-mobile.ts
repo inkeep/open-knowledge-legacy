@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-/** File sidebar switches to Sheet-mode below this width. */
+/** File sidebar switches to push-mode (translate, no backdrop) below this width. */
 const SIDEBAR_SHEET_BREAKPOINT = 1280;
 
 export function useIsMobile() {
