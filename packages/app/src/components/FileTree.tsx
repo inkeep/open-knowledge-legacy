@@ -369,7 +369,12 @@ const FileTreeNode: FC<{
   const IconToUse = isFile ? File : expanded ? FolderOpen : Folder;
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
-  const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
+  const target: FileTreeTarget = {
+    kind: node.kind,
+    path: node.path,
+    name: node.name,
+    docExt: node.docExt,
+  };
 
   const destFolderForDrop = isFile ? parentDirOfDocName(node.path) : node.path;
   const activeDragSource = useFileTreeDragSource();
@@ -444,7 +449,7 @@ const FileTreeNode: FC<{
           isActive ? 'text-sidebar-accent-foreground' : 'text-sidebar-foreground/70',
         )}
       >
-        {node.name + (isFile ? '.md' : '')}
+        {node.name + (isFile ? (node.docExt ?? '.md') : '')}
       </span>
       {showSymlink && (
         <Tooltip>
@@ -1390,7 +1395,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         >
           {deleteTarget && (
             <DeleteConfirmationDialog
-              itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
+              itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? (deleteTarget.docExt ?? '.md') : '/'}`}
               isSubmitting={busyPath === deleteTarget.path}
               onDelete={() => handleDelete(deleteTarget)}
               customDescription={

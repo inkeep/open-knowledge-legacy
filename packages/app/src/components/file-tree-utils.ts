@@ -2,6 +2,13 @@
 
 export interface DocEntry {
   docName: string;
+  /**
+   * On-disk file extension — `.md` or `.mdx`. Surfaced by `/api/documents` so
+   * the sidebar can render `foo.mdx` vs `foo.md` faithfully instead of
+   * hard-coding `.md`. Falls back to `.md` when absent for backward compat
+   * with pre-extension-aware servers.
+   */
+  docExt?: string;
   size: number;
   modified: string;
   isSymlink?: boolean;
@@ -14,6 +21,8 @@ export interface TreeNode {
   path: string;
   kind: 'folder' | 'file';
   children: TreeNode[];
+  /** On-disk extension for file nodes (undefined on folder nodes). See DocEntry.docExt. */
+  docExt?: string;
   isSymlink?: boolean;
   canonicalDocName?: string | null;
   targetPath?: string | null;
@@ -104,6 +113,7 @@ export function buildTree(documents: DocEntry[]): TreeNode[] {
           kind: isFile ? 'file' : 'folder',
           children: [],
           ...(isFile && {
+            docExt: doc.docExt,
             isSymlink: doc.isSymlink,
             canonicalDocName: doc.canonicalDocName,
             targetPath: doc.targetPath,

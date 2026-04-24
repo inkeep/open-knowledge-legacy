@@ -8,7 +8,15 @@
  * an explicit `agentId`. These tests lock that invariant in.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -436,5 +444,73 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     await new Promise((resolve) => setImmediate(resolve));
     // 400 path short-circuits before recordContributor / flushDocToGit.
     expect(spy.calls.length).toBe(0);
+  });
+});
+
+describe('handleRename — extension change via explicit .md/.mdx in newDocName', () => {
+  test('same-base rename with .mdx in newDocName physically changes extension on disk', async () => {
+    // Gap B: without this, the rename handler re-appends the source's existing
+    // extension (via getDocExtension) regardless of what the user typed in
+    // newDocName, so `foo.md → foo.mdx` was a silent no-op end-to-end.
+    writeFileSync(join(tmpDir, 'foo.md'), '# Foo\n\nOriginal .md content.\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: 'foo',
+      newDocName: 'foo.mdx',
+    });
+
+    expect(response.status).toBe(200);
+    expect(existsSync(join(tmpDir, 'foo.mdx'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'foo.md'))).toBe(false);
+    const content = readFileSync(join(tmpDir, 'foo.mdx'), 'utf-8');
+    expect(content).toContain('Original .md content');
+  });
+
+  test('name-and-ext change: rename bar.md → baz.mdx physically moves and renames', async () => {
+    writeFileSync(join(tmpDir, 'bar.md'), '# Bar\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: 'bar',
+      newDocName: 'baz.mdx',
+    });
+
+    expect(response.status).toBe(200);
+    expect(existsSync(join(tmpDir, 'baz.mdx'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'bar.md'))).toBe(false);
+  });
+
+  test('extension-less newDocName preserves source extension (backward compat)', async () => {
+    // The existing call-site contract: newDocName without an extension relies
+    // on getDocExtension() to re-derive the source's extension. Guards against
+    // a regression where adding explicit-extension handling breaks the
+    // pre-existing behavior.
+    writeFileSync(join(tmpDir, 'qux.md'), '# Qux\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: 'qux',
+      newDocName: 'renamed-qux',
+    });
+
+    expect(response.status).toBe(200);
+    expect(existsSync(join(tmpDir, 'renamed-qux.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'qux.md'))).toBe(false);
+    expect(existsSync(join(tmpDir, 'renamed-qux.mdx'))).toBe(false);
+  });
+
+  test('explicit extension matching the source (foo → foo.md when foo.md exists) is a no-op', async () => {
+    // Edge case when the client preserves the typed extension and the user
+    // typed the same name as the source. Without the sourcePath===destination
+    // short-circuit this returns 409 Destination already exists.
+    writeFileSync(join(tmpDir, 'stable.md'), '# Stable\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename', {
+      docName: 'stable',
+      newDocName: 'stable.md',
+    });
+
+    expect(response.status).toBe(200);
+    const parsed = JSON.parse(response.body);
+    expect(parsed.renamed).toEqual([]);
+    expect(existsSync(join(tmpDir, 'stable.md'))).toBe(true);
   });
 });

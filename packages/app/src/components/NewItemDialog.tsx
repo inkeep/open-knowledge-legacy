@@ -11,7 +11,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { emitDocumentsChanged } from '@/lib/documents-events';
+import {
+  type DocExtension,
+  detectExtension,
+  SUPPORTED_EXTENSIONS,
+  stripExt,
+} from './extension-picker-utils';
 
 interface NewItemDialogProps {
   open: boolean;
@@ -44,16 +51,27 @@ export function ensureMdExtension(name: string): string {
 
 /**
  * Compose the final path to POST to /api/create-page.
- * Trims fileName and folderName; auto-appends `.md`. Returns the canonical path
- * relative to the content directory (no leading slash).
+ *
+ * Precedence for the final extension:
+ *  1. If `fileName` already carries a supported extension (.md or .mdx),
+ *     it wins — Finder-like "typed-in extension always authoritative."
+ *  2. Otherwise, the optional `fileExtension` picker state applies.
+ *  3. If neither is set, defaults to `.md` (preserves pre-picker behavior).
+ *
+ * Returns the canonical path relative to the content directory (no leading slash).
  */
 export function composeNewItemPath(args: {
   kind: 'file' | 'folder';
   initialDir: string;
   fileName: string;
+  fileExtension?: DocExtension;
   folderName?: string;
 }): string {
-  const file = ensureMdExtension(args.fileName.trim());
+  const trimmed = args.fileName.trim();
+  const sniffed = detectExtension(trimmed);
+  // Typed-in extension wins over picker state. When neither is present,
+  // `fileExtension` (or its default `.md`) applies.
+  const file = sniffed ? trimmed : `${trimmed}${args.fileExtension ?? '.md'}`;
   if (args.kind === 'folder') {
     const folder = (args.folderName ?? '').trim();
     const base = args.initialDir ? `${args.initialDir}/${folder}` : folder;
@@ -109,6 +127,7 @@ export function NewItemDialog({
   const { addPage } = usePageList();
   const [fileName, setFileName] = useState('');
   const [folderName, setFolderName] = useState('');
+  const [fileExtension, setFileExtension] = useState<DocExtension>('.md');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorField, setErrorField] = useState<'folder' | 'file' | 'form' | null>(null);
@@ -124,16 +143,38 @@ export function NewItemDialog({
       setErrorField(null);
       setBusy(false);
       setFolderName('');
-      if (kind === 'file') {
-        setFileName(suggestedName ?? 'untitled.md');
-      } else {
-        setFileName('index.md');
-      }
+      const initial = kind === 'file' ? (suggestedName ?? 'untitled') : 'index';
+      // If the caller's suggestedName carries an extension, adopt it as the
+      // picker state and strip from the displayed name.
+      const sniffed = detectExtension(initial);
+      setFileExtension(sniffed ?? '.md');
+      setFileName(sniffed ? stripExt(initial) : initial);
     }
   }, [open, kind, suggestedName]);
 
+  function handleFileNameChange(next: string) {
+    // Finder-like: if the user typed a supported extension inside the name
+    // field, treat it as authoritative — adopt it into the picker state and
+    // strip from the visible name. This keeps the rendered input uncluttered
+    // while still honoring keyboard-power-user flows.
+    const sniffed = detectExtension(next);
+    if (sniffed) {
+      setFileExtension(sniffed);
+      setFileName(stripExt(next));
+    } else {
+      setFileName(next);
+    }
+    setError(null);
+  }
+
   function composePath(): string {
-    return composeNewItemPath({ kind, initialDir, fileName, folderName });
+    return composeNewItemPath({
+      kind,
+      initialDir,
+      fileName,
+      fileExtension,
+      folderName,
+    });
   }
 
   function getClientError(): { message: string; field: 'folder' | 'file' } | null {
@@ -264,27 +305,44 @@ export function NewItemDialog({
             <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
               {kind === 'folder' ? 'First file name' : 'File name'}
             </label>
-            <Input
-              ref={fileInputRef}
-              id={fileInputId}
-              value={fileName}
-              onChange={(e) => {
-                setFileName(e.target.value);
-                setError(null);
-              }}
-              placeholder="my-note.md"
-              autoFocus={kind === 'file'}
-              aria-describedby={
-                error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
-              }
-              aria-invalid={
-                error && (errorField === 'file' || errorField === 'form') ? true : undefined
-              }
-              onFocus={(e) => selectBasename(e.currentTarget)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
-              }}
-            />
+            <div className="flex items-stretch gap-2">
+              <Input
+                ref={fileInputRef}
+                id={fileInputId}
+                value={fileName}
+                onChange={(e) => handleFileNameChange(e.target.value)}
+                placeholder="my-note"
+                autoFocus={kind === 'file'}
+                aria-describedby={
+                  error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
+                }
+                aria-invalid={
+                  error && (errorField === 'file' || errorField === 'form') ? true : undefined
+                }
+                onFocus={(e) => selectBasename(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
+                }}
+                className="flex-1"
+              />
+              <ToggleGroup
+                type="single"
+                value={fileExtension}
+                onValueChange={(v) => {
+                  if (v === '.md' || v === '.mdx') setFileExtension(v);
+                }}
+                variant="outline"
+                size="sm"
+                aria-label="File extension"
+                className="shrink-0"
+              >
+                {SUPPORTED_EXTENSIONS.map((ext) => (
+                  <ToggleGroupItem key={ext} value={ext} aria-label={`Use ${ext} extension`}>
+                    {ext}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </div>
           </div>
           {error && (
             <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">

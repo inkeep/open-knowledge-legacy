@@ -8,6 +8,7 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -94,6 +95,7 @@ export function EditorHeader({
 }: EditorHeaderProps) {
   const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
+  const { pageMeta } = usePageList();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const syncStatus = useSyncStatus(activeProvider);
@@ -106,10 +108,14 @@ export function EditorHeader({
   const sourceDisabled = !activeDocName || !isConnected;
   const isFolderTarget = activeTarget?.kind === 'folder';
   const isNewDoc = activeTarget?.kind === 'missing';
+  // Extension for the active doc — pulled from PageListContext so the header
+  // renders `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
+  // Falls back to `.md` for optimistic / pre-fetch states.
+  const activeDocExt = (activeDocName && pageMeta.get(activeDocName)?.docExt) || '.md';
   const displayName = isFolderTarget
     ? `${activeTarget.folderPath}/`
     : activeDocName
-      ? `${activeDocName}.md`
+      ? `${activeDocName}${activeDocExt}`
       : '';
 
   const index = activeDocName?.lastIndexOf('/') ?? -1;
@@ -376,7 +382,7 @@ export function EditorHeader({
                     className="h-7 min-w-0 flex-1 border-none bg-background text-sm shadow-none focus-visible:ring-0"
                   />
                   <span aria-hidden="true" className="shrink-0 text-xs text-muted-foreground/40">
-                    .md
+                    {activeDocExt}
                   </span>
                 </div>
                 {renameError && (
@@ -396,7 +402,7 @@ export function EditorHeader({
                 onClick={enterRenameMode}
                 className="h-7 shrink-0 px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
               >
-                {fileBaseName}.md
+                {`${fileBaseName}${activeDocExt}`}
               </Button>
             )}
           </div>

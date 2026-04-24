@@ -460,7 +460,13 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  const relativePath = kind === 'file' ? `${path}${getDocExtension(path)}` : path;
+  // When kind is 'file': if the caller passed an explicit supported extension,
+  // use the path verbatim — this is how the rename handler signals an
+  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
+  // Extension-less paths fall through to getDocExtension() + the registered
+  // extension map so legacy callers keep the source's existing extension.
+  const relativePath =
+    kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
   if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
@@ -1637,6 +1643,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const index = getFileIndex();
       const documents: {
         docName: string;
+        docExt: string;
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -1648,8 +1655,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
+        // getDocExtension() returns the registered on-disk extension for the
+        // docName (or `.md` by default when nothing is yet recorded). Surfacing
+        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
+        // faithfully instead of hard-coding `.md`.
+        const docExt = getDocExtension(docName);
+
         documents.push({
           docName,
+          docExt,
           size: entry.size,
           modified: entry.modified,
           isSymlink: false,
@@ -1663,6 +1677,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
             docName: alias,
+            docExt,
             size: entry.size,
             modified: entry.modified,
             isSymlink: true,
@@ -3585,6 +3600,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
+      // Handles the case where the client sends an explicit extension that
+      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
+      // the file is already `foo.md`) — `docName !== newDocName` textually
+      // but the on-disk paths resolve to the same file. Treat as no-op,
+      // mirroring the extension-less `docName === newDocName` short-circuit
+      // above.
+      if (sourcePath === destinationPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
       if (!existsSync(sourcePath)) {
         json(res, 404, { ok: false, error: 'Document does not exist' });
         return;
@@ -3889,17 +3914,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      const pages: {
+        docName: string;
+        title: string;
+        docExt: string;
+        size: number;
+        modified: string;
+      }[] = [];
       for (const [docName, entry] of index) {
         let title = docName;
+        const docExt = getDocExtension(docName);
         try {
-          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
+          const filePath = resolve(contentDir, `${docName}${docExt}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title, size: entry.size, modified: entry.modified });
+        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });

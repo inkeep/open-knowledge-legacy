@@ -30,14 +30,26 @@ const documents: DocEntry[] = [
 ];
 
 describe('file-tree-operations', () => {
-  test('normalizeRenameValue strips .md suffix for files', () => {
-    expect(normalizeRenameValue('file', 'renamed.md')).toBe('renamed');
+  test('normalizeRenameValue trims whitespace but preserves the raw name', () => {
+    expect(normalizeRenameValue('file', '  renamed  ')).toBe('renamed');
+    expect(normalizeRenameValue('folder', '  renamed  ')).toBe('renamed');
+  });
+
+  test('normalizeRenameValue preserves .md suffix as an explicit extension signal', () => {
+    // Post-commit-2 the helper stripped extensions for display; updated to
+    // preserve so the server can detect an extension-change rename.
+    expect(normalizeRenameValue('file', 'renamed.md')).toBe('renamed.md');
     expect(normalizeRenameValue('folder', 'renamed.md')).toBe('renamed.md');
   });
 
-  test('normalizeRenameValue strips .mdx suffix for files', () => {
-    expect(normalizeRenameValue('file', 'renamed.mdx')).toBe('renamed');
+  test('normalizeRenameValue preserves .mdx suffix as an explicit extension signal', () => {
+    expect(normalizeRenameValue('file', 'renamed.mdx')).toBe('renamed.mdx');
     expect(normalizeRenameValue('folder', 'renamed.mdx')).toBe('renamed.mdx');
+  });
+
+  test('normalizeRenameValue leaves bare names unchanged (preserves backward-compat server re-derivation)', () => {
+    expect(normalizeRenameValue('file', 'renamed')).toBe('renamed');
+    expect(normalizeRenameValue('folder', 'renamed')).toBe('renamed');
   });
 
   test('isValidNodeName rejects path separators and dot segments', () => {

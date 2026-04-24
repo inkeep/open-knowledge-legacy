@@ -5,17 +5,18 @@ export interface RenamedDocMapping {
   toDocName: string;
 }
 
-export type FileTreeTarget = Pick<TreeNode, 'kind' | 'path' | 'name'>;
+export type FileTreeTarget = Pick<TreeNode, 'kind' | 'path' | 'name' | 'docExt'>;
 
-export function normalizeRenameValue(kind: TreeNode['kind'], value: string): string {
-  const trimmed = value.trim();
-  if (kind === 'file') {
-    // Strips either supported doc extension so the rename dialog shows the
-    // bare name; re-appended by the write path per the file's current ext
-    // (precedence: .mdx wins — see `packages/server/src/doc-extensions.ts`).
-    return trimmed.replace(/\.(mdx|md)$/i, '');
-  }
-  return trimmed;
+export function normalizeRenameValue(_kind: TreeNode['kind'], value: string): string {
+  // PRESERVE user-typed extension when present — it's the signal the server
+  // uses to detect an extension-change rename (e.g., `foo.md` → `foo.mdx`).
+  // The rename input is pre-filled with the extension-less path, so a plain
+  // edit produces a plain bare name; typing a supported extension opts into
+  // the extension-change path via `resolveContentEntryPath`'s explicit-ext
+  // detection in `packages/server/src/api-extension.ts`. The `_kind` param
+  // is preserved in the signature for API stability; the normalize logic is
+  // now kind-agnostic (folder names never carry .md/.mdx extensions anyway).
+  return value.trim();
 }
 
 export function isValidNodeName(value: string): boolean {
