@@ -251,6 +251,40 @@ test.describe('sidebar push-mode (small width)', () => {
     expect(await getInsetTranslateX(page)).toBe(0);
   });
 
+  test('resize-UP after closing at small width: desktop reopens (no propagation back)', async ({
+    page,
+    api,
+  }) => {
+    // Pins the asymmetry: desktop is canonical, small-width is a transient view.
+    // User actions at small width must NOT propagate back to the desktop `open`
+    // state. If a future refactor adds bidirectional sync, this test fails and
+    // forces a re-review.
+    await api.seedDocs([{ name: 'k', markdown: '# Doc K\n\nBody.' }]);
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await page.goto('/#/k');
+
+    // Desktop sidebar starts open (defaultOpen=true).
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+
+    // Resize DOWN: push-mode shows the sidebar (carry-across).
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+    await expect
+      .poll(() => getInsetTranslateX(page), { timeout: 1500 })
+      .toBeGreaterThan(SIDEBAR_WIDTH_PX - 1);
+
+    // User dismisses at small width (e.g., via Escape).
+    await page.keyboard.press('Escape');
+    await expect.poll(() => isSidebarOpen(page)).toBe(false);
+    await expect.poll(() => getInsetTranslateX(page), { timeout: 1500 }).toBe(0);
+
+    // Resize UP: desktop sidebar must reopen, because the close action at small
+    // width did NOT modify the desktop `open` state.
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+    expect(await getInsetTranslateX(page)).toBe(0);
+  });
+
   test('SidebarTrigger exposes aria-expanded reflecting the active sidebar state', async ({
     page,
     api,

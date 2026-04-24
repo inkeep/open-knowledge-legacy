@@ -399,7 +399,7 @@ function SidebarInset({
   };
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is the window-level ESC listener in SidebarProvider; a noop onKeyDown here would create a false affordance on a non-focusable landmark
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is handled by SidebarProvider's window-level Escape keydown listener (the useEffect gated on `isMobile && openMobile`); a noop onKeyDown here would create a false affordance on a non-focusable landmark
     <main
       data-slot="sidebar-inset"
       data-push-pulse={showPushPulse ? '' : undefined}
