@@ -23,7 +23,9 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useActivityPanel } from '@/lib/use-activity-panel';
+import { useActivityPanelWidth } from '@/lib/use-activity-panel-width';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
+import { ActivityPanelResizeHandle } from './ActivityPanelResizeHandle';
 import { Button } from './ui/button';
 import { Sheet, SheetContent, SheetTitle } from './ui/sheet';
 
@@ -283,6 +285,7 @@ export function AgentActivityPanel(): React.JSX.Element | null {
   const { activityPanelAgentId, closeActivityPanel } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const { data, status, error, reload, fetchBurstDiff } = useActivityPanel(activityPanelAgentId);
+  const { width, setWidth } = useActivityPanelWidth();
 
   // FR-P3: open state is the presence of `activityPanelAgentId`. The Sheet's
   // `onOpenChange(false)` fires on Esc + the header X; we reuse
@@ -354,9 +357,17 @@ export function AgentActivityPanel(): React.JSX.Element | null {
         // is an explicit close affordance per FR-P4.
         onInteractOutside={(event) => event.preventDefault()}
         onPointerDownOutside={(event) => event.preventDefault()}
-        className="w-[480px] max-w-[480px] sm:max-w-[480px] p-0 flex flex-col"
+        // Width is user-adjustable via the left-edge resize handle (see
+        // ActivityPanelResizeHandle). Inline style wins over the shadcn
+        // Sheet's baked-in `data-[side=right]:sm:max-w-sm` (= 384 px) by
+        // specificity. `maxWidth` is set to match so the max-w rule is
+        // overridden symmetrically — otherwise the slide-in animation's
+        // `max-width` would cap us at the class's value.
+        style={{ width: `${width}px`, maxWidth: `${width}px` }}
+        className="p-0 flex flex-col"
         data-testid="activity-panel"
       >
+        <ActivityPanelResizeHandle width={width} onChangeWidth={setWidth} />
         {/*
           Radix Dialog/Sheet requires a DialogTitle as direct descendant for
           a11y (screen-reader announcement). We render a visually-hidden one
