@@ -91,6 +91,35 @@ export interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
+/**
+ * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
+ * Mirrors `McpWiringEditorId` in `./ipc-channels.ts` and the canonical
+ * `EditorId` in `packages/cli/src/commands/editors.ts`. Drift across the
+ * three bridge-contract copies is caught by the M1 invariant test.
+ */
+export type OkMcpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
+ *  `willReplace: true` signals the editor has an existing OK-managed entry
+ *  that Add would overwrite (Pass 1 Major #8 — per-editor disclosure). */
+export interface OkMcpWiringShowPayload {
+  readonly detectedEditors: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly detected: boolean;
+    readonly willReplace: boolean;
+  }[];
+}
+
+/** Result shape for `mcpWiring.confirm` / `skip`. */
+export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
@@ -187,6 +216,24 @@ export interface OkDesktopBridge {
   update: {
     /** Invokes `autoUpdater.quitAndInstall()` in main. Triggered by Toast A's "Relaunch now" action. */
     relaunchNow(): Promise<void>;
+  };
+
+  /**
+   * M6b first-launch MCP consent surface. Renderer mounts `<McpConsentDialog>`
+   * when `onShow` fires; calls `confirm` / `skip` on user action; calls
+   * `signalReady()` once on app mount so main knows a renderer is subscribed
+   * (D-M6-R10 mount-ack handshake). Available in every Electron host window
+   * (Navigator + editor) — first-ack wins per D-M6-R10.
+   */
+  mcpWiring: {
+    /** Subscribe to the consent-dialog-show event. Returns unsubscribe. */
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;
+    /** Fire a one-way mount-ack event — main's whenRendererReady gate. */
+    signalReady(): void;
+    /** User clicked Add. `editorIds` is the subset the user checked. */
+    confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
+    /** User clicked Skip (or pressed ESC). */
+    skip(): Promise<OkMcpWiringResult>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

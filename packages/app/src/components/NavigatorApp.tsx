@@ -22,6 +22,7 @@ import {
 } from '@/lib/error-state';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
+import { McpConsentDialog } from './McpConsentDialog';
 import { Badge } from './ui/badge';
 
 // Re-exports for tests — callers previously imported these directly from
@@ -188,6 +189,11 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           </ul>
         </section>
       ) : null}
+
+      {/* M6b first-launch consent dialog — self-gates on the shared
+          `mcpConsentStore` snapshot, renders nothing until main fires
+          `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
+      <McpConsentDialog />
     </div>
   );
 }

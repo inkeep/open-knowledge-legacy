@@ -1,24 +1,10 @@
 /**
- * Host-aware `openExternal` wrapper for the Open-in-Agent dispatch path.
- *
- * Governing spec: `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §8.1 (Electron)
- * and §8.2 (web). Single choke point that maps IPC success / anchor-click
- * success to `HandoffOutcome`. Callers: `dispatch.ts`, `cursor-two-step.ts`,
- * and the disabled-row secondary "Open in claude.ai →" affordance in
- * `OpenInAgentMenu.tsx` (US-010).
- *
- *   - Electron host (`window.okDesktop` present): forwards to
- *     `window.okDesktop.shell.openExternal(url)`. The main-process side runs
- *     the D47 allowlist check (`checkOutboundUrl`) before handing to the OS.
- *   - Web host: constructs an anchor element with `href=url`, appends to the
- *     DOM, calls `.click()`, and removes it. TQ7 LOCKED — most reliable
- *     non-http scheme dispatch in browsers; avoids the "Allow this site to
- *     open X?" interstitial that `window.location.href` triggers on some
- *     browsers.
- *
- * Success → `{ ok: true }`; any thrown rejection or missing DOM context →
- * `{ ok: false, reason: 'dispatch-error', detail }`. The caller decides
- * whether to surface a failure toast (see `useHandoffDispatch` in US-009).
+ * Host-aware `openExternal` wrapper — single choke point for the Open-in-Agent
+ * dispatch path. Electron host forwards to `window.okDesktop.shell.openExternal`
+ * (main-process runs the scheme allowlist check). Web host uses an anchor
+ * element with `.click()` — the most reliable non-http scheme dispatch in
+ * browsers; avoids the "Allow this site to open X?" interstitial that
+ * `window.location.href` triggers.
  */
 
 import type { HandoffOutcome } from '@inkeep/open-knowledge-core';
@@ -62,13 +48,10 @@ export async function openExternal(
     const a = doc.createElement('a');
     a.href = url;
     a.rel = 'noopener noreferrer';
-    // http(s) URLs are the web-fallback path (https://claude.ai/new?q=…) —
-    // without `target="_blank"` the anchor click navigates the editor tab
-    // away, discarding UI state (active doc, scroll, open panels). Custom
-    // schemes (claude://, codex://, cursor://) are intercepted by the OS
-    // scheme handler and do NOT navigate the tab; `target` stays unset on
-    // those so the TQ7 LOCKED behavior (no "Allow this site to open X?"
-    // interstitial on Firefox/Chrome) is preserved.
+    // http(s) URLs are the web-fallback path — without `target="_blank"` the
+    // anchor click navigates the editor tab away. Custom schemes are
+    // intercepted by the OS scheme handler and don't navigate the tab;
+    // leaving `target` unset avoids the browser interstitial prompt.
     if (/^https?:/i.test(url)) {
       a.target = '_blank';
     }

@@ -103,6 +103,20 @@ jobs:
             ':!package-lock.json'
             ':!yarn.lock'
             ':!**/CHANGELOG.md'
+            ':!tmp/ship/**'
+            ':!dist/**'
+            ':!build/**'
+            ':!.next/**'
+            ':!.turbo/**'
+            ':!node_modules/**'
+            ':!.codex/**'
+            ':!.agents/skills/pr-context/**'
+            ':!specs/**'
+            ':!reports/**'
+            ':!tech-probes/**'
+            ':!stories/**'
+            ':!projects/**'
+            ':!strategy/**'
           )
 
           BASE="origin/${{ steps.pr.outputs.base_ref }}"
@@ -378,6 +392,20 @@ jobs:
                 ':!package-lock.json'
                 ':!yarn.lock'
                 ':!**/CHANGELOG.md'
+                ':!tmp/ship/**'
+                ':!dist/**'
+                ':!build/**'
+                ':!.next/**'
+                ':!.turbo/**'
+                ':!node_modules/**'
+                ':!.codex/**'
+                ':!.agents/skills/pr-context/**'
+                ':!specs/**'
+                ':!reports/**'
+                ':!tech-probes/**'
+                ':!stories/**'
+                ':!projects/**'
+                ':!strategy/**'
               )
               SINCE_REVIEW_LOG=$(git log --oneline "$LAST_REVIEW_SHA".."$PR_HEAD")
               SINCE_REVIEW_STATS=$(git diff --stat "$LAST_REVIEW_SHA".."$PR_HEAD" -- . "${DIFF_EXCLUDE[@]}")

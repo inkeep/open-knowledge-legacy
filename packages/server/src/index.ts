@@ -28,7 +28,12 @@ export {
   ORPHAN_MODES,
   type OrphanMode,
 } from './backlink-index.ts';
-export { type BootedServer, type BootServerOptions, bootServer } from './boot.ts';
+export {
+  type BootedServer,
+  type BootServerOptions,
+  bootServer,
+  parseKeepaliveConnectionId,
+} from './boot.ts';
 export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
@@ -209,6 +214,15 @@ export {
   type SpawnLike,
 } from './skill-install.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+export {
+  getMeter,
+  getTracer,
+  initTelemetry,
+  setActiveSpanAttributes,
+  shutdownTelemetry,
+  withSpan,
+  withSpanSync,
+} from './telemetry.ts';
 export {
   acquireUiLock,
   readUiLock,

@@ -18,7 +18,7 @@
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts",
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "bun run build && size-limit"
@@ -27,13 +27,13 @@
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "210 kB",
+      "limit": "215 kB",
       "gzip": true
     },
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1000 kB",
+      "limit": "1050 kB",
       "gzip": true
     },
     {
@@ -67,6 +67,15 @@
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
     "@lezer/markdown": "^1.6.3",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.204.0",
+    "@opentelemetry/instrumentation": "^0.204.0",
+    "@opentelemetry/instrumentation-document-load": "^0.49.0",
+    "@opentelemetry/instrumentation-fetch": "^0.204.0",
+    "@opentelemetry/instrumentation-user-interaction": "^0.49.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/sdk-trace-web": "^2.0.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0",
     "@tailwindcss/postcss": "^4.2.2",
     "@tanstack/react-query": "^5.99.0",
     "@tiptap/core": "^3.22.3",

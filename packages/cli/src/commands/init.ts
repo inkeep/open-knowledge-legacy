@@ -113,7 +113,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Types
 // ---------------------------------------------------------------------------
 
-interface EditorMcpResult {
+export interface EditorMcpResult {
   editorId: EditorId;
   label: string;
   action: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
@@ -257,6 +257,9 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       configurations: configs,
     };
     writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
+    // Main's #282 refactor fixed the dead ternary my review-fix also targeted
+    // (W1) by distinguishing 'merged' (existing entry updated) from 'created'
+    // (new entry). Main's version is strictly more informative — keep it.
     return { action: existingIdx >= 0 ? 'merged' : 'created', configPath };
   } catch (err) {
     return {
@@ -280,7 +283,17 @@ function isEditorTargetAvailable(target: EditorMcpTarget, cwd: string, home?: st
   }
 }
 
-function writeEditorMcpConfig(
+/**
+ * Per-editor MCP config writer. Exported (US-006) so `@inkeep/open-knowledge`
+ * consumers — specifically Electron main's M6b first-launch consent flow via
+ * `writeUserMcpConfigs` — can invoke the same write logic that the terminal-
+ * origin `ok init` command uses. The `installOptions.skipAvailabilityCheck`
+ * flag distinguishes the two call sites: `ok init` enforces
+ * `isEditorTargetAvailable` so users don't get empty config dirs for editors
+ * they haven't installed; the M6b consent flow bypasses the check because
+ * the user explicitly toggled the editor checkbox in the dialog.
+ */
+export function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
   installOptions: McpInstallOptions,
@@ -301,7 +314,10 @@ function writeEditorMcpConfig(
     };
   }
 
-  if (!isEditorTargetAvailable(target, cwd, home)) {
+  // M6b bypass (US-006): the consent dialog showed the editor's checkbox and
+  // the user explicitly toggled it. Skipping on `isEditorTargetAvailable` would
+  // silently drop their choice — treat the click as the consent.
+  if (!installOptions.skipAvailabilityCheck && !isEditorTargetAvailable(target, cwd, home)) {
     return {
       editorId: target.id,
       label: target.label,
@@ -387,6 +403,118 @@ function collectLegacyProjectConfig(
     label: target.label,
     path: legacyPath,
   };
+}
+
+// ---------------------------------------------------------------------------
+// User-scoped MCP config writer (Electron main entry, NOT CLI `ok init`)
+// ---------------------------------------------------------------------------
+
+export interface UserMcpConfigsOptions {
+  /**
+   * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
+   * is responsible for filtering out editors whose existing entry is a
+   * customized shape that should be preserved — those are classified via
+   * `readExistingMcpEntry` + `computeForce` and excluded from this array
+   * BEFORE the call. This function unconditionally overwrites every editor
+   * it receives (aligning with main's `writeEditorMcpConfig` always-rewrite
+   * semantic from PR #282 / "installs stay aligned with current defaults").
+   */
+  editors: EditorId[];
+  /**
+   * Absolute path to the MCP-spawning CLI binary. Written into every editor's
+   * entry as `{ command: cliPath, args: ['mcp'] }`. When unset, falls back to
+   * the canonical `{command:'npx', args:['@inkeep/open-knowledge','mcp']}` shape.
+   */
+  cliPath?: string;
+  /** Override `$HOME` for resolving user-scoped config paths (test hook). */
+  home?: string;
+}
+
+/**
+ * Write MCP config entries for a set of editors without any of `runInit`'s
+ * project-scoped side effects.
+ *
+ * Specifically does NOT run:
+ *   - `ensureProjectGit` — would `git init` wherever `cwd` is (packaged Electron
+ *     apps have `process.cwd() === '/'` by default)
+ *   - `initContent` — scaffolds `.open-knowledge/` in a project
+ *   - `scaffoldLaunchJson` — writes `.claude/launch.json`
+ *   - `upsertRootInstructions` — mutates `AGENTS.md` / `CLAUDE.md`
+ *   - `collectLegacyProjectConfig` — scans for `.mcp.json` / `.cursor/mcp.json`
+ *
+ * Per D-M6-R8, this is the entry point Electron main's first-launch MCP
+ * consent flow calls after the user clicks Add. The terminal-invoked `ok init`
+ * path still uses `runInit` and never sets `cliPath`, so backward compatibility
+ * of the `{command:'npx',...}` shape is preserved.
+ *
+ * Bypasses `isEditorTargetAvailable` via `skipAvailabilityCheck: true` — the
+ * user explicitly toggled the editor checkbox; their click IS the consent,
+ * so skip-on-missing would silently drop their selection.
+ */
+export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<EditorMcpResult[]> {
+  const targets = resolveEditorTargets(opts.editors);
+  const installOptions: McpInstallOptions = {
+    mode: 'published',
+    cliPath: opts.cliPath,
+    skipAvailabilityCheck: true,
+  };
+  // `cwd` is empty — every user-scoped target ignores it (each editor's
+  // `configPath` + `serverName` resolves from `home` or a constant).
+  return targets.map((target) => writeEditorMcpConfig(target, '', installOptions, opts.home));
+}
+
+/**
+ * Read a single editor's existing MCP server entry for use with
+ * `computeForce`-style classification (M6b). Reads the user-scoped config
+ * (format-aware — JSON or TOML), looks up `config[topLevelKey][serverName]`,
+ * and returns it as a plain object. Returns `null` when the config file is
+ * absent, unreadable, unparseable, or has no entry for this editor's
+ * server name.
+ *
+ * **Never-throws contract (load-bearing — Pass 0 Major #13):** the M6b
+ * first-launch consent flow MUST be able to classify every selected editor
+ * without aborting on one malformed config. A corrupt user config (e.g.,
+ * stale `~/.codex/config.toml` from a half-completed third-party edit) on
+ * ANY selected editor would otherwise crash `confirmHandler`, leave the
+ * marker absent, and create an infinite dialog re-fire loop on the user's
+ * machine. Every reachable failure path here returns `null`:
+ *   - configPath() throws → null (platform-mismatched target, e.g.
+ *     Claude Desktop on Linux)
+ *   - readJson/readToml throws → null (unparseable config)
+ *   - top-level mcpServers/servers/mcp_servers key absent → null
+ *   - top-level key value not a plain object → null (e.g., array)
+ *   - server entry value not a plain object → null (e.g., bare string)
+ *
+ * Note: `null` deliberately conflates "absent" with "malformed" — both mean
+ * "no compatible existing entry to merge into" from `computeForce`'s
+ * perspective. The downstream `writeEditorMcpConfig` re-reads via the same
+ * format-aware parser and would itself throw on truly corrupt files; that
+ * write-side error path is what surfaces the corruption to the user via
+ * the `mcp-wiring-write-failed` event in `mcp-wiring.ts` (Pass 0 Critical
+ * #1's toast contract).
+ */
+export function readExistingMcpEntry(
+  target: EditorMcpTarget,
+  cwd: string,
+  home?: string,
+): Record<string, unknown> | null {
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch {
+    return null;
+  }
+  let config: Record<string, unknown>;
+  try {
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
+  } catch {
+    return null;
+  }
+  const servers = config[target.topLevelKey];
+  if (!isObject(servers)) return null;
+  const existing = servers[target.serverName(cwd)];
+  if (!isObject(existing)) return null;
+  return existing;
 }
 
 // ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
@@ -730,9 +731,18 @@ export interface FileTreeHandle {
   collapseAll(): void;
 }
 
+/**
+ * Must be mounted inside a `SidebarProvider` — `useSidebar()` throws otherwise.
+ * Today only `FileSidebar` mounts it, which is always inside the provider.
+ */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { addPage } = usePageList();
+  const { notifySidebarFileSelected } = useSidebar();
+  function navigateToWithPulse(targetPath: string) {
+    navigateTo(targetPath);
+    notifySidebarFileSelected();
+  }
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1358,7 +1368,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               treeActionsLocked={treeActionsLocked}
               workspace={workspace}
               handoff={handoff}
-              onNavigate={navigateTo}
+              onNavigate={navigateToWithPulse}
               prewarm={prewarm}
               onStartRename={(target) => {
                 setEditingPath(target.path);

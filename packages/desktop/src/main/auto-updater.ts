@@ -1,28 +1,23 @@
 /**
- * M3 auto-updater — main-process orchestration for electron-updater.
+ * Auto-updater — main-process orchestration for electron-updater.
  *
- * Boots at the end of `app.whenReady()` (see main/index.ts), tears down
- * on `app.on('will-quit')` per parent D40 canonical shutdown ordering.
+ * Boots at the end of `app.whenReady()`; tears down on `app.on('will-quit')`.
  * Every time-dependent path (now, setInterval, clearInterval) and every
  * Electron boundary (autoUpdater, BrowserWindow, ipcMain, app.isPackaged,
- * app.getVersion) is injectable so the module unit-tests under bun
- * without a real Electron runtime.
+ * app.getVersion) is injectable so the module unit-tests under bun without
+ * a real Electron runtime.
  *
- * Spec: specs/2026-04-21-m3-electron-updater/SPEC.md §4 + §7 D1–D12 +
- * §5 AC2–AC3, AC10, AC17, AC18.
+ * Six events subscribed: checking-for-update, update-available,
+ * update-not-available, download-progress (debug log only), update-downloaded,
+ * error. Not wired: login, update-cancelled, appimage-filename-updated.
  *
- * Six events subscribed (AC2): checking-for-update, update-available,
- * update-not-available, download-progress (debug log only), update-
- * downloaded, error. Not wired: login, update-cancelled,
- * appimage-filename-updated.
+ * Error routing: classified `ERR_UPDATER_*` / `HTTP_ERROR_*` → silent retry
+ * + structured bracket log. Unclassified (bare Squirrel.Mac Error) → same
+ * silent path with full err.stack. Zero user-visible signal per-error; the
+ * stuck-hint closes the escape hatch after 7 consecutive failed days.
  *
- * Error-routing (D5): classified `ERR_UPDATER_*` / `HTTP_ERROR_*` → silent
- * retry + structured bracket log; unclassified (bare Squirrel.Mac Error) →
- * same silent path with full err.stack. Zero user-visible signal per-error;
- * D12 stuck-hint closes the escape hatch after 7 consecutive failed days.
- *
- * Cadence (D10 revised): `checkForUpdates()` at boot, then every
- * 1 hour via setInterval(60 * 60 * 1000). Singleton per app launch.
+ * Cadence: `checkForUpdates()` at boot, then every 1 hour. Singleton per
+ * app launch.
  */
 
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
@@ -36,17 +31,17 @@ import type { AppState } from './state-store.ts';
 // ————————————————————————————————————————————————————————
 
 /**
- * Minimal shape the module needs from electron-updater's AppUpdater. The
- * production binding wraps the real `autoUpdater` singleton; tests pass
- * a stub subclass that exposes `emit()` (see US-007).
+ * Minimal shape the module needs from electron-updater's AppUpdater.
+ * Production binding wraps the real `autoUpdater` singleton; tests pass a
+ * stub subclass that exposes `emit()`.
  */
 export interface UpdaterLike {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   channel: string | null;
-  /** NG3 — no beta channel; locked via explicit set alongside `channel`. */
+  /** No beta channel — locked via explicit set alongside `channel`. */
   allowPrerelease: boolean;
-  /** Locked via explicit set — no downgrade path. */
+  /** No downgrade path — locked via explicit set. */
   allowDowngrade: boolean;
   /**
    * electron-updater gates `checkForUpdates()` on `app.isPackaged ||
@@ -88,8 +83,7 @@ interface Clock {
 
 /**
  * `onDispatch` observability — invoked after every event-handler outcome so
- * tests can assert which code path fired. Production binding can pass
- * undefined; US-007 wires a mock to count event dispatches.
+ * tests can assert which code path fired. Production passes undefined.
  */
 export type DispatchKind =
   | 'update-downloaded-toast-a'
@@ -109,14 +103,11 @@ interface StartAutoUpdaterOpts {
   readState: () => AppState;
   writeState: (next: AppState) => void;
   /**
-   * Single target for update-toast delivery. With D24 multi-window mode
-   * ("every project pick spawns a new editor window"), fanning out to every
-   * open BrowserWindow would render N independent toasts per event and give
-   * the user N "Relaunch now" buttons. Production passes
-   * `() => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null`
-   * so the toast lands on the window the user is looking at (falling back
-   * to the first open window when none is focused). Returns null if no
-   * window is open — broadcast is a no-op.
+   * Single target for update-toast delivery — every project pick spawns a new
+   * editor window, and fanning out to every open BrowserWindow would render
+   * N independent toasts with N "Relaunch now" buttons. Production passes
+   * `() => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null`.
+   * Returns null if no window is open (broadcast is a no-op).
    */
   getPrimaryWindow: () => { webContents: SendableWebContents } | null;
   getAppVersion: () => string;
@@ -179,23 +170,20 @@ const DEFAULT_LOGGER: Logger = {
   debug: (msg, ctx) => console.debug('[updater]', msg, ctx ?? ''),
 };
 
-/** D10 revised: match Obsidian's hourly cadence. */
+/** Match Obsidian's hourly cadence. */
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
-/** D12: 7 calendar days before Toast C fires. */
+/** 7 calendar days before the stuck-hint toast fires. */
 export const STUCK_HINT_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** D12: manual-download URL for Toast C. */
 export const STUCK_HINT_DOWNLOAD_URL = 'https://inkeep.com/open-knowledge/download';
 
 /**
- * D9: GitHub Releases tag URL shape for Toast B.
+ * GitHub Releases tag URL shape for the "what's new" toast.
  *
- * `version` is `app.getVersion()` output (effectively trusted — read from
- * the app's own package.json at boot), but encode it defensively so a
- * malformed version string (e.g. containing `/` or `..`) cannot produce a
- * path-confusion URL. The resulting URL still passes the D47 scheme
- * allowlist; the encoding only locks the path segment shape.
+ * `version` is `app.getVersion()` (trusted, read from package.json at boot),
+ * but encode defensively so a malformed version string (containing `/` or
+ * `..`) cannot produce a path-confusion URL.
  */
 export function releaseUrlFor(version: string): string {
   return `https://github.com/inkeep/open-knowledge/releases/tag/v${encodeURIComponent(version)}`;
@@ -231,23 +219,20 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     logger = DEFAULT_LOGGER,
   } = opts;
 
-  // Parent §8.10 LOCKED — autoDownload=true, autoInstallOnAppQuit=true,
-  // channel='latest'. Documented here at the single wire-up site.
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
   updater.channel = 'latest';
-  // NG3: single `latest` channel, no beta. Locking the electron-updater
-  // defaults explicitly so a future library bump can't silently flip them.
+  // Explicit so a future electron-updater bump can't silently flip the
+  // defaults: single `latest` channel, no beta, no downgrade.
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
 
-  // Tier-2 smoke plumbing (evidence/electron-updater-api.md §4 approach 2).
-  // When `forceDevBypass` is true we flip `forceDevUpdateConfig` so the
-  // underlying `checkForUpdates()` actually hits the network even without a
-  // packaged `.app`. When `feedUrl` is set we point the updater at a local
-  // HTTP server (via electron-updater's `GenericProvider`). Production
-  // leaves both unset — `isPackaged` true on signed DMGs + `publish: github`
-  // in `app-update.yml` drives the real update path.
+  // Tier-2 smoke plumbing. When `forceDevBypass` is true we flip
+  // `forceDevUpdateConfig` so `checkForUpdates()` actually hits the network
+  // without a packaged `.app`. When `feedUrl` is set we point the updater at
+  // a local HTTP server via electron-updater's `GenericProvider`. Production
+  // leaves both unset — `isPackaged` + `publish: github` in `app-update.yml`
+  // drives the real update path.
   updater.forceDevUpdateConfig = forceDevBypass;
   if (feedUrl) {
     updater.setFeedURL(feedUrl);
@@ -261,14 +246,10 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   // ————————————————————————————————————————————————————————
 
   /**
-   * Send an update event to a single window (D24 multi-window fan-out fix).
-   * Routes through `sendToRenderer` — the canonical D19 main→renderer wrapper
-   * (also used by window-manager for `ok:git-init-notice`). We target ONE
-   * window (not `BrowserWindow.getAllWindows()`) because fan-out would render
-   * N independent toasts across N editor windows with N "Relaunch now"
-   * buttons. When no window is open (unusual — updater is wired after the
-   * first window opens), the broadcast no-ops; the state gate still arms so
-   * the event doesn't re-emit repeatedly once a window opens.
+   * Send an update event to ONE window (not `getAllWindows()`) so we don't
+   * render N independent toasts with N "Relaunch now" buttons. When no
+   * window is open, the broadcast no-ops; the state gate still arms so the
+   * event doesn't re-emit once a window opens.
    */
   const broadcast = <K extends keyof EventChannels>(
     channel: K,
@@ -301,7 +282,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
     }
   };
 
-  /** Evaluate D12 stuck-hint gate on every `error` emission. */
+  /** Evaluate the stuck-hint gate on every `error` emission. */
   const maybeFireStuckHint = (): void => {
     const state = readState();
     if (state.stuckHintShown) return;
@@ -549,14 +530,14 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   }
 
   // ————————————————————————————————————————————————————————
-  // Launch check + periodic interval (D10 revised = 1h)
+  // Launch check + periodic interval (hourly)
   // ————————————————————————————————————————————————————————
 
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   const startPeriodicChecks = (): void => {
-    // Singleton interval — caller guaranteed to only invoke startAutoUpdater
-    // once per app launch (US-006). Guard against accidental re-entry.
+    // Singleton interval — caller is guaranteed to only invoke
+    // startAutoUpdater once per app launch. Guard against accidental re-entry.
     if (intervalHandle) return;
     intervalHandle = clock.setInterval(() => {
       void updater.checkForUpdates().catch((err: unknown) => {
@@ -591,7 +572,7 @@ export function startAutoUpdater(opts: StartAutoUpdaterOpts): StartAutoUpdaterHa
   }
 
   // ————————————————————————————————————————————————————————
-  // Teardown (AC10 + F17: cleared on will-quit, parent D40 order)
+  // Teardown (cleared on will-quit)
   // ————————————————————————————————————————————————————————
 
   return {
