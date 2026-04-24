@@ -11,8 +11,11 @@
  *     sidebar at small width.
  *   - Clicking the SidebarTrigger button does NOT double-fire the inset's
  *     click handler.
- *   - Resize from desktop (open) to small-width carries the open state
- *     across (push-mode visible at the new width).
+ *   - Resize carries the desktop open state DOWN, but a closed desktop
+ *     stays closed at small width (no spurious open).
+ *   - ESC defers to any open Radix dismissable layer (Dialog, DropdownMenu)
+ *     instead of closing the sidebar — the sidebar's ESC handler is the
+ *     last one to fire.
  *   - Desktop behavior (>= 1280px) is unchanged: no translateX transform
  *     on the inset.
  *
@@ -28,15 +31,24 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 } as const;
 const SIDEBAR_WIDTH_PX = 288; // 18rem at 16px root font
 
 async function getInsetTranslateX(page: Page): Promise<number> {
-  const transform = await page
-    .locator('[data-slot="sidebar-inset"]')
-    .evaluate((el) => window.getComputedStyle(el).transform);
-  if (!transform || transform === 'none') return 0;
-  const match = transform.match(/matrix\(([^)]+)\)/);
-  if (!match) return 0;
-  const parts = match[1]?.split(',').map((p) => Number.parseFloat(p.trim())) ?? [];
-  // matrix(a, b, c, d, tx, ty) — translateX is the 5th value
-  return parts[4] ?? 0;
+  // Tailwind v4's translate utilities set the modern `translate:` CSS property
+  // (not the legacy combined `transform:`). Inspect both — `translate:` first,
+  // and fall back to parsing the matrix in `transform:` for code that mixes
+  // both. Returning 0 means no horizontal translate is in effect.
+  const styles = await page.locator('[data-slot="sidebar-inset"]').evaluate((el) => {
+    const cs = window.getComputedStyle(el);
+    return { translate: cs.translate, transform: cs.transform };
+  });
+  if (styles.translate && styles.translate !== 'none') {
+    const tx = Number.parseFloat(styles.translate.split(/\s+/)[0] ?? '');
+    if (!Number.isNaN(tx) && tx !== 0) return tx;
+  }
+  if (styles.transform && styles.transform !== 'none') {
+    const match = styles.transform.match(/matrix\(([^)]+)\)/);
+    const parts = match?.[1]?.split(',').map((p) => Number.parseFloat(p.trim())) ?? [];
+    return parts[4] ?? 0;
+  }
+  return 0;
 }
 
 async function isSidebarOpen(page: Page): Promise<boolean> {
@@ -106,11 +118,31 @@ test.describe('sidebar push-mode (small width)', () => {
     await page.locator('[data-sidebar="trigger"]').click();
     await expect.poll(() => isSidebarOpen(page)).toBe(true);
 
+    // Install a probe so the assertion proves the inset's own click handler
+    // fired — not some other side-effect path that would also flip
+    // openMobile to false. The probe wrapper uses capture phase so it sees
+    // the event regardless of stopPropagation in the React handler.
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-slot="sidebar-inset"]');
+      if (!el) throw new Error('inset not found');
+      (window as unknown as { __insetClicked?: boolean }).__insetClicked = false;
+      el.addEventListener(
+        'click',
+        () => {
+          (window as unknown as { __insetClicked?: boolean }).__insetClicked = true;
+        },
+        { capture: true, once: true },
+      );
+    });
+
     // Click on the editor area (inside the inset, but not the trigger).
-    // Use force:true because the click target may be partially translated
-    // off-screen at small viewport widths — the click event is what matters.
     await page.locator('.ProseMirror').first().click({ force: true });
     await expect.poll(() => isSidebarOpen(page)).toBe(false);
+
+    const insetClicked = await page.evaluate(
+      () => (window as unknown as { __insetClicked?: boolean }).__insetClicked,
+    );
+    expect(insetClicked).toBe(true);
   });
 
   test('clicking the SidebarTrigger does not double-fire dismiss', async ({ page, api }) => {
@@ -170,5 +202,68 @@ test.describe('sidebar push-mode (small width)', () => {
 
     await page.keyboard.press('ControlOrMeta+\\');
     await expect.poll(() => isSidebarOpen(page)).toBe(false);
+  });
+
+  test('ESC defers to an open Radix DropdownMenu instead of closing sidebar', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([{ name: 'i', markdown: '# Doc I\n\nBody.' }]);
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await page.goto('/#/i');
+
+    // Open the sidebar.
+    await page.locator('[data-sidebar="trigger"]').click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+
+    // The "Tree view options" button in FileSidebar is a Radix DropdownMenu
+    // trigger (role="menu" content). Open it.
+    await page.getByRole('button', { name: 'Tree view options' }).click();
+    await expect(page.locator('[role="menu"][data-state="open"]')).toBeVisible();
+
+    // Press Escape — the DropdownMenu's DismissableLayer should consume it
+    // first; the sidebar's ESC handler must defer.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[role="menu"][data-state="open"]')).toBeHidden();
+    expect(await isSidebarOpen(page)).toBe(true);
+
+    // Press Escape again — now no layer is open, so the sidebar closes.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => isSidebarOpen(page)).toBe(false);
+  });
+
+  test('resize from desktop (closed) to small width keeps sidebar closed', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([{ name: 'j', markdown: '# Doc J\n\nBody.' }]);
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await page.goto('/#/j');
+
+    // Close the desktop sidebar.
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+    await page.locator('[data-sidebar="trigger"]').click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(false);
+
+    // Resize down — closed state must carry. No spurious open at small width.
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await expect.poll(() => isSidebarOpen(page)).toBe(false);
+    expect(await getInsetTranslateX(page)).toBe(0);
+  });
+
+  test('SidebarTrigger exposes aria-expanded reflecting the active sidebar state', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([{ name: 'k', markdown: '# Doc K\n\nBody.' }]);
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await page.goto('/#/k');
+
+    const trigger = page.locator('[data-sidebar="trigger"]');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 });

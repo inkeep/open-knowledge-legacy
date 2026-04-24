@@ -15,7 +15,7 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = '\\';
-const SIDEBAR_PUSH_PULSE_MS = 700;
+const SIDEBAR_ID = 'app-file-sidebar';
 
 type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -28,6 +28,14 @@ type SidebarContextProps = {
   isMobile: boolean;
   toggleSidebar: () => void;
   showPushPulse: boolean;
+  setShowPushPulse: React.Dispatch<React.SetStateAction<boolean>>;
+  /**
+   * Trigger a one-shot pulse-hint on SidebarInset's visible left edge after a
+   * file is selected in the file tree at small width. Caller-driven so the
+   * pulse is scoped to in-sidebar selection (not every hashchange — wiki-link
+   * clicks inside the document body must not trigger it).
+   */
+  notifySidebarFileSelected: () => void;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -55,9 +63,8 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void;
 }) {
   const isMobile = useIsMobile();
-  const [openMobile, _setOpenMobile] = React.useState(false);
+  const [openMobile, setOpenMobile] = React.useState(false);
   const [showPushPulse, setShowPushPulse] = React.useState(false);
-  const pulseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -76,21 +83,19 @@ function SidebarProvider({
     document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
   };
 
-  // Wrap setOpenMobile to dispatch a synthetic Escape after the state flushes,
-  // so editor popups (BubbleMenu, suggestion-floating-ui, Radix DropdownMenu)
-  // dismiss before the 200ms slide animation starts. floating-ui's autoUpdate
-  // does not watch transform changes, so any stale popup would render at the
-  // pre-translate anchor mid-slide.
-  const setOpenMobile: OpenHandler = (value) => {
-    _setOpenMobile(value);
-    queueMicrotask(() => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-  };
-
   // Helper to toggle the sidebar.
   function toggleSidebar() {
     return isMobile ? setOpenMobile((openMobile) => !openMobile) : setOpen((open) => !open);
+  }
+
+  // Pulse-hint is fired by FileTree's navigateTo (not on every hashchange) so
+  // wiki-link clicks inside the document body, back/forward navigation, and
+  // agent-driven nav don't trigger a noise pulse. Skip when reduced motion is
+  // requested. CSS owns timing — onAnimationEnd on SidebarInset clears the flag.
+  function notifySidebarFileSelected() {
+    if (!isMobile || !openMobile) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    setShowPushPulse(true);
   }
 
   // Adds a keyboard shortcut to toggle the sidebar.
@@ -105,30 +110,35 @@ function SidebarProvider({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
+    // biome-ignore lint/correctness/useExhaustiveDependencies: toggleSidebar is a locally-defined closure with no captured render-dependent values; re-subscribing every render would be wasteful but correct
     toggleSidebar,
   ]);
 
-  // ESC dismisses the small-width sidebar. Defer to any open Radix dialog so
-  // its DismissableLayer captures ESC first (CommandPalette, AuthModal, etc.).
+  // ESC dismisses the small-width sidebar. Run in CAPTURE phase on window so
+  // we observe the open-layer DOM state BEFORE Radix's DismissableLayer
+  // (capture phase on document) flips data-state="open" → "closed". A bubble-
+  // phase listener races: by the time it runs, the layer is already closed
+  // and our defer-to-dialog check fails to see it.
   React.useEffect(() => {
     if (!isMobile || !openMobile) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      const openDialog = document.querySelector(
-        '[data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"]',
+      // Match Dialog/AlertDialog (role="dialog"/"alertdialog"), DropdownMenu/
+      // ContextMenu/Menubar (role="menu"), Combobox/Listbox (role="listbox"),
+      // and Popover content (rendered inside data-radix-popper-content-wrapper).
+      const openLayer = document.querySelector(
+        '[data-state="open"][role="dialog"], ' +
+          '[data-state="open"][role="alertdialog"], ' +
+          '[data-state="open"][role="menu"], ' +
+          '[data-state="open"][role="listbox"], ' +
+          '[data-radix-popper-content-wrapper] [data-state="open"]',
       );
-      if (openDialog) return;
+      if (openLayer) return;
       setOpenMobile(false);
     };
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
-  }, [
-    isMobile,
-    openMobile,
-    // biome-ignore lint/correctness/useExhaustiveDependencies: setOpenMobile is stable per React Compiler
-    setOpenMobile,
-  ]);
+    window.addEventListener('keydown', onEscape, { capture: true });
+    return () => window.removeEventListener('keydown', onEscape, { capture: true });
+  }, [isMobile, openMobile]);
 
   // Carry desktop sidebar state across the boundary on resize DOWN. The UP
   // direction is a no-op — the React `open` state is already the active state.
@@ -136,36 +146,10 @@ function SidebarProvider({
   const prevIsMobileRef = React.useRef(isMobile);
   React.useEffect(() => {
     if (!prevIsMobileRef.current && isMobile) {
-      _setOpenMobile(open);
+      setOpenMobile(open);
     }
     prevIsMobileRef.current = isMobile;
   }, [isMobile, open]);
-
-  // Pulse-hint on hash change while sidebar is open at small width. Hash
-  // changes fire when the user picks a file in the tree, clicks a wiki-link,
-  // or any other route change — all signal "doc changed, you can dismiss the
-  // sidebar to read it." Honors prefers-reduced-motion.
-  React.useEffect(() => {
-    if (!isMobile || !openMobile) return;
-    const onHashChange = () => {
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
-      setShowPushPulse(true);
-      pulseTimerRef.current = setTimeout(() => {
-        setShowPushPulse(false);
-        pulseTimerRef.current = null;
-      }, SIDEBAR_PUSH_PULSE_MS);
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => {
-      window.removeEventListener('hashchange', onHashChange);
-      if (pulseTimerRef.current) {
-        clearTimeout(pulseTimerRef.current);
-        pulseTimerRef.current = null;
-      }
-      setShowPushPulse(false);
-    };
-  }, [isMobile, openMobile]);
 
   // The sidebar's *active* open state depends on the breakpoint: at small
   // width, openMobile drives it; at desktop, the cookie-style `open` does.
@@ -189,6 +173,8 @@ function SidebarProvider({
         setOpenMobile,
         toggleSidebar,
         showPushPulse,
+        setShowPushPulse,
+        notifySidebarFileSelected,
       }}
     >
       <div
@@ -259,7 +245,9 @@ function Sidebar({
         data-slot="sidebar"
         data-mobile="true"
       >
-        <div
+        <nav
+          id={SIDEBAR_ID}
+          aria-label="File sidebar"
           data-slot="sidebar-container"
           data-side={side}
           className={cn(
@@ -281,7 +269,7 @@ function Sidebar({
           >
             {children}
           </div>
-        </div>
+        </nav>
       </div>
     );
   }
@@ -333,7 +321,7 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, state } = useSidebar();
 
   return (
     <Button
@@ -341,6 +329,8 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon-sm"
+      aria-expanded={state === 'expanded'}
+      aria-controls={SIDEBAR_ID}
       className={cn(className)}
       onClick={(event) => {
         onClick?.(event);
@@ -379,11 +369,17 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
   );
 }
 
-function SidebarInset({ className, onClick, ...props }: React.ComponentProps<'main'>) {
-  const { isMobile, openMobile, setOpenMobile, showPushPulse } = useSidebar();
+function SidebarInset({
+  className,
+  onClick,
+  onAnimationEnd,
+  ...props
+}: React.ComponentProps<'main'>) {
+  const { isMobile, openMobile, setOpenMobile, showPushPulse, setShowPushPulse } = useSidebar();
 
   const handleClick: React.MouseEventHandler<HTMLElement> = (event) => {
     onClick?.(event);
+    if (event.defaultPrevented) return;
     if (!isMobile || !openMobile) return;
     const target = event.target as HTMLElement | null;
     // The trigger lives inside the inset's DOM (EditorHeader); its own onClick
@@ -392,12 +388,23 @@ function SidebarInset({ className, onClick, ...props }: React.ComponentProps<'ma
     setOpenMobile(false);
   };
 
+  // CSS owns the pulse duration — clearing on animationend keeps TS state in
+  // sync with the CSS keyframe regardless of future timing tweaks. The
+  // animationName guard avoids racing with other animations on this element.
+  const handleAnimationEnd: React.AnimationEventHandler<HTMLElement> = (event) => {
+    onAnimationEnd?.(event);
+    if (event.animationName === 'sidebar-push-pulse') {
+      setShowPushPulse(false);
+    }
+  };
+
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismiss is the window-level ESC listener in SidebarProvider; a noop onKeyDown here would create a false affordance on a non-focusable landmark
     <main
       data-slot="sidebar-inset"
       data-push-pulse={showPushPulse ? '' : undefined}
       onClick={handleClick}
+      onAnimationEnd={handleAnimationEnd}
       className={cn(
         'relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
         // Push-mode translate: when peer sidebar is small-width AND open,
@@ -405,7 +412,6 @@ function SidebarInset({ className, onClick, ...props }: React.ComponentProps<'ma
         // its intrinsic width — content on the right slides off-screen.
         'transition-transform duration-200 ease-linear motion-reduce:transition-none',
         'peer-data-[mobile=true]:peer-data-[state=expanded]:translate-x-(--sidebar-width)',
-        // Pulse hint plays via the data-push-pulse attribute, defined in globals.css.
         className,
       )}
       {...props}
