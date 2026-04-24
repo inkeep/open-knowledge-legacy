@@ -69,9 +69,8 @@ import { sanitizeComponentProps } from '../utils/sanitize-url.ts';
 // pattern as `packages/app/src/components/DocumentErrorBoundary.tsx`. The
 // prior hand-rolled `class ComponentErrorBoundary` carried its own
 // `getDerivedStateFromError` / `componentDidCatch` / `componentDidUpdate`
-// trio that duplicated library semantics for no behavioral gain. Pre-QA
-// review M13 flagged the divergence; this refactor collapses both error
-// boundaries onto the same contract:
+// trio that duplicated library semantics for no behavioral gain. This
+// refactor collapses both error boundaries onto the same contract:
 //
 //   <ErrorBoundary fallbackRender resetKeys={[resetKey]} onError> …
 //
@@ -186,7 +185,7 @@ export function stableHash(value: unknown): string {
  *   - Traverses nested URL-shaped keys in arrays / plain objects (bounded).
  *
  * Storage (Y.Text, XmlFragment, shadow repo) retains the raw bytes per the
- * NG4 fidelity contract — only the live render is sanitized.
+ * storage-layer fidelity contract — only the live render is sanitized.
  */
 export function extractPrimitiveProps(
   attrs: Record<string, unknown>,
@@ -260,8 +259,8 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   //                         ring differentiation; no v1 visual treatment.
   //  - isDragging:          An HTML5 drag is active; suppress the halo.
   //
-  // Plugin may not be registered during intermediate build states (US-008
-  // activates it) — `useBlockSelection` then returns EMPTY (all flags off).
+  // Plugin may not be registered during intermediate build states —
+  // `useBlockSelection` then returns EMPTY (all flags off).
   const blockSelection = useBlockSelection(editor);
   const wrapperBridgeId = typeof pos === 'number' ? getWrapperBridgeId(editor.state, pos) : null;
   const isInnermostSelected =
@@ -449,11 +448,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // source bytes are available via Copy source even when the auto-convert
   // can't land.
   if (stuck) {
-    // M9 review fix: use action-oriented copy instead of internal jargon
-    // ("could not open source editor"). The stuck state is the highest-
-    // friction UX moment in the feature — the label should explain the
-    // recovery bridge (copy → close → paste elsewhere), not name an
-    // internal subsystem the user has never encountered.
+    // Use action-oriented copy instead of internal jargon ("could not open
+    // source editor"). The stuck state is the highest-friction UX moment
+    // in the feature — the label should explain the recovery bridge (copy
+    // → close → paste elsewhere), not name an internal subsystem the user
+    // has never encountered.
     const label =
       descriptor.name === '*'
         ? `<${node.attrs.componentName as string}> isn't a known component. Copy the source to use it elsewhere, or delete the block.`
@@ -465,11 +464,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           void navigator.clipboard.writeText(src);
         }
       } catch (err) {
-        // Clipboard API may be unavailable (permissions, test env). The Delete
-        // affordance still works, and the source bytes are safe in the
-        // underlying node regardless of clipboard access — log at debug for
-        // operator visibility so the stuck-state UX leaves a support trail.
-        // Mi4: paired with the structured-warn so ops can compute a
+        // Clipboard API may be unavailable (permissions, test env). The
+        // Delete affordance still works, and the source bytes are safe in
+        // the underlying node regardless of clipboard access — log at
+        // debug for operator visibility so the stuck-state UX leaves a
+        // support trail. The structured warn lets ops compute a
         // recovery-success rate against the existing jsxAutoConvertFailed
         // denominator.
         incrementJsxStuckCopyFailed(descriptor.name);
@@ -491,9 +490,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       } catch (err) {
         // Position races (concurrent remote peer edit, Observer B re-parse
         // shift) are the expected failure shape — classify + log so the
-        // stuck-state last-line-of-defense leaves a correlatable trail. Match
-        // the Move Up/Down handler telemetry (same file, L645-656).
-        // Mi4: paired with the structured-warn so ops can aggregate.
+        // stuck-state last-line-of-defense leaves a correlatable trail.
+        // Matches the Move Up/Down handler telemetry in the chrome bar so
+        // ops can aggregate against a consistent denominator.
         if (!(err instanceof RangeError)) throw err;
         incrementJsxStuckDeleteFailed(descriptor.name);
         console.warn(

@@ -28,23 +28,22 @@
  * reliable place to detect the foldable marker. Scope is the 5 GFM types
  * only — broader Obsidian types (`[!success]+`, `[!idea]-`) still flow
  * through the alias map but foldable-marker detection is inside the GFM
- * narrow (NG26 defers enum extension).
+ * narrow.
  *
- * ## Alias map (Q-MF3 LOCKED)
+ * ## Alias map
  *
  * Folds Obsidian / Mintlify / Pandoc type aliases into the GFM 5-type
  * subset. Lossy for some migrated content (`success` → `tip`, `danger` →
  * `caution`, `idea` → `tip`); the strict GFM 5-type enum will extend
- * additively under NG26 when broader Obsidian authoring demand surfaces.
+ * additively when broader Obsidian authoring demand surfaces.
  *
- * ## Why not path (b) (custom ~150-LoC blockquote visitor)
+ * ## Why not a custom ~150-LoC blockquote visitor
  *
- * Per Q-MF1 LOCKED on path (a): `remark-github-alerts` handles the
- * error-prone opener-line tokenization (case-insensitivity, marker
- * validation, title extraction, body-stripping) with a maintained upstream.
- * The ~60-LoC transformer here is strictly additive on top of that output.
- * Path (b) is the escape hatch if the upstream proves problematic; one
- * file changes.
+ * `remark-github-alerts` handles the error-prone opener-line tokenization
+ * (case-insensitivity, marker validation, title extraction,
+ * body-stripping) with a maintained upstream. The ~60-LoC transformer
+ * here is strictly additive on top of that output. A custom visitor stays
+ * as an escape hatch if the upstream proves problematic; one file changes.
  */
 
 import type { Blockquote, Paragraph, Root } from 'mdast';
@@ -52,7 +51,7 @@ import type { MdxJsxAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import { visit } from 'unist-util-visit';
 import type { VFile } from 'vfile';
 
-/** GFM-canonical callout types (D-MF11). */
+/** GFM-canonical callout types. */
 type CalloutType = 'note' | 'tip' | 'important' | 'warning' | 'caution';
 
 const GFM_TYPES: ReadonlySet<string> = new Set<CalloutType>([
@@ -65,8 +64,9 @@ const GFM_TYPES: ReadonlySet<string> = new Set<CalloutType>([
 
 /**
  * Alias map folding broader Obsidian / Mintlify / Pandoc / Fumadocs type
- * tokens into the GFM 5-type subset (Q-MF3 LOCKED). ~23 entries. Lossy for
- * some migrated content (see NG26 for the un-deferral framework).
+ * tokens into the GFM 5-type subset. ~23 entries. Lossy for some migrated
+ * content — the strict GFM 5-type enum will extend additively when
+ * broader Obsidian authoring demand surfaces.
  *
  * Keys are normalized to lowercase before lookup.
  */
@@ -118,13 +118,13 @@ const CLASS_TYPE_RE = new RegExp(`(?:^|\\s)${CALLOUT_CLASS_PREFIX}-(\\w+)(?:\\s|
  *   - match[2] = foldable marker (`+` / `-` / undefined)
  *   - match[3] = trailing title text (optional)
  *
- * Scope note (D-MF17): foldable marker recognition is scoped to the 5 GFM
- * types via `GFM_TYPES` membership check AFTER alias normalization. If the
- * source type aliases INTO a GFM type (e.g., `> [!SUCCESS]-\nBody` →
- * `tip` via alias map), foldable is NOT honored — the authoring-side
- * Obsidian syntax maps to a GFM type but foldable + non-GFM type combos
- * are part of NG26. This is conservative: the alias map is about
- * type-token normalization, not runtime-semantic expansion.
+ * Scope note: foldable marker recognition is scoped to the 5 GFM types via
+ * `GFM_TYPES` membership check AFTER alias normalization. If the source
+ * type aliases INTO a GFM type (e.g., `> [!SUCCESS]-\nBody` → `tip` via
+ * alias map), foldable is NOT honored — the authoring-side Obsidian
+ * syntax maps to a GFM type but foldable + non-GFM type combos stay out
+ * of scope. Conservative by design: the alias map is about type-token
+ * normalization, not runtime-semantic expansion.
  */
 interface OpenerInspection {
   /** Raw type token as it appears in source (preserves case until alias normalization). */
@@ -290,9 +290,9 @@ export function calloutTransformerPlugin() {
       // type didn't resolve. Foldable-marker capture is deferred until after
       // the GFM-resolution fallback below — see the `resolvedType`-gated
       // capture immediately following so unknown-type + foldable combos
-      // (e.g. `> [!MYSTERY]+\nBody`) still honor the marker (M1 review fix:
-      // pre-fix the capture gated on pre-resolution `type` and dropped the
-      // marker whenever alias lookup returned `null`).
+      // (e.g. `> [!MYSTERY]+\nBody`) still honor the marker. An earlier
+      // version gated this capture on the pre-resolution `type` and dropped
+      // the marker whenever alias lookup returned `null`.
       let title: string | null = null;
       let opener: ReturnType<typeof inspectOpenerLine> | null = null;
       if (node.position?.start?.offset !== undefined) {
@@ -406,14 +406,14 @@ const PLACEHOLDER_SVG =
  * The Proxy gives a constant-time catch-all that satisfies the plugin's
  * contract without eager enumeration.
  *
- * Co3 review fix: dropped the speculative `has: () => true` trap. The
- * upstream plugin source (verified via `~/.claude/oss-repos/` and a fresh
- * `bun pm pkg ls`) does not consult `Reflect.has` / the `in` operator on
- * the icon map; only `get` is read. Adding traps for unverified consumers
- * is the kind of defensive scaffolding that gets quietly load-bearing
- * later in subtle ways. If a future upstream version starts checking
- * `has`, the failure surfaces as an `encodeSvg` throw on first use of
- * the affected marker — re-add the trap then.
+ * The upstream plugin source (verified via `~/.claude/oss-repos/` and a
+ * fresh `bun pm pkg ls`) does not consult `Reflect.has` / the `in`
+ * operator on the icon map; only `get` is read. An earlier version added
+ * a speculative `has: () => true` trap that was unused — adding traps for
+ * unverified consumers is the kind of defensive scaffolding that gets
+ * quietly load-bearing later in subtle ways. If a future upstream version
+ * starts checking `has`, the failure surfaces as an `encodeSvg` throw on
+ * first use of the affected marker — re-add the trap then.
  */
 const PLUGIN_ICON_MAP: Readonly<Record<string, string>> = new Proxy({} as Record<string, string>, {
   get: () => PLACEHOLDER_SVG,
@@ -428,16 +428,16 @@ const PLUGIN_ICON_MAP: Readonly<Record<string, string>> = new Proxy({} as Record
  *   Obsidian aliases, Mintlify aliases, Pandoc aliases, or arbitrary
  *   user-coined tokens). Our transformer normalizes via `TYPE_ALIAS_MAP`
  *   when possible and falls back to `type: 'note'` otherwise, preserving
- *   the authored token via `data-authored-as` (M8 contract). This delivers
- *   the symmetric "GFM path + MDX JSX path both graceful-fallback to note"
- *   customer contract (pre-QA review M7 option (b)).
+ *   the authored token via `data-authored-as`. This delivers the
+ *   symmetric "GFM path + MDX JSX path both graceful-fallback to note"
+ *   customer contract.
  *
- *   Pre-M7, this was `Object.keys(TYPE_ALIAS_MAP)` — the explicit allowlist
- *   dropped tokens outside the 23-entry alias map back to plain blockquotes
- *   while the JSX path promoted them to `<Callout type="...">` with fallback
- *   rendering. The asymmetry surprised Obsidian migrators authoring exotic
- *   `[!TYPE]` tokens; the QA plan (QA-022) caught the gap between stated
- *   contract and shipped behavior. `markers: '*'` closes it.
+ *   An earlier iteration used `Object.keys(TYPE_ALIAS_MAP)` as an explicit
+ *   allowlist — that dropped tokens outside the 23-entry alias map back to
+ *   plain blockquotes while the JSX path promoted them to
+ *   `<Callout type="...">` with fallback rendering. The asymmetry surprised
+ *   Obsidian migrators authoring exotic `[!TYPE]` tokens; `markers: '*'`
+ *   closes the gap.
  *
  *   Multi-word `[!DOWN FOR MAINT]` inside a blockquote still does NOT match
  *   (the plugin's internal matcher is single-word by design), so legitimate
