@@ -28,6 +28,7 @@ import {
   MarkdownManager,
   normalizeBridge,
   prependFrontmatter,
+  ServerInfoResponseSchema,
   sharedExtensions,
 } from '@inkeep/open-knowledge-core';
 import {
@@ -1663,12 +1664,7 @@ export async function seedPoolServerInstanceId(
   if (!res.ok) {
     throw new Error(`seedPoolServerInstanceId: /api/server-info returned ${res.status}`);
   }
-  const body = (await res.json()) as { serverInstanceId?: unknown };
-  if (typeof body.serverInstanceId !== 'string') {
-    throw new Error(
-      `seedPoolServerInstanceId: /api/server-info body missing string serverInstanceId`,
-    );
-  }
+  const body = ServerInfoResponseSchema.parse(await res.json());
   pool.setExpectedServerInstanceId(body.serverInstanceId);
   return body.serverInstanceId;
 }

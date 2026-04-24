@@ -3,11 +3,11 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CONTRACT_VERSION,
-  CC1Broadcaster,
-  type CC1Signal,
-  isSystemDoc,
+  CC1BranchSwitchedPayloadSchema,
+  CC1DerivedViewPayloadSchema,
   SYSTEM_DOC_NAME,
-} from './cc1-broadcast.ts';
+} from '@inkeep/open-knowledge-core';
+import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
 function wait(ms: number): Promise<void> {
@@ -66,7 +66,7 @@ describe('CC1Broadcaster', () => {
     }
     await wait(150);
     expect(broadcasts).toHaveLength(1);
-    const payload: CC1Signal = JSON.parse(broadcasts[0]);
+    const payload = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(payload).toEqual({ v: 1, ch: 'files', seq: 1 });
   });
 
@@ -78,13 +78,13 @@ describe('CC1Broadcaster', () => {
 
     // 'files' should have fired at ~100ms, 'backlinks' not yet
     expect(broadcasts).toHaveLength(1);
-    const first: CC1Signal = JSON.parse(broadcasts[0]);
+    const first = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(first.ch).toBe('files');
 
     await wait(50);
     // 'backlinks' should have fired by now (~120ms after its signal)
     expect(broadcasts).toHaveLength(2);
-    const second: CC1Signal = JSON.parse(broadcasts[1]);
+    const second = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[1]));
     expect(second.ch).toBe('backlinks');
     expect(second.seq).toBe(1);
   });
@@ -98,7 +98,7 @@ describe('CC1Broadcaster', () => {
     await wait(120);
 
     expect(broadcasts).toHaveLength(3);
-    const seqs = broadcasts.map((b) => (JSON.parse(b) as CC1Signal).seq);
+    const seqs = broadcasts.map((b) => CC1DerivedViewPayloadSchema.parse(JSON.parse(b)).seq);
     expect(seqs).toEqual([1, 2, 3]);
   });
 
@@ -111,7 +111,7 @@ describe('CC1Broadcaster', () => {
     await wait(120);
 
     expect(broadcasts).toHaveLength(3);
-    const payloads = broadcasts.map((b) => JSON.parse(b) as CC1Signal);
+    const payloads = broadcasts.map((b) => CC1DerivedViewPayloadSchema.parse(JSON.parse(b)));
     expect(payloads[0]).toEqual({ v: 1, ch: 'files', seq: 1 });
     expect(payloads[1]).toEqual({ v: 1, ch: 'backlinks', seq: 1 });
     expect(payloads[2]).toEqual({ v: 1, ch: 'files', seq: 2 });
@@ -157,11 +157,8 @@ describe('CC1Broadcaster', () => {
   test('payload shape matches CC1 contract v1', async () => {
     broadcaster.signal('files');
     await wait(150);
-    const payload = JSON.parse(broadcasts[0]);
-    expect(payload).toHaveProperty('v', 1);
-    expect(payload).toHaveProperty('ch', 'files');
-    expect(payload).toHaveProperty('seq');
-    expect(typeof payload.seq).toBe('number');
+    const payload = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({ v: 1, ch: 'files', seq: 1 });
     expect(Object.keys(payload).sort()).toEqual(['ch', 'seq', 'v']);
   });
 
@@ -172,7 +169,7 @@ describe('CC1Broadcaster', () => {
   test('emitBranchSwitched publishes payload with branch + seq=1 on first call', () => {
     broadcaster.emitBranchSwitched('main');
     expect(broadcasts).toHaveLength(1);
-    const payload = JSON.parse(broadcasts[0]);
+    const payload = CC1BranchSwitchedPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(payload).toEqual({
       v: 1,
       ch: CC1_CHANNEL_BRANCH_SWITCHED,
@@ -192,7 +189,7 @@ describe('CC1Broadcaster', () => {
     broadcaster.emitBranchSwitched('feature-x');
     broadcaster.emitBranchSwitched('feature-y');
     expect(broadcasts).toHaveLength(3);
-    const seqs = broadcasts.map((b) => (JSON.parse(b) as CC1Signal).seq);
+    const seqs = broadcasts.map((b) => CC1BranchSwitchedPayloadSchema.parse(JSON.parse(b)).seq);
     expect(seqs).toEqual([1, 2, 3]);
   });
 
@@ -200,7 +197,9 @@ describe('CC1Broadcaster', () => {
     broadcaster.emitBranchSwitched('main');
     broadcaster.emitBranchSwitched('detached-abc123');
     broadcaster.emitBranchSwitched('feature/user-auth');
-    const branches = broadcasts.map((b) => (JSON.parse(b) as { branch: string }).branch);
+    const branches = broadcasts.map(
+      (b) => CC1BranchSwitchedPayloadSchema.parse(JSON.parse(b)).branch,
+    );
     expect(branches).toEqual(['main', 'detached-abc123', 'feature/user-auth']);
   });
 
@@ -226,9 +225,12 @@ describe('CC1Broadcaster', () => {
     broadcaster.signal('files');
     await wait(120);
 
-    const payloads = broadcasts.map((b) => JSON.parse(b) as CC1Signal);
-    expect(payloads[0]).toMatchObject({ ch: 'files', seq: 1 });
-    expect(payloads[1]).toMatchObject({ ch: CC1_CHANNEL_BRANCH_SWITCHED, seq: 1, branch: 'main' });
-    expect(payloads[2]).toMatchObject({ ch: 'files', seq: 2 });
+    // First + third broadcasts are derived-view ('files'); second is branch-switched.
+    const derived0 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    const branchSwitch = CC1BranchSwitchedPayloadSchema.parse(JSON.parse(broadcasts[1]));
+    const derived2 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[2]));
+    expect(derived0).toMatchObject({ ch: 'files', seq: 1 });
+    expect(branchSwitch).toMatchObject({ ch: CC1_CHANNEL_BRANCH_SWITCHED, seq: 1, branch: 'main' });
+    expect(derived2).toMatchObject({ ch: 'files', seq: 2 });
   });
 });

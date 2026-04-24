@@ -1,4 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { ServerInfoResponseSchema } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
@@ -296,8 +297,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     fetch('/api/server-info')
       .then((r) => (r.ok ? r.json() : null))
       .then((info: unknown) => {
-        if (info && typeof (info as { serverInstanceId?: unknown }).serverInstanceId === 'string') {
-          p.setExpectedServerInstanceId((info as { serverInstanceId: string }).serverInstanceId);
+        const result = ServerInfoResponseSchema.safeParse(info);
+        if (result.success) {
+          p.setExpectedServerInstanceId(result.data.serverInstanceId);
         }
       })
       .catch(() => {

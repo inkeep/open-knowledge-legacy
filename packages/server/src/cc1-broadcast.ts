@@ -1,5 +1,14 @@
 import type { Hocuspocus } from '@hocuspocus/server';
-import { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
+import {
+  CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_SERVER_INFO,
+  CC1_CONTRACT_VERSION,
+  CC1BranchSwitchedPayloadSchema,
+  CC1DerivedViewPayloadSchema,
+  CC1ServerInfoPayloadSchema,
+  type DerivedViewChannel,
+  SYSTEM_DOC_NAME,
+} from '@inkeep/open-knowledge-core';
 import { getLogger } from './logger.ts';
 import {
   incrementCC1Broadcast,
@@ -16,36 +25,6 @@ export function isSystemDoc(documentName: string): boolean {
   return documentName === SYSTEM_DOC_NAME;
 }
 
-export interface CC1Signal {
-  v: typeof CC1_CONTRACT_VERSION;
-  ch: string;
-  seq: number;
-  /**
-   * Only populated on `ch === 'server-info'` broadcasts. Carries the
-   * per-process serverInstanceId the clients use for restart-defense.
-   * See `ServerInstance.serverInstanceId` in standalone.ts for the full
-   * defense flow.
-   */
-  serverInstanceId?: string;
-  /**
-   * Only populated on `ch === 'branch-switched'` broadcasts. Carries the
-   * target branch name so clients can confirm the invalidation scope
-   * matches the server's new HEAD.
-   */
-  branch?: string;
-}
-
-/** CC1 channel for the server-info broadcast (per-process instance ID). */
-const CC1_CHANNEL_SERVER_INFO = 'server-info';
-
-/**
- * CC1 channel for the branch-switched broadcast. Fired when the server
- * normalizes to a new branch (cross-branch checkout). Clients invalidate
- * their IDB persistence caches on receipt because the new branch's
- * markdown-rebuilt state is the only valid source.
- */
-export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched';
-
 export class CC1Broadcaster {
   private readonly hocuspocus: Hocuspocus;
   private readonly seqs = new Map<string, number>();
@@ -57,7 +36,7 @@ export class CC1Broadcaster {
     this.hocuspocus = hocuspocus;
   }
 
-  signal(channel: string): void {
+  signal(channel: DerivedViewChannel): void {
     const existing = this.timers.get(channel);
     if (existing !== undefined) {
       clearTimeout(existing);
@@ -72,7 +51,7 @@ export class CC1Broadcaster {
     );
   }
 
-  private broadcast(channel: string): void {
+  private broadcast(channel: DerivedViewChannel): void {
     try {
       const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
       if (!doc) {
@@ -90,11 +69,11 @@ export class CC1Broadcaster {
       const seq = (this.seqs.get(channel) ?? 0) + 1;
       this.seqs.set(channel, seq);
 
-      const payload: CC1Signal = {
+      const payload = CC1DerivedViewPayloadSchema.parse({
         v: CC1_CONTRACT_VERSION,
         ch: channel,
         seq,
-      };
+      });
 
       doc.broadcastStateless(JSON.stringify(payload));
 
@@ -127,12 +106,12 @@ export class CC1Broadcaster {
         incrementCC1BroadcastDrop();
         return;
       }
-      const payload: CC1Signal = {
+      const payload = CC1ServerInfoPayloadSchema.parse({
         v: CC1_CONTRACT_VERSION,
         ch: CC1_CHANNEL_SERVER_INFO,
         seq: 0,
         serverInstanceId,
-      };
+      });
       doc.broadcastStateless(JSON.stringify(payload));
       incrementCC1Broadcast();
       setCC1LastSeq(CC1_CHANNEL_SERVER_INFO, 0);
@@ -166,12 +145,12 @@ export class CC1Broadcaster {
       }
       const seq = (this.seqs.get(CC1_CHANNEL_BRANCH_SWITCHED) ?? 0) + 1;
       this.seqs.set(CC1_CHANNEL_BRANCH_SWITCHED, seq);
-      const payload: CC1Signal = {
+      const payload = CC1BranchSwitchedPayloadSchema.parse({
         v: CC1_CONTRACT_VERSION,
         ch: CC1_CHANNEL_BRANCH_SWITCHED,
         seq,
         branch,
-      };
+      });
       doc.broadcastStateless(JSON.stringify(payload));
       incrementCC1Broadcast();
       setCC1LastSeq(CC1_CHANNEL_BRANCH_SWITCHED, seq);

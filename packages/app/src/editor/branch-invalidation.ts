@@ -16,7 +16,26 @@
  * Buffering would reintroduce stale markers from the old branch.
  */
 
+import { z } from 'zod';
 import type { ProviderPool } from './provider-pool';
+
+/**
+ * Zod schema for the structured warn event emitted when a per-entry
+ * `clearData` fails during a branch-switched invalidation. Co-located
+ * with the emitter so the test (`branch-invalidation.test.ts`) can
+ * import the same schema and assert the parsed shape rather than
+ * hand-casting a JSON-parsed blob.
+ *
+ * Structured logs follow the project's `console.warn(JSON.stringify({
+ * event, ... }))` convention (see AGENTS.md §"Logging conventions").
+ */
+export const BranchSwitchedClearFailedLogSchema = z.object({
+  event: z.literal('ok-branch-switched-clear-failed'),
+  branch: z.string(),
+  docName: z.string().optional(),
+  reason: z.string().optional(),
+});
+type BranchSwitchedClearFailedLog = z.infer<typeof BranchSwitchedClearFailedLogSchema>;
 
 /**
  * Wipe every open provider's IndexedDB persistence and recycle the
@@ -36,14 +55,13 @@ export async function handleBranchSwitched(pool: ProviderPool, branch: string): 
     if (entry.tearingDown || entry.persistence === null) continue;
     clears.push(
       entry.persistence.clearData().catch((err: unknown) => {
-        console.warn(
-          JSON.stringify({
-            event: 'ok-branch-switched-clear-failed',
-            docName,
-            branch,
-            reason: err instanceof Error ? err.message : String(err),
-          }),
-        );
+        const log: BranchSwitchedClearFailedLog = {
+          event: 'ok-branch-switched-clear-failed',
+          docName,
+          branch,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+        console.warn(JSON.stringify(log));
       }),
     );
   }

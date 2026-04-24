@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { handleBranchSwitched } from './branch-invalidation';
+import { BranchSwitchedClearFailedLogSchema, handleBranchSwitched } from './branch-invalidation';
 import { ProviderPool } from './provider-pool';
 
 // Pool ingests real HocuspocusProvider instances pointing at an unreachable
@@ -137,12 +137,7 @@ describe('handleBranchSwitched', () => {
     expect(logSpy).toHaveBeenCalled();
     const firstLog: string | undefined = logSpy.mock.calls[0]?.[0];
     if (firstLog === undefined) throw new Error('expected warn call');
-    const parsed = JSON.parse(firstLog) as {
-      event: string;
-      branch: string;
-      docName?: string;
-      reason?: string;
-    };
+    const parsed = BranchSwitchedClearFailedLogSchema.parse(JSON.parse(firstLog));
     expect(parsed.event).toBe('ok-branch-switched-clear-failed');
     expect(parsed.branch).toBe('feature');
   });

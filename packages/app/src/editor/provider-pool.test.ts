@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
@@ -571,11 +572,8 @@ describe('buildAuthToken (MECHANISM-ONLY — CRDT restart recovery / US-001)', (
     const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
     const token = buildAuthToken(tabId, 'server-instance-abc');
     expect(token).toBeDefined();
-    const parsed = JSON.parse(token as string) as {
-      principalId?: string;
-      tabSessionId?: string;
-      expectedServerInstanceId?: string;
-    };
+    const parsed = parseHocuspocusAuthToken(token as string);
+    if (!parsed) throw new Error('expected valid token');
     expect(parsed.principalId).toBe('p-1');
     expect(parsed.tabSessionId).toBe('s-1');
     expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
@@ -585,8 +583,9 @@ describe('buildAuthToken (MECHANISM-ONLY — CRDT restart recovery / US-001)', (
     const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
     const token = buildAuthToken(tabId, null);
     expect(token).toBeDefined();
-    const parsed = JSON.parse(token as string) as Record<string, unknown>;
-    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+    const parsed = parseHocuspocusAuthToken(token as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedServerInstanceId).toBeUndefined();
     expect(parsed.principalId).toBe('p-1');
     expect(parsed.tabSessionId).toBe('s-1');
   });
@@ -595,17 +594,19 @@ describe('buildAuthToken (MECHANISM-ONLY — CRDT restart recovery / US-001)', (
     const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
     const token = buildAuthToken(tabId, '');
     expect(token).toBeDefined();
-    const parsed = JSON.parse(token as string) as Record<string, unknown>;
-    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+    const parsed = parseHocuspocusAuthToken(token as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedServerInstanceId).toBeUndefined();
   });
 
   test('instance-ID-only claim (no tab identity) still serializes cleanly', () => {
     const token = buildAuthToken(null, 'server-instance-abc');
     expect(token).toBeDefined();
-    const parsed = JSON.parse(token as string) as Record<string, unknown>;
+    const parsed = parseHocuspocusAuthToken(token as string);
+    if (!parsed) throw new Error('expected valid token');
     expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
-    expect(parsed).not.toHaveProperty('principalId');
-    expect(parsed).not.toHaveProperty('tabSessionId');
+    expect(parsed.principalId).toBeUndefined();
+    expect(parsed.tabSessionId).toBeUndefined();
   });
 });
 
@@ -622,7 +623,8 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     // configuration.token should be exactly the JSON we serialized.
     const resolved = entry.provider.configuration.token as unknown;
     expect(typeof resolved).toBe('string');
-    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
+    const parsed = parseHocuspocusAuthToken(resolved as string);
+    if (!parsed) throw new Error('expected valid token');
     expect(parsed.expectedServerInstanceId).toBe('server-instance-xyz');
     expect(parsed.principalId).toBe('p-1');
     expect(parsed.tabSessionId).toBe('s-1');
@@ -637,8 +639,9 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     if (!entry) throw new Error('expected entry');
     const resolved = entry.provider.configuration.token as unknown;
     expect(typeof resolved).toBe('string');
-    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
-    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+    const parsed = parseHocuspocusAuthToken(resolved as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedServerInstanceId).toBeUndefined();
   });
 
   test('setExpectedServerInstanceId(null) clears a previously-set cache', () => {
@@ -650,8 +653,9 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     const resolved = entry.provider.configuration.token as unknown;
-    const parsed = JSON.parse(resolved as string) as Record<string, unknown>;
-    expect(parsed).not.toHaveProperty('expectedServerInstanceId');
+    const parsed = parseHocuspocusAuthToken(resolved as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedServerInstanceId).toBeUndefined();
   });
 
   test('setExpectedServerInstanceId affects future opens, not existing providers', () => {
@@ -668,15 +672,10 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     const entry2 = pool.open('doc2');
     if (!entry2) throw new Error('expected entry2');
 
-    const tok1 = JSON.parse(entry1.provider.configuration.token as string) as Record<
-      string,
-      unknown
-    >;
-    const tok2 = JSON.parse(entry2.provider.configuration.token as string) as Record<
-      string,
-      unknown
-    >;
-    expect(tok1).not.toHaveProperty('expectedServerInstanceId');
+    const tok1 = parseHocuspocusAuthToken(entry1.provider.configuration.token as string);
+    const tok2 = parseHocuspocusAuthToken(entry2.provider.configuration.token as string);
+    if (!tok1 || !tok2) throw new Error('expected valid tokens');
+    expect(tok1.expectedServerInstanceId).toBeUndefined();
     expect(tok2.expectedServerInstanceId).toBe('server-instance-xyz');
   });
 });
@@ -742,8 +741,8 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     if (!replaced) throw new Error('expected replaced entry');
     const resolved = replaced.provider.configuration.token;
     if (typeof resolved === 'string') {
-      const parsed = JSON.parse(resolved) as Record<string, unknown>;
-      expect(parsed.expectedServerInstanceId).toBeUndefined();
+      const parsed = parseHocuspocusAuthToken(resolved);
+      expect(parsed?.expectedServerInstanceId).toBeUndefined();
     }
     // Re-seeding via the post-mismatch boot would only happen via a fresh
     // GET /api/server-info in prod — this is mechanism, not that flow.

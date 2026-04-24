@@ -234,6 +234,7 @@
         "vfile": "^6.0.0",
         "vfile-message": "^4.0.3",
         "yjs": "^13.6.30",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@tiptap/extension-document": "^3.22.3",
