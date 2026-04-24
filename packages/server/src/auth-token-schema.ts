@@ -38,8 +38,6 @@
  *   mismatch bug class. Clients cache the last-observed server instance ID
  *   and claim it on every reconnect; server rejects on mismatch so a
  *   stale-client reconnect is recycled BEFORE Yjs sync can merge.
- *   Added in `fix: CRDT server-restart recovery via Yjs binary sidecar +
- *   instance-ID defense` — see `reports/crdt-server-restart-recovery/`.
  */
 import { z } from 'zod';
 

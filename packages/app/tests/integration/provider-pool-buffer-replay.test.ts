@@ -14,11 +14,9 @@
  *      delta the replay listener applies on the fresh provider's first
  *      `synced` event.
  *
- * The *content-level* guarantee (burst survives end-to-end) depends on
- * the CRDT parent items surviving the server restart, which requires the
- * server-side sidecar to be written in time and loaded on boot. That path
- * is exercised by T4 in `provider-pool-reconnect.test.ts`; these tests
- * cover the client-side machinery alone.
+ * The *content-level* guarantee (burst survives end-to-end) is exercised
+ * by T4 in `provider-pool-reconnect.test.ts`; these tests cover the
+ * client-side machinery alone.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';

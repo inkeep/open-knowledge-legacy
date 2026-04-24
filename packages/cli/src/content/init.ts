@@ -375,7 +375,7 @@ const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
   { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },
   {
     name: '.gitignore',
-    content: `${CACHE_DIR}/\nystate/\nserver.lock\nui.lock\nsync-state.json\n`,
+    content: `${CACHE_DIR}/\nserver.lock\nui.lock\nsync-state.json\n`,
   },
   { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
 ];

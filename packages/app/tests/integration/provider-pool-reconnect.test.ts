@@ -293,11 +293,11 @@ describe('ProviderPool reconnects', () => {
     // Wait for the edit to reach the server's in-memory Y.Doc by polling
     // `unsyncedChanges === 0` (deterministic — does not depend on wall-clock
     // timing, so slow CI runners behave identically to local loopback). We
-    // MUST kill the network before the L1 persistence debounce (200ms) flushes
-    // to markdown — that's the scenario the sidecar-preservation story
-    // targets: "edit reached the server's last L1 debounce window but not yet
-    // on disk." Poll interval is 10ms; on loopback the ack lands in 1-5ms, so
-    // we exit this wait well before the 200ms L1 threshold.
+    // kill the network before the L1 persistence debounce (200ms) flushes to
+    // markdown so the fresh server starts without this edit on disk — the
+    // client-side buffer-and-replay path is what carries it across the recycle.
+    // Poll interval is 10ms; on loopback the ack lands in 1-5ms, so we exit
+    // this wait well before the 200ms L1 threshold.
     await pollUntil(() => firstProvider.unsyncedChanges === 0, 180, 10);
     server.killNetwork();
     // Small wait so the client's websocket observes the disconnect.
@@ -313,15 +313,10 @@ describe('ProviderPool reconnects', () => {
     // Wait for re-sync.
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
 
-    // Pre-fix mechanism precondition was `expect(pool.getActive()?.provider).toBe(firstProvider)`
-    // — the unsynced-changes disconnect path never recycled. Post-Commit-4,
-    // the authenticationFailed handler recycles unconditionally, losing the
-    // unsynced edit (this is the "degraded path" the plan calls out as
-    // out-of-scope for v1 and expects to remain FAIL at this commit). The
-    // behavior assertion below (marker count = 1) is what flips PASS at
-    // Commit 6 when the server-side sidecar preserves the edit across
-    // restart; the client then syncs from sidecar-restored state and sees
-    // its own marker again.
+    // Behavior: client-side buffer-and-replay captures the unsynced delta
+    // before clearData + recycle, then replays it onto the fresh provider's
+    // first sync. The local edit survives in the client's Y.Doc and lands
+    // back on the server on the next L1 flush.
 
     // The local edit survives in the client's Y.Doc.
     await pollUntil(

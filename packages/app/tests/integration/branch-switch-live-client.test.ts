@@ -27,14 +27,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureProjectGit } from '@inkeep/open-knowledge-server';
@@ -220,16 +213,10 @@ describe('T5: Branch switch while tab open', () => {
     expect((diskAfter.match(/\[\[feature-sibling\]\]/g) ?? []).length).toBe(1);
     expect((diskAfter.match(/\[\[main-sibling\]\]/g) ?? []).length).toBe(0);
 
-    // Mechanism: sidecars written on the pre-switch branch must be wiped on
-    // branch switch (Commit 7's `deleteSidecarsForBranch` in onBatchBegin).
-    // Either the ystate dir doesn't exist (never written) or it's empty of
-    // `.bin` files — any leftover is a regression in the branch-switch
-    // composition that T5 would otherwise miss (content-level assertions
-    // above converge whether or not the delete runs).
+    // Server-side `.open-knowledge/ystate/` must not exist — restart recovery
+    // moved to client-side y-indexeddb. A leftover directory here would
+    // indicate stale scaffolding or a reintroduced sidecar write path.
     const ystateDir = join(contentDir, '.open-knowledge', 'ystate');
-    if (existsSync(ystateDir)) {
-      const binFiles = readdirSync(ystateDir).filter((f) => f.endsWith('.bin'));
-      expect(binFiles).toEqual([]);
-    }
+    expect(existsSync(ystateDir)).toBe(false);
   }, 45_000);
 });

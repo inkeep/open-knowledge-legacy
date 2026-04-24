@@ -238,15 +238,12 @@ describe('ProviderPool disconnect recycling', () => {
   // `packages/app/tests/integration/provider-pool-reconnect.test.ts` under the
   // T4 scenario ("unsynced local changes during disconnect/restart").
   //
-  // As of the CRDT server-restart recovery fix (commit SHA tbd — see
-  // `reports/crdt-server-restart-recovery/REPORT.md`), T4 PASSES end-to-end:
-  // the server-side sidecar preserves the in-flight edit across restart, and
-  // the client's authenticationFailed recycle + fresh sync delivers the
-  // preserved state back. This disconnect-path "skip recycle on unsynced" is
-  // still the active mechanism for same-network-same-server blips; the
-  // authenticationFailed recycle is the path that fires on server-instance
-  // mismatch. The two paths compose. A green mechanism test here is
-  // necessary-but-not-sufficient for T4.
+  // This disconnect-path "skip recycle on unsynced" is the active mechanism
+  // for same-network-same-server blips. The authenticationFailed recycle is
+  // the path that fires on server-instance mismatch, where client-side
+  // buffer-and-replay (computeUnsyncedUpdate → clearData → recycle → replay)
+  // carries unsynced edits across the new provider. The two paths compose.
+  // A green mechanism test here is necessary-but-not-sufficient for T4.
   test('keeps the provider when disconnect occurs with unsynced local changes', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');

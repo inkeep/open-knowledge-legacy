@@ -15,9 +15,9 @@
  * and the overhead is a single function-call indirection.
  */
 
-import type { RmOptions, WriteFileOptions } from 'node:fs';
+import type { WriteFileOptions } from 'node:fs';
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from './telemetry.ts';
@@ -100,18 +100,6 @@ export async function tracedMkdir(
 ): Promise<string | undefined> {
   return withSpan('fs.mkdir', { attributes: buildAttrs('mkdir', path) }, async () => {
     return mkdir(path, options);
-  });
-}
-
-export async function tracedUnlink(path: string): Promise<void> {
-  return withSpan('fs.unlink', { attributes: buildAttrs('unlink', path) }, async () => {
-    await unlink(path);
-  });
-}
-
-export async function tracedRm(path: string, options?: RmOptions): Promise<void> {
-  return withSpan('fs.rm', { attributes: buildAttrs('rm', path) }, async () => {
-    await rm(path, options);
   });
 }
 

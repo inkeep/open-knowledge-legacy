@@ -288,9 +288,8 @@ export class ProviderPool {
 
     // Attach client-side Yjs persistence to the provider's Y.Doc. Hydrates
     // from `ok-ydoc:${docName}` on cold mount and persists every non-self
-    // update back. Additive to the server-side sidecar (Shape 2+ transition
-    // — US-005 will remove the sidecar once US-004 wires clearData into the
-    // mismatch-recycle path).
+    // update back. On server-instance-mismatch, buffer-and-replay captures
+    // unsynced edits before clearData + recycle.
     const persistence = createClientPersistence(asDocName(docName), provider.document);
 
     const entry: PoolEntry = {
