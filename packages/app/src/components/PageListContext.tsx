@@ -1,12 +1,20 @@
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
+import { setPageListCache } from '@/editor/page-list-cache';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { deriveKnownFolderPaths } from './navigation-targets';
+
+export interface PageMeta {
+  size: number;
+  modified: string;
+}
 
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
   /** Display titles returned by `/api/pages`, keyed by docName. */
   pageTitles: ReadonlyMap<string, string>;
+  /** File metadata (size, modified) returned by `/api/pages`, keyed by docName. */
+  pageMeta: ReadonlyMap<string, PageMeta>;
   /** Set of known folder paths derived from the current document list. */
   folderPaths: Set<string>;
   /** True while the page list is being fetched from the server. */
@@ -24,6 +32,8 @@ const PageListContext = createContext<PageListContextValue | null>(null);
 interface PageSummary {
   docName: string;
   title: string;
+  size: number;
+  modified: string;
 }
 
 export function mergePageSets(
@@ -80,6 +90,7 @@ function logLoadPagesError(err: unknown) {
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [serverPages, setServerPages] = useState(new Set<string>());
   const [serverPageTitles, setServerPageTitles] = useState(new Map<string, string>());
+  const [serverPageMeta, setServerPageMeta] = useState(new Map<string, PageMeta>());
   const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +106,13 @@ export function PageListProvider({ children }: { children: ReactNode }) {
         setServerPages(pageNames);
         setServerPageTitles(
           new Map(pageSummaries.map((page) => [page.docName, page.title] as const)),
+        );
+        setServerPageMeta(
+          new Map(
+            pageSummaries.map(
+              (page) => [page.docName, { size: page.size, modified: page.modified }] as const,
+            ),
+          ),
         );
         setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, pageNames));
         setError(null);
@@ -144,10 +162,21 @@ export function PageListProvider({ children }: { children: ReactNode }) {
 
   const pages = mergePageSets(serverPages, optimisticPages);
   const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
+  const pageMeta: ReadonlyMap<string, PageMeta> = serverPageMeta;
   const folderPaths = deriveKnownFolderPaths(pages);
 
+  // Publish to the page-list-cache side-channel so plain-DOM chip consumers
+  // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
+  // state without React context. `setPageListCache` absorbs no-op calls via
+  // Set-content equality — safe to call every render.
+  useEffect(() => {
+    setPageListCache({ pages, folderPaths });
+  }, [pages, folderPaths]);
+
   return (
-    <PageListContext value={{ pages, pageTitles, folderPaths, loading, error, refetch, addPage }}>
+    <PageListContext
+      value={{ pages, pageTitles, pageMeta, folderPaths, loading, error, refetch, addPage }}
+    >
       {children}
     </PageListContext>
   );

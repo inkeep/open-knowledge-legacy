@@ -11,30 +11,15 @@
  * playwright.config.ts webServer on VITE_PORT.
  */
 
-import { expect, type Page, test } from '@playwright/test';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
-
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
+import { randomUUID } from 'node:crypto';
+import type { Page } from '@playwright/test';
+import { expect, test, waitForActiveProviderSynced as waitForProvider } from './_helpers';
 
 async function getYText(page: Page): Promise<string> {
   return page.evaluate(() => {
     const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
-}
-
-/** Seed content via agent-write-md API (replace mode). */
-async function seedContent(markdown: string) {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, position: 'replace' }),
-  });
-  if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
 /** Get a snapshot of WYSIWYG structure from the DOM. */
@@ -84,25 +69,28 @@ async function getXmlFragmentText(page: Page): Promise<string> {
 const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
 const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
-test.beforeEach(async ({ page }) => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+let docName: string;
+
+test.beforeEach(async ({ page, api }) => {
+  docName = `test-midtype-${randomUUID().slice(0, 8)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
 });
 
 test('mid-type recovery: surrounding structure stable during <Callout> character-by-character typing', async ({
   page,
+  api,
 }) => {
   // Seed with structured content
   const seedMd = '# Top Heading\n\nParagraph above.\n\n## Bottom Heading\n\nParagraph below.\n';
-  await seedContent(seedMd);
+  await api.replaceDoc(docName, seedMd);
 
   // Wait for content to render in WYSIWYG
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Top Heading'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -117,7 +105,15 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   await page.locator('.cm-content').focus();
 
   // Move to end of document
-  await page.keyboard.press('Control+End');
+  // `ControlOrMeta+End` is the cross-platform end-of-document binding
+  // (Meta on macOS, Control elsewhere). Bare `Control+End` is a no-op on
+  // macOS — the cursor stays at position 0 and the subsequent `type()`
+  // inserts at the start of the doc, not the end. That silently subverts
+  // this test's intent: broken MDX at doc-start gets parsed differently
+  // than broken MDX at doc-end (MDX-agnostic's graceful degradation
+  // consumes adjacent markdown as text, eating the heading we expected
+  // Observer B to preserve). See CLAUDE.md §20(a).
+  await page.keyboard.press('ControlOrMeta+End');
 
   // Type blank line + the MDX component with per-character delay (simulates typing)
   const fullText = '\n\n<Callout type="warning">Hello world</Callout>';
@@ -126,11 +122,28 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   // Wait for Y.Text to have the complete component
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('</Callout>'),
+    null,
     { timeout: 10_000 },
   );
 
-  // Wait for Observer B to settle after typing completes
-  await page.waitForTimeout(1000);
+  // Wait for Observer B (50ms scheduler debounce + ~300ms typing-defer) to
+  // settle on the server, mirror back to the client, and reach a stable
+  // fragment length. We can't tell freeze-vs-parse-success from outside, so
+  // length stability across 3 consecutive 100ms ticks is the signal.
+  let lastFragLen = -1;
+  let stableTicks = 0;
+  await expect
+    .poll(
+      async () => {
+        const len = (await getXmlFragmentText(page)).length;
+        if (len > 0 && len === lastFragLen) stableTicks += 1;
+        else stableTicks = 0;
+        lastFragLen = len;
+        return stableTicks;
+      },
+      { intervals: [100], timeout: 5_000 },
+    )
+    .toBeGreaterThanOrEqual(3);
 
   // Check XmlFragment state (works in any mode — no DOM rendering dependency).
   // Observer B either froze (preserving last valid state with headings) or parsed
@@ -156,6 +169,7 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
   // Wait for ProseMirror to render SOME content from the XmlFragment
   await page.waitForFunction(
     () => (document.querySelector('.ProseMirror')?.textContent?.length ?? 0) > 10,
+    null,
     { timeout: 10_000 },
   );
 
@@ -168,13 +182,15 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
 
 test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding structure intact', async ({
   page,
+  api,
 }) => {
   // Seed structured content
   const seedMd = '# Header\n\nAbove paragraph.\n\n## Sub Header\n\nBelow paragraph.\n';
-  await seedContent(seedMd);
+  await api.replaceDoc(docName, seedMd);
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Header'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -184,7 +200,15 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
   await page.locator('.cm-content').focus();
 
   // Move to end and add a blank line + mismatched tag
-  await page.keyboard.press('Control+End');
+  // `ControlOrMeta+End` is the cross-platform end-of-document binding
+  // (Meta on macOS, Control elsewhere). Bare `Control+End` is a no-op on
+  // macOS — the cursor stays at position 0 and the subsequent `type()`
+  // inserts at the start of the doc, not the end. That silently subverts
+  // this test's intent: broken MDX at doc-start gets parsed differently
+  // than broken MDX at doc-end (MDX-agnostic's graceful degradation
+  // consumes adjacent markdown as text, eating the heading we expected
+  // Observer B to preserve). See CLAUDE.md §20(a).
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type('\n\n<Foo>some text</Bar>\n', { delay: 10 });
 
   // Wait for Y.Text to update
@@ -194,6 +218,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
         ?.getText('source')
         ?.toString()
         ?.includes('<Foo>some text</Bar>'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -207,6 +232,7 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
       const pm = document.querySelector('.ProseMirror');
       return pm?.querySelectorAll('h1').length === 1 && pm?.querySelectorAll('h2').length === 1;
     },
+    null,
     { timeout: 10_000 },
   );
 
@@ -224,13 +250,14 @@ test('mid-type recovery: tag mismatch shows rawMdxFallback with surrounding stru
   expect(ytext).toContain('<Foo>some text</Bar>');
 });
 
-test('mid-type recovery: partial attribute does not collapse document', async ({ page }) => {
+test('mid-type recovery: partial attribute does not collapse document', async ({ page, api }) => {
   // Seed structured content
   const seedMd = '# Title\n\nContent here.\n';
-  await seedContent(seedMd);
+  await api.replaceDoc(docName, seedMd);
 
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.textContent?.includes('Title'),
+    null,
     { timeout: 10_000 },
   );
 
@@ -240,12 +267,21 @@ test('mid-type recovery: partial attribute does not collapse document', async ({
   await page.locator('.cm-content').focus();
 
   // Move to end and type a partial attribute (intentionally broken)
-  await page.keyboard.press('Control+End');
+  // `ControlOrMeta+End` is the cross-platform end-of-document binding
+  // (Meta on macOS, Control elsewhere). Bare `Control+End` is a no-op on
+  // macOS — the cursor stays at position 0 and the subsequent `type()`
+  // inserts at the start of the doc, not the end. That silently subverts
+  // this test's intent: broken MDX at doc-start gets parsed differently
+  // than broken MDX at doc-end (MDX-agnostic's graceful degradation
+  // consumes adjacent markdown as text, eating the heading we expected
+  // Observer B to preserve). See CLAUDE.md §20(a).
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type('\n\n<Foo a=', { delay: 20 });
 
   // Wait for the text to appear in Y.Text
   await page.waitForFunction(
     () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('<Foo a='),
+    null,
     { timeout: 10_000 },
   );
 
@@ -256,6 +292,7 @@ test('mid-type recovery: partial attribute does not collapse document', async ({
   // Wait for ProseMirror to show the heading (Observer B freeze preserves it)
   await page.waitForFunction(
     () => document.querySelector('.ProseMirror')?.querySelectorAll('h1').length === 1,
+    null,
     { timeout: 10_000 },
   );
 

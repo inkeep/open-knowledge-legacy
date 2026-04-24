@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "exports": {
@@ -10,13 +10,20 @@
     }
   },
   "bin": {
-    "open-knowledge": "./dist/cli.mjs"
+    "open-knowledge": "./dist/cli.mjs",
+    "ok": "./dist/cli.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inkeep/open-knowledge.git",
+    "directory": "packages/cli"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "publishConfig": {
     "access": "public"
@@ -30,19 +37,21 @@
     "prepublishOnly": "bun run build && bun run test"
   },
   "dependencies": {
-    "@clack/prompts": "^1.2.0",
-    "@hocuspocus/provider": "4.0.0-rc.1",
+    "@inquirer/password": "^5.0.11",
     "@modelcontextprotocol/sdk": "^1.28.0",
-    "chokidar": "^5.0.0",
+    "@napi-rs/keyring": "^1.2.0",
+    "@octokit/auth-oauth-device": "^8.0.3",
+    "@octokit/request": "^10.0.8",
+    "@octokit/rest": "^22.0.1",
     "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
     "just-bash": "^2.14.1",
     "picocolors": "^1.1.1",
     "picomatch": "^4.0.4",
     "shell-quote": "^1.8.3",
-    "simple-git": "^3.35.2",
+    "simple-git": "^3.36.0",
     "sirv": "^3.0.1",
-    "ws": "^8.20.0",
+    "smol-toml": "^1.6.1",
     "yaml": "^2.7.1",
     "zod": "^4.3.6"
   },
@@ -50,13 +59,12 @@
     "@parcel/watcher": "^2.5.6"
   },
   "devDependencies": {
+    "@inkeep/open-knowledge-app": "workspace:*",
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
-    "open-knowledge-app": "workspace:*",
-    "@types/node": "^22.16.0",
+    "@types/node": "^24.7.0",
     "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
-    "@types/ws": "^8.18.1",
     "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }

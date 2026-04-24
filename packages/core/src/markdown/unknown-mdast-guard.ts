@@ -182,9 +182,3 @@ export function toRawMdxFallbackMdast(node: WalkableNode, source: string): RawMd
     position: node.position,
   };
 }
-
-/**
- * Type-safe access for the handler table — imported by `buildMdastToPmHandlers`
- * in index.ts.
- */
-export type RawMdxFallbackMdastNode = RawMdxFallbackMdast;

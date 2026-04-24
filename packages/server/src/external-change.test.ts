@@ -122,7 +122,7 @@ describe('applyExternalChange — throwing helper', () => {
     expect(capturedOrigin).toEqual({
       source: 'local',
       skipStoreHooks: true,
-      context: { origin: 'file-watcher' },
+      context: { origin: 'file-watcher', paired: true },
     });
 
     await conn.disconnect();

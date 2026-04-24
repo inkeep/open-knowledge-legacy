@@ -3,21 +3,13 @@ import {
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
   type DocLinkTarget,
-  type ResolvedInternalHref,
-  resolveInternalHref,
 } from '@inkeep/open-knowledge-core';
 import { hashFromDocName } from '../lib/doc-hash';
+import { isSafeNavigationUrl } from './safe-navigation-url';
 
-export function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
+function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
   const hashMatch = locationHash.match(/^#\/([^?#]+)/);
   return hashMatch ? decodeURIComponent(hashMatch[1]) : '';
-}
-
-export function resolveCurrentInternalHref(
-  href: string,
-  locationHash = window.location.hash,
-): ResolvedInternalHref | null {
-  return resolveInternalHref(href, getCurrentDocNameFromHash(locationHash));
 }
 
 export function classifyCurrentMarkdownHref(
@@ -35,12 +27,27 @@ export function toInternalHashHref({
 }
 
 export function openHashHrefInNewTab(href: string): void {
-  window.open(href, '_blank', 'noopener,noreferrer');
+  // Gate on scheme allowlist (review Major #13). Authored URLs can contain
+  // `javascript:`, `data:`, `vbscript:` etc. that reach `window.open`
+  // unfiltered and execute arbitrary JS in the viewer's origin. Relative
+  // hash-hrefs like `#/docName` return false from isSafeNavigationUrl —
+  // they're safe to pass to window.open because same-origin navigation
+  // cannot carry JS, but isSafeNavigationUrl doesn't know that. We treat
+  // any URL the parser rejects OR that starts with '#' as same-origin and
+  // let it through.
+  if (href.startsWith('#') || isSafeNavigationUrl(href)) {
+    window.open(href, '_blank', 'noopener,noreferrer');
+  } else {
+    // Refuse silently — authored navigation to a non-safe scheme is
+    // treated the same as an empty URL. No telemetry here because this
+    // is a user-authored-content path; the PropPanel's Edit UI surfaces
+    // the URL so the author can see and fix it.
+    // eslint-disable-next-line no-console
+    console.warn('[safe-nav] blocked non-safe scheme:', href);
+  }
 }
 
-export function navigateToInternalHashHref(
-  resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
-): void {
+function navigateToInternalHashHref(resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>): void {
   window.location.assign(toInternalHashHref(resolved));
 }
 
@@ -54,7 +61,7 @@ export function shouldOpenInNewTab(event: { metaKey: boolean; ctrlKey: boolean }
   return event.metaKey || event.ctrlKey;
 }
 
-export function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
+function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
   const currentDocName = getCurrentDocNameFromHash(locationHash);
   if (!currentDocName) return;
 

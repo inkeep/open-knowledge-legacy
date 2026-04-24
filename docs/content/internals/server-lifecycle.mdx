@@ -2,8 +2,9 @@
 title: Server lifecycle
 description: Startup initialization, graceful shutdown phases, and the data-loss guarantees of createServer().destroy().
 ---
-
 `createServer()` in `packages/server/src/standalone.ts` returns a `ServerInstance` with two lifecycle handles: a `ready` promise for startup completion and a `destroy()` function for graceful shutdown. Understanding the lifecycle matters for CLI signal handlers, Electron window lifecycle events, and integration tests.
+
+This page covers the collab-server lifecycle owned by `ok start` (holds `server.lock`). The `ok ui` sibling has a simpler lifecycle — it acquires `ui.lock`, serves the React bundle + `/api/config`, and either exits on SIGTERM from `ok start`'s idle-shutdown or fires its own 12h D-025 safety-net timer. Both locks are minted by the shared `acquireProcessLock` factory in `packages/server/src/process-lock.ts`; `server-lock.ts` and `ui-lock.ts` are thin adapters that pin `lockName: 'server'` / `'ui'`.
 
 ## Startup
 
@@ -12,7 +13,9 @@ description: Startup initialization, graceful shutdown phases, and the data-loss
 ```text
 createServer(options)          ← synchronous, returns ServerInstance
   ├─ acquireServerLock         ← <contentDir>/.open-knowledge/server.lock
-  │                              (throws ServerLockCollisionError if a live
+  │                              (thin adapter over acquireProcessLock;
+  │                               throws ServerLockCollisionError — a subclass
+  │                               of ProcessLockCollisionError — if a live
   │                               same-host PID already holds it)
   ├─ Hocuspocus instance       ← immediate (in-memory)
   ├─ ContentFilter             ← immediate (compiled patterns)
@@ -21,8 +24,11 @@ createServer(options)          ← synchronous, returns ServerInstance
   ├─ API extension             ← immediate (HTTP routes registered)
   └─ ready = initAsync()       ← async background init
        ├─ Shadow repo init     ← git plumbing (~50-200ms)
+       ├─ HEAD-drift check     ← compare last-known-head vs current HEAD;
+       │                         commitUpstreamImport() if diverged
        ├─ File watcher start   ← @parcel/watcher subscribe
-       └─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
+       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/
+       └─ SyncEngine start     ← remote detection → auto-sync timers (if remote exists)
 ```
 
 The lock is written with `port: 0` as a "starting, not yet bound" sentinel. The CLI (`packages/cli/src/commands/start.ts`) and the Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) both call `updateServerLockPort(lockDir, realPort)` after `http.listen()` resolves so downstream tools (MCP, external clients) can read the actual port from the lock file.
@@ -42,7 +48,8 @@ destroy()
   ├─ Phase 2: Drain sessions   ← AgentSessionManager.closeAll()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
   ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
-  ├─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs
+  ├─ Phase 4.5: SyncEngine     ← syncEngine.destroy() — persists state to sync-state.json
+  ├─ Phase 5: Shadow release   ← write last-known-head + destroyShadowRepo() — always runs
   └─ Phase 6: Server lock      ← releaseServerLock() — LAST, in finally block
 ```
 
@@ -124,10 +131,22 @@ This option is on the programmatic `ServerOptions` interface, not the YAML confi
 
 After a successful `destroy()`, all writes that reached the server-side Y.Doc are flushed to disk (L1) and committed to the shadow git repo (L2). The guarantee boundary is:
 
-| Layer | Guaranteed by `destroy()` |
-|-------|---------------------------|
-| Server Y.Doc → markdown on disk (L1) | Yes |
-| Disk → shadow git commit (L2) | Yes |
-| Client WebSocket buffer → server Y.Doc | No -- out of scope |
+| Layer                                  | Guaranteed by `destroy()` |
+| -------------------------------------- | ------------------------- |
+| Server Y.Doc → markdown on disk (L1)   | Yes                       |
+| Disk → shadow git commit (L2)          | Yes                       |
+| Client WebSocket buffer → server Y.Doc | No -- out of scope        |
 
-The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this client-side residual window is negligible compared to the server-side guarantees above. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.
+The client-side transmission buffer (\~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this client-side residual window is negligible compared to the server-side guarantees above. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.
+
+## Idle-shutdown
+
+`ok start` wires `attachIdleShutdown` (`packages/server/src/idle-shutdown.ts`) over the Hocuspocus HTTP listener. It counts WebSocket upgrade events on paths starting with `/collab` and fires `onShutdown` after the configured threshold of zero clients (default 30 min; WARN log at 25 min).
+
+**"Idle" is WebSocket-only by design.** DirectConnections opened by server-internal subsystems (CC1 broadcaster pre-materializing `__system__`, `AgentSessionManager` per-agent sessions) are invisible to the counter. The rationale (SPEC §9 D-017): DirectConnections are plentiful and long-lived; counting them would keep the server alive forever on empty worktrees. The cost is that an agent session left dangling at midnight doesn't keep the server alive — considered acceptable per NG10 in the Zero-Ceremony Resume SPEC.
+
+On fire, `onShutdown` looks up `ui.lock`, SIGTERMs the `ok ui` sibling if alive, and then awaits `destroy()` — which runs the six-phase shutdown above, releasing `server.lock` as its final step. A `try/finally` guarantees the lock is released even if any phase throws.
+
+### D-025 safety-net on `ok ui`
+
+`ok ui` independently arms a 12-hour timer (`DEFAULT_UI_SAFETY_NET_MS` in `packages/cli/src/commands/ui.ts`) that self-terminates the UI if `ok start` ever crashes hard enough to skip the idle-shutdown SIGTERM. It is not a substitute for idle-shutdown — it's a backstop for silent crashes. `handle.release()` cancels the timer (idempotent); `handle.detachSafetyNet()` cancels only the timer without releasing the lock.

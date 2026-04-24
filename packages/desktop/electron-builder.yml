@@ -1,0 +1,115 @@
+appId: com.inkeep.open-knowledge
+productName: Open Knowledge
+copyright: Copyright © 2026 Inkeep
+
+# Pin the Electron version explicitly — bun's workspace hoisting puts
+# node_modules/electron at repo root (not in packages/desktop/node_modules),
+# and electron-builder's auto-version-detection walks the package manifest
+# tree and refuses to infer from a caret range. electron-userland/electron-
+# builder#3984 is the canonical reference. Keep this byte-identical to the
+# "electron" devDep in packages/desktop/package.json — that devDep is
+# pinned exact (no caret) so the packaged runtime and the version used by
+# electron-rebuild / native-module ABI compilation cannot drift.
+electronVersion: "41.2.1"
+
+directories:
+  output: dist-desktop
+  buildResources: build
+
+# Core-assert: the CLI's build:assets step produces packages/cli/dist/public/
+# (Vite build of packages/app/, copied by `cp -r ../app/dist dist/public`).
+# We consume that output directly — no separate renderer build for the app.
+files:
+  - "out/**/*"
+  - "!**/*.map"
+
+extraResources:
+  - from: "../cli/dist/public"
+    to: "app"
+    filter: ["**/*"]
+  # M6a: ship the CLI bundle + wrapper so the packaged .app can host
+  # `ok` on PATH via ELECTRON_RUN_AS_NODE=1. Filter keeps cli/dist/public/**
+  # intact — `ok ui` from the wrapper reads it via $APP_PATH/Contents/
+  # Resources/cli/dist/public/ (distinct consumer from the React bundle
+  # copy above that the BrowserWindow loads from Contents/Resources/app/).
+  # Two copies, deliberately — see SPEC §5 AC1.11 and OQ-22.
+  - from: "../cli/dist"
+    to: "cli/dist"
+    filter:
+      - "**/*"
+      - "!**/*.map"
+      # Post-review Minor #21: tsdown emits `.d.mts` + `.d.mts.map` for
+      # every source module. TypeScript declarations have no runtime
+      # function inside the packaged `.app` and add ~12 MB of dead
+      # weight (tiny info-leak surface too — internal type names
+      # minable from a customer .app). Exclude both shapes.
+      - "!**/*.d.mts"
+      - "!**/*.d.mts.map"
+      - "!**/*.d.ts"
+      - "!**/*.d.ts.map"
+  - from: "resources/cli/bin/ok.sh"
+    to: "cli/bin/ok.sh"
+
+asarUnpack:
+  - "**/*.node"
+  - "**/@parcel/watcher/**"
+  - "**/@parcel/watcher-*/**"
+  - "**/@napi-rs/keyring/**"
+  - "**/@napi-rs/keyring-*/**"
+  - "**/simple-git/**"
+
+mac:
+  category: public.app-category.productivity
+  # Source PNG rasterized from packages/app/public/favicon.svg by
+  # scripts/rasterize-icon.mjs. electron-builder auto-generates the .icns
+  # at package time; same PNG is used by dev-mode `app.dock.setIcon()`.
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [universal]
+    # `.zip` is required by the electron-updater / Squirrel.Mac swap path.
+    # MacUpdater.ts:~89 calls `findFile(files, "zip", ["pkg", "dmg"])` — it
+    # downloads the ZIP variant (not the DMG) and pipes it to Squirrel.Mac
+    # for the in-place swap. Without this target, auto-update would surface
+    # ERR_UPDATER_ZIP_FILE_NOT_FOUND at every check. M3 is the first consumer
+    # that needs `.zip`; M2 shipped DMG-only because auto-update was out of
+    # M2's scope (NG4). See specs/2026-04-21-m3-electron-updater/ D6.
+    - target: zip
+      arch: [universal]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization is invoked from `scripts/afterSign.mjs` per spec §8.9 (custom
+  # afterSign pipeline) — NOT electron-builder's built-in notarize. Setting
+  # `mac.notarize: true` would double-notarize. The afterSign script gates on
+  # env vars (APPLE_ID/APPLE_TEAM_ID/APPLE_APP_SPECIFIC_PASSWORD or
+  # APPLE_API_KEY triplet) and skips gracefully when absent — the unsigned
+  # smoke path for M2 scaffolding before cert procurement completes.
+
+dmg:
+  # `dmg.sign: true` is already the electron-builder default — kept explicit to
+  # document that we've thought about the unsigned path. `build:mac:unsigned`
+  # passes `-c.mac.identity=null`, which cascades: `dmg-builder/out/dmg.js:63-69`
+  # reads `qualifier = packager.platformSpecificBuildOptions.identity` and
+  # early-returns ("explicitly disabled if set to null") without attempting
+  # a keychain lookup. So `dmg.sign: true` + `mac.identity=null` = no-op on
+  # the DMG codesign step, no cert required. Verify before upgrading
+  # electron-builder or dmg-builder: confirm the null-identity short-circuit
+  # is still present in `dmg-builder/out/dmg.js:signDmg()`.
+  sign: true
+
+# Flip fuses (D17 LOCKED, spec §8.9) on the packed .app before code signing.
+afterPack: scripts/afterPack.mjs
+# Post-sign: @electron/notarize → stapler validate → @electron/fuses read verify.
+afterSign: scripts/afterSign.mjs
+
+protocols:
+  - name: Open Knowledge URL
+    schemes: [openknowledge]
+    role: Editor
+
+publish:
+  - provider: github
+    owner: inkeep
+    repo: open-knowledge

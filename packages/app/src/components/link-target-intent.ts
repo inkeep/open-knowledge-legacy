@@ -7,7 +7,7 @@ type NavigableTarget = Extract<
 >;
 type MissingTarget = Extract<ResolvedNavigationTarget, { kind: 'missing' }>;
 
-export type LinkTargetIntent =
+type LinkTargetIntent =
   | {
       kind: 'navigate';
       displayState: 'resolved' | 'folder';

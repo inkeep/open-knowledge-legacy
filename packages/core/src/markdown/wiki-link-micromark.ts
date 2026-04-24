@@ -157,6 +157,7 @@ function enterWikiLink(this: CompileContext, token: Token) {
       type: 'wikiLink',
       value: '',
       data: { target: '', anchor: null, alias: null },
+      children: [],
     } as unknown as Parameters<CompileContext['enter']>[0],
     token,
   );
@@ -186,7 +187,12 @@ function exitAlias(this: CompileContext, token: Token) {
 function exitWikiLink(this: CompileContext, token: Token) {
   const node = topWikiLink(this);
   const { target, anchor, alias } = node.data;
-  node.value = alias ? alias : anchor ? `${target}#${anchor}` : target;
+  const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+  node.value = label;
+  // Populate children so mdast→hast (US-007) renders `<a>label</a>` with
+  // visible text. The markdown handler still reads `data`, not children,
+  // so there is no double-emit on serialize.
+  node.children = [{ type: 'text', value: label }];
   this.exit(token);
 }
 

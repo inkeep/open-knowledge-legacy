@@ -3,75 +3,25 @@
  *
  * All diagnostic logging goes to stderr.
  *
- * Port discovery: reads `<contentDir>/.open-knowledge/server.lock` (written by
- * `open-knowledge start` / `bun run dev`) to find a running server. If a live
- * lock with `port > 0` is present, MCP connects to that port. Otherwise, MCP
- * falls back to disk-only mode. An explicit `--port` override bypasses
- * discovery entirely.
+ * The stdio MCP process is now intentionally project-agnostic at startup:
+ * without an explicit `--port` override it discovers / auto-starts the target
+ * project's Hocuspocus server lazily from the effective cwd of each tool call
+ * (explicit tool cwd → exactly one client root → error).
+ *
+ * Transitive auto-git-init (SPEC 2026-04-21-shadow-repo-single-mode D13):
+ * when this command auto-spawns `ok start` to service a tool call against a
+ * project that has no running server, the spawned `ok start` runs
+ * `ensureProjectGit` which may create `.git/` in the project directory. Opt
+ * out via `OK_MCP_AUTOSTART=0` or config `mcp.autoStart: false`. `ok mcp`
+ * itself never runs `ensureProjectGit` — the auto-init is strictly a
+ * side-effect of the auto-spawned `ok start`.
  */
 
-import { readServerLock } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
+import { createProjectConfigResolver } from '../config/loader.ts';
 import type { Config } from '../config/schema.ts';
 import { startMcpServer } from '../mcp/server.ts';
-
-export interface DiscoveryResult {
-  serverUrl: string | undefined;
-  /** Human-readable log line describing the decision. Safe to emit to stderr. */
-  message: string;
-}
-
-/**
- * Decide which WebSocket URL (if any) the MCP server should connect to.
- *
- * Precedence: explicit `--port` override > live `server.lock` with port > 0 >
- * disk-only. Exported for testing; the CLI action wraps this with stderr
- * logging + `startMcpServer`.
- */
-export function discoverServerUrl(params: {
-  lockDir: string;
-  host: string;
-  portOverride: string | undefined;
-}): DiscoveryResult {
-  const { lockDir, host, portOverride } = params;
-
-  if (portOverride !== undefined) {
-    const parsed = Number.parseInt(portOverride, 10);
-    if (Number.isNaN(parsed)) {
-      return {
-        serverUrl: undefined,
-        message: `invalid --port value '${portOverride}' — disk-only mode`,
-      };
-    }
-    if (parsed > 0) {
-      const serverUrl = `ws://${host}:${parsed}`;
-      return { serverUrl, message: `using --port override, connecting to ${serverUrl}` };
-    }
-    return { serverUrl: undefined, message: '--port=0 — disk-only mode' };
-  }
-
-  const lock = readServerLock(lockDir);
-  if (lock && lock.port > 0) {
-    // Lock-based discovery uses localhost: the lock file is local, so the
-    // server is on this machine. `localhost` resolves to whichever loopback
-    // the OS prefers (IPv4 127.0.0.1 or IPv6 ::1), avoiding mismatches when
-    // the server binds to IPv6 only. `host` is only meaningful for --port
-    // overrides where the user may target a remote server.
-    const serverUrl = `ws://localhost:${lock.port}`;
-    return {
-      serverUrl,
-      message: `connected to running instance at ${serverUrl} (pid ${lock.pid})`,
-    };
-  }
-  if (lock) {
-    return {
-      serverUrl: undefined,
-      message: 'running instance still starting (port=0) — disk-only mode',
-    };
-  }
-  return { serverUrl: undefined, message: 'no running instance — disk-only mode' };
-}
+import { createProjectServerUrlResolver, parseSpawnTimeoutEnv } from '../mcp/server-discovery.ts';
 
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')
@@ -83,22 +33,47 @@ export function mcpCommand(getConfig: () => Config): Command {
     )
     .action(async (opts: { port?: string }) => {
       try {
-        const config = getConfig();
+        const startupConfig = getConfig();
         const projectDir = process.cwd();
-        const contentDir = resolveContentDir(config, projectDir);
-        const lockDir = resolveLockDir(contentDir);
-
-        const { serverUrl, message } = discoverServerUrl({
-          lockDir,
-          host: config.server.host,
-          portOverride: opts.port,
+        const resolveConfig = createProjectConfigResolver({
+          startupCwd: projectDir,
+          startupConfig,
         });
+
+        const timeoutMs = parseSpawnTimeoutEnv(process.env.OK_MCP_SPAWN_TIMEOUT_MS);
+        let serverUrl: string | ((cwd?: string) => Promise<string | undefined>) | undefined;
+        let message: string;
+        if (opts.port !== undefined) {
+          const parsed = Number.parseInt(opts.port, 10);
+          if (Number.isNaN(parsed)) {
+            serverUrl = undefined;
+            message = `invalid --port value '${opts.port}' — disk-only mode`;
+          } else if (parsed > 0) {
+            serverUrl = `ws://${startupConfig.server.host}:${parsed}`;
+            message = `using --port override, connecting to ${serverUrl}`;
+          } else {
+            serverUrl = undefined;
+            message = '--port=0 — disk-only mode';
+          }
+        } else {
+          serverUrl = createProjectServerUrlResolver({
+            startupCwd: projectDir,
+            resolveConfig,
+            host: startupConfig.server.host,
+            portOverride: undefined,
+            envAutoStart: process.env.OK_MCP_AUTOSTART,
+            timeoutMs,
+          });
+          message = 'project server discovery/autostart is lazy per effective cwd';
+        }
         process.stderr.write(`[mcp] ${message}\n`);
 
         await startMcpServer({
           projectDir,
           serverUrl,
-          config,
+          config: resolveConfig,
+          startupConfig,
+          bypassProjectSelection: opts.port !== undefined,
         });
       } catch (err) {
         process.stderr.write(

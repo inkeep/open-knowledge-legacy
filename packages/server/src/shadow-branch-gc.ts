@@ -1,26 +1,50 @@
 /**
  * Shadow branch garbage collection.
  *
- * Cleans up orphaned shadow branch refs when their corresponding project
- * branches are deleted. Also handles branch rename detection.
+ * Cleans up orphaned shadow branch refs when the corresponding project
+ * branches are deleted, and handles branch-rename detection.
  *
- * - WIP refs (refs/wip/<branch>/*) are deleted after 24h grace period
- * - Checkpoint refs (refs/checkpoints/<branch>/*) are retained (reference durable project commits)
- * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
+ * - WIP refs (refs/wip/<branch>/*) are deleted after a 24h grace period.
+ * - Checkpoint refs (refs/checkpoints/<branch>/*) have kind-aware GC:
+ *   - `Save Version` (no `ok-checkpoint-v1:` body line): retained
+ *     indefinitely — user-intentional permanent-history artifacts.
+ *   - `bridge-merge-loss` (observer Path B auto-rescue) and
+ *     `external-change-rescue` (reconcile-delete / branch-switch auto-rescue):
+ *     most-recent N per branch + TTL. See `gcCheckpointRefs` in `shadow-repo.ts`.
+ * - Branch rename: if old branch disappears and a new branch has the same
+ *   HEAD SHA, migrate refs.
  */
 
 import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
-import type { ShadowHandle } from './shadow-repo.ts';
-import { shadowGit } from './shadow-repo.ts';
+import type { CheckpointRetentionPolicy, ShadowHandle } from './shadow-repo.ts';
+import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './shadow-repo.ts';
 
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
-export interface GcResult {
+/** Per-writer inactivity TTL for session writers (agent-*, principal-*) on active branches. */
+const SESSION_WRITER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface GcResult {
   deletedBranches: string[];
   renamedBranches: { from: string; to: string }[];
   retainedBranches: string[];
+  /**
+   * Per-branch tally of checkpoint refs GC'd under the kind-aware retention
+   * policy. Entries with zero deletions are omitted.
+   */
+  checkpointGc: Record<
+    string,
+    {
+      scanned: number;
+      deletedBridgeMergeLoss: number;
+      deletedExternalChangeRescue: number;
+      retained: number;
+    }
+  >;
+  /** Count of stale session writer refs deleted due to 30-day inactivity TTL. */
+  deletedStaleSessionRefs: number;
 }
 
 /**
@@ -94,11 +118,14 @@ async function listProjectBranches(projectGitDir: string): Promise<Set<string>> 
 export async function gcShadowBranches(
   shadow: ShadowHandle,
   projectGitDir: string,
+  checkpointRetention: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
 ): Promise<GcResult> {
   const result: GcResult = {
     deletedBranches: [],
     renamedBranches: [],
     retainedBranches: [],
+    checkpointGc: {},
+    deletedStaleSessionRefs: 0,
   };
 
   const sg = shadowGit(shadow);
@@ -129,81 +156,150 @@ export async function gcShadowBranches(
     }
   }
 
-  if (orphaned.length === 0) return result;
+  if (orphaned.length === 0) {
+    // No orphaned branches — skip rename/delete logic but still run per-writer TTL GC
+    // and checkpoint GC on active branches.
+  } else {
+    // Check for renames: orphaned branch with same SHA as a new project branch
+    const newProjectBranches = new Set<string>();
+    for (const pb of projectBranches) {
+      if (!shadowBranches.has(pb)) {
+        newProjectBranches.add(pb);
+      }
+    }
 
-  // Check for renames: orphaned branch with same SHA as a new project branch
-  const newProjectBranches = new Set<string>();
-  for (const pb of projectBranches) {
-    if (!shadowBranches.has(pb)) {
-      newProjectBranches.add(pb);
+    for (const orphanedBranch of orphaned) {
+      // Try to detect rename by matching commit SHA
+      let renamed = false;
+
+      if (newProjectBranches.size > 0) {
+        // Get latest SHA from the orphaned branch's WIP refs
+        let orphanedSha: string | null = null;
+        for (const ref of wipRefs) {
+          if (ref.startsWith(`refs/wip/${orphanedBranch}/`)) {
+            try {
+              orphanedSha = (await sg.raw('rev-parse', ref)).trim();
+              break;
+            } catch {}
+          }
+        }
+
+        if (orphanedSha) {
+          for (const newBranch of newProjectBranches) {
+            const newSha = await getProjectBranchSha(projectGitDir, newBranch);
+            if (newSha === orphanedSha) {
+              // Rename detected — migrate refs
+              const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
+              for (const oldRef of branchRefs) {
+                const writerId = oldRef.slice(`refs/wip/${orphanedBranch}/`.length);
+                const newRef = `refs/wip/${newBranch}/${writerId}`;
+                try {
+                  const sha = (await sg.raw('rev-parse', oldRef)).trim();
+                  await sg.raw('update-ref', newRef, sha);
+                  await sg.raw('update-ref', '-d', oldRef);
+                } catch (e) {
+                  console.error(`[shadow-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
+                }
+              }
+              result.renamedBranches.push({ from: orphanedBranch, to: newBranch });
+              newProjectBranches.delete(newBranch);
+              renamed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!renamed) {
+        // Delete orphaned WIP refs after grace period
+        const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
+        for (const ref of branchRefs) {
+          try {
+            // Check commit timestamp for grace period
+            const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
+            const commitTime = new Date(commitDate).getTime();
+            const age = Date.now() - commitTime;
+
+            if (age < GC_GRACE_PERIOD_MS) {
+              result.retainedBranches.push(orphanedBranch);
+              break; // Skip this entire branch
+            }
+
+            await sg.raw('update-ref', '-d', ref);
+          } catch {
+            // Ref may already be deleted
+          }
+        }
+        if (!result.retainedBranches.includes(orphanedBranch)) {
+          result.deletedBranches.push(orphanedBranch);
+        }
+      }
     }
   }
 
-  for (const orphanedBranch of orphaned) {
-    // Try to detect rename by matching commit SHA
-    let renamed = false;
-
-    if (newProjectBranches.size > 0) {
-      // Get latest SHA from the orphaned branch's WIP refs
-      let orphanedSha: string | null = null;
-      for (const ref of wipRefs) {
-        if (ref.startsWith(`refs/wip/${orphanedBranch}/`)) {
-          try {
-            orphanedSha = (await sg.raw('rev-parse', ref)).trim();
-            break;
-          } catch {}
-        }
+  // Kind-aware checkpoint GC on every live project branch + every retained
+  // shadow branch (covers detached HEADs that accrued bridge-merge-loss
+  // checkpoints during their lifetime). `Save Version` untyped checkpoints
+  // are never eligible — see `gcCheckpointRefs` JSDoc.
+  const gcBranches = new Set<string>([...projectBranches, ...result.retainedBranches]);
+  for (const branch of gcBranches) {
+    try {
+      const ckResult = await gcCheckpointRefs(shadow, branch, checkpointRetention);
+      if (
+        ckResult.scanned > 0 ||
+        ckResult.deletedBridgeMergeLoss > 0 ||
+        ckResult.deletedExternalChangeRescue > 0
+      ) {
+        result.checkpointGc[branch] = {
+          scanned: ckResult.scanned,
+          deletedBridgeMergeLoss: ckResult.deletedBridgeMergeLoss,
+          deletedExternalChangeRescue: ckResult.deletedExternalChangeRescue,
+          retained: ckResult.retained,
+        };
       }
-
-      if (orphanedSha) {
-        for (const newBranch of newProjectBranches) {
-          const newSha = await getProjectBranchSha(projectGitDir, newBranch);
-          if (newSha === orphanedSha) {
-            // Rename detected — migrate refs
-            const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
-            for (const oldRef of branchRefs) {
-              const writerId = oldRef.slice(`refs/wip/${orphanedBranch}/`.length);
-              const newRef = `refs/wip/${newBranch}/${writerId}`;
-              try {
-                const sha = (await sg.raw('rev-parse', oldRef)).trim();
-                await sg.raw('update-ref', newRef, sha);
-                await sg.raw('update-ref', '-d', oldRef);
-              } catch (e) {
-                console.error(`[shadow-gc] failed to migrate ${oldRef} → ${newRef}:`, e);
-              }
-            }
-            result.renamedBranches.push({ from: orphanedBranch, to: newBranch });
-            newProjectBranches.delete(newBranch);
-            renamed = true;
-            break;
-          }
-        }
-      }
+    } catch (err) {
+      console.warn(`[shadow-gc] checkpoint GC failed for branch ${branch}:`, err);
     }
+  }
 
-    if (!renamed) {
-      // Delete orphaned WIP refs (no grace period check in this implementation —
-      // the spec says 24h but we check commit timestamps in a future iteration)
-      const branchRefs = wipRefs.filter((r) => r.startsWith(`refs/wip/${orphanedBranch}/`));
-      for (const ref of branchRefs) {
-        try {
-          // Check commit timestamp for grace period
-          const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
-          const commitTime = new Date(commitDate).getTime();
-          const age = Date.now() - commitTime;
+  // Per-writer 30-day TTL: GC stale session refs on ACTIVE project branches.
+  // Classified writers (file-system, git-upstream, openknowledge-service) are NEVER GC'd.
+  // Unknown writers: log warning + preserve (sweepLegacyShadowRefs handles known-legacy).
+  for (const branch of projectBranches) {
+    const branchPrefix = `refs/wip/${branch}/`;
+    const branchRefs = wipRefs.filter((r) => r.startsWith(branchPrefix));
+    for (const ref of branchRefs) {
+      const writerId = ref.slice(branchPrefix.length);
+      const { classification } = parseWriterId(writerId);
 
-          if (age < GC_GRACE_PERIOD_MS) {
-            result.retainedBranches.push(orphanedBranch);
-            break; // Skip this entire branch
-          }
-
-          await sg.raw('update-ref', '-d', ref);
-        } catch {
-          // Ref may already be deleted
-        }
+      // Classified writers are never GC'd regardless of age (D54)
+      if (
+        classification === 'classified-file-system' ||
+        classification === 'classified-git-upstream' ||
+        classification === 'classified-openknowledge-service'
+      ) {
+        continue;
       }
-      if (!result.retainedBranches.includes(orphanedBranch)) {
-        result.deletedBranches.push(orphanedBranch);
+
+      // Unknown writers: preserve with a warning (defensive)
+      if (classification === 'unknown') {
+        console.warn(`[shadow-gc] unknown writer id in active branch ref ${ref} — preserved`);
+        continue;
+      }
+
+      // Session writers (agent-*, principal-*): check 30-day TTL
+      if (classification === 'agent' || classification === 'principal') {
+        try {
+          const commitDate = (await sg.raw('log', '-1', '--format=%ci', ref)).trim();
+          if (!commitDate) continue;
+          const age = Date.now() - new Date(commitDate).getTime();
+          if (age >= SESSION_WRITER_TTL_MS) {
+            await sg.raw('update-ref', '-d', ref);
+            result.deletedStaleSessionRefs++;
+          }
+        } catch {
+          // Ref may already be deleted or timestamp unavailable — skip
+        }
       }
     }
   }

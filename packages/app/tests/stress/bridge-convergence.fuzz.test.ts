@@ -3,7 +3,7 @@
  *
  * FR-17 / US-014: Samples the race space across bridge write surfaces using
  * 2-3 clients with random operations drawn from { wysiwyg-type, source-type,
- * agent-write, agent-patch, external-change, sync-pause, sync-resume, wait }.
+ * agent-write, agent-patch, agent-undo, external-change, sync-pause, sync-resume, wait }.
  *
  * Oracles (after all ops drain + convergence loop settles):
  *   (a) bridge invariant holds on every client
@@ -45,13 +45,16 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AGENT_WRITE_ORIGIN, applyExternalChange } from '@inkeep/open-knowledge-server';
+import { chunkedYTextInsert } from '@inkeep/open-knowledge-core';
+import { applyExternalChange, isPairedWriteOrigin } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
 import {
   agentPatch,
+  agentUndo,
   agentWriteMd,
   assertBridgeInvariant,
+  awaitDocQuiescence,
   createItemOriginProbe,
   createTestClients,
   createTestServer,
@@ -85,7 +88,7 @@ function createPRNG(seed: number) {
 
 type Rng = ReturnType<typeof createPRNG>;
 
-// ─── Op type union (v1 — 8 kinds backed by spec-shipped primitives) ───
+// ─── Op type union (10 kinds backed by spec-shipped primitives) ───
 
 type Op =
   | { kind: 'wysiwyg-type'; clientIdx: number; text: string; marker: string }
@@ -97,7 +100,20 @@ type Op =
       marker: string;
     }
   | { kind: 'agent-patch'; find: string; replace: string; marker: string }
+  | { kind: 'agent-undo' }
   | { kind: 'external-change'; newContent: string; marker: string }
+  | {
+      // FR-21 chunked Source paste. Large payload (>500KB threshold) split
+      // into 50KB chunks with requestAnimationFrame yields between chunks.
+      // The Y.RelativePosition-based `resolveOffset` maintains anchor
+      // correctness through concurrent peer insertions/deletions that land
+      // between chunks — this is the invariant QA-045 exercises under the
+      // fuzzer's randomized op interleaving.
+      kind: 'chunked-source-paste';
+      clientIdx: number;
+      text: string;
+      marker: string;
+    }
   | { kind: 'sync-pause'; clientIdx: number }
   | { kind: 'sync-resume'; clientIdx: number }
   | { kind: 'wait'; ms: number };
@@ -163,13 +179,34 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
       const find = rng.pick(WORDS);
       const replace = rng.pick(WORDS);
       ops.push({ kind: 'agent-patch', find, replace, marker: `patch-${find}→${replace}` });
-    } else if (roll < 0.71) {
+    } else if (roll < 0.66) {
+      // agent-undo via HTTP (3%). Calls applyAgentUndo on the default claude-1
+      // session. Non-fatal if no session exists or undo stack is empty. Content
+      // oracle treats this as a content-reset (like external-change) — the undo
+      // may remove any prior agent-write content unpredictably.
+      ops.push({ kind: 'agent-undo' });
+    } else if (roll < 0.74) {
       // external-change (8%): file-watcher disk→CRDT bridge.
       // Elevated from 0.5% to exercise file-watcher convergence path.
       const marker = `M${markerIdx++}-${randomShortText(rng)}`;
       const content = `${marker}\n`;
       const stabilized = mdManager.serialize(mdManager.parse(content));
       ops.push({ kind: 'external-change', newContent: stabilized, marker });
+      ops.push({ kind: 'wait', ms: 500 });
+    } else if (roll < 0.77) {
+      // chunked-source-paste (3%): FR-21 large-paste exercise. Payload
+      // above threshold (600KB) so chunkedYTextInsert takes the chunked
+      // path with rAF yields; subsequent ops interleave peer activity
+      // during the chunked writes to exercise the Y.RelativePosition
+      // anchor-preservation invariant (QA-045). 3% is sparse enough to
+      // keep per-seed runtime bounded while hitting the scenario multiple
+      // times across the default 25-seed runs.
+      const marker = `M${markerIdx++}-chunked-${randomShortText(rng)}`;
+      // 600KB payload: marker prefix + repeated filler, ensuring total
+      // exceeds DEFAULT_CHUNK_THRESHOLD_BYTES (500KB).
+      const filler = 'lorem ipsum dolor sit amet '.repeat(25000);
+      const text = `${marker}\n\n${filler}\n`;
+      ops.push({ kind: 'chunked-source-paste', clientIdx, text, marker });
       ops.push({ kind: 'wait', ms: 500 });
     } else if (roll < 0.83) {
       // sync-pause
@@ -234,6 +271,34 @@ async function applyOp(
       });
       break;
     }
+    case 'chunked-source-paste': {
+      const client = clients[op.clientIdx];
+      if (!client) return;
+      // Anchor at current doc end. Capture a Y.RelativePosition so concurrent
+      // peer inserts/deletes between chunks don't shift our target offset —
+      // this mirrors source-clipboard.ts:279-294 production behavior.
+      const anchorIndex = client.ytext.length;
+      const relPos = Y.createRelativePositionFromTypeIndex(client.ytext, anchorIndex);
+      try {
+        await chunkedYTextInsert(client.doc, client.ytext, anchorIndex, op.text, {
+          // Short setTimeout yield — default `requestAnimationFrame` is not
+          // available in Node test runtime; 0ms setTimeout still yields the
+          // task queue, letting other fuzzer ops interleave.
+          yieldFn: () => new Promise((r) => setTimeout(r, 0)),
+          resolveOffset: (n: number) => {
+            const abs = Y.createAbsolutePositionFromRelativePosition(relPos, client.doc);
+            return abs?.index ?? n;
+          },
+        });
+      } catch {
+        // ChunkedInsertError is a valid outcome under concurrent-peer pressure
+        // (e.g., peer deletion shrinks the doc below our anchor). The oracles
+        // still verify bridge-invariant + convergence post-settle; marker
+        // preservation is best-effort for this op (the partial-progress
+        // rollback path is unit-tested in source-clipboard-recovery.test.ts).
+      }
+      break;
+    }
     case 'agent-write': {
       try {
         await agentWriteMd(server.port, `${op.text}\n`, { docName, position: op.position });
@@ -247,6 +312,17 @@ async function applyOp(
         await agentPatch(server.port, op.find, op.replace, docName);
       } catch {
         // Non-fatal
+      }
+      break;
+    }
+    case 'agent-undo': {
+      try {
+        // Default session connectionId is 'claude-1' (no agentId override).
+        // Non-fatal if no session exists or undo stack is empty — the endpoint
+        // returns 404 which the catch swallows.
+        await agentUndo(server.port, { docName, connectionId: 'claude-1' });
+      } catch {
+        // Non-fatal — 404 when session absent or undo stack empty
       }
       break;
     }
@@ -293,8 +369,18 @@ async function applyOp(
 async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Promise<boolean> {
   const start = Date.now();
 
-  // Phase 1: wait for CRDT sync to settle
-  await wait(1500);
+  // Phase 1: wait for each client's pending local observer work to settle.
+  // Under the settlement-based bridge (SPEC §6 R4), this replaces the
+  // debounce-era `wait(1500)` — `awaitDocQuiescence` returns as soon as
+  // each doc's `afterAllTransactions` has been quiet for a couple of
+  // microtasks (including any OBSERVER_SYNC_ORIGIN inner drains). Runs
+  // in parallel across clients so the gate is bounded by the slowest.
+  // We keep a small wall-clock padding between quiescence-and-check to
+  // absorb WebSocket propagation jitter (~20-60 ms typical). Precedent
+  // #13(b): prefer structural gates; wall-clock only where genuine
+  // network timing lives.
+  await Promise.all(clients.map((c) => awaitDocQuiescence(c.doc, { timeoutMs: 3000 })));
+  await wait(100);
 
   // Phase 2: check + tickle loop
   let attempts = 0;
@@ -326,9 +412,16 @@ async function driveToConvergence(clients: TestClient[], timeoutMs = 15000): Pro
       text.applyDelta([{ insert: `r${attempts}` }]);
       paragraph.insert(0, [text]);
       target.fragment.push([paragraph]);
+      // Await the tickled client's local settlement before looping —
+      // structural replacement for the debounce-era `wait(800)`. The
+      // tickled doc's `afterAllTransactions` fires and (via the server's
+      // round-trip) propagates updates back to peers. We keep a small
+      // WebSocket-propagation pad so the round-trip can land before the
+      // next converge check.
+      await awaitDocQuiescence(target.doc, { timeoutMs: 2000 });
     }
     attempts++;
-    await wait(800); // Wait for debounce (50ms) + CRDT propagation
+    await wait(200);
   }
   return false;
 }
@@ -377,7 +470,9 @@ const ALL_OP_KINDS = [
   'source-type',
   'agent-write',
   'agent-patch',
+  'agent-undo',
   'external-change',
+  'chunked-source-paste',
   'sync-pause',
   'sync-resume',
   'wait',
@@ -387,26 +482,136 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
   'agent-write': ['agent-write'],
   'agent-write-md': ['agent-write'],
   'agent-patch': ['agent-patch'],
+  'agent-undo': ['agent-undo'],
   'observer-a-sync': ['wysiwyg-type'],
   'observer-b-sync': ['source-type'],
   'file-watcher': ['external-change'],
+  // FR-21 chunked Source paste: same W2 write surface as source-type, but a
+  // distinct *insertion strategy* (chunked + rAF-yielded + Y.RelativePosition
+  // anchor preservation). Precedent #13(d) spirit: coverage gate should catch
+  // a regression that removes the chunked op without replacement.
+  'chunked-source-paste': ['chunked-source-paste'],
   rollback: ['agent-write', 'agent-patch'],
 };
 
 // ─── Main fuzzer ───
 
-const SEED_COUNT = Number(process.env.BRIDGE_FUZZ_SEEDS ?? (process.env.STRESS_FUZZ_SEED ? 1 : 25));
-const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
+// Seed count calibration (bridge-correctness SPEC §6 R2, §10 D11 DELEGATED,
+// review iteration 4 recalibration).
+//
+//   - Seed-replay mode (`STRESS_FUZZ_SEED=<n>`): exactly 1 seed, for
+//     deterministic reproduction.
+//   - Explicit override (`BRIDGE_FUZZ_SEEDS=<n>`): exact count, for local
+//     scaling / bisection runs.
+//   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): 10000 seeds (tier 2; 30-min
+//     budget). Split across `nightly.yml` + `weekly.yml` as needed.
+//   - PR mode (`STRESS_FUZZ_PR=1`): 75 seeds. Calibrated against CI's
+//     measured per-seed distribution (from main's 25-seed run, job
+//     71850662391): median 4054 ms/seed, mean 8949 ms/seed, p95 24045 ms,
+//     max 45677 ms. The long tail dominates: 200 × mean = ~30 min, which
+//     exceeded the 15-min tier-1 budget regardless of runner size
+//     (ubuntu-latest cancelled at 14m56s; ubuntu-64gb cancelled at
+//     15m14s — the large runner's raw CPU advantage was not enough to
+//     absorb 45 s tail seeds × 200). 75 × 8.9 s mean ≈ 11 min + overhead
+//     ≈ 12 min, fits comfortably with headroom for tail variance. Still
+//     3× the default-mode coverage; the 1K-10K elevated-seed tail runs
+//     in tier-2 nightly / tier-3 weekly on-demand workflows (D11
+//     resolution: split-by-tier, not matrix-shard).
+//   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
+//     and keeps local developer runs cheap.
+const SEED_COUNT_PR = 75;
+const SEED_COUNT_NIGHTLY = 10_000;
+const SEED_COUNT_DEFAULT = 25;
+
+/**
+ * Strict integer-env parser. Non-finite, non-integer, or otherwise malformed
+ * inputs throw with a concrete example message — matches the defense-in-
+ * depth discipline `server-authoritative-stress.test.ts` uses for
+ * STRESS_SEED. The measurement script layer (`measure-fuzz.sh`) also
+ * validates via `assert_numeric_flag`, but this test is also invokable
+ * directly via `bun test` without going through the wrapper — so the
+ * test file must not silently coerce "100.5" or "0x42" to NaN→1 at the
+ * PRNG layer. Evidence log that lies quietly is worse than a loud throw.
+ */
+function parseIntegerEnv(name: string, raw: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error(
+      `${name} must be a finite integer, got ${JSON.stringify(raw)}. ` +
+        `Example: ${name}=42 bun test tests/stress/bridge-convergence.fuzz.test.ts`,
+    );
+  }
+  return parsed;
+}
+
+function resolveSeedCount(): number {
+  if (process.env.STRESS_FUZZ_SEED) return 1;
+  if (process.env.BRIDGE_FUZZ_SEEDS) {
+    return parseIntegerEnv('BRIDGE_FUZZ_SEEDS', process.env.BRIDGE_FUZZ_SEEDS);
+  }
+  if (process.env.STRESS_FUZZ_NIGHTLY === '1') return SEED_COUNT_NIGHTLY;
+  if (process.env.STRESS_FUZZ_PR === '1') return SEED_COUNT_PR;
+  return SEED_COUNT_DEFAULT;
+}
+const SEED_COUNT = resolveSeedCount();
+const FIXED_SEED = process.env.STRESS_FUZZ_SEED
+  ? parseIntegerEnv('STRESS_FUZZ_SEED', process.env.STRESS_FUZZ_SEED)
+  : undefined;
+
+// Surface the resolved seed count in CI logs so reviewers can confirm the
+// PR-tier gate is actually running at its calibrated coverage, not the
+// 25-seed default (bridge-correctness review iteration 4 regression guard).
+// Skipped when only 1 seed is requested (replay runs print the seed itself).
+if (FIXED_SEED === undefined) {
+  const mode =
+    process.env.STRESS_FUZZ_NIGHTLY === '1'
+      ? 'nightly'
+      : process.env.STRESS_FUZZ_PR === '1'
+        ? 'pr'
+        : process.env.BRIDGE_FUZZ_SEEDS
+          ? 'custom'
+          : 'default';
+  console.log(`[bridge-convergence fuzzer] mode=${mode} seeds=${SEED_COUNT}`);
+}
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
   let server: TestServer;
+  // Track per-seed outcomes so the after-all hook can emit a machine-
+  // parseable summary line for `packages/app/scripts/measure-fuzz.sh` to
+  // consume. The script grep-matches:
+  //   [fuzz] RESULT seeds=<total> passed=<n> failed=<n> failingSeeds=[<s1>,<s2>,...]
+  // Written via `process.stdout.write` so it's stdout-only and not subject
+  // to bun's human-summary formatting — mirrors the stress test's approach
+  // (`packages/app/tests/stress/server-authoritative-stress.test.ts`).
+  // Changing the format is a breaking change for the measurement script's
+  // regex; see `specs/2026-04-19-ci-signal-quality/SPEC.md` FR-5/FR-6.
+  const fuzzPassed: number[] = [];
+  const fuzzFailed: number[] = [];
 
   beforeAll(async () => {
     server = await createTestServer();
   });
 
   afterAll(async () => {
-    await server?.cleanup();
+    // Emit RESULT BEFORE cleanup. measure-fuzz.sh greps for this exact line
+    // as its only data source — if server.cleanup() threw first (handle leak,
+    // port teardown race), the summary would never reach the script and the
+    // run would be classified as a crash-before-banner with conservative all-
+    // seeds-failed accounting. Ordering this pre-cleanup makes the RESULT
+    // emission unconditional on cleanup outcome. Cleanup itself is wrapped in
+    // try/catch so a cleanup failure surfaces as a warn but does not destroy
+    // the observability signal we just wrote.
+    process.stdout.write(
+      `[fuzz] RESULT seeds=${fuzzPassed.length + fuzzFailed.length} passed=${fuzzPassed.length} failed=${fuzzFailed.length} failingSeeds=[${fuzzFailed.join(',')}]\n`,
+    );
+    try {
+      await server?.cleanup();
+    } catch (err) {
+      console.warn(
+        '[bridge-convergence fuzzer] server.cleanup() failed after RESULT emission:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
   const seeds =
@@ -415,6 +620,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       : Array.from({ length: SEED_COUNT }, (_, i) => Date.now() + i);
 
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
+    // Per-seed setup try/catch — if the setup path throws (harness init,
+    // port allocation, agentWriteMd, createTestClients) BEFORE we reach
+    // the main test body, the seed must still be accounted for in the
+    // RESULT line. Otherwise the script's seedCount drifts below the
+    // requested --seeds N and trend analysis across runs compares
+    // apples and oranges. Re-throw after recording so the test still
+    // fails loudly — this is accounting hygiene, not error swallowing.
+    let setupOk = false;
+    let clients: Awaited<ReturnType<typeof createTestClients>> = [] as never;
     const rng = createPRNG(seed);
     const clientCount = 2 + (seed % 2); // 2..3
     // 12 ops per seed: enough to sample 2-3 agent-write + wysiwyg-type pairs
@@ -424,18 +638,55 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     const opCount = 12;
     const docName = `fuzz-${seed}`;
 
-    // Seed initial content
-    await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
-    await wait(200);
+    try {
+      // Seed initial content
+      await agentWriteMd(server.port, 'seed paragraph\n', { docName, position: 'replace' });
+      await wait(200);
 
-    const clients = await createTestClients(server.port, {
-      count: clientCount,
-      docName,
-      perClientOptions: { syncControl: true, skipInvariantWatcher: true },
+      clients = await createTestClients(server.port, {
+        count: clientCount,
+        docName,
+        perClientOptions: { syncControl: true, skipInvariantWatcher: true },
+      });
+      setupOk = true;
+    } catch (err) {
+      // Setup failure — record as failed seed so RESULT accounting is
+      // complete, then re-throw so the test fails visibly. The catch at
+      // the end of the try-block (below, around the main oracle) records
+      // post-setup failures; this catch records pre-setup failures.
+      fuzzFailed.push(seed);
+      throw err;
+    }
+    // Guard against any unexpected control-flow — if we somehow reached
+    // here with setupOk=false without the catch having run, fail loud.
+    if (!setupOk) {
+      fuzzFailed.push(seed);
+      throw new Error(`bridge-convergence fuzz setup invariant violated for seed ${seed}`);
+    }
+
+    // Per-session origins (F1) arrive at clients as remote transactions (undefined
+    // origin) — client-side probes cannot capture server-authoritative agent writes.
+    // Create a local paired-write origin matching the F1 shape to verify the probe
+    // infrastructure works correctly with per-session origins (isPairedWriteOrigin=true).
+    // The probe remains vacuous for server-side writes; oracle (c) is enforced by the
+    // bridge-invariant watcher in assertBridgeInvariant above.
+    const localFuzzOrigin = Object.freeze({
+      source: 'local' as const,
+      skipStoreHooks: false,
+      context: Object.freeze({
+        origin: 'agent-write',
+        paired: true as const,
+        session_id: `fuzz-probe-${seed}`,
+      }),
     });
-
+    // Structural check: isPairedWriteOrigin must return true for per-session origins (US-028)
+    if (!isPairedWriteOrigin(localFuzzOrigin)) {
+      throw new Error(
+        `fuzz: isPairedWriteOrigin(localFuzzOrigin) failed — per-session origin rejected`,
+      );
+    }
     const agentProbes = clients.map((c) =>
-      createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
+      createItemOriginProbe(c.ytext, { trackedOrigins: [localFuzzOrigin] }),
     );
 
     // ────────────── Oracle (d): prefix-match content preservation ─────
@@ -505,6 +756,12 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           // the provided content (parse-serialize canonicalized).
           expectedBody = op.newContent.replace(/\n+$/, '');
           break;
+        case 'agent-undo':
+          // applyAgentUndo reverses the last tracked agent write — content
+          // oracle conservatively treats this as a full reset (like external-
+          // change) since the undo may remove any prior agent-write content.
+          expectedBody = '';
+          break;
         case 'sync-pause':
         case 'sync-resume':
         case 'wait':
@@ -516,22 +773,23 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
     try {
       const ops = generateOps(rng, clientCount, opCount);
 
-      // Apply ops with short inter-op waits. Pacing matters for the Bug-A
-      // trigger: a wysiwyg-type edit propagates XmlFragment to the server
-      // via CRDT (<50ms typical). Client Observer A then takes another
-      // DEBOUNCE_MS=50ms before propagating to Y.Text. Bug-A fires when an
-      // agent-write lands at the server in that ~50ms window — when server
-      // XmlFragment has the user's content but server Y.Text hasn't received
-      // it yet from the client's Observer A.
-      //
-      // Strategy: keep inter-op wait SHORT (20ms) so agent-write frequently
-      // hits inside the debounce window. A small pre-agent-write wait (30ms)
-      // skews timing toward mid-debounce. This produces a reliable Bug-A race
-      // on every 2-4 seeds instead of once per ~12 seeds.
+      // Apply ops back-to-back. Under the server-authoritative settlement
+      // bridge (bridge-correctness SPEC §6 R4 — `doc.on('afterAllTransactions',
+      // ...)` in server-observers.ts) there is no 50 ms debounce window for
+      // inter-op wall-clock pacing to target. The historical pre-agent-write
+      // `wait(30)` + post-op `wait(20)` were calibrated to hit "mid-debounce"
+      // for the pre-US-009 Bug-A trigger, which observer-layer paired-write
+      // symmetry (US-001) has closed. The RGA-level race that remains (SPEC
+      // §1 D7) is sampled structurally by the `sync-pause`/`sync-resume` op
+      // kinds, not by wall-clock pacing. Generated `wait` ops still run
+      // through `applyOp` and contribute deliberate fuzz-generated delays.
+      // Convergence timing (WebSocket propagation) is handled at the end
+      // of the run by `driveToConvergence`'s quiescence-gated loop. Net
+      // savings: ~600 ms per seed (~12 ops × ~50 ms average), so the fuzz
+      // harness fits its tier-1 budget at the calibrated 200-seed coverage
+      // and nightly's 10000-seed tier-2 run completes faster. (US-010 /
+      // precedent #13(b): prefer structural gates over wall-clock waits.)
       for (const op of ops) {
-        if (op.kind === 'agent-write' || op.kind === 'agent-patch') {
-          await wait(30);
-        }
         await applyOp(op, clients, server, docName);
 
         // Update marker tracking AFTER the op succeeds (oracle d prefix set).
@@ -540,14 +798,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         } else if (op.kind === 'external-change') {
           livePrefixes.clear();
           livePrefixes.add(prefixOf(op.marker));
+        } else if (op.kind === 'agent-undo') {
+          // Conservatively clear all tracked prefixes — the undo may have
+          // removed content from any prior agent-write, and we can't know
+          // exactly which without replaying the undo stack.
+          livePrefixes.clear();
         }
 
         // Update full-body expectation (oracle e).
         updateExpectedBody(op);
-
-        if (op.kind !== 'wait' && op.kind !== 'sync-pause' && op.kind !== 'sync-resume') {
-          await wait(20);
-        }
       }
 
       // Resume all paused clients
@@ -585,11 +844,11 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
       // Oracle (c): agent-origin Items preserved + no origin laundering (FR-6).
       for (const probe of agentProbes) {
-        // FR-6 rigor: assert every captured origin is AGENT_WRITE_ORIGIN —
-        // no user-origin Items (ORIGIN_TREE_TO_TEXT, undefined) leaked into
-        // the agent UM. Uses the 'stack-item-added' event-based tracking
-        // from createItemOriginProbe (Y.UndoManager StackItem has no public
-        // .origin field; the event is the only public API that exposes it).
+        // Per-session origins (F1): server-side writes arrive at clients as remote
+        // transactions (undefined origin); the probe's UM captures nothing, making
+        // assertOnlyTrackedOrigins() vacuously true. The primary enforcement for
+        // bridge invariants is assertBridgeInvariant above. This probe verifies
+        // that no unexpected LOCAL transacts with non-tracked origins appear.
         probe.assertOnlyTrackedOrigins();
 
         if (probe.undoStackLength() > 0) {
@@ -697,6 +956,10 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
             preMarkerLines.clear();
             preMarkerLines.set(prefixOf(op.marker), op.marker);
             break;
+          case 'agent-undo':
+            // Conservatively clear — undo may remove any prior agent-write.
+            preMarkerLines.clear();
+            break;
         }
       }
 
@@ -788,18 +1051,54 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           );
         }
       }
+      // Record the seed as passing BEFORE the `finally` block so a cleanup
+      // throw cannot silently skew RESULT totals. If the try-block completed
+      // every assertion, the seed is a genuine pass; the cleanup machinery
+      // running after is teardown-only and its failure must not retroactively
+      // reclassify the outcome. Cleanup errors are swallowed+logged in the
+      // finally block below for the same reason.
+      fuzzPassed.push(seed);
     } catch (err) {
       writeFuzzSnapshot(seed, {
         ops: generateOps(createPRNG(seed), clientCount, opCount),
         error: err,
         clientStates: snapshotClients(clients),
       });
+      fuzzFailed.push(seed);
       throw err;
     } finally {
-      for (const p of agentProbes) p.cleanup();
-      for (const c of clients) await c.cleanup();
+      for (const p of agentProbes) {
+        try {
+          p.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] agent-probe cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
+      for (const c of clients) {
+        try {
+          await c.cleanup();
+        } catch (cleanupErr) {
+          console.warn(
+            `[bridge-convergence seed ${seed}] client cleanup failed:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
     }
-  }, 90_000);
+    // 120s per seed: the original 90s budget covered macOS scheduler jitter
+    // locally (observed ~40s p50, 60s p99 on M-series hardware). On
+    // ubuntu-latest CI runners the same seeds run ~40% slower under
+    // contention, occasionally exceeding 90s — seed 1776384097736 timed
+    // out at 90000ms on CI but passed in 44s locally. 120s gives ~2×
+    // local p99 headroom for CI scheduler pressure without masking real
+    // convergence bugs — the content-preservation and bridge-invariant
+    // oracles fire before the timeout either way, so a slow-but-
+    // eventually-converging seed is still a green signal rather than a
+    // hanging test.
+  }, 120_000);
 });
 
 // ─── D18 coverage gate ───

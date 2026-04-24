@@ -5,6 +5,19 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**"]
     },
+    "build:desktop": {
+      "dependsOn": ["^build", "@inkeep/open-knowledge#build"],
+      "outputs": ["out/**"]
+    },
+    "build:desktop:dir": {
+      "dependsOn": ["build:desktop"],
+      "outputs": ["dist-desktop/**"],
+      "env": ["ELECTRON_CACHE", "ELECTRON_MIRROR"]
+    },
+    "rebuild:native": {
+      "cache": false,
+      "dependsOn": []
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },
@@ -36,31 +49,6 @@
         "../server/src/**/*.ts"
       ]
     },
-    "test:stress:server-authoritative": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/server-authoritative-stress.test.ts",
-        "tests/integration/test-harness.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:fuzz:bridge": {
-      "dependsOn": [],
-      "cache": false,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/bridge-convergence.fuzz.test.ts",
-        "tests/integration/test-harness.ts",
-        "tests/integration/network-control.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
     "test:fidelity": {
       "dependsOn": [],
       "cache": true,
@@ -71,7 +59,8 @@
         "../core/src/**/*.ts",
         "../core/src/markdown/fixtures/**/*.json",
         "../../patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
-      ]
+      ],
+      "env": ["STRESS_FIDELITY"]
     },
     "test:e2e": {
       "dependsOn": ["^build"],
@@ -144,6 +133,21 @@
         "tests/health/parse-health-gate.ts",
         "tests/health/baseline.json"
       ]
+    },
+    "test:perf:sessions": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "tests/integration/per-session-um-perf.test.ts",
+        "../server/src/**/*.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
+    "perf:profile": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": ["src/lib/perf/**/*.ts", "src/lib/perf/**/*.tsx", "tests/perf/**/*.ts"],
+      "passThroughEnv": ["DISPLAY", "OK_PERF_TARGET"]
     }
   }
 }

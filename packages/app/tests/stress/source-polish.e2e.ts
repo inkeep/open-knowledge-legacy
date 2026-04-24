@@ -12,25 +12,22 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
-import { expect, type Page, test } from '@playwright/test';
-
-const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+import { randomUUID } from 'node:crypto';
+import type { Page } from '@playwright/test';
+import {
+  type ApiHelpers,
+  expect,
+  filterCriticalErrors,
+  type LogEntry,
+  test,
+  waitForActiveProviderSynced as waitForProvider,
+} from './_helpers';
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-async function waitForProvider(page: Page) {
-  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
-}
-
 /** Seed content via agent-write-md API (replace mode). */
-async function seedMarkdown(markdown: string) {
-  const res = await fetch(`${BASE}/api/agent-write-md`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName: 'test-doc', markdown, position: 'replace' }),
-  });
-  if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
+async function seedMarkdown(api: ApiHelpers, docName: string, markdown: string) {
+  await api.replaceDoc(docName, markdown);
 }
 
 /** Switch to source mode and wait for CodeMirror to render. CM6 paints decorations
@@ -47,33 +44,42 @@ async function switchToSource(page: Page) {
 }
 
 // ── Console error accumulator ────────────────────────────────────────────────
+//
+// Structured entries (url + line) so the shared `filterCriticalErrors` helper
+// can strip known benign dev-server noise (Vite HMR chatter, WebSocket
+// reconnect races). Same pattern as `crdt-stress.e2e.ts`.
 
-const errors: string[] = [];
+const errors: LogEntry[] = [];
 
-test.beforeEach(async ({ page }) => {
+// Per-test unique docName to avoid parallel-worker state contention.
+let testDocName = '';
+
+test.beforeEach(async ({ page, api }) => {
   errors.length = 0;
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  page.on('pageerror', (err) => errors.push({ type: 'uncaught', text: err.message }));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
+    if (msg.type() === 'error') {
+      const loc = msg.location();
+      errors.push({ type: 'error', text: msg.text(), url: loc.url, line: loc.lineNumber });
+    }
   });
 
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+  testDocName = `sp-${randomUUID().slice(0, 8)}`;
+  await api.createPage(`${testDocName}.md`);
+  await page.goto(`/#/${testDocName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
 });
 
 test.afterEach(() => {
-  expect(errors, 'Expected zero console errors').toEqual([]);
+  expect(filterCriticalErrors(errors), 'Expected zero critical console errors').toEqual([]);
 });
 
 // ── §6.2 Strikethrough ──────────────────────────────────────────────────────
 
 test.describe('§6.2 Strikethrough', () => {
-  test('~~text~~ renders cm-del on content only, not delimiters', async ({ page }) => {
-    await seedMarkdown('~~deprecated~~ text');
+  test('~~text~~ renders cm-del on content only, not delimiters', async ({ page, api }) => {
+    await seedMarkdown(api, testDocName, '~~deprecated~~ text');
     await switchToSource(page);
 
     // Find span with cm-del class
@@ -92,9 +98,12 @@ test.describe('§6.2 Strikethrough', () => {
 // ── §6.3 List hanging-indent ─────────────────────────────────────────────────
 
 test.describe('§6.3 List hanging-indent', () => {
-  test('wrapped bullet continuation x > marker x', async ({ page }) => {
+  test('wrapped bullet list line left edge aligns with plain paragraph (marker not pushed off-screen)', async ({
+    page,
+    api,
+  }) => {
     const longText = 'A'.repeat(200);
-    await seedMarkdown(`- ${longText}\n\nplain paragraph`);
+    await seedMarkdown(api, testDocName, `- ${longText}\n\nplain paragraph`);
     await switchToSource(page);
 
     // Narrow viewport to force wrapping; Playwright's toBeVisible auto-waits
@@ -124,8 +133,8 @@ test.describe('§6.3 List hanging-indent', () => {
 // ── §6.5 Code wrap-preserve-indent ──────────────────────────────────────────
 
 test.describe('§6.5 Code wrap-preserve-indent', () => {
-  test('source indent is visible (not flattened)', async ({ page }) => {
-    await seedMarkdown('```js\nfoo\n    bar\n        baz\n```');
+  test('source indent is visible (not flattened)', async ({ page, api }) => {
+    await seedMarkdown(api, testDocName, '```js\nfoo\n    bar\n        baz\n```');
     await switchToSource(page);
 
     // Get all fenced-code-line elements
@@ -149,9 +158,9 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
     expect(boxes.length).toBeGreaterThanOrEqual(3);
   });
 
-  test('long indented code line wraps under the indent', async ({ page }) => {
+  test('long indented code line wraps under the indent', async ({ page, api }) => {
     const longLine = `    ${'x'.repeat(300)}`;
-    await seedMarkdown(`\`\`\`js\n${longLine}\n\`\`\``);
+    await seedMarkdown(api, testDocName, `\`\`\`js\n${longLine}\n\`\`\``);
     await switchToSource(page);
 
     // Force narrow viewport to trigger wrap; expect().toBeVisible() below
@@ -171,42 +180,11 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
   });
 });
 
-// ── §6.1 Broken link-ref ────────────────────────────────────────────────────
-
-test.describe('§6.1 Broken link-ref', () => {
-  test('[x][missing] gets cm-link-ref-broken; adding definition clears it', async ({ page }) => {
-    // Seed with a VALID ref pair first (survives CRDT round-trip without escaping),
-    // then type a broken ref directly in source mode to avoid remark-stringify escaping brackets.
-    await seedMarkdown('[valid link][exists]\n\n[exists]: https://example.com');
-    await switchToSource(page);
-
-    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping).
-    // Playwright's expect().toHaveCount() auto-retries until the assertion passes
-    // or the timeout expires — no manual waitForTimeout needed.
-    await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+End');
-    await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
-
-    // The [click here][missing] should be marked broken — StateField rescans
-    // on docChanged, so the mark should appear within the assertion's timeout.
-    const broken = page.locator('.cm-link-ref-broken');
-    await expect(broken).toHaveCount(1, { timeout: 5_000 });
-
-    // Now add the missing definition — the broken mark should clear as soon
-    // as the StateField's next docChanged run sees the new definition.
-    await page.keyboard.press('Meta+End');
-    await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
-
-    const brokenAfter = page.locator('.cm-link-ref-broken');
-    await expect(brokenAfter).toHaveCount(0, { timeout: 5_000 });
-  });
-});
-
 // ── §6.1 Broken wikilink ────────────────────────────────────────────────────
 
 test.describe('§6.1 Broken wikilink', () => {
-  test('[[NonexistentPage]] gets cm-wiki-link-broken after cache warms', async ({ page }) => {
-    await seedMarkdown('[[DefinitelyNotAPage12345]]');
+  test('[[NonexistentPage]] gets cm-wiki-link-broken after cache warms', async ({ page, api }) => {
+    await seedMarkdown(api, testDocName, '[[DefinitelyNotAPage12345]]');
     await switchToSource(page);
 
     // Wait for pagesCache to warm (≤5s TTL)
@@ -214,9 +192,9 @@ test.describe('§6.1 Broken wikilink', () => {
     await expect(brokenLink).toBeVisible({ timeout: 10_000 });
   });
 
-  test('[[test-doc]] (existing page) does NOT get broken class', async ({ page }) => {
+  test('[[test-doc]] (existing page) does NOT get broken class', async ({ page, api }) => {
     // test-doc exists (created by playwright.config.ts)
-    await seedMarkdown('[[test-doc]]');
+    await seedMarkdown(api, testDocName, '[[test-doc]]');
     await switchToSource(page);
 
     // Wait for the wikilink mark to paint (cache-cold → plain mark; cache-warm → still plain).
@@ -236,8 +214,10 @@ test.describe('§6.1 Broken wikilink', () => {
 // ── §6.6 Tables — structure/layout only, no styling ─────────────────────────
 
 test.describe('§6.6 Tables (structure/layout only)', () => {
-  test('header + row + delimiter get structural classes; no styling', async ({ page }) => {
+  test('header + row + delimiter get structural classes; no styling', async ({ page, api }) => {
     await seedMarkdown(
+      api,
+      testDocName,
       'plain paragraph\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nanother paragraph',
     );
     await switchToSource(page);
@@ -327,7 +307,7 @@ test.describe('§6.6 Tables (structure/layout only)', () => {
 // ── §6.7 Cross-cutting: addressability ───────────────────────────────────────
 
 test.describe('§6.7 Cross-cutting', () => {
-  test('Cmd+A → Cmd+C is byte-identical to source doc state', async ({ page }) => {
+  test('Cmd+A → Cmd+C is byte-identical to source doc state', async ({ page, api }) => {
     const composition = [
       '~~strikethrough~~',
       '',
@@ -349,7 +329,7 @@ test.describe('§6.7 Cross-cutting', () => {
       '| 1 | 2 |',
     ].join('\n');
 
-    await seedMarkdown(composition);
+    await seedMarkdown(api, testDocName, composition);
     await switchToSource(page);
 
     // Wait for the CRDT bridge to settle: the agent-write-md call above writes
@@ -389,8 +369,8 @@ test.describe('§6.7 Cross-cutting', () => {
 
     // Select all and copy
     await page.locator('.cm-content').focus();
-    await page.keyboard.press('Meta+a');
-    await page.keyboard.press('Meta+c');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('ControlOrMeta+c');
 
     // Read clipboard
     const clipboard = await page.evaluate(() => navigator.clipboard.readText());

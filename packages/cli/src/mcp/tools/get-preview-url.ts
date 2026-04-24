@@ -16,10 +16,16 @@
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
-import type { Config } from '../../config/schema.ts';
-import { resolvePreviewUrl } from './preview-url.ts';
+import { type PreviewUrlSource, resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance } from './shared.ts';
-import { normalizeDocName, textPlusStructured, textResult } from './shared.ts';
+import {
+  type ConfigOrResolver,
+  normalizeDocName,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectConfigContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   'Return a browser URL for the given wiki docName. Agents should call this IMMEDIATELY BEFORE `write_document` / `edit_document` so they can navigate the preview browser to the doc first and watch the CRDT edit land live.',
@@ -30,19 +36,19 @@ export const DESCRIPTION = [
   'Returns `{ previewUrl, previewUrlSource }` (source: `env` / `lock` / `config`). When no source is configured, returns `{ previewUrl: null }` and the agent may proceed without navigation.',
 ].join('\n');
 
-export interface GetPreviewUrlDeps {
+interface GetPreviewUrlDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
-  config: Config;
+  config: ConfigOrResolver;
 }
 
-export interface GetPreviewUrlResult {
+interface GetPreviewUrlResult {
   previewUrl: string | null;
-  previewUrlSource?: 'env' | 'lock' | 'config';
+  previewUrlSource?: PreviewUrlSource;
 }
 
 export async function buildGetPreviewUrlResult(
-  args: { docName: string },
+  args: { docName: string; cwd?: string },
   deps: GetPreviewUrlDeps,
 ): Promise<{ ok: true; result: GetPreviewUrlResult; text: string } | { ok: false; error: string }> {
   const normalized = normalizeDocName(args.docName);
@@ -53,15 +59,17 @@ export async function buildGetPreviewUrlResult(
 
   // Content-include check — mirrors search.ts / wiki-write tools. Try both
   // canonical extensions (.md, .mdx) since docNames are extension-less.
-  const cwd = await deps.resolveCwd();
-  const contentDir = resolveContentDir(deps.config, cwd);
+  const context = await resolveProjectConfigContext(deps.resolveCwd, deps.config, args.cwd);
+  if (!context.ok) return context;
+  const { cwd, config } = context;
+  const contentDir = resolveContentDir(config, cwd);
   let filter: ReturnType<typeof createContentFilter>;
   try {
     filter = createContentFilter({
       projectDir: cwd,
       contentDir,
-      includePatterns: deps.config.content.include,
-      excludePatterns: deps.config.content.exclude,
+      includePatterns: config.content.include,
+      excludePatterns: config.content.exclude,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -76,14 +84,15 @@ export async function buildGetPreviewUrlResult(
   if (!included) {
     return {
       ok: false,
-      error: `Error: docName "${docName}" is not inside content.include globs (${deps.config.content.include.join(', ')}). This tool only returns URLs for docs that match those globs.`,
+      error: `Error: docName "${docName}" is not inside content.include globs (${config.content.include.join(', ')}). This tool only returns URLs for docs that match those globs.`,
     };
   }
 
   const lockDir = resolveLockDir(contentDir);
   const resolved = resolvePreviewUrl(docName, {
-    config: deps.config,
+    config,
     lockDir,
+    contentDir,
   });
   if (!resolved) {
     return {
@@ -100,11 +109,19 @@ export async function buildGetPreviewUrlResult(
 }
 
 export function register(server: ServerInstance, deps: GetPreviewUrlDeps): void {
-  server.tool('get_preview_url', DESCRIPTION, { docName: z.string().min(1) }, async (args) => {
-    const outcome = await buildGetPreviewUrlResult(args, deps);
-    if (!outcome.ok) {
-      return textResult(outcome.error, true);
-    }
-    return textPlusStructured(outcome.text, outcome.result);
-  });
+  server.tool(
+    'get_preview_url',
+    DESCRIPTION,
+    {
+      docName: z.string().min(1),
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { docName: string; cwd?: string }) => {
+      const outcome = await buildGetPreviewUrlResult(args, deps);
+      if (!outcome.ok) {
+        return textResult(outcome.error, true);
+      }
+      return textPlusStructured(outcome.text, outcome.result);
+    },
+  );
 }

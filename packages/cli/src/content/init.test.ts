@@ -74,9 +74,11 @@ describe('initContent', () => {
     expect(agents).toContain('Navigation');
     expect(agents).toContain('exec');
 
-    // .gitignore excludes cache/
+    // .gitignore excludes cache/ and the per-process lock files
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
+    expect(gitignore).toContain('server.lock');
+    expect(gitignore).toContain('ui.lock');
 
     // config.yml is the fully-commented starter — every section header
     // present, every key commented out so the file parses to a no-op.
@@ -207,17 +209,14 @@ describe('upsertRootInstructions', () => {
   });
 
   it('writes extraFiles alongside AGENTS.md', () => {
-    const results = upsertRootInstructions(testDir, false, ['CLAUDE.md', '.cursorrules']);
+    const results = upsertRootInstructions(testDir, false, ['CLAUDE.md']);
 
     expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
-    expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
     expect(readFileSync(join(testDir, 'CLAUDE.md'), 'utf-8')).toContain(OK_MARKER_BEGIN);
-    expect(readFileSync(join(testDir, '.cursorrules'), 'utf-8')).toContain(OK_MARKER_BEGIN);
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(2);
     expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('created');
     expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('created');
-    expect(results.find((r) => r.file === '.cursorrules')?.action).toBe('created');
   });
 
   it('deduplicates extraFiles that symlink to an already-written file', () => {

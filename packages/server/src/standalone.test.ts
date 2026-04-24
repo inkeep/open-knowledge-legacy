@@ -10,6 +10,7 @@ import {
   managedRenameJournalPath,
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
+import { ensureProjectGit } from './project-git.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer, type ServerInstance } from './standalone.ts';
 
@@ -168,6 +169,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
+    await ensureProjectGit(projectDir);
     const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
@@ -195,10 +197,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     await server.destroy();
 
-    // Verify L2 git commit landed in shadow repo
+    // Verify L2 git commit landed in shadow repo — check for any WIP ref
+    // (the exact writer ID depends on contributor-tracker state shared across tests)
     const sg = shadowGit(shadowHandle);
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/server')).trim();
-    expect(refSha).toBeTruthy();
+    const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
+    expect(wipRefs).toBeTruthy();
   });
 
   test('destroy() completes within destroyTimeoutMs AND rescues hung docs when onStoreDocument throws', async () => {
@@ -208,6 +211,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
+    await ensureProjectGit(projectDir);
     const shadowHandle = await initShadowRepo(projectDir);
 
     const server = createServer({
@@ -265,7 +269,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     );
 
     // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. The in-memory Y.Doc
-    // state was preserved to <shadow-gitDir>/rescue/<docName>.md so the user
+    // state was preserved to <history-gitDir>/rescue/<docName>.md so the user
     // can recover via the existing /api/rescue endpoints.
     const rescuePath = join(shadowHandle.gitDir, 'rescue', 'pathological-doc.md');
     expect(existsSync(rescuePath)).toBe(true);

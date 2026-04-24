@@ -4,10 +4,23 @@
  * Calls POST /api/save-version to snapshot the current state of all documents
  * into a checkpoint commit in the shadow repo (and optionally the project repo).
  * The resulting checkpoint ref can later be found via `get_history`.
+ *
+ * previewUrl is always `null` per FR-2.1 / US-011: save_version operates on the
+ * whole workspace (all documents), not a single docName, and the UI has no
+ * checkpoint-level URL shape. Emitting null keeps the 21-tool contract uniform
+ * without misleading agents into a nonexistent per-doc preview.
  */
+import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, resolveServerUrl, textResult } from './shared.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpPost,
+  ROUTED_CWD_DESCRIPTION,
+  resolveProjectServerContext,
+  textPlusStructured,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Save a version checkpoint of all documents.',
@@ -18,29 +31,43 @@ export const DESCRIPTION = [
 
 export function register(
   server: ServerInstance,
+  config: ConfigOrResolver,
   serverUrl: ServerUrlOrResolver,
+  resolveCwd: (explicit?: string) => Promise<string>,
   identityRef?: { current: AgentIdentity },
 ): void {
-  server.tool('save_version', DESCRIPTION, {}, async () => {
-    const url = await resolveServerUrl(serverUrl);
-    if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+  server.tool(
+    'save_version',
+    DESCRIPTION,
+    {
+      cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
+    },
+    async (args: { cwd?: string } = {}) => {
+      const context = await resolveProjectServerContext(resolveCwd, config, serverUrl, args.cwd);
+      if (!context.ok) return textResult(`Error: ${context.error}`, true);
+      if (!context.url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const { url } = context;
 
-    const identity = identityRef?.current;
-    const result = await httpPost(url, '/api/save-version', {
-      ...(identity
-        ? {
-            writers: [
-              {
-                id: `agent-${identity.connectionId}`,
-                name: identity.displayName,
-                email: `agent-${identity.connectionId}@openknowledge.local`,
-              },
-            ],
-          }
-        : {}),
-    });
-    if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      const identity = identityRef?.current;
+      const result = await httpPost(url, '/api/save-version', {
+        ...(identity
+          ? {
+              writers: [
+                {
+                  id: `agent-${identity.connectionId}`,
+                  name: identity.displayName,
+                  email: `agent-${identity.connectionId}@openknowledge.local`,
+                },
+              ],
+            }
+          : {}),
+      });
+      if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-    return textResult(`Version saved. Checkpoint ref: ${result.checkpointRef}`);
-  });
+      return textPlusStructured(`Checkpoint saved. Checkpoint ref: ${result.checkpointRef}`, {
+        checkpointRef: result.checkpointRef,
+        previewUrl: null,
+      });
+    },
+  );
 }

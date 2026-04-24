@@ -4,20 +4,19 @@
  *
  * Entry types are classified from commit message prefixes:
  *   'checkpoint:' → checkpoint
- *   'upstream:'   → upstream
+ *   'import:'     → upstream  (canonical since D53/FR-13)
+ *   'upstream:'   → upstream  (legacy fallback for pre-D53 commits)
  *   else          → wip
  */
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
-import { parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { parseCheckpoint, readContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
 
-export type { EntryType, TimelineEntry };
-
-export interface HistoryQuery {
+interface HistoryQuery {
   docName: string;
   branch?: string;
   /** Filter to specific entry types (comma-separated or array). */
@@ -30,7 +29,7 @@ export interface HistoryQuery {
   offset?: number;
 }
 
-export interface HistoryResult {
+interface HistoryResult {
   entries: TimelineEntry[];
   total: number;
   hasMore: boolean;
@@ -49,7 +48,7 @@ const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
 
 function classifyType(subject: string): EntryType {
   if (subject.startsWith('checkpoint:')) return 'checkpoint';
-  if (subject.startsWith('upstream:')) return 'upstream';
+  if (subject.startsWith('import:') || subject.startsWith('upstream:')) return 'upstream';
   return 'wip';
 }
 
@@ -63,14 +62,16 @@ function parseGitLogOutput(raw: string): TimelineEntry[] {
       const parts = trimmed.split('\x00');
       const [sha = '', timestamp = '', author = '', authorEmail = '', message = '', rawBody = ''] =
         parts;
+      const type = classifyType(message);
       return {
         sha: sha.trim(),
         timestamp,
         author,
         authorEmail,
-        type: classifyType(message),
+        type,
         message,
-        contributors: parseContributors(rawBody),
+        contributors: readContributors(rawBody),
+        checkpoint: type === 'checkpoint' ? parseCheckpoint(rawBody) : null,
       };
     })
     .filter((e): e is TimelineEntry => e !== null && e.sha.length === 40);
@@ -175,17 +176,31 @@ export async function getDocumentHistory(
       const allShas = [...branchCpShas, ...mainCpShas];
       if (allShas.length === 0) return EMPTY;
 
-      // Bulk-resolve commit details without walking ancestry
+      // Bulk-resolve commit details without walking ancestry.
+      // Note: --no-walk ignores pathspecs, so we filter afterwards via cat-file.
       const raw = await sg.raw(
         'log',
         '--no-walk',
         '--author-date-order',
         `--format=${GIT_LOG_FORMAT}`,
         ...allShas,
-        ...(docPath ? ['--', docPath] : []),
       );
 
       let allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
+
+      if (docPath) {
+        const relevant = await Promise.all(
+          allEntries.map(async (e) => {
+            try {
+              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        allEntries = allEntries.filter((_, i) => relevant[i]);
+      }
 
       // Apply branch-takes-over-main cutoff
       if (branch !== 'main' && branchCpShas.length > 0 && mainCpShas.length > 0) {
@@ -291,10 +306,26 @@ export async function getDocumentHistory(
         `--format=${GIT_LOG_FORMAT}`,
         ...allCpShas,
       );
-      const allCpEntries = parseGitLogOutput(cpRaw).map((e) => ({
+      let allCpEntries = parseGitLogOutput(cpRaw).map((e) => ({
         ...e,
         type: 'checkpoint' as const,
       }));
+
+      // --no-walk ignores pathspecs, so filter checkpoints to only those
+      // whose tree actually contains the target document.
+      if (docPath) {
+        const relevant = await Promise.all(
+          allCpEntries.map(async (e) => {
+            try {
+              await sg.raw('cat-file', '-e', `${e.sha}:${docPath}`);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        allCpEntries = allCpEntries.filter((_, i) => relevant[i]);
+      }
 
       if (isFeatureBranch && checkpointShas.length > 0 && mainCheckpointShas.length > 0) {
         // Find the earliest branch checkpoint timestamp — main's checkpoints

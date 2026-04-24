@@ -13,9 +13,9 @@ import { resolve } from 'node:path';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
+type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
 
-export interface BatchEndInfo {
+interface BatchEndInfo {
   headMoved: boolean;
   oldHead: string | null;
   newHead: string | null;
@@ -25,12 +25,12 @@ export interface BatchEndInfo {
   newBranch: string | null;
 }
 
-export interface BatchBeginInfo {
+interface BatchBeginInfo {
   trigger: string;
 }
 
-export type OnBatchBegin = (info: BatchBeginInfo) => void | Promise<void>;
-export type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
+type OnBatchBegin = (info: BatchBeginInfo) => void | Promise<void>;
+type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
@@ -129,8 +129,9 @@ export function readBranchFromHead(gitDir: string): string | null {
 /**
  * Start watching .git/ for coordinated operations.
  *
- * Returns a handle to stop watching. If projectGitDir is null (standalone mode),
- * returns a no-op handle.
+ * Returns a handle to stop watching. If `.git/` cannot be resolved (e.g. the
+ * project is uninitialized and `ensureProjectGit` has not yet run), returns a
+ * no-op handle so callers don't have to special-case the missing state.
  */
 export async function startHeadWatcher(
   projectRoot: string,
@@ -139,7 +140,7 @@ export async function startHeadWatcher(
 ): Promise<HeadWatcherHandle> {
   const resolvedGitDir = resolveGitDir(projectRoot);
   if (!resolvedGitDir) {
-    // Standalone mode — no .git to watch
+    // No .git/ to watch — skip attachment without erroring
     return { unsubscribe: async () => {}, getLastKnownBranch: () => null };
   }
   const gitDir: string = resolvedGitDir;

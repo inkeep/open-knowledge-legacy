@@ -3,7 +3,13 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [
-    ["@inkeep/open-knowledge", "@inkeep/open-knowledge-core", "@inkeep/open-knowledge-server"]
+    [
+      "@inkeep/open-knowledge",
+      "@inkeep/open-knowledge-core",
+      "@inkeep/open-knowledge-server",
+      "@inkeep/open-knowledge-app",
+      "@inkeep/open-knowledge-desktop"
+    ]
   ],
   "linked": [],
   "access": "restricted",

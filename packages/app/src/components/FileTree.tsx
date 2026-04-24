@@ -1,4 +1,15 @@
 import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
+import {
   Bot,
   ChevronRight,
   Copy,
@@ -14,9 +25,11 @@ import {
   UnfoldVertical,
 } from 'lucide-react';
 import {
+  createContext,
   type FC,
   type Ref,
   startTransition,
+  use,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -24,6 +37,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
+import { parentDirOfDocName, validateMoveToFolder } from '@/components/file-tree-dnd';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -72,6 +86,21 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { joinWorkspacePath } from '@/lib/workspace-paths';
+import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
+import {
+  buildHandoffInput,
+  type HandoffDispatchInput,
+  useHandoffDispatch,
+} from './handoff/useHandoffDispatch';
+import { useInstalledAgents } from './handoff/useInstalledAgents';
+import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
+
+const FileTreeDragContext = createContext<FileTreeTarget | null>(null);
+
+function useFileTreeDragSource(): FileTreeTarget | null {
+  return use(FileTreeDragContext);
+}
 
 function navigateTo(targetPath: string) {
   window.location.hash = hashFromDocName(targetPath);
@@ -81,22 +110,13 @@ function navigateTo(targetPath: string) {
  * Workspace-relative on-disk path for a tree node. Files get the `.md` extension;
  * folders return the bare path (no trailing slash). Mirrors how paths appear in
  * git diffs, VS Code 'Copy Relative Path', and the server's docName convention.
+ *
+ * US-011 promoted the sibling `joinWorkspacePath` to `@/lib/workspace-paths` so
+ * handoff dispatch inputs share the same normalizer. `relativePathForNode`
+ * stays local because it operates on a `TreeNode` (not a bare docName).
  */
 function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): string {
   return node.kind === 'file' ? `${node.path}.md` : node.path;
-}
-
-/**
- * Join `contentDir` with a workspace-relative path. Cross-platform — uses the
- * platform separator that `/api/workspace` returns (Node's `path.sep`), which
- * is the source of truth for the host. `TreeNode.path` and `DocEntry.docName`
- * are always POSIX-form in transit, so when the host is Windows we rewrite
- * their internal `/` to `\` before joining.
- */
-function joinWorkspacePath(contentDir: string, relative: string, sep: '/' | '\\'): string {
-  const normalizedRelative = sep === '\\' ? relative.replaceAll('/', '\\') : relative;
-  const trimmedDir = contentDir.endsWith(sep) ? contentDir.slice(0, -1) : contentDir;
-  return `${trimmedDir}${sep}${normalizedRelative}`;
 }
 
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -213,6 +233,48 @@ function InlineCreateRow({
   );
 }
 
+function dropHighlightClass(
+  activeSource: FileTreeTarget | null,
+  destinationFolderPath: string,
+): string {
+  if (!activeSource) return '';
+  const v = validateMoveToFolder(activeSource, destinationFolderPath);
+  if (!v.ok && (v.reason === 'self' || v.reason === 'descendant')) {
+    return 'bg-destructive/20 ring-2 ring-destructive/50';
+  }
+  if (v.ok) {
+    return 'bg-primary/10 ring-2 ring-primary/40';
+  }
+  return '';
+}
+
+function RootDropRow({ treeActionsLocked }: { treeActionsLocked: boolean }) {
+  const activeSource = useFileTreeDragSource();
+  const { setNodeRef, isOver } = useDroppable({
+    id: 'drop-root',
+    disabled: treeActionsLocked,
+    data: { destinationFolderPath: '' },
+  });
+
+  if (!activeSource) {
+    return null;
+  }
+
+  return (
+    <SidebarMenuItem>
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'flex h-8 items-center rounded-md border border-dashed border-sidebar-border px-2 text-xs text-muted-foreground transition-colors',
+          isOver && dropHighlightClass(activeSource, ''),
+        )}
+      >
+        Drop here to move to library root
+      </div>
+    </SidebarMenuItem>
+  );
+}
+
 const FileTreeNode: FC<{
   node: TreeNode;
   selectedFilePath: string | null;
@@ -223,9 +285,24 @@ const FileTreeNode: FC<{
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
+  treeActionsLocked: boolean;
   /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
   workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
+  /** Handoff install states + dispatch fn, lifted to the FileTree root so every
+   *  file-row ContextMenu shares one `useInstalledAgents` coordinator (otherwise
+   *  N file rows spin up N probe coordinators each with a 10s throttle — the
+   *  server-side cache absorbs it but the React state stays fragmented). */
+  handoff: {
+    readonly installStates: Record<HandoffTarget, InstallState>;
+    readonly isElectronHost: boolean;
+    readonly dispatch: (
+      target: HandoffTarget,
+      input: HandoffDispatchInput,
+    ) => Promise<HandoffOutcome>;
+  };
   onNavigate: (targetPath: string) => void;
+  /** Hover-intent prewarm trigger (V2 Option G). Safe-no-op when not wired. */
+  prewarm: (docName: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
   onCommitRename: (target: FileTreeTarget) => void;
@@ -248,8 +325,11 @@ const FileTreeNode: FC<{
   editingPath,
   editingValue,
   busyPath,
+  treeActionsLocked,
   workspace,
+  handoff,
   onNavigate,
+  prewarm,
   onStartRename,
   onEditingValueChange,
   onCommitRename,
@@ -276,26 +356,81 @@ const FileTreeNode: FC<{
 
   useEffect(() => {
     if (!isEditing) return;
-    const id = setTimeout(() => {
+    requestAnimationFrame(() => {
       const el = renameInputRef.current;
       if (el) {
         el.focus();
         el.select();
       }
-    }, 0);
-    return () => clearTimeout(id);
+    });
   }, [isEditing]);
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
-  const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
+  const IconToUse = isFile ? File : expanded ? FolderOpen : Folder;
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
 
+  const destFolderForDrop = isFile ? parentDirOfDocName(node.path) : node.path;
+  const activeDragSource = useFileTreeDragSource();
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `drag-${node.kind}-${node.path}`,
+    disabled: treeActionsLocked || isEditing,
+    data: { source: target },
+  });
+
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `drop-${node.kind}-${node.path}`,
+    disabled: treeActionsLocked,
+    data: { destinationFolderPath: destFolderForDrop },
+  });
+
+  const rowRef = (el: HTMLDivElement | null) => {
+    setDragRef(el);
+    setDropRef(el);
+    if (isActive) activeRowRef(el);
+  };
+
+  const overDropClass =
+    isOver && activeDragSource ? dropHighlightClass(activeDragSource, destFolderForDrop) : '';
+
   const showSymlink = isFile && node.isSymlink;
   const showAgentBadge = isAgentFile(node);
+  /*
+   * `!text-muted-foreground/50` (Tailwind v4 trailing-bang) is required
+   * because SidebarMenuSubButton applies `[&>svg]:text-sidebar-accent-foreground`
+   * to every direct SVG child (sidebar.tsx:636) — without !important, nested
+   * rows render these badges as bright sidebar-accent-foreground while root
+   * rows render them as muted-foreground/50.
+   */
+  const iconClass = 'size-3.5 shrink-0 text-muted-foreground/50!';
 
-  const fileContent = (
+  // Hover-intent prewarm (review Major #7 / V2 SPEC FR12 Option G). Files
+  // only — hovering a folder row doesn't trigger a prewarm. The 80ms
+  // intent threshold + 3-concurrent cap live in `sidebar-hover-prewarm`;
+  // here we just wire mouseenter/mouseleave to it. The prewarm opens a
+  // cold HocuspocusProvider via `prewarm(docName)` so the target doc's
+  // Y.Doc sync starts before the user clicks. Idempotent + rate-limited.
+  const onRowEnter = isFile
+    ? () => {
+        scheduleHoverPrewarm(node.path, (docName) => {
+          prewarm(docName);
+        });
+      }
+    : undefined;
+  const onRowLeave = isFile
+    ? () => {
+        cancelHoverPrewarm(node.path);
+      }
+    : undefined;
+
+  const displayContent = (
     <>
       <IconToUse
         className="size-4 shrink-0"
@@ -309,33 +444,22 @@ const FileTreeNode: FC<{
           isActive ? 'text-sidebar-accent-foreground' : 'text-sidebar-foreground/70',
         )}
       >
-        {node.name}
-        {isFile && '.md'}
+        {node.name + (isFile ? '.md' : '')}
       </span>
-      {/*
-       * `!text-muted-foreground/50` (Tailwind v4 trailing-bang) is required
-       * because SidebarMenuSubButton applies `[&>svg]:text-sidebar-accent-foreground`
-       * to every direct SVG child (sidebar.tsx:636) — without !important, nested
-       * rows render these badges as bright sidebar-accent-foreground while root
-       * rows render them as muted-foreground/50.
-       */}
-      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
-      {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50!" />}
+      {showSymlink && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link2 className={iconClass} />
+          </TooltipTrigger>
+          <TooltipContent side="right" className="text-center leading-relaxed">
+            Symlink → {node.targetPath}
+            <br />
+            Opens the same document as {node.canonicalDocName}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {showAgentBadge && <Bot className={iconClass} />}
     </>
-  );
-
-  const displayContent = showSymlink ? (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="flex min-w-0 flex-1 items-center gap-2">{fileContent}</span>
-      </TooltipTrigger>
-      <TooltipContent side="right" className="flex flex-col gap-0.5">
-        <span>Symlink → {node.targetPath}</span>
-        <span className="text-muted">Opens the same document as {node.canonicalDocName}</span>
-      </TooltipContent>
-    </Tooltip>
-  ) : (
-    fileContent
   );
 
   const editingContent = (
@@ -363,7 +487,7 @@ const FileTreeNode: FC<{
             onCancelRename();
           }
         }}
-        className="h-7 min-w-0 flex-1 bg-background text-sm"
+        className="h-7 min-w-0 flex-1 bg-background text-sm text-foreground"
       />
       {isFile && <span className="text-xs text-sidebar-foreground/40">.md</span>}
     </div>
@@ -395,6 +519,11 @@ const FileTreeNode: FC<{
         className={cn('top-1', expanded && 'rotate-90')}
         aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
         aria-expanded={expanded}
+        onPointerDown={(event) => {
+          // The row wrapper is the draggable source. Stop the chevron's
+          // pointer-down here so expand/collapse never arm a drag gesture.
+          event.stopPropagation();
+        }}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -410,7 +539,32 @@ const FileTreeNode: FC<{
     <ComponentToUse>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
+          {/*
+            The accessible widget is the button inside `triggerContent`
+            (SidebarMenuButton); it already carries role/aria + keyboard
+            affordances. This <div> is a pointer/ARIA passthrough — the
+            mouseenter/mouseleave handlers fire hover-intent prewarm
+            (Major #7) across the whole row. `role="presentation"`
+            declares the div has no semantics of its own.
+          */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-intent wrapper for ContextMenuTrigger; accessible target is the SidebarMenuButton inside triggerContent (review Major #7 wiring) */}
+          <div
+            ref={rowRef}
+            className={cn(
+              'rounded-md transition-[opacity,box-shadow] duration-150 ease-out',
+              isDragging && 'opacity-40',
+              overDropClass,
+            )}
+            onMouseEnter={onRowEnter}
+            onMouseLeave={onRowLeave}
+            {...(!isEditing && listeners)}
+            {...(!isEditing && attributes)}
+            role="presentation"
+            // Disable double tab; the real focusable control is the inner button.
+            tabIndex={undefined}
+          >
+            {triggerContent}
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent
           onCloseAutoFocus={(e) => {
@@ -425,10 +579,8 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) {
-                    preventFocusReturnRef.current = true;
-                    onStartCreating('file', node.path);
-                  }
+                  preventFocusReturnRef.current = true;
+                  onStartCreating('file', node.path);
                 }}
               >
                 <SquarePen aria-hidden="true" />
@@ -437,10 +589,8 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) {
-                    preventFocusReturnRef.current = true;
-                    onStartCreating('folder', node.path);
-                  }
+                  preventFocusReturnRef.current = true;
+                  onStartCreating('folder', node.path);
                 }}
               >
                 <FolderPlus aria-hidden="true" />
@@ -467,10 +617,8 @@ const FileTreeNode: FC<{
           <ContextMenuItem
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) {
-                preventFocusReturnRef.current = true;
-                onStartRename(target);
-              }
+              preventFocusReturnRef.current = true;
+              onStartRename(target);
             }}
           >
             <Pencil aria-hidden="true" />
@@ -505,12 +653,20 @@ const FileTreeNode: FC<{
               </ContextMenuItem>
             </ContextMenuSubContent>
           </ContextMenuSub>
+          {isFile && (
+            <OpenInAgentContextSubmenu
+              input={buildHandoffInput({ docName: node.path, workspace })}
+              installStates={handoff.installStates}
+              isElectronHost={handoff.isElectronHost}
+              dispatch={handoff.dispatch}
+            />
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             variant="destructive"
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) onDelete(target);
+              onDelete(target);
             }}
           >
             <Trash2 aria-hidden="true" />
@@ -537,8 +693,11 @@ const FileTreeNode: FC<{
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
+              treeActionsLocked={treeActionsLocked}
               workspace={workspace}
+              handoff={handoff}
               onNavigate={onNavigate}
+              prewarm={prewarm}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
               onCommitRename={onCommitRename}
@@ -572,7 +731,7 @@ export interface FileTreeHandle {
 }
 
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -580,14 +739,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [busyPath, setBusyPath] = useState<string | null>(null);
-  const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
-  const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
+  const [userExpanded, setUserExpanded] = useState(() => new Set<string>());
+  const [userCollapsed, setUserCollapsed] = useState(() => new Set<string>());
   const {
     selectedFilePath,
     selectedFolderPath,
     navigationPath: activeNavigationPath,
   } = resolveFileTreeSelection(activeTarget, activeDocName);
-  const [prevActiveNavigationPath, setPrevActiveNavigationPath] = useState(activeNavigationPath);
   const [deleteTarget, setDeleteTarget] = useState<FileTreeTarget | null>(null);
   const [creatingItem, setCreatingItem] = useState<{
     kind: 'file' | 'folder';
@@ -596,6 +754,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [creatingValue, setCreatingValue] = useState('');
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
+  const [activeDragSource, setActiveDragSource] = useState<FileTreeTarget | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
   // Absolute workspace root + host path separator — null until /api/workspace
   // resolves. Used to build full filesystem paths for the row context menu's
   // 'Copy path > Full path' item. The separator comes from the server (Node's
@@ -606,13 +766,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     pathSeparator: '/' | '\\';
   } | null>(null);
 
-  if (activeNavigationPath !== prevActiveNavigationPath) {
-    // Clear user-collapsed overrides on navigation so ancestors of the new
-    // active file are guaranteed to expand. userExpanded is preserved — a user
-    // who hand-opened unrelated folders keeps them open.
-    setPrevActiveNavigationPath(activeNavigationPath);
-    setUserCollapsed(new Set());
-  }
+  // Handoff surface (US-011) — shared across every file row's right-click menu.
+  // Lifted to the tree root so one `useInstalledAgents` coordinator backs the
+  // whole sidebar; per-row hook calls would spin up N probe coordinators (each
+  // with its own 10s throttle) for no benefit.
+  const { states: handoffInstallStates } = useInstalledAgents();
+  const { dispatch: dispatchHandoff } = useHandoffDispatch();
+  const handoffIsElectronHost = typeof window !== 'undefined' && window.okDesktop != null;
+  const handoff = {
+    installStates: handoffInstallStates,
+    isElectronHost: handoffIsElectronHost,
+    dispatch: dispatchHandoff,
+  };
 
   // Ref callback: fires when the active row DOM node attaches. Handles initial
   // page load (tree mounts after /api/documents resolves), hash navigation, and
@@ -728,11 +893,15 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   /**
-   * Collapse a folder and all its descendant folders. Because the global
-   * derivation is `expanded = (ancestors ∪ userExpanded) \ userCollapsed`,
-   * adding the subtree paths to `userCollapsed` correctly overrides both
-   * prior user expansions and the active-doc-ancestor auto-expansion inside
-   * this scope, while leaving unrelated folders untouched.
+   * Collapse a folder and all its descendant folders. The global derivation
+   * is `expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
+   * ancestors unconditionally expanded (see the `expandedPaths` loop below
+   * and PRECEDENTS.md precedent #21). So adding subtree paths to `userCollapsed`
+   * collapses every non-ancestor folder in the subtree; ancestors of the
+   * active doc stay visible (matches VS Code / Finder semantics) — their
+   * chevron is a visual no-op. See US-011 in
+   * `specs/2026-04-17-e2e-observability-determinism/` for the empirical
+   * triage that landed this invariant.
    */
   function collapseSubtree(folder: TreeNode) {
     const subtreePaths = collectFolderPaths([folder]);
@@ -773,9 +942,14 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       });
     },
     collapseAll() {
-      // `userCollapsed` must include ancestors of the active doc to override the
-      // derivation `expanded = (ancestors ∪ userExpanded) \ userCollapsed`;
-      // otherwise "collapse all" would leave the active file's chain open.
+      // Under the ancestor-priority derivation
+      // (`expandedPaths = ancestors ∪ (userExpanded \ userCollapsed)` with
+      // ancestors exempt from userCollapsed — see the `expandedPaths` loop
+      // below and PRECEDENTS.md precedent #21), ancestors of the active doc
+      // stay expanded regardless of what we put in `userCollapsed`. So
+      // "collapse all" collapses every non-ancestor folder and leaves the
+      // active file's chain open — which matches VS Code / Finder UX and is
+      // the intended contract for this button.
       const paths = collectFolderPaths(buildTree(documents));
       startTransition(() => {
         setUserCollapsed(paths);
@@ -960,6 +1134,74 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     }
   }
 
+  async function handleMove(source: FileTreeTarget, destinationFolderPath: string) {
+    const v = validateMoveToFolder(source, destinationFolderPath);
+    if (!v.ok) {
+      if (v.reason === 'no_op') return;
+      toast.error(
+        v.reason === 'self'
+          ? 'Cannot move a folder into itself'
+          : 'Cannot move a folder into one of its subfolders',
+      );
+      return;
+    }
+
+    const nextPath = v.destinationPath;
+    setBusyPath(source.path);
+    setError(null);
+
+    try {
+      const endpoint = source.kind === 'file' ? '/api/rename' : '/api/rename-path';
+      const payload =
+        source.kind === 'file'
+          ? { docName: source.path, newDocName: nextPath }
+          : { kind: 'folder', fromPath: source.path, toPath: nextPath };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data: RenamePathResponse = await res.json();
+
+      if (!res.ok || !data.ok) {
+        const msg = data.error ?? 'Failed to move';
+        toast.error(msg);
+        setError(msg);
+        setBusyPath(null);
+        return;
+      }
+
+      const renamed = Array.isArray(data.renamed) ? data.renamed : [];
+      const nextActiveDocName = remapActiveDocName(activeDocName, renamed);
+
+      for (const entry of renamed) closeDocument(entry.fromDocName);
+
+      setDocuments((current) => applyRenameToDocuments(current, renamed));
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+
+      const segments = nextPath.split('/').filter(Boolean);
+      if (segments.length > 1) {
+        setUserExpanded((prev) => {
+          const n = new Set(prev);
+          for (let i = 0; i < segments.length - 1; i++) {
+            n.add(segments.slice(0, i + 1).join('/'));
+          }
+          return n;
+        });
+      }
+
+      if (activeDocName && nextActiveDocName !== activeDocName) {
+        window.location.hash = `#/${nextActiveDocName}`;
+      }
+      setBusyPath(null);
+    } catch (err) {
+      console.warn('[FileTree] move failed:', err);
+      toast.error('Network error — please try again');
+      setBusyPath(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center py-8">
@@ -980,7 +1222,12 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
-        <Button variant="outline" size="sm" onClick={() => startCreating('file', '')}>
+        <Button
+          variant="link"
+          size="sm"
+          className="font-mono uppercase"
+          onClick={() => startCreating('file', '')}
+        >
           Create your first file
         </Button>
       </div>
@@ -992,41 +1239,61 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const ancestors = computeAncestors(activeNavigationPath);
 
   // Derive expansion on every render (D4 derive-don't-store):
-  //   expandedPaths = (ancestors(activeDocName) ∪ userExpanded) \ userCollapsed
+  //   expandedPaths = ancestors(activeDocName) ∪ (userExpanded \ userCollapsed)
+  //
+  // Ancestors of the active doc are UNCONDITIONALLY expanded — user-collapse
+  // on an active-doc-ancestor has no effect. This is a deliberate UX contract
+  // matching VS Code / Finder file-explorer semantics: the active file's
+  // context is always visible in the sidebar. The user can still collapse
+  // non-ancestor folders (useExpanded \ useCollapsed applies there).
+  //
+  // Prior art: an earlier derivation `(ancestors ∪ userExpanded) \ userCollapsed`
+  // let user-collapse override ancestors, which created a race with a
+  // render-time `setUserCollapsed(new Set())` that auto-expanded ancestors
+  // on navigation. Under CI load, concurrent user-collapse + navigation
+  // batched into a single React render and the auto-clear clobbered the
+  // user's intent 60% of the time. Moving the auto-clear to useEffect did
+  // NOT fix it (same ordering race). The correct fix is the ancestor-priority
+  // derivation here: there is no competing setState, so there is no race.
+  // See US-011 in specs/2026-04-17-e2e-observability-determinism/SPEC.md.
+  //
   // Both userExpanded and userCollapsed are intersected with current folder
-  // paths — `userExpanded ∩ folderPaths` caps the expansion loop, and
-  // `userCollapsed ∩ folderPaths` prevents a stale "I collapsed this before"
-  // entry from pre-collapsing a later-recreated folder at the same path (e.g.
-  // delete then recreate `notes/drafts/`). Either set can grow unboundedly
-  // across a long session; the intersection prevents that from affecting the
-  // derived state.
+  // paths to prevent stale entries (e.g., from a deleted-then-recreated
+  // folder) affecting the derived state.
+  const ancestorSet = new Set(ancestors);
   const expandedPaths = new Set<string>();
-  for (const a of ancestors) {
+  // Ancestors always expanded
+  for (const a of ancestorSet) {
     if (folderPaths.has(a)) expandedPaths.add(a);
   }
+  // userExpanded adds non-ancestor folders
   for (const p of userExpanded) {
     if (folderPaths.has(p)) expandedPaths.add(p);
   }
+  // userCollapsed subtracts — BUT ancestors are exempt (priority)
   for (const p of userCollapsed) {
-    if (folderPaths.has(p)) expandedPaths.delete(p);
+    if (folderPaths.has(p) && !ancestorSet.has(p)) expandedPaths.delete(p);
   }
 
   function handleToggle(path: string) {
-    if (expandedPaths.has(path)) {
-      setUserCollapsed((prev) => new Set(prev).add(path));
-      setUserExpanded((prev) => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
-    } else {
-      setUserExpanded((prev) => new Set(prev).add(path));
-      setUserCollapsed((prev) => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
+    // Ancestors of the active doc are unconditionally expanded by the
+    // derivation above — the chevron is already a visual no-op on them.
+    // Skip the `userCollapsed` write so a former-ancestor path doesn't
+    // become a "surprise collapse" the moment the user navigates away.
+    // Precedent #21 (AGENTS.md) + `packages/app/tests/stress/reveal-on-activate.e2e.ts`.
+    if (ancestorSet.has(path)) {
+      return;
     }
+    const [add, remove] = expandedPaths.has(path)
+      ? [setUserCollapsed, setUserExpanded]
+      : [setUserExpanded, setUserCollapsed];
+
+    add((prev) => new Set(prev).add(path));
+    remove((prev) => {
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
   }
 
   function getInlineCreate(parentDir: string): InlineCreateProps | null {
@@ -1044,76 +1311,112 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   const rootInlineCreate = getInlineCreate('');
 
+  const treeActionsLocked = busyPath !== null || editingPath !== null || creatingItem !== null;
+
   return (
-    <>
-      {error && (
-        <span role="alert" className="px-3 pb-1 text-xs text-destructive">
-          {error}
-        </span>
-      )}
-      <SidebarMenu>
-        {rootInlineCreate && (
-          <SidebarMenuItem>
-            <InlineCreateRow {...rootInlineCreate} />
-          </SidebarMenuItem>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={({ active }) => {
+        setActiveDragSource((active.data.current?.source as FileTreeTarget | undefined) ?? null);
+      }}
+      onDragEnd={({ active, over }) => {
+        setActiveDragSource(null);
+        if (!over) return;
+        const src = active.data.current?.source as FileTreeTarget | undefined;
+        const dest = over.data.current?.destinationFolderPath;
+        if (!src || typeof dest !== 'string') return;
+        void handleMove(src, dest);
+      }}
+      onDragCancel={() => setActiveDragSource(null)}
+    >
+      <FileTreeDragContext.Provider value={activeDragSource}>
+        {error && (
+          <span role="alert" className="px-3 pb-1 text-xs text-destructive">
+            {error}
+          </span>
         )}
-        {treeNodes.map((node) => (
-          <FileTreeNode
-            key={node.path}
-            node={node}
-            selectedFilePath={selectedFilePath}
-            selectedFolderPath={selectedFolderPath}
-            expandedPaths={expandedPaths}
-            onToggle={handleToggle}
-            activeRowRef={activeRowRef}
-            editingPath={editingPath}
-            editingValue={editingValue}
-            busyPath={busyPath}
-            onNavigate={(targetPath) => {
-              navigateTo(targetPath);
-            }}
-            onStartRename={(target) => {
-              setEditingPath(target.path);
-              setEditingValue(target.name);
-              setError(null);
-            }}
-            onEditingValueChange={setEditingValue}
-            onCommitRename={(target) => void handleRename(target)}
-            onCancelRename={() => {
-              if (!busyPath) {
-                setEditingPath(null);
-                setEditingValue('');
+        <SidebarMenu>
+          {rootInlineCreate && (
+            <SidebarMenuItem>
+              <InlineCreateRow {...rootInlineCreate} />
+            </SidebarMenuItem>
+          )}
+          <RootDropRow treeActionsLocked={treeActionsLocked} />
+          {treeNodes.map((node) => (
+            <FileTreeNode
+              key={node.path}
+              node={node}
+              selectedFilePath={selectedFilePath}
+              selectedFolderPath={selectedFolderPath}
+              expandedPaths={expandedPaths}
+              onToggle={handleToggle}
+              activeRowRef={activeRowRef}
+              editingPath={editingPath}
+              editingValue={editingValue}
+              busyPath={busyPath}
+              treeActionsLocked={treeActionsLocked}
+              workspace={workspace}
+              handoff={handoff}
+              onNavigate={navigateTo}
+              prewarm={prewarm}
+              onStartRename={(target) => {
+                setEditingPath(target.path);
+                setEditingValue(target.name);
+                setError(null);
+              }}
+              onEditingValueChange={setEditingValue}
+              onCommitRename={(target) => void handleRename(target)}
+              onCancelRename={() => {
+                if (!busyPath) {
+                  setEditingPath(null);
+                  setEditingValue('');
+                }
+              }}
+              onDelete={(target) => setDeleteTarget(target)}
+              onStartCreating={startCreating}
+              onExpandSubtree={expandSubtree}
+              onCollapseSubtree={collapseSubtree}
+              inlineCreate={getInlineCreate(node.path)}
+              getInlineCreate={getInlineCreate}
+            />
+          ))}
+        </SidebarMenu>
+        <Dialog
+          open={!!deleteTarget}
+          onOpenChange={(open) => {
+            if (!open && !busyPath) setDeleteTarget(null);
+          }}
+        >
+          {deleteTarget && (
+            <DeleteConfirmationDialog
+              itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
+              isSubmitting={busyPath === deleteTarget.path}
+              onDelete={() => handleDelete(deleteTarget)}
+              customDescription={
+                deleteTarget.kind === 'folder'
+                  ? `Are you sure you want to delete ${deleteTarget.name}/ and all files inside? This action cannot be undone.`
+                  : undefined
               }
-            }}
-            onDelete={(target) => setDeleteTarget(target)}
-            onStartCreating={startCreating}
-            onExpandSubtree={expandSubtree}
-            onCollapseSubtree={collapseSubtree}
-            inlineCreate={getInlineCreate(node.path)}
-            getInlineCreate={getInlineCreate}
-            workspace={workspace}
-          />
-        ))}
-      </SidebarMenu>
-      <Dialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open && !busyPath) setDeleteTarget(null);
-        }}
-      >
-        {deleteTarget && (
-          <DeleteConfirmationDialog
-            itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
-            isSubmitting={busyPath === deleteTarget.path}
-            onDelete={() => handleDelete(deleteTarget)}
-            customDescription={
-              deleteTarget.kind === 'folder'
-                ? `Are you sure you want to delete ${deleteTarget.name}/ and all files inside? This action cannot be undone.`
-                : undefined
-            }
-          />
-        )}
-      </Dialog>
-    </>
+            />
+          )}
+        </Dialog>
+        <DragOverlay dropAnimation={null}>
+          {activeDragSource ? (
+            <div className="pointer-events-none flex max-w-[min(100vw-2rem,280px)] items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-3 py-1.5 text-sm shadow-lg">
+              {activeDragSource.kind === 'file' ? (
+                <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+              ) : (
+                <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
+                {activeDragSource.name}
+                {activeDragSource.kind === 'file' ? '.md' : ''}
+              </span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </FileTreeDragContext.Provider>
+    </DndContext>
   );
 }

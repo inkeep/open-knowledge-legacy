@@ -54,7 +54,7 @@ import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
-export interface PipelineOptions {
+interface PipelineOptions {
   schema: Schema;
   /** mdast → PM handlers (keyed by mdast node type) */
   handlers: RemarkProseMirrorOptions['handlers'];
@@ -69,7 +69,7 @@ export interface PipelineOptions {
 /** Options needed by `serializeMd` for the PM→mdast pre-pass. Kept separate
  * from the (pre-baked) processor so one cached serialize processor can serve
  * calls that share schema/handler registrations. */
-export interface SerializeMdOptions {
+interface SerializeMdOptions {
   schema: Schema;
   pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
@@ -173,6 +173,11 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
     .use(remarkMdxAgnostic)
+    // remarkWikiLink registers mdast-util-to-markdown handlers for the
+    // `wikiLink` mdast type (see wiki-link-micromark.ts:wikiLinkToMarkdown).
+    // Required now that PM→mdast (index.ts) emits first-class wikiLink nodes
+    // instead of `{type:'html'}` passthrough (D7 / US-004).
+    .use(remarkWikiLink)
     .use(remarkStringify, {
       bullet: '-',
       fences: true,
@@ -204,6 +209,22 @@ export function parseMd(source: string, processor: Processor): PmNode {
   file.value = source;
   const transformed = processor.runSync(tree, file);
   return (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
+}
+
+/**
+ * Parse markdown to mdast only (stopping BEFORE the remark-prosemirror
+ * stringifier). Used by V2's Option E walker (`to-react.ts`) which
+ * converts mdast directly to a React-element tree, bypassing ProseMirror
+ * entirely. Shares the same parser + plugin pipeline as `parseMd` so the
+ * fallback render uses exactly the same parse behavior as the editor —
+ * identical Phase A restoreFromMdx + Phase B merged walker output.
+ */
+export function parseMdToMdast(source: string, processor: Processor): MdastRoot {
+  const protected_ = protectFromMdx(source);
+  const file = new VFile(protected_);
+  const tree = processor.parse(file);
+  file.value = source;
+  return processor.runSync(tree, file) as MdastRoot;
 }
 
 /**

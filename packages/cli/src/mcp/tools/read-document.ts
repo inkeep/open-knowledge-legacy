@@ -19,12 +19,12 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
-import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { resolveServerUrl, textResult } from './shared.ts';
+import { resolvePreviewUrlForTool } from './preview-url.ts';
+import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { resolveProjectServerContext, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink/forward-link context.',
@@ -44,7 +44,7 @@ export const DESCRIPTION = [
 export interface ReadDocumentDeps {
   /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
-  config: Config;
+  config: ConfigOrResolver;
   /**
    * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
    * Resolved once per call before passing into `enrichPath`.
@@ -59,7 +59,7 @@ function formatShadowHistory(entries: ShadowCommit[] | null): string {
     const who =
       e.writerClassification === 'agent'
         ? `agent: ${e.writerName}`
-        : e.writerClassification === 'human'
+        : e.writerClassification === 'principal'
           ? `human: ${e.writerName}`
           : `${e.writerClassification}: ${e.writerName}`;
     const hash = e.hash.slice(0, 7);
@@ -110,15 +110,28 @@ function relativePath(input: string): string {
   return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
 
+/** Strip a trailing .md/.mdx to produce the extension-less docName the UI hash-routes on. */
+function docNameFromRelPath(relPath: string): string {
+  return relPath.replace(/\.(md|mdx)$/i, '');
+}
+
 export async function buildReadResult(
   args: { path: string; since?: string; cwd?: string },
   deps: ReadDocumentDeps,
 ): Promise<string> {
-  const cwd = await deps.resolveCwd(args.cwd);
+  const context = await resolveProjectServerContext(
+    deps.resolveCwd,
+    deps.config,
+    deps.serverUrl,
+    args.cwd,
+  );
+  if (!context.ok) {
+    throw new Error(context.error);
+  }
+  const { cwd, config, url: resolvedServerUrl } = context;
   const relPath = relativePath(args.path);
   const abs = resolve(cwd, relPath);
-  const historyDepth = deps.config.mcp.tools.read_document.historyDepth;
-  const resolvedServerUrl = await resolveServerUrl(deps.serverUrl);
+  const historyDepth = config.mcp.tools.read_document.historyDepth;
 
   const [content, meta] = await Promise.all([
     readFile(abs, 'utf-8'),
@@ -128,7 +141,7 @@ export async function buildReadResult(
         projectDir: cwd,
         serverUrl: resolvedServerUrl,
         historyDepth,
-        folderRules: deps.config.folders,
+        folderRules: config.folders,
       },
       { includeRichFields: true },
     ),
@@ -177,13 +190,28 @@ export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
         .string()
         .optional()
         .describe(
-          "Absolute host path to resolve `path` against. Defaults to the MCP client's first advertised root.",
+          'Absolute host path to resolve `path` against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.',
         ),
     },
     async (args: { path: string; since?: string; cwd?: string }) => {
       try {
         const body = await buildReadResult(args, deps);
-        return textResult(body);
+        const docName = docNameFromRelPath(relativePath(args.path));
+        const preview = await resolvePreviewUrlForTool(
+          docName,
+          {
+            config: deps.config,
+            resolveCwd: deps.resolveCwd,
+          },
+          await deps.resolveCwd(args.cwd),
+        );
+        if (!preview) {
+          return textPlusStructured(body, { previewUrl: null });
+        }
+        return textPlusStructured(body, {
+          previewUrl: preview.url,
+          previewUrlSource: preview.source,
+        });
       } catch (err) {
         return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
       }

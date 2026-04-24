@@ -1,9 +1,9 @@
 import type { Document, Extension } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import { mdManager } from './md-manager.ts';
+import { mdManager, schema } from './md-manager.ts';
 
 export const LIVE_DERIVED_INDEX_DEBOUNCE_MS = 100;
 
@@ -27,7 +27,7 @@ function isLocalOriginLike(origin: unknown): origin is LocalOriginLike {
 
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
-  const body = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+  const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
   const metaMap = document.getMap('metadata');
   const frontmatter = metaMap.get('frontmatter');
   return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);

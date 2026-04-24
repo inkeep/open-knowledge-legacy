@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { CommandPalette } from '@/components/CommandPalette';
+import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
+import { McpConsentDialog } from '@/components/McpConsentDialog';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
 import { resolveNavigationTarget } from '@/components/navigation-targets';
 import { PageListProvider, usePageList } from '@/components/PageListContext';
@@ -13,20 +16,18 @@ import {
   useDocumentTransition,
 } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
-
-export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
+import { mark, ProfilerBoundary } from '@/lib/perf';
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that resolves the active navigation target
- *  and calls openTargetTransition().
- *  Wrapping every hash-driven nav in a transition (a) keeps the previously-revealed
- *  doc visible while the next entry suspends on syncPromise (SPEC G2), and
- *  (b) surfaces `isPending` to NavigationPendingBar (SPEC G3). Agent-driven
- *  nav via SystemDocSubscriber flows through `window.location.hash` too, so
+ *  and calls openTargetTransition(). The transition wrapper keeps a previously-
+ *  revealed doc visible while the next entry suspends on syncPromise (fast/warm
+ *  path, SPEC G2); on cold paths `openTargetTransition` drops the transition
+ *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately. Agent-
+ *  driven nav via SystemDocSubscriber flows through `window.location.hash`, so
  *  it inherits the same UX without a separate code path (SPEC §F7). Target
  *  resolution (doc / folder-index / folder / missing) lives in
- *  resolveNavigationTarget (PR #175) — the transition wraps the whole
- *  openTarget() call so folder-overview nav is transition-wrapped too. */
+ *  resolveNavigationTarget (PR #175). */
 function NavigationHandler() {
   const { clearTarget } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
@@ -38,16 +39,20 @@ function NavigationHandler() {
     function onHashChange() {
       const docName = docNameFromHash(window.location.hash);
       if (!docName) {
+        mark('ok/nav/hash-change', { docName: null, kind: 'clear' });
         clearTarget();
         return;
       }
-      if (loading) return;
-      openTargetTransition(
-        resolveNavigationTarget(docName, {
-          pages,
-          folderPaths,
-        }),
-      );
+      if (loading) {
+        mark('ok/nav/hash-change', { docName, kind: 'deferred-loading' });
+        return;
+      }
+      const target = resolveNavigationTarget(docName, {
+        pages,
+        folderPaths,
+      });
+      mark('ok/nav/hash-change', { docName, kind: target.kind });
+      openTargetTransition(target);
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -96,19 +101,35 @@ function NewItemShortcutHandler() {
 }
 
 export function App() {
+  // Electron-only Cmd+K palette for project-level commands (open folder,
+  // start fresh, switch to a recent project). Gated on `window.okDesktop`
+  // so the web/CLI distribution never mounts the handler — zero footprint
+  // outside Electron. Mounted at the App root so Cmd+K works regardless of
+  // which surface has focus (editor, sidebar, timeline, etc.).
+  const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
+
   return (
-    <DocumentProvider>
-      <PageListProvider>
-        <SystemDocSubscriber />
-        <NavigationHandler />
-        <NewItemShortcutHandler />
-        <SidebarProvider className="h-screen overflow-hidden">
-          <FileSidebar />
-          <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-            <EditorPane />
-          </SidebarInset>
-        </SidebarProvider>
-      </PageListProvider>
-    </DocumentProvider>
+    <ProfilerBoundary name="app">
+      <DocumentProvider>
+        <ConnectingBanner />
+        <PageListProvider>
+          <SystemDocSubscriber />
+          <NavigationHandler />
+          <NewItemShortcutHandler />
+          {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
+              Self-gates on the shared `mcpConsentStore` snapshot; renders
+              nothing until main fires `ok:mcp-wiring:show`. Mounted
+              identically in NavigatorApp. */}
+          <McpConsentDialog />
+          {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+          <SidebarProvider className="h-screen overflow-hidden">
+            <FileSidebar />
+            <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+              <EditorPane />
+            </SidebarInset>
+          </SidebarProvider>
+        </PageListProvider>
+      </DocumentProvider>
+    </ProfilerBoundary>
   );
 }

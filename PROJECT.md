@@ -162,7 +162,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -208,7 +208,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -244,7 +244,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -291,7 +291,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -859,7 +859,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -905,7 +905,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -941,7 +941,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -988,7 +988,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -1556,7 +1556,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -1602,7 +1602,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -1638,7 +1638,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -1685,7 +1685,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -2253,7 +2253,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -2299,7 +2299,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -2335,7 +2335,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -2382,7 +2382,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -2950,7 +2950,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -2996,7 +2996,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -3032,7 +3032,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -3079,7 +3079,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -3647,7 +3647,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -3693,7 +3693,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -3729,7 +3729,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -3776,7 +3776,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -4344,7 +4344,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -4390,7 +4390,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -4426,7 +4426,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -4473,7 +4473,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -5041,7 +5041,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -5087,7 +5087,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -5123,7 +5123,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -5170,7 +5170,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -5738,7 +5738,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -5784,7 +5784,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -5820,7 +5820,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -5867,7 +5867,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -6435,7 +6435,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -6481,7 +6481,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -6517,7 +6517,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -6564,7 +6564,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -7132,7 +7132,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -7178,7 +7178,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -7214,7 +7214,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -7261,7 +7261,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.
@@ -7829,7 +7829,7 @@ They don't interfere. Branch merge is ALWAYS text-level (git merge on .md files)
 **CRDT bindings (validated by init\_spike + PR #6):**
 
 - **WYSIWYG mode:** y-prosemirror binds TipTap to Y.XmlFragment('default'). Block-level CRDT. Void nodes atomic. Full real-time sync. **CONFIRMED — browser E2E.**
-- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via **`tests/e2e/sync.spec.ts`** (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
+- **Source mode (TQ25 observer sync):** Bidirectional observers between Y.XmlFragment and Y.Text('source'). CodeMirror binds to Y.Text via y-codemirror.next. WYSIWYG edits → serialize → incremental diff → Y.Text. Source edits → parse → updateYFragment. Transaction origin guards prevent loops. **CONFIRMED — 22 server-side observer-sync tests + Playwright E2E via `tests/e2e/sync.spec.ts` (PR #6).** V4b (serialize-on-toggle) is the fallback; V4b three-way merge (TQ28) kept as utility for future disk bridge use.
 - Mini CodeMirror in void nodes: edit string attribute on parent node, no separate binding.
 
 **Cross-mode sync matrix (E2E verified by PR #6, 24 Playwright tests across sync.spec.ts + qa-scenarios.spec.ts):**
@@ -7875,7 +7875,7 @@ Rendering paths not yet designed (resolve during /spec): MDX live preview compil
 
 Three contexts: Main (live state), Draft (isolated workspace), Proposal (review-gated draft). Each is a **git branch**. The editor, MCP tools, sync layer, persistence pipeline, and derived data all work **the same regardless of which branch is active**. Git determines which files. Everything else follows.
 
-**Context switch = **`git checkout`** + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
+**Context switch = `git checkout` + cache deserialize (CC6).** All .md files + catalog files switch atomically (git). Backlinks load from per-branch cache. Editor reloads. MCP tools read from new branch's files. One operation, everything consistent.
 
 **Which context an agent writes to is determined by its resolved permission** (Zanzibar model — PQ7, PQ9):
 
@@ -7911,7 +7911,7 @@ Content changes produce derived data. The architectural principle: **everything 
 
    **Frontmatter is open/flexible** — the product recognizes specific fields (title, description, tags, name for skills) but accepts arbitrary additional fields. No rigid schema enforcement. Different content types have different frontmatter shapes. `description` is the single most important field for agent discoverability — feeds catalog entries across all content types. Recommended (not required) — reference skills should always populate it as a convention. Articles without description still appear in catalogs but with less navigational scent. Product does NOT auto-generate descriptions at P0 (no LLM in core).
 
-**Open: **`title`** vs **`name`** as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
+**Open: `title` vs `name` as the identity field.** Articles use `title` (human-readable). Skills use `name` (kebab-case, matches folder). These serve different purposes — `title` is display, `name` is identifier. The catalog generator needs to handle both. Open question: should the product normalize to one field, support both, or let content types define their own? See Agent Skills spec (agentskills.io/specification) for `name` constraints. See /reports/frontmatter-schema-conventions-for-agent-readable-docs/.
 
 **Catalog files are the primary agent navigation mechanism** — not just derived data. Research: RAPTOR (ICLR 2024) validated hierarchical summaries outperform flat retrieval; Dust.tt (April 2025) found agents spontaneously prefer tree navigation; GraphRAG showed 97% token savings from hierarchical summaries vs flat source; information foraging theory frames per-folder summaries as "information scent" that helps agents decide where to drill in. The specific pattern of per-folder catalog files in a markdown KB appears novel, but building blocks are independently validated across 5+ systems. The catalog format is llms.txt-spec-compatible (H1 required, everything else optional markdown — our format fits). The llms.txt spec explicitly allows subpath placement. Fern is the only platform currently shipping per-section llms.txt. See /reports/kb-index-navigation-patterns-for-agents/ D9, /reports/llms-txt-content-negotiation-agent-readable-web/ D8.
 
@@ -7958,7 +7958,7 @@ The agent's experience of interacting with an open-knowledge project must be coh
 
 **Primary mechanisms for agent guidance (in preference order):**
 
-1. **MCP tool descriptions + **`instructions`** field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
+1. **MCP tool descriptions + `instructions` field** — read by every MCP-compatible agent on connect. The highest-leverage surface for shaping agent behavior.
 2. **Files on disk** — AGENTS.md, catalog files, SKILL.md files. Portable, readable by any agent, no product dependency.
 3. **Skills** — Agent Skills spec (agentskills.io) SKILL.md files. Cross-agent (33+ compatible). The intelligence layer.
 4. **CLI output** — `npx openknowledge status` can surface health, context, guidance as text.

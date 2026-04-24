@@ -1,9 +1,24 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
 @plugin "tailwind-scrollbar";
+
+/*
+ * Explicit source roots for Tailwind v4 content scanning.
+ *
+ * packages/app's own `bun run dev` runs with CWD=packages/app, and Tailwind
+ * v4 auto-detects sources via a package.json walk from there — that default
+ * works for the web distribution.
+ *
+ * When packages/desktop's `electron-vite dev` serves this CSS with
+ * `root: packages/app + configFile: false`, Vite runs with CWD=packages/desktop
+ * so Tailwind's auto-detection scans packages/desktop/** — which has no .tsx
+ * files, so zero utility classes get emitted. The @source directive below
+ * anchors the scan to packages/app/src/** (relative to this CSS file) and is
+ * inert for packages/app's own dev because the same paths are already
+ * auto-covered.
+ */
+@source "./**/*.{tsx,ts,jsx,js}";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -202,6 +217,13 @@
 }
 
 /* OK Blob mascot */
+
+/* Group wrapper — the click bounce animates the group so body + eyes squish together. */
+.ok-blob-group {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+
 .ok-blob-body {
   fill: var(--color-azure-blue);
   animation: ok-blob-squish 6s ease-in-out infinite;
@@ -289,8 +311,151 @@
   }
 }
 
-.ok-blob-clicked {
+/* Level 2 — rapid click, bouncier + snappier */
+@keyframes ok-blob-click-bounce-2 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  20% {
+    transform: scaleY(0.84) scaleX(1.13);
+  }
+  45% {
+    transform: scaleY(1.1) scaleX(0.93);
+  }
+  70% {
+    transform: scaleY(0.97) scaleX(1.02);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Level 3 — rage click, max squish + max stretch */
+@keyframes ok-blob-click-bounce-3 {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  18% {
+    transform: scaleY(0.76) scaleX(1.2);
+  }
+  42% {
+    transform: scaleY(1.16) scaleX(0.88);
+  }
+  65% {
+    transform: scaleY(0.96) scaleX(1.03);
+  }
+  85% {
+    transform: scaleY(1.02) scaleX(0.99);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.ok-blob-clicked-1 {
   animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-2 {
+  animation: ok-blob-click-bounce-2 550ms var(--ease-out-strong) forwards;
+}
+.ok-blob-clicked-3 {
+  animation: ok-blob-click-bounce-3 650ms var(--ease-out-strong) forwards;
+}
+
+/* Firework burst — radial particles launch from the blob center, translate
+   outward with varied distance/size/delay/duration, then fade. Per-particle
+   variation is pumped in via CSS custom properties (--fx-tx, --fx-ty,
+   --fx-delay, --fx-duration) set inline by the React component so one keyframe
+   serves every spark. */
+.ok-blob-firework {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ok-blob-firework-pop var(--fx-duration, 700ms) var(--ease-out-strong)
+    var(--fx-delay, 0ms) forwards;
+}
+
+@keyframes ok-blob-firework-pop {
+  0% {
+    transform: translate(0, 0) scale(0.2);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(calc(var(--fx-tx, 0px) * 0.22), calc(var(--fx-ty, 0px) * 0.22)) scale(1.35);
+    opacity: 1;
+  }
+  70% {
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.7);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate(var(--fx-tx, 0px), var(--fx-ty, 0px)) scale(0.1);
+    opacity: 0;
+  }
+}
+
+/* Sleeping state — closed eyelids + gentler body motion + floating "z"s.
+   The sleeping class lives on the group, so descendant selectors pause the
+   blink/squish animations without removing them entirely (a very slow rest
+   cycle reads as breathing). */
+.ok-blob-sleeping .ok-blob-body {
+  animation: ok-blob-sleeping-breathe 4.8s ease-in-out infinite;
+}
+.ok-blob-sleeping .ok-blob-eye {
+  animation: none;
+}
+
+.ok-blob-sleeping-eye {
+  stroke: var(--color-azure-blue);
+  opacity: 0.9;
+}
+.dark .ok-blob-sleeping-eye {
+  stroke: var(--color-sky-blue);
+}
+
+@keyframes ok-blob-sleeping-breathe {
+  0%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  50% {
+    transform: scaleY(0.985) scaleX(1.01);
+  }
+}
+
+/* Floating z letters — drift up + fade. Two instances with staggered delay
+   and different travel so the rhythm doesn't look mechanical. */
+.ok-blob-z {
+  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, sans-serif);
+  font-size: 6px;
+  font-style: italic;
+  font-weight: 600;
+  fill: var(--color-azure-blue);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.dark .ok-blob-z {
+  fill: var(--color-sky-blue);
+}
+.ok-blob-z-1 {
+  animation: ok-blob-z-float 2.4s ease-out 0s infinite;
+}
+.ok-blob-z-2 {
+  animation: ok-blob-z-float 2.4s ease-out 1.2s infinite;
+}
+
+@keyframes ok-blob-z-float {
+  0% {
+    transform: translate(0, 0) scale(0.7);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(3px, -6px) scale(1.1);
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -300,8 +465,21 @@
   .ok-blob-body {
     animation: none;
   }
-  .ok-blob-clicked {
+  .ok-blob-clicked-1,
+  .ok-blob-clicked-2,
+  .ok-blob-clicked-3 {
     animation: none;
+  }
+  .ok-blob-firework {
+    display: none;
+  }
+  .ok-blob-sleeping .ok-blob-body,
+  .ok-blob-z-1,
+  .ok-blob-z-2 {
+    animation: none;
+  }
+  .ok-blob-z {
+    opacity: 0.7;
   }
 }
 
@@ -366,7 +544,7 @@
 /* Editor layout — grid on wrapper; content column max 1024px (lg), side rails minmax(gutter, 1fr) */
 .tiptap-editor {
   --content-max-width: 1024px;
-  --margin-width: 3rem;
+  --margin-width: 4rem;
   display: grid;
   width: 100%;
   grid-template-columns:
@@ -374,7 +552,6 @@
     [content-start] minmax(0, min(var(--content-max-width), 100%))
     [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
     [full-end];
-  @apply lg:[--margin-width:8rem];
 }
 
 .tiptap-editor > div {
@@ -413,6 +590,12 @@
   font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.4em;
+}
+
+.ProseMirror > h1:first-child,
+.ProseMirror > h2:first-child,
+.ProseMirror > h3:first-child {
+  margin-top: 0;
 }
 
 .ProseMirror h1 {
@@ -572,12 +755,97 @@
   @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
 }
 
-/* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
-   so the chip's own color/decoration styling isn't overridden by .ProseMirror a */
-.ProseMirror [data-resolution-state] a {
-  color: inherit;
-  text-decoration: none;
-  @apply dark:text-inherit dark:hover:text-inherit;
+/* -------------------------------------------------------------------------
+ * V2 InteractionLayer chips — InternalLink + WikiLink (precedent #25(h))
+ *
+ * Pre-V2: per-instance React MarkViews rendered styled chrome around each
+ * link mark. V2 moves to plain-DOM `<span data-link>` / `<span data-wiki-link>`
+ * with `data-mark-id` / `data-node-id` for event delegation AND a
+ * `data-resolution-state` decoration attribute ('resolved' | 'folder' |
+ * 'unresolved' | 'loading' | 'external' | 'anchor') written by the
+ * `linkResolutionDecorationPlugin`. The styling below is the user-visible
+ * half of that contract (review Pass-2 Major #8).
+ * --------------------------------------------------------------------- */
+
+.ProseMirror [data-link],
+.ProseMirror [data-wiki-link] {
+  display: inline;
+  cursor: pointer;
+  color: var(--color-azure-blue);
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-underline-offset: 2px;
+  border-radius: 2px;
+  @apply font-medium dark:text-sky-blue;
+}
+
+.ProseMirror [data-link]:hover,
+.ProseMirror [data-wiki-link]:hover {
+  text-decoration-thickness: 2px;
+  @apply dark:text-azure-300;
+}
+
+.ProseMirror [data-link]:focus-visible,
+.ProseMirror [data-wiki-link]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Resolution states — the decoration plugin writes `data-resolution-state`
+   at PM render time. Selectors are specific enough to override the base
+   chip color when present. */
+
+.ProseMirror [data-resolution-state="resolved"] {
+  color: var(--color-azure-blue);
+  @apply dark:text-sky-blue;
+}
+
+/* Folder chip — doc-reference to a directory rather than a page. Italicize
+   to differentiate from a resolved page link. */
+.ProseMirror [data-resolution-state="folder"] {
+  font-style: italic;
+}
+
+/* Unresolved / broken — squiggly underline + muted color to make the
+   broken state visible in WYSIWYG (source mode has its own squiggly via
+   `source-polish`). */
+.ProseMirror [data-resolution-state="unresolved"] {
+  color: var(--color-red-600, #dc2626);
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-red-600, #dc2626);
+}
+
+.dark .ProseMirror [data-resolution-state="unresolved"] {
+  color: #f87171; /* red-400 */
+  text-decoration-color: #f87171;
+}
+
+/* Loading — awaiting page-list-cache population. Dotted underline
+   communicates "indeterminate" without alarming. */
+.ProseMirror [data-resolution-state="loading"] {
+  opacity: 0.7;
+  text-decoration-style: dotted;
+}
+
+/* External — leaves-the-workspace visual (↗ cue via ::after would require
+   layout room on inline; we take a subtler color-differentiation route). */
+.ProseMirror [data-resolution-state="external"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="external"]::after {
+  content: " ↗";
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+/* In-doc anchor — no external navigation. Keep base link color; just drop
+   the ↗ glyph. Selector intentionally LAST so it overrides `external`'s
+   ::after if both flags ever coexist. */
+.ProseMirror [data-resolution-state="anchor"] {
+  color: var(--color-azure-blue);
+}
+.ProseMirror [data-resolution-state="anchor"]::after {
+  content: none;
 }
 
 /* Horizontal rule */
@@ -1119,4 +1387,40 @@ button:active:not(:disabled) {
 .cm-table-header {
   padding-inline-start: calc(8px + 2ch);
   text-indent: -2ch;
+}
+
+/* V2 mode-toggle visibility (FR9, V2 SPEC §8b) — replaces Tailwind's
+   `hidden` (`display: none`) on the non-active editor's container during
+   Visual ↔ Source mode flips. `content-visibility: hidden` skips browser
+   style + layout recalc on the 39K-PM-DOM-node tree of large docs:
+   CV:hidden probe AC22 MET at 204 ms first / 115 ms repeat in dev,
+   target G4 < 200 ms prod (cold-mount-profile §S3). `contain-intrinsic-size`
+   reserves layout space so the scrollbar doesn't collapse during the
+   toggle (no jarring scrollbar disappearance). The reserved height (8000px)
+   is generous enough to cover most docs without forcing a layout shift
+   on toggle-back; for ultra-tall docs CV:hidden's auto-resume on visibility
+   handles the diff cheaply.
+
+   Difference vs `display: none`:
+     - `display: none` removes the element from layout entirely. Browser
+       still has the DOM in memory but no layout/paint cost.
+     - `content-visibility: hidden` keeps the element in layout but skips
+       descendant layout/paint. The container reserves intrinsic size.
+       Switching back to visible is faster on large trees (no full reflow).
+
+   Out-of-flow stacking: `position: absolute; inset: 0` takes the hidden
+   editor out of normal flow so its 8000px reserved intrinsic size does
+   not size the wrapper (or any grid row) — earlier grid-based stacking
+   sized rows to MAX intrinsic across children, stretching the visible
+   sibling to 8000px and producing bottom whitespace on short docs. The
+   consuming dual-editor wrapper must be `position: relative` so this
+   absolute positioning resolves against it (see `EditorActivityPool.tsx`).
+   `pointer-events: none` guards against stray hit-tests reaching hidden
+   descendants before content-visibility's own hit-test skip applies. */
+.ok-mode-hidden {
+  content-visibility: hidden;
+  contain-intrinsic-size: 0 8000px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }

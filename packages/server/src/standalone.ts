@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { Extension } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
+import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -12,7 +15,12 @@ import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
-import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import {
+  type HeadWatcherHandle,
+  readBranchFromHead,
+  resolveGitDir,
+  startHeadWatcher,
+} from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
@@ -38,9 +46,11 @@ import {
   setReconciledBase,
   switchReconciledBaseScope,
 } from './persistence.ts';
+import { loadPrincipal } from './principal.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import { createServerObserverExtension } from './server-observer-extension.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -48,10 +58,13 @@ import {
   type ParkableDoc,
   parkBranch,
   readParkedState,
+  SERVICE_WRITER,
   type ShadowHandle,
   type ShadowRef,
+  saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { SyncEngine } from './sync-engine.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -65,9 +78,10 @@ export interface ServerOptions {
   commitDebounceMs?: number;
   wipRef?: string;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use and must never be
+   * exposed in production. Enable only in tests.
    */
   enableTestRoutes?: boolean;
   /** Shadow repo handle — passed to persistence. */
@@ -92,6 +106,13 @@ export interface ServerOptions {
    * on the first agent edit per session; consumers that don't care can omit.
    */
   onAgentWrite?: () => void;
+  /**
+   * CLI argv prefix for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (CLI on PATH).
+   * Pass [process.execPath, process.argv[1]] from start.ts to use the exact
+   * runtime that launched this server — necessary in dev (bun + .ts entry).
+   */
+  localOpCliArgs?: string[];
 }
 
 export interface ServerInstance {
@@ -99,6 +120,7 @@ export interface ServerInstance {
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
   agentFocusBroadcaster: AgentFocusBroadcaster;
+  agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -117,7 +139,27 @@ export interface ServerInstance {
    * once the HTTP listener has bound to a kernel-assigned port.
    */
   readonly lockDir: string;
+  /** Active sync engine instance, or null if dormant / no remote detected. */
+  readonly syncEngine: SyncEngine | null;
 }
+
+/**
+ * Transaction origin for park-snapshot reads (US-017, D39).
+ *
+ * Wrapping each serializeDoc() call inside doc.transact(..., PARK_SNAPSHOT_ORIGIN)
+ * ensures Y.js serializes the snapshot capture atomically against concurrent
+ * in-flight transactions. skipStoreHooks: false — the transact is read-only
+ * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
+ * concurrent observer somehow fires, it short-circuits symmetrically (D39).
+ */
+const PARK_SNAPSHOT_ORIGIN = (() => {
+  const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
+  return Object.freeze({
+    source: 'local' as const,
+    skipStoreHooks: false,
+    context: ctx,
+  }) satisfies PairedWriteOrigin;
+})();
 
 export function createServer(options: ServerOptions): ServerInstance {
   const {
@@ -135,6 +177,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
+    localOpCliArgs,
   } = options;
 
   const log = getLogger('server');
@@ -158,6 +201,9 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
+  // Mutable principal holder — populated in initAsync (D50, US-024)
+  let loadedPrincipal: Principal | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -183,6 +229,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      getPrincipal: () => loadedPrincipal,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -195,6 +242,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
     agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
+    agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -202,6 +250,65 @@ export function createServer(options: ServerOptions): ServerInstance {
       signalChannel,
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
+
+    // D50 / US-024: Browser tabs supply { principalId, tabSessionId } via token.
+    // onAuthenticate parses the JSON token and hoists identity into connection
+    // context so persistence.resolveWriterFromOrigin sees source:'connection'
+    // with ctx.principalId set. Missing or invalid tokens are silently ignored
+    // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
+    // like test harness and MCP never send tokens).
+    //
+    // Post-QA review fix (principalId-token-unverified, Consider):
+    // The token is unauthenticated — a rogue browser tab (or a page that
+    // discovers the localhost port + passes the Origin allowlist) could claim
+    // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
+    // when the claim matches the server's loaded principal, and ignore the
+    // claim otherwise (falling back to SERVICE_WRITER via resolveWriterFromOrigin).
+    // This closes attribution-forgery on the single-user loopback deployment
+    // without requiring a signed token. When multi-principal support is ever
+    // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
+    const principalAuthExtension: Extension = {
+      async onAuthenticate(payload) {
+        try {
+          const tokenStr = payload.token;
+          if (!tokenStr) return;
+          const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
+          const ctx = payload.context as Record<string, unknown>;
+          if (typeof parsed.principalId === 'string') {
+            // Pin to loaded principal when the claim matches; ignore on mismatch.
+            if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
+              ctx.principalId = loadedPrincipal.id;
+            } else if (loadedPrincipal) {
+              // Claim doesn't match — log at warn and omit principalId so the
+              // write falls through to SERVICE_WRITER. Preserves observability
+              // without letting the claim through.
+              console.warn(
+                JSON.stringify({
+                  event: 'principal-token-mismatch',
+                  claimed: parsed.principalId,
+                  loaded: loadedPrincipal.id,
+                }),
+              );
+            }
+            // When loadedPrincipal is null (not yet loaded), accept the claim
+            // — the async load is best-effort and browser writes need a writer
+            // ID even in the brief pre-load window. Classified writer fallback
+            // happens via resolveWriterFromOrigin when loaded fields aren't
+            // available for display-name lookup.
+            else {
+              ctx.principalId = parsed.principalId;
+            }
+          }
+          if (typeof parsed.tabSessionId === 'string') {
+            ctx.tabSessionId = parsed.tabSessionId;
+          }
+          ctx.kind = 'human';
+        } catch {
+          // Invalid/missing token — connection proceeds without principal context
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(principalAuthExtension);
 
     const apiExtension = createApiExtension({
       hocuspocus,
@@ -217,11 +324,24 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
+      agentPresenceBroadcaster,
       onAgentWrite: options.onAgentWrite,
+      getSyncEngine: () => syncEngine,
+      localOpCliArgs,
+      projectDir,
+      getPrincipal: () => loadedPrincipal,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
-    hocuspocus.configuration.extensions.push(createServerObserverExtension({ mdManager, schema }));
+    hocuspocus.configuration.extensions.push(
+      createServerObserverExtension({
+        mdManager,
+        schema,
+        shadowRef,
+        contentRoot,
+        getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      }),
+    );
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;
@@ -241,7 +361,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     const document = hocuspocus.documents.get(docName);
     if (!document) return null;
     const xmlFragment = document.getXmlFragment('default');
-    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
     const metaMap = document.getMap('metadata');
     const fm = metaMap.get('frontmatter');
@@ -409,20 +529,34 @@ export function createServer(options: ServerOptions): ServerInstance {
           const isDirty = ours !== base;
 
           if (isDirty && shadowRef.current) {
-            const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-            if (rescuePath) {
-              try {
-                mkdirSync(dirname(rescuePath), { recursive: true });
-                writeFileSync(rescuePath, ours, 'utf-8');
-                incrementRescueBuffer();
-                log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
-              } catch (e) {
-                log.error(
-                  { docName, err: e },
-                  `[reconcile] rescue buffer write failed: ${docName}`,
-                );
-              }
-            }
+            // Silent rescue checkpoint (SPEC §6 R7e) — preserve in-memory
+            // content on a timeline ref so TimelinePanel renders it as an
+            // 'external-change-rescue' row. Fire-and-forget; failures warn
+            // but don't block the delete lifecycle.
+            const shadowForCheckpoint = shadowRef.current;
+            const branch = headWatcher?.getLastKnownBranch() ?? 'main';
+            queueMicrotask(() => {
+              saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                kind: 'external-change-rescue',
+                docName,
+                contents: ours,
+                label: `External change recovered @ ${new Date().toISOString()}`,
+                branch,
+                // Delete event has no incoming disk content — sentinel empty
+                // string so the TimelineRescueEntry shape round-trips.
+                metadata: { incomingDiskSha: '' },
+              })
+                .then(() => {
+                  incrementRescueBuffer();
+                  log.info({ docName }, `[reconcile] rescue checkpoint saved (delete): ${docName}`);
+                })
+                .catch((e: unknown) => {
+                  log.error(
+                    { docName, err: e },
+                    `[reconcile] rescue checkpoint write failed: ${docName}`,
+                  );
+                });
+            });
           }
 
           const lifecycleMap = document.getMap('lifecycle');
@@ -516,6 +650,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  let syncEngine: SyncEngine | null = null;
   let inflightDestroy: Promise<void> | null = null;
 
   // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
@@ -688,9 +823,15 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
           }
 
-          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          // Phase 1b: tear down CC1 broadcaster + agent-presence broadcaster +
+          // __system__ direct connection. Both broadcasters share the same
+          // `__system__` Y.Doc — their destroys clear internal state (debounce
+          // timers for CC1; idempotent no-op for agent-presence today but
+          // symmetric with the broadcaster-lifecycle contract). The single
+          // systemDocConnection handle is torn down last.
           try {
             cc1Broadcaster?.destroy();
+            agentPresenceBroadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
@@ -750,9 +891,37 @@ export function createServer(options: ServerOptions): ServerInstance {
           } finally {
             if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
           }
+          // Phase 4.5: stop sync engine (CC8 Phase 5 per spec)
+          try {
+            if (syncEngine) {
+              await syncEngine.destroy();
+              syncEngine = null;
+            }
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'sync-engine-stop',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown sync-engine-stop failed');
+          }
         } finally {
           // Phase 5: shadow repo release — ALWAYS runs
           if (shadowRef.current) {
+            // Persist current HEAD before releasing shadow lock (FR11)
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+              const currentHead = (await projectGit.revparse('HEAD')).trim();
+              if (currentHead) {
+                writeFileSync(
+                  resolve(shadowRef.current.gitDir, 'last-known-head'),
+                  currentHead,
+                  'utf-8',
+                );
+              }
+            } catch {
+              // Fresh repo with no commits, or git not available — skip silently
+            }
+
             try {
               destroyShadowRepo(shadowRef.current);
             } catch (err) {
@@ -802,21 +971,32 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
+    // Load (or create) the principal record — non-blocking best-effort (D50, US-024)
+    try {
+      loadedPrincipal = await loadPrincipal(contentDir);
+      log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
+    } catch (e) {
+      log.warn(
+        { err: e },
+        '[server] principal load failed — browser writes will use SERVICE_WRITER',
+      );
+    }
+
     // Auto-initialize shadow repo if not provided
     if (!shadowRef.current) {
       try {
         shadowRef.current = await initShadowRepo(projectDir);
         log.info(
           { gitDir: shadowRef.current.gitDir },
-          `[server] shadow repo initialized at ${shadowRef.current.gitDir}`,
+          `[server] history repo initialized at ${shadowRef.current.gitDir}`,
         );
       } catch (e) {
-        log.error({ err: e }, '[server] shadow repo init failed');
+        log.error({ err: e }, '[server] history repo init failed');
         degraded.push('shadow-repo');
       }
     }
 
-    // Verify shadow repo integrity — reinit only on structural corruption, not transient errors
+    // Verify history repo integrity — reinit only on structural corruption, not transient errors
     if (shadowRef.current) {
       try {
         const sg = shadowGit(shadowRef.current);
@@ -824,17 +1004,88 @@ export function createServer(options: ServerOptions): ServerInstance {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
-          log.warn({}, '[server] shadow repo appears corrupted — reinitializing');
+          log.warn({}, '[server] history repo appears corrupted — reinitializing');
           try {
             shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
-            log.error({ err: e2 }, '[server] shadow repo reinit failed');
+            log.error({ err: e2 }, '[server] history repo reinit failed');
             shadowRef.current = undefined;
             if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
-          log.error({ err: e }, '[server] shadow repo check failed (transient?)');
+          log.error({ err: e }, '[server] history repo check failed (transient?)');
         }
+      }
+    }
+
+    // HEAD-drift check (FR11): detect git operations that occurred while offline
+    // Compare stored last-known-head against current HEAD SHA and import if diverged
+    if (shadowRef.current) {
+      try {
+        const lastKnownHeadPath = resolve(shadowRef.current.gitDir, 'last-known-head');
+
+        // Read last persisted HEAD SHA
+        let lastKnownHead: string | null = null;
+        try {
+          lastKnownHead = readFileSync(lastKnownHeadPath, 'utf-8').trim() || null;
+        } catch {
+          // File doesn't exist yet — first run
+        }
+
+        // Read current HEAD SHA from project repo
+        let currentHead: string | null = null;
+        try {
+          const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+          currentHead = (await projectGit.revparse('HEAD')).trim() || null;
+        } catch {
+          // Fresh repo with no commits — skip drift check
+        }
+
+        if (currentHead !== null) {
+          if (currentHead !== lastKnownHead) {
+            // Drift detected (includes null → SHA for fresh clone T0 case)
+            let branch = 'main';
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+              const b = (await projectGit.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
+              if (b && b !== 'HEAD') branch = b;
+            } catch {
+              // Detached HEAD or error — fallback to 'main'
+            }
+
+            log.info(
+              { lastKnownHead, currentHead, branch },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=import`,
+            );
+
+            try {
+              await commitUpstreamImport(
+                shadowRef.current,
+                contentRoot ?? '',
+                lastKnownHead,
+                currentHead,
+                branch,
+              );
+              incrementUpstreamImport();
+            } catch (e) {
+              log.warn({ err: e }, '[head-drift] commitUpstreamImport failed — continuing');
+            }
+          } else {
+            log.info(
+              { currentHead },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=noop`,
+            );
+          }
+
+          // Always persist current HEAD so next startup has an accurate baseline
+          try {
+            writeFileSync(lastKnownHeadPath, currentHead, 'utf-8');
+          } catch (e) {
+            log.warn({ err: e }, '[head-drift] failed to write last-known-head');
+          }
+        }
+      } catch (e) {
+        log.warn({ err: e }, '[head-drift] check failed — continuing');
       }
     }
 
@@ -890,25 +1141,46 @@ export function createServer(options: ServerOptions): ServerInstance {
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
 
+          // Gate new L1/L2 writes BEFORE the park loop so any onStoreDocument
+          // calls that fire during the async parkBranch are blocked (D39).
+          setBatchInProgress(true);
+
           // Park current branch's Y.Doc state to shadow refs
           if (shadowRef.current) {
             const currentBranch = getActiveBranch();
+            // Read new branch from HEAD (already updated by git at onBatchBegin time)
+            // so the park subject can carry both ends of the switch (D39, D53).
+            const gitDir = resolveGitDir(projectDir);
+            const newBranch = gitDir
+              ? (readBranchFromHead(gitDir) ?? currentBranch)
+              : currentBranch;
             const docs: ParkableDoc[] = [];
-            for (const [docName] of hocuspocus.documents) {
+            for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName)) continue;
-              const markdown = serializeDoc(docName);
+              // Wrap in doc.transact so Y.js serializes snapshot capture atomically
+              // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
+              let markdown: string | null = null;
+              document.transact(() => {
+                markdown = serializeDoc(docName);
+              }, PARK_SNAPSHOT_ORIGIN);
               if (markdown === null) continue;
               const diskSnapshot = getReconciledBase(docName) ?? markdown;
               docs.push({ docName, markdown, diskSnapshot });
             }
             if (docs.length > 0) {
               try {
-                const sha = await parkBranch(shadowRef.current, currentBranch, 'server', docs);
+                const sha = await parkBranch(
+                  shadowRef.current,
+                  currentBranch,
+                  SERVICE_WRITER.id,
+                  docs,
+                  newBranch,
+                );
                 if (sha) {
                   incrementPark();
                   log.info(
                     { count: docs.length, branch: currentBranch, sha: sha.slice(0, 8) },
-                    `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
+                    `[history] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
                   );
                 }
               } catch (e) {
@@ -916,8 +1188,6 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
             }
           }
-
-          setBatchInProgress(true);
         },
         // onBatchEnd — dispatch on BatchKind
         async (info) => {
@@ -960,23 +1230,32 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const isDirty = ours !== base;
 
                   if (isDirty && shadowRef.current) {
-                    const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
-                    if (rescuePath) {
-                      try {
-                        mkdirSync(dirname(rescuePath), { recursive: true });
-                        writeFileSync(rescuePath, ours, 'utf-8');
-                        incrementRescueBuffer();
-                        log.info(
-                          { docName },
-                          `[reconcile] rescue buffer saved on branch switch: ${docName}`,
-                        );
-                      } catch (e) {
-                        log.error(
-                          { docName, err: e },
-                          `[reconcile] rescue buffer write failed: ${docName}`,
-                        );
-                      }
-                    }
+                    // Silent rescue checkpoint on branch-switch tombstone
+                    // (SPEC §6 R7e). Same pattern as reconcile-delete above.
+                    const shadowForCheckpoint = shadowRef.current;
+                    queueMicrotask(() => {
+                      saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
+                        kind: 'external-change-rescue',
+                        docName,
+                        contents: ours,
+                        label: `External change recovered @ ${new Date().toISOString()}`,
+                        branch: newBranch,
+                        metadata: { incomingDiskSha: '' },
+                      })
+                        .then(() => {
+                          incrementRescueBuffer();
+                          log.info(
+                            { docName },
+                            `[reconcile] rescue checkpoint saved on branch switch: ${docName}`,
+                          );
+                        })
+                        .catch((e: unknown) => {
+                          log.error(
+                            { docName, err: e },
+                            `[reconcile] rescue checkpoint write failed: ${docName}`,
+                          );
+                        });
+                    });
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');
@@ -1016,7 +1295,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const parked = await readParkedState(
                     shadowRef.current,
                     newBranch,
-                    'server',
+                    SERVICE_WRITER.id,
                     docName,
                   );
                   if (!parked) continue;
@@ -1113,7 +1392,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   newHead: info.newHead.slice(0, 8),
                   sha: sha.slice(0, 8),
                 },
-                `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
+                `[history] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );
             } catch (e) {
               log.error({ err: e }, '[shadow] upstream-import failed');
@@ -1125,6 +1404,32 @@ export function createServer(options: ServerOptions): ServerInstance {
       log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
     }
+
+    // Start SyncEngine (FR21): remote detection + auto-sync
+    // Build credentialArgs from localOpCliArgs so git fetch/push can authenticate.
+    // Pattern: ['-c', 'credential.helper=!<cli-binary> auth git-credential']
+    const cliCmd = localOpCliArgs?.[0] ?? 'open-knowledge';
+    const cliPrefix =
+      localOpCliArgs && localOpCliArgs.length > 1 ? localOpCliArgs.join(' ') : cliCmd;
+    const syncCredentialArgs = ['-c', `credential.helper=!${cliPrefix} auth git-credential`];
+    try {
+      syncEngine = new SyncEngine({
+        projectDir,
+        contentDir,
+        contentFilter,
+        contentRoot,
+        credentialArgs: syncCredentialArgs,
+        cc1Broadcaster,
+        setBatchInProgress,
+        onStateChange: (state) => {
+          log.info({ state }, `[sync] state → ${state}`);
+        },
+      });
+      await syncEngine.start();
+    } catch (err) {
+      log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
+      syncEngine = null;
+    }
   }
 
   const ready = initAsync();
@@ -1134,10 +1439,14 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     cc1Broadcaster,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     contentFilter,
     destroy,
     ready,
     degraded,
     lockDir,
+    get syncEngine() {
+      return syncEngine;
+    },
   };
 }

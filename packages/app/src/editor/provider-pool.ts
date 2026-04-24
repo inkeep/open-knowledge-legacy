@@ -1,6 +1,8 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
+import { mark } from '../lib/perf/mark';
+import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
@@ -8,15 +10,7 @@ import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sy
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-function defaultCollabWsUrl(): string {
-  if (typeof location === 'undefined') {
-    return 'ws://localhost/collab';
-  }
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${location.host}/collab`;
-}
-
-export interface PoolEntry {
+interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
   syncState: SyncState;
@@ -36,7 +30,7 @@ export interface PoolEntry {
   bridgeSetupFailed: boolean;
 }
 
-export type PoolChangeCallback = () => void;
+type PoolChangeCallback = () => void;
 
 const editorSchema = getSchema(sharedExtensions);
 
@@ -87,6 +81,27 @@ export const MAX_POOL = 10;
 /**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
+ *
+ * **Contract — `wsUrl` is frozen at construction ("first-URL wins").**
+ * `DocumentContext` instantiates the module-level singleton the first time
+ * `useCollabUrl()` resolves a non-null URL. If `/api/config` later reports a
+ * different URL (e.g. `ok start` crashed and was respawned on a different
+ * kernel-allocated port, OR the user clicks the ConnectingBanner's Retry
+ * after a terminal-state transition and `/api/config` now returns a new
+ * port), this pool continues targeting the original URL.
+ *
+ * Why we accept this today: the built-in HocuspocusProvider exponential
+ * backoff + our 4s recycle debounce handle server-restart-on-same-port
+ * transparently, which is the common case. Port-change-on-restart is rare
+ * enough that a full page reload is an acceptable recovery path — and
+ * tearing down live providers mid-session would require deciding about
+ * unsaved-CRDT-state preservation, which is out of scope for the
+ * Zero-Ceremony Resume bet.
+ *
+ * The next maintainer who wants dynamic `wsUrl` updates must: (a) add a
+ * tear-down + rebuild step keyed on `wsUrl` changes, (b) decide how to
+ * reconcile any pending CRDT ops buffered during the disconnect, and (c)
+ * extend the multi-client test harness with a port-change scenario.
  */
 export class ProviderPool {
   readonly entries = new Map<string, PoolEntry>();
@@ -96,12 +111,26 @@ export class ProviderPool {
   private readonly wsUrl: string;
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
+  private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
 
-  constructor(maxSize: number = MAX_POOL, wsUrl?: string, recycleDebounceMs?: number) {
+  constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
-    // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
-    this.wsUrl = wsUrl ?? defaultCollabWsUrl();
+    // wsUrl is REQUIRED post-lifecycle-split (US-014 / FR-1.13) — resolved
+    // asynchronously by `useCollabUrl()` from the `ok ui` /api/config endpoint
+    // before the pool is instantiated. Callers must not pass an empty string.
+    this.wsUrl = wsUrl;
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+  }
+
+  /**
+   * Set the browser tab's identity (principalId + tabSessionId) after the
+   * principal has been fetched from the server. New provider opens will
+   * include this as a JSON `token` in the HocuspocusProvider so the server's
+   * `onAuthenticate` hook can set `connection.context.principalId` for
+   * correct writer attribution (D50, US-024).
+   */
+  setTabIdentity(identity: { principalId: string; tabSessionId: string }): void {
+    this.tabIdentity = identity;
   }
 
   /** Register a callback that fires whenever pool state changes. */
@@ -146,6 +175,7 @@ export class ProviderPool {
       url: this.wsUrl,
       name: docName,
       forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
+      ...(this.tabIdentity !== null ? { token: JSON.stringify(this.tabIdentity) } : {}),
     });
 
     const entry: PoolEntry = {
@@ -247,6 +277,49 @@ export class ProviderPool {
     return entry;
   }
 
+  /**
+   * V2 SPEC FR12 (Option G): pre-warm a provider on sidebar hover.
+   *
+   * Opens a HocuspocusProvider for `docName` WITHOUT promoting it in the
+   * LRU order — the returned entry sits at LRU-oldest, evictable by any
+   * subsequent user-initiated `open()`. Rate-limiting and concurrency
+   * caps are the caller's responsibility (FileSidebar uses an 80 ms
+   * intent debounce + a 3-concurrent cap per Audit §S4).
+   *
+   * Idempotent: if the doc is already in the pool (any state), returns
+   * the existing entry without modification. The existing entry's LRU
+   * position is unchanged by prewarm — calls to `touch()` only happen on
+   * user-initiated `open()` / `setActive()`.
+   *
+   * Returns null for system docs. The pool does not evict an Activity-
+   * mounted doc on prewarm admission — evictLru() always skips the
+   * active doc. When the pool is at capacity, prewarm's cold-path
+   * returns the newly-constructed entry even though it sits at the
+   * oldest position and will be the first to be evicted.
+   */
+  prewarm(docName: string): PoolEntry | null {
+    if (isSystemDoc(docName)) return null;
+    const existing = this.entries.get(docName);
+    if (existing) {
+      // Already warm — return without touching LRU.
+      return existing;
+    }
+    // Cold path: use `open()` to construct the provider but DO NOT touch
+    // LRU or active. `open()` internally calls `touch(docName)` which
+    // bumps LRU to most-recent — we need to counter-act so prewarms are
+    // at the oldest slot. The simplest approach: let `open()` run its
+    // full init, then move the docName to LRU-oldest immediately.
+    const entry = this.open(docName);
+    if (!entry) return null;
+    // Demote to LRU-oldest — prewarms should never evict user-initiated docs.
+    const idx = this.lruOrder.indexOf(docName);
+    if (idx !== -1) {
+      this.lruOrder.splice(idx, 1);
+      this.lruOrder.unshift(docName);
+    }
+    return entry;
+  }
+
   /** Close a specific document — disconnect and clean up. */
   close(docName: string): void {
     const entry = this.entries.get(docName);
@@ -300,11 +373,11 @@ export class ProviderPool {
   /**
    * Destroy and recreate the entry for `docName`, preserving `activeDocName`
    * across the swap. Used by the "Try again" retry path in
-   * `DocumentErrorBoundary` and `NavigationPendingBar` tier-3 to recover from
-   * `BridgeSetupError` (or any sync failure that leaves the provider in a
-   * known-broken state). Differs from `close + open` in that it does NOT
-   * intermediately null `activeDocName`, so `EditorArea` does not flash the
-   * "Select a document" empty state during the swap.
+   * `DocumentErrorBoundary` to recover from `BridgeSetupError` (or any sync
+   * failure that leaves the provider in a known-broken state). Differs from
+   * `close + open` in that it does NOT intermediately null `activeDocName`,
+   * so `EditorArea` does not flash the "Select a document" empty state
+   * during the swap.
    *
    * No-op if the doc is not in the pool.
    */
@@ -327,7 +400,7 @@ export class ProviderPool {
     // Find the LRU entry that is NOT the active doc
     for (const docName of this.lruOrder) {
       if (docName !== this.activeDocName) {
-        console.log(`[ProviderPool] Evicting LRU entry: ${docName}`);
+        mark('ok/pool/evict-lru', { docName });
         this.close(docName);
         return;
       }
@@ -346,6 +419,19 @@ export class ProviderPool {
     // teardown. Natural (network-triggered) close events still reject as
     // expected because this path only runs inside pool destroy/recycle/evict.
     invalidateSyncPromise(entry.docName);
+    // Evict V2 editor cache entries BEFORE destroying the provider: the cache
+    // holds Editor/EditorView instances bound to `provider.document` via
+    // Collaboration.configure / y-codemirror.next. If the cache survived the
+    // pool's destroy, the next `mountTiptapEditor/mountCmEditor(docName)`
+    // would return a stale entry bound to an orphaned Y.Doc (Critical #2 from
+    // 2026-04-21 review). Coupling eviction here — the single point that
+    // destroys the provider — keeps the invariant at one site. Eviction is
+    // safe when the cache has no entry (no-op returns false). It also runs
+    // editor.destroy() itself, so the React subtree receives a destroyed
+    // editor on next mount and falls through to factory-construct a fresh
+    // one.
+    evictTiptapEditor(entry.docName);
+    evictCmEditor(entry.docName);
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
@@ -361,7 +447,7 @@ export class ProviderPool {
     if (!entry || entry.tearingDown) return;
 
     const wasActive = this.activeDocName === docName;
-    console.log(`[ProviderPool] Recycling disconnected entry: ${docName}`);
+    mark('ok/pool/recycle-disconnected', { docName, wasActive });
 
     this.destroyEntry(entry);
     this.entries.delete(docName);

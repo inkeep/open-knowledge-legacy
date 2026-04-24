@@ -37,8 +37,8 @@ describe('resolveGitDir', () => {
     expect(result).toBe(realGitDir);
   });
 
-  test('returns null when no .git exists (standalone mode)', () => {
-    const projectRoot = resolve(tmpDir, 'standalone');
+  test('returns null when no .git exists', () => {
+    const projectRoot = resolve(tmpDir, 'no-git');
     mkdirSync(projectRoot, { recursive: true });
 
     const result = resolveGitDir(projectRoot);

@@ -1,14 +1,27 @@
 name: Nightly deep tests
 
-# Tier 2 per SPEC §6 R9 (US-016). Runs the fuzz + stress + perf regression gate
-# + parse-health gate that the PR-time `ci.yml` (tier 1) does not. Budget: 30 min
-# total per job (see calibration note in turbo.json top-of-file comment).
+# Tier 2 per SPEC §6 R9 (US-016). Runs the perf regression gate, parse-health
+# gate, `parseWithFallback` perf bound, and R15 guard that the PR-time
+# `ci.yml` (tier 1) does not. Budget: 30 min total per job.
+#
+# Bridge-convergence deep fuzz and full stress were removed on 2026-04-19 per
+# `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2/FR-3). Those signals
+# sampled the dual-CRDT architectural residual race; the spec explicitly
+# accepts that residual-rate detection is ad-hoc-only (NG6) via
+# `bun run measure:fuzz` / `measure:stress`. See AGENTS.md §Measurement
+# scripts for the invocation convention.
 
 on:
-  schedule:
-    # 6:17 AM UTC daily (off-minute to avoid GHA scheduling contention)
-    - cron: "17 6 * * *"
-  workflow_dispatch: {} # manual trigger via GitHub Actions UI
+  # On-demand only. The scheduled trigger was retired while this project is
+  # pre-production — nobody is on-call for nightly signal and automated
+  # compute has no consumer. Tier 1 (`ci.yml`) catches regressions at merge
+  # time via the deterministic fidelity + integration + conversion suites.
+  # Developers run this workflow from the GitHub Actions UI ("Run workflow"
+  # button on the Nightly deep tests page), or via
+  # `gh workflow run nightly.yml`. If the project reaches a stage where
+  # background regression detection is load-bearing, re-enable the
+  # `schedule:` trigger with a calibrated off-minute cron.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -18,53 +31,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deep-fuzz:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
-        with:
-          bun-version: "1.3.11"
-          cache: true
-      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-deep-fuzz-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-deep-fuzz-
-      - run: bun install --frozen-lockfile
-      - env:
-          STRESS_FUZZ_NIGHTLY: "1"
-        run: bunx turbo run test:fuzz:bridge
-
-  # NOTE: `test:fuzz:bridge` is intentionally not in this matrix.
-  # Tier-1 `ci.yml` already runs it at default seeds on every PR/push, and
-  # `deep-fuzz` (above) runs the elevated-seed variant via
-  # `STRESS_FUZZ_NIGHTLY=1`. Re-running the default-seed variant here
-  # would duplicate the tier-1 job without adding variance coverage.
-  full-stress:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard:
-          - test:stress:server-authoritative
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
-        with:
-          bun-version: "1.3.11"
-          cache: true
-      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ matrix.shard }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-${{ matrix.shard }}-
-      - run: bun install --frozen-lockfile
-      - run: bunx turbo run ${{ matrix.shard }}
+  # fuzz (bridge-convergence.fuzz.test.ts) and stress
+  # (server-authoritative-stress.test.ts) were removed from CI entirely on
+  # 2026-04-19 per `specs/2026-04-19-ci-signal-quality/SPEC.md`. Their
+  # architectural CRDT residual is intrinsic to the dual-CRDT topology
+  # (D4-LOCKED until H2 2026+ per `specs/2026-04-16-bridge-correctness/`)
+  # and mathematically guaranteed >80% PR-red rate. Ad-hoc sampling is
+  # now handled by `bun run measure:fuzz` and `bun run measure:stress`
+  # (see `packages/app/scripts/measure-*.sh`) with results appended to
+  # `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl`
+  # — git history of that file is the trend record. No automated
+  # regression detection (accepted cost per NG6 in the spec).
 
   # Tier-2 regression gates (R4 perf + R19 parse-health + US-015
   # parseWithFallback 5× bound). These gates are defined in `packages/core/`
@@ -89,11 +66,10 @@ jobs:
     env:
       RUN_BENCH: "1"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.11"
-          cache: true
+          bun-version-file: ".bun-version"
       - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: .turbo

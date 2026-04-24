@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
-import { loadConfig } from './loader';
+import { createProjectConfigResolver, loadConfig } from './loader';
 
 let testDir: string;
 
@@ -26,6 +26,12 @@ function writeWorkspaceConfig(yaml: string) {
   writeFileSync(resolve(configDir, 'config.yml'), yaml, 'utf-8');
 }
 
+function writeWorkspaceConfigAt(dir: string, yaml: string) {
+  const configDir = resolve(dir, OK_DIR);
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(resolve(configDir, 'config.yml'), yaml, 'utf-8');
+}
+
 describe('loadConfig', () => {
   // ── Defaults ────────────────────────────────────────────────────────
 
@@ -39,22 +45,26 @@ describe('loadConfig', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
 
-    // server
-    expect(config.server.port).toBe(3000);
+    // server — default 0 means kernel-allocated port
+    expect(config.server.port).toBe(0);
     expect(config.server.host).toBe('localhost');
 
     // persistence
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
+
+    // mcp auto-spawn enabled by default
+    expect(config.mcp.autoStart).toBe(true);
   });
 
   test('empty YAML file → all defaults resolve', () => {
     writeWorkspaceConfig('');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
+    expect(config.mcp.autoStart).toBe(true);
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {
@@ -72,8 +82,20 @@ describe('loadConfig', () => {
 
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+  });
+
+  test('explicit server.port: 3000 in config.yml → 3000 (backward compat)', () => {
+    writeWorkspaceConfig('server:\n  port: 3000\n');
+    const { config } = loadConfig(testDir);
+    expect(config.server.port).toBe(3000);
+  });
+
+  test('mcp.autoStart: false disables auto-spawn', () => {
+    writeWorkspaceConfig('mcp:\n  autoStart: false\n');
+    const { config } = loadConfig(testDir);
+    expect(config.mcp.autoStart).toBe(false);
   });
 
   // ── Workspace overrides ─────────────────────────────────────────────
@@ -162,7 +184,7 @@ content:
     const { config } = loadConfig(testDir);
 
     // Still resolves defaults — no crash
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
   });
 
   test('unknown nested keys within known sections are silently ignored', () => {
@@ -176,6 +198,128 @@ content:
     writeWorkspaceConfig('server:\n  port: [invalid yaml');
     // Malformed YAML is caught by the loader and warned, falls back to defaults
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(3000);
+    expect(config.server.port).toBe(0);
+  });
+});
+
+describe('createProjectConfigResolver', () => {
+  test('loads different workspace configs per cwd', async () => {
+    const projectA = resolve(testDir, 'project-a');
+    const projectB = resolve(testDir, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeWorkspaceConfigAt(projectA, 'content:\n  dir: docs-a\n');
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-b\n');
+
+    const startupConfig = loadConfig(projectA).config;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: projectA,
+      startupConfig,
+      cacheMs: 10_000,
+    });
+
+    await expect(resolveConfig(projectA)).resolves.toMatchObject({
+      content: { dir: 'docs-a' },
+    });
+    await expect(resolveConfig(projectB)).resolves.toMatchObject({
+      content: { dir: 'docs-b' },
+    });
+  });
+
+  test('applies process env overrides on top of per-cwd config', async () => {
+    writeWorkspaceConfig('server:\n  host: localhost\n  port: 3000\n');
+    const startupConfig = loadConfig(testDir).config;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: testDir,
+      startupConfig,
+      env: {
+        ...process.env,
+        HOST: '0.0.0.0',
+        PORT: '4545',
+      },
+    });
+
+    await expect(resolveConfig()).resolves.toMatchObject({
+      server: { host: '0.0.0.0', port: 4545 },
+    });
+  });
+
+  test('normalizes cwd before config cache lookups', async () => {
+    const realProject = resolve(testDir, 'project-real');
+    const symlinkProject = resolve(testDir, 'project-link');
+    mkdirSync(realProject, { recursive: true });
+    symlinkSync(realProject, symlinkProject);
+
+    const startupConfig = loadConfig(realProject).config;
+    let loadCalls = 0;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: realProject,
+      startupConfig,
+      cacheMs: 10_000,
+      loadConfigFn: (cwd) => {
+        loadCalls += 1;
+        return loadConfig(cwd);
+      },
+    });
+
+    await expect(resolveConfig(symlinkProject)).resolves.toMatchObject(startupConfig);
+    expect(loadCalls).toBe(0);
+  });
+
+  test('deduplicates concurrent config loads for the same cwd', async () => {
+    const projectA = resolve(testDir, 'project-a');
+    const projectB = resolve(testDir, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-b\n');
+
+    const startupConfig = loadConfig(projectA).config;
+    let loadCalls = 0;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: projectA,
+      startupConfig,
+      cacheMs: 10_000,
+      loadConfigFn: (cwd) => {
+        loadCalls += 1;
+        return loadConfig(cwd);
+      },
+    });
+
+    const [first, second] = await Promise.all([resolveConfig(projectB), resolveConfig(projectB)]);
+    expect(first).toMatchObject({ content: { dir: 'docs-b' } });
+    expect(second).toMatchObject({ content: { dir: 'docs-b' } });
+    expect(loadCalls).toBe(1);
+  });
+
+  test('reloads config after cache expiration', async () => {
+    const projectA = resolve(testDir, 'project-a');
+    const projectB = resolve(testDir, 'project-b');
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-b\n');
+
+    const startupConfig = loadConfig(projectA).config;
+    let loadCalls = 0;
+    const resolveConfig = createProjectConfigResolver({
+      startupCwd: projectA,
+      startupConfig,
+      cacheMs: 1,
+      loadConfigFn: (cwd) => {
+        loadCalls += 1;
+        return loadConfig(cwd);
+      },
+    });
+
+    await expect(resolveConfig(projectB)).resolves.toMatchObject({
+      content: { dir: 'docs-b' },
+    });
+
+    writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-c\n');
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+
+    await expect(resolveConfig(projectB)).resolves.toMatchObject({
+      content: { dir: 'docs-c' },
+    });
+    expect(loadCalls).toBe(2);
   });
 });

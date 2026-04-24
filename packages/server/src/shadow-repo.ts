@@ -1,19 +1,35 @@
 /**
- * Shadow repo — attribution journal at .git/openknowledge/
+ * Shadow repo — attribution journal at `<projectRoot>/.git/open-knowledge/`.
  *
  * A bare repo (core.bare unset, core.worktree → project root) that stores
  * per-writer WIP refs and upstream-import commits. Isolated from the project
  * repo so user staging area and history are never touched.
  *
- * Layout:
- *   Integrated mode: .git/openknowledge/   (inside project .git — no .gitignore needed)
- *   Standalone mode: .openknowledge/       (added to .gitignore)
+ * Single-mode layout (SPEC 2026-04-21-shadow-repo-single-mode):
+ *   - Shadow always lives inside `<projectRoot>/.git/open-knowledge/`.
+ *   - Projects without `.git/` get auto-init'd by `ensureProjectGit` before
+ *     `initShadowRepo` runs (R2 / D12 fail-fast).
+ *   - Pre-spec integrated shadows at `.git/openknowledge/` (legacy path) are
+ *     silently rename-migrated in-place once per repo (R9 shim below).
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import {
+  formatCheckpointBodyLine,
+  formatCheckpointSubject,
+  formatImportSubject,
+  formatOkActor,
+  formatParkSubject,
+  type OkActorEntry,
+  type ParsedCheckpoint,
+  parseCheckpoint,
+  parseWriterId,
+  resolveShadowDir,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
+import { incrementShadowMigrationLegacyRefsDeleted } from './metrics.ts';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -52,15 +68,31 @@ export function shadowGit(shadow: ShadowHandle) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 /**
- * Initialize the shadow bare repo.
+ * Initialize the shadow bare repo at `<projectRoot>/.git/open-knowledge/`.
  *
- * - Integrated mode (.git/ exists): creates .git/openknowledge/
- * - Standalone mode (no .git/):     creates .openknowledge/ and adds to .gitignore
+ * Assumes the project already has a `.git/` — `ensureProjectGit` is responsible
+ * for that guarantee upstream (SPEC R2 / D12).
+ *
+ * Legacy migration (R9): if `<projectRoot>/.git/openknowledge/` exists from a
+ * pre-spec integrated-mode install, silently `renameSync` it to the canonical
+ * `.git/open-knowledge/` path. One-shot, lossless — preserves all refs and
+ * commits. Defensive: if BOTH directories are present (shouldn't happen), log
+ * and no-op.
  */
 export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
-  // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
-  // read path and this server write path use exactly the same rule (D22/FR20).
-  const { path: shadowDir, mode } = resolveShadowDir(projectRoot);
+  // Path resolution lives in @inkeep/open-knowledge-core so the CLI read path
+  // and this server write path use exactly the same rule (D22).
+  const shadowDir = resolveShadowDir(projectRoot);
+
+  // R9 legacy-rename shim — runs before any other shadow op.
+  const legacyDir = resolve(projectRoot, '.git/openknowledge');
+  const legacyExists = existsSync(legacyDir);
+  const newExists = existsSync(shadowDir);
+  if (legacyExists && !newExists) {
+    renameSync(legacyDir, shadowDir);
+  } else if (legacyExists && newExists) {
+    console.warn('[shadow-repo] unexpected legacy + new shadow both present — no rename performed');
+  }
 
   // Skip init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
@@ -77,26 +109,19 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
     await sg.raw('config', 'user.email', 'noreply@openknowledge.local');
   }
 
-  // Standalone mode: ensure .openknowledge/ is in .gitignore
-  if (mode === 'standalone') {
-    const gitignorePath = resolve(projectRoot, '.gitignore');
-    const entry = '.openknowledge/';
-    let content = '';
-    try {
-      content = readFileSync(gitignorePath, 'utf-8');
-    } catch {
-      // no .gitignore yet
-    }
-    if (!content.split('\n').some((line) => line.trim() === entry)) {
-      const suffix = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-      writeFileSync(gitignorePath, `${content}${suffix}${entry}\n`, 'utf-8');
-    }
-  }
+  // NFR-6 / D35: allowlist-based sweep of legacy WIP refs on every start.
+  // Idempotent — no-op once all legacy refs are gone.
+  const handle: ShadowHandle = { gitDir: shadowDir, workTree: projectRoot };
+  await sweepLegacyShadowRefs(handle);
+
+  // Sweep orphaned temp-index files left behind by crashed `buildWipTree`
+  // calls from a prior process. Idempotent — no-op on a clean shutdown.
+  sweepOrphanedTmpIndexFiles(handle);
 
   // Acquire exclusive writer lock
   acquireLock(shadowDir, projectRoot);
 
-  return { gitDir: shadowDir, workTree: projectRoot };
+  return handle;
 }
 
 /**
@@ -105,6 +130,77 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
  */
 export function destroyShadowRepo(shadow: ShadowHandle): void {
   releaseLock(shadow.gitDir);
+}
+
+/**
+ * Allowlist-based sweep of legacy WIP refs (NFR-6, D35, US-018).
+ *
+ * Enumerates refs/wip/*\/\* and deletes ONLY refs whose writer-ID segment
+ * matches the known-legacy patterns: exact `server`, prefix `human-`, exact
+ * `upstream`. New-taxonomy refs (agent-*, principal-*, file-system,
+ * git-upstream, openknowledge-service) are preserved unchanged.
+ *
+ * Idempotent: running twice is a no-op once legacy refs are gone.
+ */
+export async function sweepLegacyShadowRefs(shadow: ShadowHandle): Promise<number> {
+  const sg = shadowGit(shadow);
+  let allRefs: string[];
+  try {
+    const raw = await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip');
+    allRefs = raw
+      .trim()
+      .split('\n')
+      .filter((r) => r.length > 0);
+  } catch {
+    // No refs yet (fresh repo) — nothing to sweep
+    return 0;
+  }
+
+  const toDelete: string[] = [];
+  const breakdown: Record<string, number> = { server: 0, 'human-': 0, upstream: 0 };
+
+  for (const refname of allRefs) {
+    // refs/wip/<branch>/<writerId>
+    const parts = refname.split('/');
+    if (parts.length < 4) continue;
+    const writerId = parts.slice(3).join('/');
+
+    // Only delete refs that parseWriterId classifies as 'unknown' AND match
+    // the known-legacy allowlist. This is deliberately narrow — we never
+    // delete a ref we can't positively identify as legacy (D35).
+    const classification = parseWriterId(writerId).classification;
+    if (classification !== 'unknown') continue;
+
+    if (writerId === 'server') {
+      toDelete.push(refname);
+      breakdown.server++;
+    } else if (writerId.startsWith('human-')) {
+      toDelete.push(refname);
+      breakdown['human-']++;
+    } else if (writerId === 'upstream') {
+      toDelete.push(refname);
+      breakdown.upstream++;
+    }
+    // All other 'unknown' refs are preserved (defensive)
+  }
+
+  if (toDelete.length === 0) return 0;
+
+  for (const ref of toDelete) {
+    try {
+      await sg.raw('update-ref', '-d', ref);
+    } catch (e) {
+      console.warn(`[shadow-migration] failed to delete legacy ref ${ref}:`, e);
+    }
+  }
+
+  const deleted = toDelete.length;
+  incrementShadowMigrationLegacyRefsDeleted(deleted);
+  console.warn(
+    `[shadow-migration] deleted ${deleted} legacy refs: server=${breakdown.server} human-=${breakdown['human-']} upstream=${breakdown.upstream}`,
+  );
+
+  return deleted;
 }
 
 // ─── WIP commits ─────────────────────────────────────────────────────────────
@@ -196,13 +292,134 @@ export async function commitWip(
   }
 }
 
+// ─── Per-writer fan-out helpers (US-014, FR-7) ───────────────────────────────
+
+/**
+ * Stage the content directory and return a git tree SHA.
+ * Used by the per-writer L2 fan-out so all writers share the same tree.
+ * Uses a fresh index (no seeding from any ref) so the tree reflects
+ * current filesystem state of contentRoot.
+ */
+/**
+ * Sweep orphaned `index-wip-fanout-*` files left in the shadow gitDir by a
+ * crashed `buildWipTree` call from a prior process. Each entry is a transient
+ * index scratch file; the owning process is always gone by the time we run
+ * (initShadowRepo acquires an exclusive writer lock immediately after), so
+ * unconditional deletion is safe.
+ */
+function sweepOrphanedTmpIndexFiles(shadow: ShadowHandle): number {
+  let deleted = 0;
+  try {
+    for (const name of readdirSync(shadow.gitDir)) {
+      if (!name.startsWith('index-wip-fanout-')) continue;
+      try {
+        rmSync(resolve(shadow.gitDir, name));
+        deleted++;
+      } catch {
+        // best effort — next startup will retry
+      }
+    }
+  } catch {
+    // gitDir missing or unreadable — initShadowRepo will catch the real error
+  }
+  return deleted;
+}
+
+export async function buildWipTree(shadow: ShadowHandle, contentRoot: string): Promise<string> {
+  const tmpIndex = resolve(shadow.gitDir, `index-wip-fanout-${randomUUID()}`);
+  const sg = shadowGit(shadow);
+  const gitPathspec = contentRoot || '.';
+
+  try {
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_WORK_TREE: shadow.workTree,
+        GIT_INDEX_FILE: tmpIndex,
+      })
+      .raw('add', gitPathspec);
+    return (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+}
+
+/**
+ * Create a commit from a pre-built tree SHA and advance the per-writer WIP ref.
+ * All per-writer commits in one fan-out cycle share the same treeSha.
+ */
+export async function commitWipFromTree(
+  shadow: ShadowHandle,
+  writer: WriterIdentity,
+  treeSha: string,
+  message: string,
+  branch = 'main',
+): Promise<string> {
+  const ref = `refs/wip/${branch}/${writer.id}`;
+  const sg = shadowGit(shadow);
+
+  let parentSha: string | null = null;
+  try {
+    parentSha = (await sg.raw('rev-parse', ref)).trim();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+      console.error(`[shadow-repo] Unexpected error resolving ${ref}:`, e);
+      throw e;
+    }
+  }
+
+  const args = ['commit-tree', treeSha, '-m', message];
+  if (parentSha) args.push('-p', parentSha);
+
+  const commitSha = (
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_AUTHOR_NAME: writer.name,
+        GIT_AUTHOR_EMAIL: writer.email,
+        GIT_COMMITTER_NAME: 'openknowledge',
+        GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+      })
+      .raw(...args)
+  ).trim();
+
+  await sg.raw('update-ref', ref, commitSha);
+  return commitSha;
+}
+
+// ─── D34 classified writer-identity constants ─────────────────────────────────
+
+/** Non-attributable file-system writes (disk changes, reconciliation). */
+export const FILE_SYSTEM_WRITER: WriterIdentity = {
+  id: 'file-system',
+  name: 'File System',
+  email: 'file-system@openknowledge.local',
+};
+
+/** Non-attributable upstream git-pull imports. */
+export const GIT_UPSTREAM_WRITER: WriterIdentity = {
+  id: 'git-upstream',
+  name: 'Git (upstream)',
+  email: 'git@openknowledge.local',
+};
+
+/** Non-attributable internal service bookkeeping. */
+export const SERVICE_WRITER: WriterIdentity = {
+  id: 'openknowledge-service',
+  name: 'Open Knowledge (service)',
+  email: 'service@openknowledge.local',
+};
+
 // ─── Upstream import ─────────────────────────────────────────────────────────
 
-const UPSTREAM_WRITER: WriterIdentity = {
-  id: 'upstream',
-  name: 'upstream',
-  email: 'noreply@openknowledge.local',
-};
+const UPSTREAM_WRITER: WriterIdentity = GIT_UPSTREAM_WRITER;
 
 /**
  * Record an upstream-import commit in the shadow.
@@ -219,10 +436,21 @@ export async function commitUpstreamImport(
   newHead: string,
   branch = 'main',
 ): Promise<string> {
-  const message = oldHead
-    ? `upstream: import from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
-    : `upstream: initial import at ${newHead.slice(0, 8)}`;
-
+  const subject = formatImportSubject(oldHead, newHead);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    writer_id: UPSTREAM_WRITER.id,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: UPSTREAM_WRITER.name,
+    color_seed: UPSTREAM_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
@@ -245,11 +473,7 @@ export interface SafetyCheckpointParams {
   context: Record<string, unknown>;
 }
 
-const SAFETY_WRITER: WriterIdentity = {
-  id: 'openknowledge-server',
-  name: 'openknowledge-server',
-  email: 'noreply@openknowledge.local',
-};
+const SAFETY_WRITER: WriterIdentity = SERVICE_WRITER;
 
 export async function safetyCheckpoint(
   shadow: ShadowHandle,
@@ -257,8 +481,446 @@ export async function safetyCheckpoint(
   params: SafetyCheckpointParams,
   branch = 'main',
 ): Promise<string> {
-  const message = `safety-checkpoint: pre-${params.action}`;
+  const subject = formatCheckpointSubject(`pre-${params.action}`);
+  const actorEntry: OkActorEntry = {
+    v: 1,
+    writer_id: SAFETY_WRITER.id,
+    principal: null,
+    agent_session: null,
+    agent_type: null,
+    client_name: null,
+    client_version: null,
+    label: null,
+    display_name: SAFETY_WRITER.name,
+    color_seed: SAFETY_WRITER.id,
+    docs: [],
+  };
+  const message = `${subject}\n\n${formatOkActor(actorEntry)}`;
   return commitWip(shadow, SAFETY_WRITER, contentRoot, message, branch);
+}
+
+// ─── In-memory checkpoint (bridge-correctness SPEC §6 R7a) ──────────────────
+
+/**
+ * Kind-discriminated parameters for {@link saveInMemoryCheckpoint}. Each
+ * kind carries typed metadata that `parseCheckpoint` in
+ * `@inkeep/open-knowledge-core/shadow-repo-layout` can round-trip.
+ *
+ * - `bridge-merge-loss` — Observer A Path B fired `mergeThreeWay`, the
+ *   content-preservation post-condition flagged the result, and we want a
+ *   silent Notion-style restore artifact on the timeline. `contents` is the
+ *   pre-merge baseline (the state the user saw before the conflict merge).
+ * - `external-change-rescue` — an external disk write (reconcile-delete or
+ *   branch-switch path) would otherwise have discarded dirty Y.Doc content.
+ *   `contents` is the rescued in-memory markdown; `incomingDiskSha` names
+ *   the disk SHA we chose over it.
+ */
+export type InMemoryCheckpointParams =
+  | {
+      kind: 'bridge-merge-loss';
+      docName: string;
+      contents: string;
+      label: string;
+      branch?: string;
+      metadata: { lostSubstrings: string[] };
+    }
+  | {
+      kind: 'external-change-rescue';
+      docName: string;
+      contents: string;
+      label: string;
+      branch?: string;
+      metadata: { incomingDiskSha: string };
+    };
+
+/**
+ * Silent in-memory checkpoint — writes `contents` as a blob at
+ * `<docName>.md` in an isolated git tree, commits with body
+ * `checkpoint: ${label}\n\nok-checkpoint-v1: ${JSON}`, and updates the ref
+ * `refs/checkpoints/<branch>/<sha>`. Never touches `refs/wip/*` — this is a
+ * one-shot recovery artifact, not part of the per-writer WIP chain
+ * (contrast `saveVersion` which resets WIP).
+ *
+ * **Concurrent safety (Q8 audit).** Each call uses a unique tmp-index file
+ * name derived from a random UUID so two in-flight calls on the same shadow
+ * do not contend at the index level. The ref-update is atomic at the git
+ * layer. Callers fire-and-forget via `queueMicrotask(() =>
+ * saveInMemoryCheckpoint(...).catch(...))` — the hot bridge-merge path
+ * never awaits the commit.
+ *
+ * @returns the commit sha (which also appears in the ref name).
+ */
+export async function saveInMemoryCheckpoint(
+  shadow: ShadowHandle,
+  contentRoot: string,
+  params: InMemoryCheckpointParams,
+): Promise<string> {
+  const branch = params.branch ?? 'main';
+  const sg = shadowGit(shadow);
+  const token = randomUUID();
+  const tmpIndex = resolve(shadow.gitDir, `index-checkpoint-${token}`);
+  const tmpBlobFile = resolve(shadow.gitDir, `tmp-checkpoint-blob-${token}`);
+
+  // Path inside the tree mirrors the real content layout so TimelinePanel's
+  // existing per-doc view logic (walks the tree at the commit's docName)
+  // resolves identically for silent-checkpoint artifacts.
+  const treePath = contentRoot
+    ? `${contentRoot.replace(/\/$/, '')}/${params.docName}`
+    : params.docName;
+  // Byte-size of the rescued content; encoded in metadata so the rescue
+  // read path can render the listing without spawning a per-ref `git ls-tree`
+  // subprocess (bridge-correctness review iteration 5).
+  const size = Buffer.byteLength(params.contents, 'utf-8');
+  const parsed: ParsedCheckpoint =
+    params.kind === 'bridge-merge-loss'
+      ? {
+          kind: 'bridge-merge-loss',
+          docName: params.docName,
+          size,
+          metadata: params.metadata,
+        }
+      : {
+          kind: 'external-change-rescue',
+          docName: params.docName,
+          size,
+          metadata: params.metadata,
+        };
+  const bodyLine = formatCheckpointBodyLine(parsed);
+  const message = `checkpoint: ${params.label}\n\n${bodyLine}`;
+
+  try {
+    writeFileSync(tmpBlobFile, params.contents, 'utf-8');
+    const blobSha = (
+      await sg
+        .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+        .raw('hash-object', '-w', tmpBlobFile)
+    ).trim();
+    await sg
+      .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+      .raw('update-index', '--add', '--cacheinfo', `100644,${blobSha},${treePath}`);
+    const treeSha = (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+
+    const commitSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_NAME: 'openknowledge',
+          GIT_AUTHOR_EMAIL: 'noreply@openknowledge.local',
+          GIT_COMMITTER_NAME: 'openknowledge',
+          GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+        })
+        .raw('commit-tree', treeSha, '-m', message)
+    ).trim();
+
+    await sg.raw('update-ref', `refs/checkpoints/${branch}/${commitSha}`, commitSha);
+    return commitSha;
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+    try {
+      rmSync(tmpBlobFile);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+}
+
+/**
+ * A single `kind: 'external-change-rescue'` rescue entry reconstructed from
+ * the shadow repo's `refs/checkpoints/<branch>/*` namespace. Shape mirrors
+ * the flat-file rescue listing at `/api/rescue` so the two sources can be
+ * merged into one unified response (bridge-correctness SPEC §6 R7f).
+ */
+export interface TimelineRescueEntry {
+  docName: string;
+  timestamp: string;
+  size: number;
+  /** Commit SHA of the checkpoint, so the caller can request the raw content. */
+  sha: string;
+  /** Commit message (first line); surfaces the human-readable label. */
+  label: string;
+  /** SHA of the incoming disk content that overrode the in-memory state. */
+  incomingDiskSha: string;
+}
+
+/**
+ * List every `external-change-rescue` checkpoint on `refs/checkpoints/<branch>/*`
+ * by walking the refs, reading each commit's body via `parseCheckpoint`,
+ * and filtering by kind. Does not walk ancestry — each ref is resolved
+ * directly via `git log --no-walk`. Returns an empty array on any git error
+ * to match the graceful-degradation posture of `getDocumentHistory`.
+ *
+ * Bridge-correctness review iteration 5: `docName` + `size` are now read
+ * from the parsed `ok-checkpoint-v1:` metadata body line. The per-ref
+ * `git ls-tree` fan-out the prior implementation performed is retained
+ * only as a backward-compat fallback for checkpoints written before the
+ * metadata was enriched (none in a fresh install; included for robustness
+ * on worktrees carrying earlier-iteration artifacts).
+ */
+export async function listRescueCheckpoints(
+  shadow: ShadowHandle,
+  branch = 'main',
+): Promise<TimelineRescueEntry[]> {
+  const sg = shadowGit(shadow);
+  let refOutput: string;
+  try {
+    refOutput = await sg.raw(
+      'for-each-ref',
+      '--format=%(objectname)',
+      `refs/checkpoints/${branch}/`,
+    );
+  } catch {
+    return [];
+  }
+  const shas = refOutput
+    .trim()
+    .split('\n')
+    .filter((s) => s.length === 40);
+  if (shas.length === 0) return [];
+
+  let logRaw: string;
+  try {
+    logRaw = await sg.raw(
+      'log',
+      '--no-walk',
+      '--author-date-order',
+      '--format=%H%x00%aI%x00%s%x00%B%x1e',
+      ...shas,
+    );
+  } catch {
+    return [];
+  }
+
+  const out: TimelineRescueEntry[] = [];
+  for (const record of logRaw.split('\x1e')) {
+    const trimmed = record.trimStart();
+    if (!trimmed) continue;
+    const [sha = '', timestamp = '', subject = '', body = ''] = trimmed.split('\x00');
+    const parsed = parseCheckpoint(body);
+    if (parsed?.kind !== 'external-change-rescue') continue;
+
+    // Fast path: metadata carries docName + size directly (bridge-correctness
+    // review iteration 5). Per-commit subprocess skipped in this path.
+    let docName = parsed.docName ?? '';
+    let size = parsed.size ?? 0;
+
+    // Backward-compat fallback for any pre-enrichment checkpoints on this
+    // branch. Safe no-op for fresh commits since the fast-path already
+    // populated both fields.
+    if (!docName) {
+      try {
+        const tree = (await sg.raw('ls-tree', '-r', '--long', sha)).trim();
+        const line = tree.split('\n')[0];
+        if (line) {
+          const cols = line.split(/\s+/);
+          const pathIdx = 4;
+          const sizeIdx = 3;
+          if (size === 0) size = Number(cols[sizeIdx] ?? '0');
+          docName =
+            (cols[pathIdx] ?? '')
+              .replace(/\.mdx?$/, '')
+              .split('/')
+              .slice(-1)[0] ?? '';
+        }
+      } catch {
+        // ignore — docName stays empty; caller treats as unparseable
+      }
+    }
+    if (!docName) continue;
+    out.push({
+      docName,
+      timestamp,
+      size,
+      sha,
+      label: subject.replace(/^checkpoint:\s*/, ''),
+      incomingDiskSha: parsed.metadata.incomingDiskSha,
+    });
+  }
+  return out;
+}
+
+// ─── Checkpoint GC (bridge-correctness SPEC §6 R7 + review iteration 5) ────
+
+/** Per-kind retention policy for `refs/checkpoints/<branch>/*`. */
+export interface CheckpointRetentionPolicy {
+  /**
+   * Maximum `bridge-merge-loss` checkpoints to keep per branch. These are
+   * written on every Observer A Path B post-condition violation. Default 50.
+   */
+  maxBridgeMergeLoss: number;
+  /**
+   * Maximum `external-change-rescue` checkpoints to keep per branch. These
+   * are written on reconcile-delete / branch-switch disk-overrode-memory
+   * paths. Default 50.
+   */
+  maxExternalChangeRescue: number;
+  /**
+   * `ok-checkpoint-v1`-tagged checkpoints older than this TTL (ms) are
+   * GC-eligible regardless of count. Default 30 days. `Save Version`
+   * checkpoints (no `ok-checkpoint-v1:` body line) are NOT affected —
+   * their retention was set at PR inception as permanent.
+   */
+  ttlMs: number;
+}
+
+export const DEFAULT_CHECKPOINT_RETENTION: CheckpointRetentionPolicy = {
+  maxBridgeMergeLoss: 50,
+  maxExternalChangeRescue: 50,
+  ttlMs: 30 * 24 * 60 * 60 * 1000,
+};
+
+export interface CheckpointGcResult {
+  scanned: number;
+  deletedBridgeMergeLoss: number;
+  deletedExternalChangeRescue: number;
+  retained: number;
+}
+
+/**
+ * GC `refs/checkpoints/<branch>/*` kind-aware: keep the most-recent N per
+ * kind (per policy), delete older entries, apply TTL as a lower bound.
+ * Untyped checkpoints (no `ok-checkpoint-v1:` body line — i.e. user-
+ * triggered `Save Version` artifacts) are always retained to preserve the
+ * permanent-history contract.
+ *
+ * Batched: single `for-each-ref` + single `git log --no-walk` regardless of
+ * ref count. Deletion is one `update-ref -d` per eligible ref.
+ */
+export async function gcCheckpointRefs(
+  shadow: ShadowHandle,
+  branch = 'main',
+  policy: CheckpointRetentionPolicy = DEFAULT_CHECKPOINT_RETENTION,
+): Promise<CheckpointGcResult> {
+  const result: CheckpointGcResult = {
+    scanned: 0,
+    deletedBridgeMergeLoss: 0,
+    deletedExternalChangeRescue: 0,
+    retained: 0,
+  };
+  const sg = shadowGit(shadow);
+  let refOutput: string;
+  try {
+    refOutput = await sg.raw(
+      'for-each-ref',
+      '--format=%(objectname) %(refname)',
+      `refs/checkpoints/${branch}/`,
+    );
+  } catch {
+    return result;
+  }
+  const refLines = refOutput
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (refLines.length === 0) return result;
+
+  // Maintain the ref → sha mapping so we can delete by refname (stable even
+  // if a future rewrite changes the sha-under-ref naming convention).
+  const shaToRef = new Map<string, string>();
+  const shas: string[] = [];
+  for (const line of refLines) {
+    const spaceIdx = line.indexOf(' ');
+    if (spaceIdx < 0) continue;
+    const sha = line.slice(0, spaceIdx);
+    const ref = line.slice(spaceIdx + 1);
+    if (sha.length !== 40) continue;
+    shaToRef.set(sha, ref);
+    shas.push(sha);
+  }
+  result.scanned = shas.length;
+  if (shas.length === 0) return result;
+
+  let logRaw: string;
+  try {
+    logRaw = await sg.raw(
+      'log',
+      '--no-walk',
+      '--author-date-order',
+      '--format=%H%x00%aI%x00%B%x1e',
+      ...shas,
+    );
+  } catch {
+    return result;
+  }
+
+  interface Entry {
+    sha: string;
+    timestamp: number; // ms since epoch
+    kind: 'bridge-merge-loss' | 'external-change-rescue' | null;
+  }
+  const entries: Entry[] = [];
+  for (const record of logRaw.split('\x1e')) {
+    const trimmed = record.trimStart();
+    if (!trimmed) continue;
+    const [sha = '', timestamp = '', body = ''] = trimmed.split('\x00');
+    if (!sha) continue;
+    const parsed = parseCheckpoint(body);
+    const kind = parsed?.kind ?? null;
+    const ts = Date.parse(timestamp);
+    entries.push({ sha, timestamp: Number.isFinite(ts) ? ts : 0, kind });
+  }
+
+  // Partition by kind. Save-Version (kind=null) entries are always retained.
+  const byKind: Record<'bridge-merge-loss' | 'external-change-rescue', Entry[]> = {
+    'bridge-merge-loss': [],
+    'external-change-rescue': [],
+  };
+  let retainedUntyped = 0;
+  for (const e of entries) {
+    if (e.kind === null) {
+      retainedUntyped++;
+      continue;
+    }
+    byKind[e.kind].push(e);
+  }
+
+  const now = Date.now();
+  const deleteRefs: string[] = [];
+  const planDeletions = (
+    list: Entry[],
+    limit: number,
+    counter: 'deletedBridgeMergeLoss' | 'deletedExternalChangeRescue',
+  ): void => {
+    // Newest first so the count-based keep-N is trivial.
+    list.sort((a, b) => b.timestamp - a.timestamp);
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (!entry) continue;
+      const overCount = i >= limit;
+      const overTtl =
+        policy.ttlMs > 0 && entry.timestamp > 0 && now - entry.timestamp > policy.ttlMs;
+      if (overCount || overTtl) {
+        const ref = shaToRef.get(entry.sha);
+        if (ref) {
+          deleteRefs.push(ref);
+          result[counter]++;
+        }
+      }
+    }
+  };
+  planDeletions(byKind['bridge-merge-loss'], policy.maxBridgeMergeLoss, 'deletedBridgeMergeLoss');
+  planDeletions(
+    byKind['external-change-rescue'],
+    policy.maxExternalChangeRescue,
+    'deletedExternalChangeRescue',
+  );
+
+  for (const ref of deleteRefs) {
+    try {
+      await sg.raw('update-ref', '-d', ref);
+    } catch (err) {
+      console.warn('[checkpoint-gc] failed to delete', ref, err);
+    }
+  }
+
+  result.retained = retainedUntyped + (result.scanned - deleteRefs.length - retainedUntyped);
+  return result;
 }
 
 // ─── Park / Load / Restore ──────────────────────────────────────────────────
@@ -282,14 +944,15 @@ export interface ParkableDoc {
 export async function parkBranch(
   shadow: ShadowHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   documents: ParkableDoc[],
+  newBranch?: string,
 ): Promise<string | null> {
   if (documents.length === 0) return null;
 
   const sg = shadowGit(shadow);
   const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   const tmpBlobFile = resolve(shadow.gitDir, 'tmp-park-blob');
   try {
@@ -330,12 +993,21 @@ export async function parkBranch(
       // No prior WIP on this branch for this session
     }
 
-    const args = [
-      'commit-tree',
-      treeSha,
-      '-m',
-      `park: branch context at ${new Date().toISOString()}`,
-    ];
+    const parkActorEntry: OkActorEntry = {
+      v: 1,
+      writer_id: SERVICE_WRITER.id,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: documents.map((d) => d.docName),
+    };
+    const parkMessage = `${formatParkSubject(branch, newBranch ?? branch)}\n\n${formatOkActor(parkActorEntry)}`;
+    const args = ['commit-tree', treeSha, '-m', parkMessage];
     if (parentSha) args.push('-p', parentSha);
 
     const commitSha = (
@@ -373,11 +1045,11 @@ export async function parkBranch(
 export async function readParkedState(
   shadow: ShadowHandle,
   branch: string,
-  sessionId: string,
+  writerId: string,
   docName: string,
 ): Promise<{ markdown: string; diskSnapshot: string } | null> {
   const sg = shadowGit(shadow);
-  const ref = `refs/wip/${branch}/human-${sessionId}`;
+  const ref = `refs/wip/${branch}/${writerId}`;
 
   // Check if ref exists — expected to be missing on first visit to a branch
   let refSha: string;
@@ -443,7 +1115,7 @@ export async function saveVersion(
     // Collect ALL writer WIP refs + upstream ref as checkpoint parents
     // (preserves all per-writer chains across the checkpoint boundary)
     const shadowParentShas: string[] = [];
-    for (const w of [...writers, { id: 'upstream' }]) {
+    for (const w of [...writers, GIT_UPSTREAM_WRITER]) {
       try {
         const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
         shadowParentShas.push(sha);
@@ -474,7 +1146,21 @@ export async function saveVersion(
       }
     }
 
-    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', 'checkpoint: Save Version'];
+    const checkpointActorEntry: OkActorEntry = {
+      v: 1,
+      writer_id: SERVICE_WRITER.id,
+      principal: null,
+      agent_session: null,
+      agent_type: null,
+      client_name: null,
+      client_version: null,
+      label: null,
+      display_name: SERVICE_WRITER.name,
+      color_seed: SERVICE_WRITER.id,
+      docs: [],
+    };
+    const checkpointMessage = `${formatCheckpointSubject('Checkpoint version')}\n\n${formatOkActor(checkpointActorEntry)}`;
+    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', checkpointMessage];
     for (const p of uniqueParents) {
       checkpointArgs.push('-p', p);
     }
@@ -505,7 +1191,7 @@ export async function saveVersion(
     }
     // Also reset upstream WIP for this branch
     try {
-      await sg.raw('update-ref', '-d', `refs/wip/${branch}/upstream`);
+      await sg.raw('update-ref', '-d', `refs/wip/${branch}/${GIT_UPSTREAM_WRITER.id}`);
     } catch {
       // may not exist
     }

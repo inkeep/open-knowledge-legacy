@@ -1,5 +1,15 @@
 {
   "title": "Guides",
   "icon": "LuBookText",
-  "pages": ["getting-started", "configuration", "mcp-integration", "content-filtering"]
+  "pages": [
+    "getting-started",
+    "github-sync",
+    "configuration",
+    "cli-reference",
+    "mcp-integration",
+    "open-in-agent-desktop",
+    "content-filtering",
+    "timeline",
+    "collaboration-recovery"
+  ]
 }

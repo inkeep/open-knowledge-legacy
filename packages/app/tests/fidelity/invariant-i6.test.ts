@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 import { block, paragraph } from './arbitraries';
@@ -20,7 +20,7 @@ const schema = getSchema(sharedExtensions);
 
 function serializeDoc(doc: Y.Doc): string {
   const fragment = doc.getXmlFragment('default');
-  return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
 describe('I6 — multi-client preservation: state sync', () => {

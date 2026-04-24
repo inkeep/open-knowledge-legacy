@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { acquireServerLock, updateServerLockPort } from '@inkeep/open-knowledge-server';
+import { acquireUiLock, updateUiLockPort } from '@inkeep/open-knowledge-server';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import { buildGetPreviewUrlResult } from './get-preview-url.ts';
@@ -67,8 +67,8 @@ describe('buildGetPreviewUrlResult', () => {
 
   test('uses local lock file when present', async () => {
     const lockDir = resolve(tmpDir, OK_DIR);
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 4242);
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 4242);
 
     const outcome = await buildGetPreviewUrlResult(
       { docName: 'docs/test' },
@@ -133,5 +133,62 @@ describe('buildGetPreviewUrlResult', () => {
     if (outcome.ok) {
       expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
     }
+  });
+
+  test('supports per-cwd config resolvers', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const seenCwds: string[] = [];
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd,
+        config: async (cwd) => {
+          seenCwds.push(cwd ?? '');
+          return {
+            ...BASE_CONFIG,
+            content: { ...BASE_CONFIG.content, include: ['docs/**/*.md'] },
+          };
+        },
+      },
+    );
+
+    expect(seenCwds).toEqual([tmpDir]);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
+
+  test('uses explicit cwd when the client cannot provide a default root', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test', cwd: tmpDir },
+      {
+        resolveCwd: async (explicit?: string) => {
+          if (!explicit) throw new Error('explicit cwd required');
+          return explicit;
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.previewUrl).toBe('https://x.example/#/docs/test');
+    }
+  });
+
+  test('returns resolveCwd failures as tool errors', async () => {
+    const outcome = await buildGetPreviewUrlResult(
+      { docName: 'docs/test' },
+      {
+        resolveCwd: async () => {
+          throw new Error('No client roots');
+        },
+        config: BASE_CONFIG,
+      },
+    );
+
+    expect(outcome).toEqual({ ok: false, error: 'No client roots' });
   });
 });

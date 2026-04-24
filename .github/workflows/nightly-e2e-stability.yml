@@ -1,0 +1,178 @@
+name: Nightly E2E stability
+
+# Tier 2 stability surveillance per US-029 / D-Q41 DIRECTED in
+# specs/2026-04-17-e2e-observability-determinism/SPEC.md.
+#
+# Purpose: catch flakes that PR-time `failOnFlakyTests: true` doesn't —
+# specifically, slow-burn drift where a test passes 99/100 but the 1%
+# tail accumulates. PR-time CI runs each test once (or twice on retry);
+# this nightly job runs the full Playwright suite with `--repeat-each=3`
+# and `--workers=1`, exposing failure rates that single-shot CI would
+# miss.
+#
+# On failure, appends a comment to the most recent open `e2e-flake`-
+# labeled issue (or opens one if none exists) — dedup per triage
+# contract, which says "monitor for one more cycle before escalating."
+# Multiple consecutive failing nights collapse to one issue with a
+# running comment thread. `workflow_dispatch` runs still open a fresh
+# issue if the most recent `e2e-flake` issue is already closed.
+#
+# Label creation is self-healing: the `actions/github-script` step below
+# calls `getLabel` first and creates it on demand with `createLabel`,
+# so a deleted / renamed / never-created label does NOT silently drop
+# the issue-creation step (it re-creates the label and continues).
+
+on:
+  schedule:
+    # 09:00 UTC daily — coordinated NOT to collide with the existing
+    # nightly.yml at 06:17 UTC. Off-cron-minute (00) chosen because the
+    # spec text named "09:00 UTC" specifically.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-stability:
+    runs-on: ubuntu-latest
+    # 60 min matches the Tier 3 cap documented in CLAUDE.md. Runner
+    # cold-start + bun install + Playwright browser install consumes ~3-4
+    # min before tests start; `--repeat-each=3` then triples the per-test
+    # wall-clock on top of PR-time CI's ~2m30s warm baseline. Under p95
+    # CI-runner variance, 30 min gets into the tail that causes the
+    # `timeout-minutes` backstop to fire on completing-but-slow runs, which
+    # would pollute the `e2e-flake` label with false positives. 60 min
+    # leaves well over 2x headroom vs the measured worst case.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - id: playwright
+        env:
+          VITE_PORT: "13580"
+        # Run the suite with `--repeat-each=3` to amplify any flake rate.
+        # `--workers=1` matches PR-time concurrency from playwright.config.ts.
+        # Run inside packages/app where playwright.config.ts lives.
+        run: |
+          cd packages/app
+          bunx playwright test --repeat-each=3 --workers=1 --reporter=list
+      - name: Upload nightly Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-playwright-report-${{ github.run_id }}
+          path: packages/app/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Upload nightly test-results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-test-results-${{ github.run_id }}
+          path: packages/app/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Open or append issue on failure
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v8.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const LABEL = 'e2e-flake';
+
+            // Self-heal the label so a deleted / renamed / never-created
+            // label does NOT silently drop the issue-creation step.
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: LABEL,
+                  color: 'FBCA04',
+                  description: 'Surfaced by Nightly E2E stability workflow',
+                });
+              } else {
+                throw err;
+              }
+            }
+
+            // Dedup: if an open `e2e-flake` issue whose title starts with
+            // "Nightly E2E stability flake" already exists, append a comment
+            // instead of opening a parallel issue. Matches the triage
+            // contract ("monitor for one more cycle before escalating").
+            const existing = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              labels: LABEL,
+              per_page: 100,
+            });
+            const match = existing.data.find((i) =>
+              typeof i.title === 'string' &&
+              i.title.startsWith('Nightly E2E stability flake'),
+            );
+
+            const commentBody = [
+              `Another nightly run failed under \`--repeat-each=3 --workers=1\`.`,
+              ``,
+              `**Run:** ${runUrl}`,
+              `**Trigger:** ${context.eventName}`,
+              `**Branch:** ${context.ref}`,
+              `**SHA:** \`${context.sha}\``,
+              ``,
+              `Artifacts: \`nightly-test-results-${context.runId}\`, \`nightly-playwright-report-${context.runId}\`.`,
+            ].join('\n');
+
+            if (match) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: match.number,
+                body: commentBody,
+              });
+              core.info(`Appended comment to existing issue #${match.number}.`);
+              return;
+            }
+
+            const body = [
+              `The Nightly E2E stability workflow failed under \`--repeat-each=3 --workers=1\`.`,
+              ``,
+              `**Run:** ${runUrl}`,
+              `**Trigger:** ${context.eventName}`,
+              `**Branch:** ${context.ref}`,
+              `**SHA:** \`${context.sha}\``,
+              ``,
+              `Download the \`nightly-test-results-${context.runId}\` artifact for traces / videos / screenshots, or view the HTML report at \`nightly-playwright-report-${context.runId}\`.`,
+              ``,
+              `Check the playwright job log for the specific failing test names. If the same test fails across multiple consecutive nights, promote it to a Linear bug; if isolated, monitor for one more cycle before escalating. Subsequent nightly failures will comment on this issue rather than opening duplicates.`,
+            ].join('\n');
+            const created = await github.rest.issues.create({
+              owner,
+              repo,
+              title: `Nightly E2E stability flake — first seen run ${context.runId}`,
+              body,
+              labels: [LABEL],
+            });
+            core.info(`Opened new issue #${created.data.number}.`);

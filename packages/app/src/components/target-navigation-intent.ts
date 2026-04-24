@@ -2,7 +2,7 @@ import { type ResolvedNavigationTarget, resolveNavigationTarget } from './naviga
 
 type TargetDisplayState = 'doc' | 'folder' | 'missing';
 
-export interface TargetNavigationIntent {
+interface TargetNavigationIntent {
   resolvedTarget: ResolvedNavigationTarget;
   hashDocName: string;
   displayState: TargetDisplayState;

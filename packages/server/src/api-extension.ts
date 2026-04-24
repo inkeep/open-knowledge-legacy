@@ -5,6 +5,7 @@
  * the standalone Server and the Vite dev plugin.
  */
 
+import { spawn } from 'node:child_process';
 import {
   closeSync,
   existsSync,
@@ -22,42 +23,66 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
+import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
   applyFastDiff,
+  colorFromSeed,
+  createCodeFenceTracker,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  type Principal,
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import {
+  formatCheckpointSubject,
+  formatRenameSubject,
+  formatRollbackSubject,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import { captureEffect } from './activity-log.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
+import { type AgentPresenceBroadcaster, BROADCASTER_EVICTION_MS } from './agent-presence.ts';
 import {
-  AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
+  applyAgentUndo,
+  iconFromClientName,
 } from './agent-sessions.ts';
-import { recordContributor } from './contributor-tracker.ts';
+import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import { recordContributor, swapContributors } from './contributor-tracker.ts';
+import {
+  createInstalledAgentsProbe,
+  createOsProbe,
+  handleInstalledAgents,
+  type InstalledAgentScheme,
+} from './handoff-api.ts';
 import { findHubCandidates } from './hub-candidates.ts';
 import {
   extractPageTitle,
   type FrontmatterMetadata,
   parseFrontmatterMetadata,
 } from './page-identity.ts';
+import { readServerLock } from './server-lock.ts';
+import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
+import simpleGit from 'simple-git';
+import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
   isOrphanMode,
 } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import type { ResolveStrategy } from './conflict-storage.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
@@ -65,6 +90,16 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { withParentLock } from './git-handle.ts';
+import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
+import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
+import {
+  checkLocalOpSecurity,
+  createConcurrencyGuard,
+  expandTilde,
+  isAllowedGitUrl,
+  isSafeLocalPath,
+} from './local-op-security.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -77,41 +112,67 @@ import {
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { getMetrics } from './metrics.ts';
+import {
+  getMetrics,
+  incrementAgentWriteCalls,
+  incrementSummariesProvided,
+  incrementSummariesTruncated,
+} from './metrics.ts';
 import {
   deleteReconciledBase,
   isWithinContentDir,
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import type { PairedWriteOrigin } from './server-observers.ts';
 import {
+  listRescueCheckpoints,
+  SERVICE_WRITER,
   type ShadowRef,
   safetyCheckpoint,
   saveVersion,
   shadowGit,
+  type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
+import type { SyncEngine } from './sync-engine.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
- * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
+ * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
- * skipStoreHooks: false — L1 persistence SHOULD fire after rollback so the
- * restored content reaches disk through the normal pipeline. The file-watcher's
- * registerWrite hash check prevents the self-write from re-triggering reconciliation.
+ * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
+ * restored content reaches disk through the normal pipeline. The
+ * file-watcher's registerWrite hash check prevents the self-write from
+ * re-triggering reconciliation.
+ *
+ * `paired: true` — rollback atomically writes both XmlFragment and Y.Text
+ * inside one `doc.transact()` block. `satisfies PairedWriteOrigin` gates the
+ * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'rollback-apply' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'rollback-apply', paired: true },
+} as const satisfies PairedWriteOrigin;
 
-const MANAGED_RENAME_ORIGIN = {
+/**
+ * Managed-rename origin — typed `PairedWriteOrigin`.
+ *
+ * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
+ * and so server observers can resolve `context.paired` without importing the
+ * object transitively (bridge-correctness SPEC §6 R0d).
+ *
+ * `paired: true` — the caller atomically writes BOTH XmlFragment (via
+ * `updateYFragment`) and Y.Text (via `applyFastDiff`) inside one transact
+ * block. `satisfies PairedWriteOrigin` is the compile-time gate.
+ */
+export const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
-  context: { origin: 'managed-rename' },
-} satisfies LocalTransactionOrigin;
+  context: { origin: 'managed-rename', paired: true },
+} as const satisfies PairedWriteOrigin;
 
 const log = getLogger('api');
 
@@ -259,9 +320,9 @@ export function safeSubdir(baseDir: string, subdir: string): string {
   return resolved;
 }
 
-export type ContentEntryKind = 'file' | 'folder';
+type ContentEntryKind = 'file' | 'folder';
 
-export interface RenamedDocMapping {
+interface RenamedDocMapping {
   fromDocName: string;
   toDocName: string;
 }
@@ -276,7 +337,7 @@ interface ManagedRenameRewrittenDoc {
   rewrites: number;
 }
 
-export function isValidRelativeContentPath(path: string): boolean {
+function isValidRelativeContentPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
     return false;
   }
@@ -284,7 +345,7 @@ export function isValidRelativeContentPath(path: string): boolean {
   return path.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
 }
 
-export function listAffectedDocNames(
+function listAffectedDocNames(
   index: ReadonlyMap<string, FileIndexEntry>,
   kind: ContentEntryKind,
   path: string,
@@ -296,7 +357,7 @@ export function listAffectedDocNames(
   return docNames;
 }
 
-export function remapDocNameForRename(
+function remapDocNameForRename(
   docName: string,
   kind: ContentEntryKind,
   fromPath: string,
@@ -386,6 +447,43 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   return fullPath;
 }
 
+function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
+  const resolvedProjectDir = resolve(projectDir);
+  const resolvedPath = resolve(absolutePath);
+  if (
+    resolvedPath !== resolvedProjectDir &&
+    !resolvedPath.startsWith(`${resolvedProjectDir}${sep}`)
+  ) {
+    return null;
+  }
+  return relative(resolvedProjectDir, resolvedPath).split(sep).join('/');
+}
+
+async function renameTrackedPathInGit(
+  projectDir: string | undefined,
+  sourcePath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  if (!projectDir) return false;
+  const sourceRel = toGitRelativePath(projectDir, sourcePath);
+  const destinationRel = toGitRelativePath(projectDir, destinationPath);
+  if (!sourceRel || !destinationRel) return false;
+
+  return await withParentLock(async () => {
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    if (!tracked) return false;
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    try {
+      await pg.raw('mv', '--', sourceRel, destinationRel);
+      return true;
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git mv failed, falling back to fs rename:', err);
+      return false;
+    }
+  });
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
@@ -395,10 +493,12 @@ export interface ApiExtensionOptions {
   /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
   /**
-   * When true, register test-only routes (currently `/api/test-reset`).
-   * Defaults to `false` — these routes allow any client to destroy document
-   * state and must never be exposed in production. Enable only in tests and
-   * local dev mode.
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use (reset wipes document
+   * content; rescan-backlinks rebuilds the index from disk, dropping
+   * unpersisted in-memory state) and must never be exposed in production.
+   * Enable only in tests and local dev mode.
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
@@ -410,17 +510,63 @@ export interface ApiExtensionOptions {
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   /**
-   * Optional. When present, agent write handlers publish the active doc on
-   * `__system__` awareness so clients can push-navigate to follow the agent.
-   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   * Optional. When present, agent write handlers publish per-write attribution
+   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
+   * currentDoc — the signal that drives browser push-navigation to the doc the
+   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
+   * publishes sustained session state.
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. When present, agent write handlers publish presence entries on
+   * `__system__` awareness (`agentPresence` map) so clients can render the
+   * multi-agent presence bar and follow the active agent. Omit to disable
+   * presence broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentPresenceBroadcaster?: AgentPresenceBroadcaster;
   /**
    * Optional. Called after every successful agent write (write_document /
    * edit_document). The handler is expected to be cheap and idempotent —
    * the CLI uses it to open the browser on the first agent edit per session.
    */
   onAgentWrite?: () => void;
+  /**
+   * Getter for the active SyncEngine instance (may be null when dormant or if
+   * no remote was detected). Called per-request so it always reflects current state.
+   */
+  getSyncEngine?: () => SyncEngine | null;
+  /**
+   * CLI argv prefix used to spawn subprocesses for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (assumes CLI is on PATH).
+   * Pass [process.execPath, process.argv[1]] from the CLI start command to use
+   * the exact runtime that started this server.
+   *
+   * Example: ['bun', '/path/to/packages/cli/src/cli.ts'] in dev,
+   *          ['open-knowledge'] in production.
+   */
+  localOpCliArgs?: string[];
+  /**
+   * Path to the project's parent git working tree (i.e. the repo root, not the
+   * shadow git dir). When provided, `POST /api/save-version` and
+   * `POST /api/rollback` create an additional commit + `ok/v<N>` tag in the
+   * parent git repository to make checkpoints and restores team-visible.
+   * Parent-git operations are serialized through `parentGitMutex`.
+   */
+  projectDir?: string;
+  /**
+   * Getter for the server's principal record (D50, US-024).
+   * Called at request time so deferred async init propagates.
+   * Returns null if principal has not yet been loaded or loading failed.
+   */
+  getPrincipal?: () => Principal | null;
+  /**
+   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
+   * parity for the Electron `ok:shell:detect-protocol` IPC — see
+   * `handoff-api.ts`). When omitted, the platform's default probe is used
+   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
+   * fake so the endpoint doesn't shell out.
+   */
+  installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -436,19 +582,23 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function json(res: ServerResponse, status: number, data: unknown): void {
+function json(
+  res: ServerResponse,
+  status: number,
+  data: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }
-
 /**
- * Extract all ATX headings (# … ######) from a markdown document.
+ * Extract all ATX headings (# … ######) from a Markdown document.
  * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
  */
-export type { HeadingEntry } from '@inkeep/open-knowledge-core';
 export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
@@ -460,7 +610,9 @@ export function extractHeadings(content: string): HeadingEntry[] {
 
   const headings: HeadingEntry[] = [];
   const slugCounts = new Map<string, number>();
+  const isInCodeFence = createCodeFenceTracker();
   for (const line of body.split('\n')) {
+    if (isInCodeFence(line)) continue;
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();
@@ -480,6 +632,32 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
+/**
+ * Returns true when an Origin header value is permitted to reach /api/* endpoints.
+ *
+ * Allowed:
+ * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
+ * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
+ * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
+ * - http(s)://[::1][:port] — IPv6 loopback
+ *
+ * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
+ */
+function isAllowedApiOrigin(origin: string): boolean {
+  if (origin === 'null') return true; // file:// / packaged Electron renderer
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname === 'localhost' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -495,8 +673,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     onAgentWrite,
+    getSyncEngine,
+    localOpCliArgs = ['open-knowledge'],
+    projectDir,
+    getPrincipal,
+    installedAgentsProbe,
   } = options;
+
+  // Concurrency guard: at most 1 in-flight request per local-op endpoint
+  const localOpGuard = createConcurrencyGuard();
+
+  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
+  // Factory is called once per createApiExtension() so the cache lives for
+  // the lifetime of the server (cleared on server restart).
+  const installedAgentsCache = createInstalledAgentsProbe({
+    probe: installedAgentsProbe ?? createOsProbe(process.platform),
+  });
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -800,7 +994,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
+      // Apply rewrite via XmlFragment-authoritative pattern (PRECEDENTS.md precedent #12;
       // replaces the deleted syncTextToFragment helper). Parse new markdown →
       // updateYFragment (preserves user-content Items at matching positions) →
       // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
@@ -900,8 +1094,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           destinationDocName,
         );
 
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
         setReconciledBase(destinationDocName, renamedSource.markdown);
 
@@ -941,29 +1142,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
   const AGENT_NAME_MAX_LEN = 128;
 
-  /** Extract agent identity fields shared across the three write endpoints. */
+  /**
+   * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
+   * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
+   * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
     agentId: string;
     agentName: string;
     colorSeed: string;
     clientName: string | undefined;
+    clientVersion: string | undefined;
+    label: string | undefined;
   } {
     let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
     if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
       rawAgentId = undefined;
     }
-    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
     const agentName =
-      typeof body.agentName === 'string'
-        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
-        : 'Claude';
+      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
     let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
     if (clientName !== undefined) {
-      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+      clientName = sanitizeGitIdentity(clientName);
+    }
+    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
+    if (clientVersion !== undefined) {
+      clientVersion = sanitizeGitIdentity(clientVersion);
+    }
+    let label = typeof body.label === 'string' ? body.label : undefined;
+    if (label !== undefined) {
+      label = sanitizeGitIdentity(label);
     }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
@@ -971,7 +1183,119 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       typeof body.colorSeed === 'string' && body.colorSeed.length > 0
         ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName };
+    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
+  }
+
+  /**
+   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
+   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
+   */
+  function resolveAgentType(clientName: string | undefined): string {
+    if (!clientName) return 'bot';
+    const lower = clientName.toLowerCase();
+    if (lower.includes('claude')) return 'claude';
+    if (lower.includes('cursor')) return 'cursor';
+    if (lower.includes('codex')) return 'codex';
+    if (lower.includes('cline')) return 'cline';
+    if (lower.includes('windsurf')) return 'windsurf';
+    return 'bot';
+  }
+
+  /**
+   * Build actor-tuple metadata (FR-8) for threading through recordContributor →
+   * ContributorEntry → OkActorEntry. Populates:
+   *   - principalId from getPrincipal() (stable UUID per local install)
+   *   - agentType derived from clientName
+   *   - clientName / clientVersion / label passed through from request body
+   */
+  function buildAgentActor(args: {
+    clientName: string | undefined;
+    clientVersion?: string;
+    label?: string;
+  }): {
+    principalId?: string;
+    agentType?: string;
+    clientName?: string;
+    clientVersion?: string;
+    label?: string;
+  } {
+    const principalId = getPrincipal?.()?.id;
+    return {
+      principalId,
+      agentType: resolveAgentType(args.clientName),
+      clientName: args.clientName,
+      clientVersion: args.clientVersion,
+      label: args.label,
+    };
+  }
+
+  /**
+   * Shape of the `summary` field appended to a handler's success JSON response
+   * when the caller provided a summary (spec FR8). Absent from the response
+   * entirely when the caller did not supply a summary (including empty string,
+   * which is treated as absent per `normalizeSummary`).
+   *
+   * `hint` is nested inside `summary` (not a sibling top-level key) so the
+   * truncation message always travels with the field it explains — this
+   * prevents naming collisions at the response root and tightens the coupling
+   * between `truncatedFrom` and the human-readable explanation.
+   */
+  type SummaryResponse = { value: string; truncatedFrom?: number; hint?: string };
+
+  /**
+   * Pure response-shape derivation from a normalized summary — NO side effects.
+   * Returns the fields the handler appends to its success JSON when the caller
+   * supplied a summary (FR8/FR12). `undefined` return values mean "omit the
+   * corresponding response key entirely."
+   *
+   * The hint is nested inside `response.hint` when truncation fires — callers
+   * that want the top-level text line read the value via `response?.hint`.
+   */
+  function summaryResponseFields(normalized: NormalizedSummary): {
+    response?: SummaryResponse;
+    stored: string | undefined;
+  } {
+    if (normalized.kind !== 'value') return { stored: undefined };
+    if (normalized.truncatedFrom !== undefined) {
+      return {
+        response: {
+          value: normalized.value,
+          truncatedFrom: normalized.truncatedFrom,
+          hint: `Summary truncated from ${normalized.truncatedFrom} chars to 80 (max 80).`,
+        },
+        stored: normalized.value,
+      };
+    }
+    return { response: { value: normalized.value }, stored: normalized.value };
+  }
+
+  /**
+   * Strip truncation-specific fields from a `SummaryResponse`. Used by the
+   * rename / rollback default-substitution path: when the server generates a
+   * default like "Renamed X → Y" and that default itself overflows the cap,
+   * the agent did not submit the long string — so `truncatedFrom` and the
+   * "Summary truncated from ..." hint would misattribute blame to the caller.
+   * The stored value is still the truncated form (so the timeline bullet fits),
+   * but the diagnostic metadata is silenced in the response.
+   */
+  function stripDefaultPathTruncation(response: SummaryResponse): SummaryResponse {
+    return { value: response.value };
+  }
+
+  /**
+   * Fire the M1/M2 counters for a summary that is about to be persisted.
+   * Call AFTER the contribution is guaranteed to land (i.e. not on 404/409
+   * early-returns) so adoption rate reflects successful writes.
+   *
+   * `fromDefault` suppresses the `summariesTruncated` increment when the
+   * truncation came from a server-generated default (rename / rollback default
+   * substitution). The agent had no control over those strings, so counting
+   * them toward M2 would muddy the "agent behavior" signal per spec §7 M2.
+   */
+  function countNormalizedSummary(normalized: NormalizedSummary, fromDefault = false): void {
+    if (normalized.kind !== 'value') return;
+    incrementSummariesProvided();
+    if (normalized.truncatedFrom !== undefined && !fromDefault) incrementSummariesTruncated();
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1008,8 +1332,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
+      const normalizedSummary = normalizeSummary(body.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1017,28 +1347,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        recordContributor(docName, agentId, agentName, colorSeed);
+        }, session.origin);
+        recordContributor(
+          docName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(docName, 'agent-write');
+      onAgentWrite?.();
 
-      json(res, 200, { ok: true, timestamp });
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1093,39 +1456,71 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
-      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const { response: summaryResponse, stored: storedSummary } =
+        summaryResponseFields(normalizedSummary);
+      const session = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
 
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
-          applyAgentMarkdownWrite(dc.document, markdown, position);
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: resolvedDocName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          applyAgentMarkdownWrite(session.dc.document, markdown, position);
 
-          const activityMap = dc.document.getMap('activity');
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
+        }, session.origin);
+        recordContributor(
+          resolvedDocName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Publish agent focus on __system__ awareness so browser clients can
-      // push-navigate to the doc just written. Uses per-write agentId from
-      // attribution (PR #134).
+      // Focus (attribution) on __system__ awareness. Focus drives browser
+      // push-navigation to the doc the agent just wrote (writeKind); presence
+      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -1146,6 +1541,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         timestamp,
         subscriberCount,
         ...(hints ? { hints } : {}),
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
@@ -1171,9 +1567,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
-      const content = dc.document.getText('source').toString();
-      json(res, 200, { ok: true, docName, content });
+      // Read via a transient DirectConnection rather than sessionManager.getSession —
+      // this endpoint has no agent identity, and creating a cached session would
+      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+      const dc = await hocuspocus.openDirectConnection(docName);
+      try {
+        const document = dc.document;
+        if (!document) {
+          json(res, 500, { ok: false, error: 'Document not available' });
+          return;
+        }
+        const content = document.getText('source').toString();
+        json(res, 200, { ok: true, docName, content });
+      } finally {
+        await dc.disconnect();
+      }
     } catch (e) {
       console.error('[document-read]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1585,10 +1993,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
-        body as Record<string, unknown>,
-      );
-      const dc = await sessionManager.getSession(docName, agentId, {
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body as Record<string, unknown>);
+      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
         clientName,
@@ -1597,16 +2009,44 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
-      dc.document.awareness.setLocalStateField('mode', 'editing');
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and transact
+      // (even future code added here) flips the badge back to idle rather
+      // than wedging it on 'editing'.
       try {
-        dc.document.transact(() => {
-          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
-          const xmlFragment = dc.document.getXmlFragment('default');
-          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+        session.dc.document.transact(() => {
+          // Read current authoritative state. Search the FULL markdown
+          // (frontmatter + body) so agents can patch frontmatter fields
+          // (e.g. `title:`, `cluster:`) the same way they patch body text.
+          // XmlFragment is the authoritative body per precedent #12; the
+          // frontmatter lives in Y.Map('metadata') and must be composed
+          // in for the search surface to reflect the document as the
+          // agent sees it on disk.
+          const xmlFragment = session.dc.document.getXmlFragment('default');
+          const metaMap = session.dc.document.getMap('metadata');
+          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+          const currentBody = mdManager.serialize(
+            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+          );
+          const currentFull = prependFrontmatter(currentFm, currentBody);
+
           const pos =
             offset == null
-              ? currentBody.indexOf(find)
-              : currentBody.slice(offset, offset + find.length) === find
+              ? currentFull.indexOf(find)
+              : currentFull.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1617,21 +2057,47 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          const newBody =
-            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
-          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
-          const activityMap = dc.document.getMap('activity');
+          // Splice at the character level. The result is the authoritative
+          // post-patch full document — if the patch deletes the FM region,
+          // metaMap must be cleared accordingly. Route through explicit
+          // split-then-write so empty-FM is distinguishable from
+          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          const newFull =
+            currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
+          if (newFm !== currentFm) {
+            metaMap.set('frontmatter', newFm);
+          }
+          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
+
+          const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
             agentId,
             timestamp: Date.now(),
             type: 'insert',
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
-        }, AGENT_WRITE_ORIGIN);
-        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
+        }, session.origin);
+        if (!notFound && !staleTarget) {
+          // Only count + record when the patch actually applied. The M1
+          // denominator excludes 404/409 so adoption rate reflects successful
+          // writes, not total attempts.
+          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
+          recordContributor(
+            docName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        }
       } finally {
-        dc.document.awareness.setLocalStateField('mode', 'idle');
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
 
       if (staleTarget) {
@@ -1648,6 +2114,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
+      // Focus (attribution) on __system__ awareness. Presence is separately
+      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -1658,9 +2126,145 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const subscriberCount = getSubscriberCount(docName);
 
-      json(res, 200, { ok: true, timestamp, subscriberCount });
+      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
+   *
+   * Body: { docName?: string, connectionId: string, scope?: 'last' | 'session' }
+   *   connectionId — the session's agentId (matches sessionManager key)
+   *   scope — 'last' undoes the top UM stack item; 'session' undoes all items.
+   *
+   * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
+   * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
+   */
+  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
+      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
+      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
+      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
+      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(body);
+
+      const rawDocName =
+        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+
+      const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined;
+      if (!connectionId) {
+        json(res, 400, { ok: false, error: 'connectionId required' });
+        return;
+      }
+
+      const rawScope = body.scope;
+      const scope: 'last' | 'session' = rawScope === 'session' ? 'session' : 'last';
+
+      if (!sessionManager.hasSession(docName, connectionId)) {
+        json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
+        return;
+      }
+
+      const session = await sessionManager.getSession(docName, connectionId);
+
+      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+      // instead of the per-doc awareness — the per-doc awareness has ONE
+      // shared clientID across N concurrent agents and would stomp. The
+      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
+      // so the keepalive-WS close handler's cleanup path finds the entry.
+      //
+      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+      // in `finally` is atomic — any throw between setPresence and the undo
+      // transact flips the badge back to idle rather than wedging it on 'writing'.
+      let undone = false;
+      try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
+        // applyAgentUndo wraps um.undo() + composition in one transact under
+        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
+        undone = applyAgentUndo(session, scope);
+        // FR-5 / D42: record attribution for the undo write so the shadow-repo
+        // L2 drain fans it out under this session's writer-id. Skip when the
+        // UM stack was empty — a no-op undo has no mutation to attribute.
+        if (undone) {
+          recordContributor(
+            docName,
+            connectionId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+          );
+        }
+      } finally {
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+      }
+
+      if (undone) {
+        flushDocToGit(docName, 'agent-undo');
+      }
+
+      agentFocusBroadcaster?.setFocus(connectionId, {
+        agentName: connectionId,
+        currentDoc: docName,
+        writeKind: 'undo',
+        ts: Date.now(),
+      });
+
+      json(res, 200, { ok: true, docName, scope, undone });
+    } catch (e) {
+      log.error({ err: e }, '[agent-undo] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1725,6 +2329,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
+   *
+   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
+   * files written into freshly-created subdirectories (the recursive subwatch
+   * is registered asynchronously after the IN_CREATE for the directory, so
+   * rapid follow-up file writes race the registration). That leaves the
+   * backlink index out of sync with the content directory on disk, which the
+   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
+   * orphan-hint shape) cannot otherwise recover from.
+   *
+   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
+   * resync from the filesystem that covers dropped events. It is NOT suitable
+   * for production: rebuild wipes any in-memory backlink state not yet
+   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
+   * behind `enableTestRoutes` for that reason.
+   */
+  async function handleTestRescanBacklinks(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      if (!backlinkIndex) {
+        json(res, 503, { ok: false, error: 'Backlink index not configured' });
+        return;
+      }
+      backlinkIndex.rebuildFromDisk();
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+      });
+      signalChannel?.('backlinks');
+      signalChannel?.('graph');
+      json(res, 200, { ok: true });
+    } catch (e) {
+      console.error('[test-rescan-backlinks]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
   async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -1747,9 +2395,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers from body
+      // Parse optional writers + message + principal from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
+      let userMessage: string | undefined;
+      let saveVersionBody: Record<string, unknown> = {};
+      let principalName: string | undefined;
+      let principalEmail: string | undefined;
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1757,6 +2409,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch {
           json(res, 400, { ok: false, error: 'Invalid JSON' });
           return;
+        }
+        saveVersionBody = body;
+        if (typeof body.message === 'string' && body.message.trim()) {
+          userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
         if (Array.isArray(body.writers)) {
           writers = (body.writers as Array<Record<string, string>>).map((w) => {
@@ -1771,23 +2427,132 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             };
           });
         }
+        // Optional principal identity: { name: string, email: string } (US-020, D12)
+        const p = body.principal;
+        if (p && typeof p === 'object' && !Array.isArray(p)) {
+          const pr = p as Record<string, unknown>;
+          if (typeof pr.name === 'string' && pr.name.trim()) {
+            principalName = sanitizeGitIdentity(pr.name.trim());
+          }
+          if (typeof pr.email === 'string' && pr.email.trim()) {
+            principalEmail = sanitizeGitIdentity(pr.email.trim());
+          }
+        }
       }
 
-      // Default writer if none provided
+      // Thread agent identity — extends writers[] with calling agent (D42).
+      const {
+        rawAgentId: svRawAgentId,
+        agentId: svAgentId,
+        agentName: svAgentName,
+        clientName: svClientName,
+      } = extractAgentIdentity(saveVersionBody);
       if (writers.length === 0) {
-        writers = [
-          { id: 'server', name: 'openknowledge-server', email: 'noreply@openknowledge.local' },
-        ];
+        if (svRawAgentId !== undefined) {
+          const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
+          writers = [
+            { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
+          ];
+        } else {
+          writers = [SERVICE_WRITER];
+        }
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
       const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
-      console.log(`[shadow] checkpoint ${result.checkpointRef}`);
+      console.log(`[history] checkpoint ${result.checkpointRef}`);
+
+      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
+      // swapContributors() atomically captures all agent writes since the last checkpoint.
+      const contributorSnapshot = swapContributors();
+
+      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
+      let versionTag: string | undefined;
+      if (projectDir) {
+        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
+        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
+        let parentGitAvailable = false;
+        try {
+          const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+          await checkPg.revparse(['--git-dir']);
+          parentGitAvailable = true;
+        } catch (e) {
+          console.warn(
+            `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        if (parentGitAvailable) {
+          try {
+            versionTag = await withParentLock(async () => {
+              const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+              // Count existing ok/v* tags to derive N
+              const existing = await pg.tags(['--list', 'ok/v*']);
+              const n = existing.all.length + 1;
+              const tag = `ok/v${n}`;
+
+              // Author identity: principal from body > git config > openknowledge fallback
+              let authorName = 'openknowledge';
+              let authorEmail = 'noreply@openknowledge.local';
+              if (principalName && principalEmail) {
+                authorName = principalName;
+                authorEmail = principalEmail;
+              } else {
+                try {
+                  const gitId = await resolveGitIdentity(projectDir);
+                  if (gitId) {
+                    authorName = gitId.name;
+                    authorEmail = gitId.email;
+                  }
+                } catch {
+                  // no-op — use defaults
+                }
+              }
+
+              // Co-Authored-By trailers for agent/principal session contributors (US-020)
+              const coAuthorLines: string[] = [];
+              for (const entry of contributorSnapshot.values()) {
+                if (
+                  entry.writerId.startsWith('agent-') ||
+                  entry.writerId.startsWith('principal-')
+                ) {
+                  const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                  coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+                }
+              }
+
+              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+              const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+              const commitMsg =
+                coAuthorLines.length > 0
+                  ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                  : subjectLine;
+
+              // Stage content changes and create commit (allow-empty so a tag always lands)
+              const gitPathspec = resolvedContentRoot || '.';
+              await pg.add(gitPathspec);
+              await pg
+                .env({
+                  GIT_AUTHOR_NAME: authorName,
+                  GIT_AUTHOR_EMAIL: authorEmail,
+                  GIT_COMMITTER_NAME: authorName,
+                  GIT_COMMITTER_EMAIL: authorEmail,
+                })
+                .commit(commitMsg, ['--allow-empty']);
+              await pg.addTag(tag);
+              console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+              return tag;
+            });
+          } catch (e) {
+            console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+          }
+        }
+      }
 
       json(res, 200, {
         ok: true,
         checkpointRef: result.checkpointRef,
+        ...(versionTag ? { versionTag } : {}),
       });
     } catch (e) {
       console.error('[save-version]', e);
@@ -1854,7 +2619,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, ...result });
     } catch (e) {
-      console.error('[history]', e);
+      console.error('[shadow]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -1913,7 +2678,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, sha, content, timestamp, author });
     } catch (e) {
-      console.error('[history-version]', e);
+      console.error('[shadow-version]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -2046,9 +2811,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const { docName: rawDocName, commitSha: rawSha } = body as Record<string, unknown>;
+    const {
+      agentId: rollbackAgentId,
+      agentName: rollbackAgentName,
+      colorSeed: rollbackColorSeed,
+      clientName: rollbackClientName,
+      clientVersion: rollbackClientVersion,
+      label: rollbackLabel,
+    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+
+    const {
+      docName: rawDocName,
+      commitSha: rawSha,
+      versionTag: rawVersionTag,
+    } = body as Record<string, unknown>;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
+    const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
 
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName required' });
@@ -2056,6 +2835,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
       json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
+      return;
+    }
+
+    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
+    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
+    // defaults would attribute every human Restore to Claude. Only when the
+    // caller explicitly sends `agentId` do we attribute + record a summary.
+    //
+    // Validation runs unconditionally (independent of `hasAgentId`) so a
+    // malformed `summary: 42` returns 400 even when identity is absent — this
+    // surfaces MCP-client identity-passthrough regressions loudly instead of
+    // silently dropping the summary on the floor. The attribution semantics
+    // (D22) are unchanged: `recordContributor` still only fires when
+    // `hasAgentId` is true.
+    const bodyObj = body as Record<string, unknown>;
+    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+    const normalizedSummary = normalizeSummary(bodyObj.summary);
+    if (normalizedSummary.kind === 'invalid') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
     }
 
@@ -2119,22 +2917,106 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
-      setReconciledBase(docName, markdown);
+      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
+      // here. Setting the base before `onStoreDocument` has fired would trip the
+      // "skip write when serialized === currentBase" guard at
+      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
+      // — which also skips the following `scheduleGitCommit()`, orphaning any
+      // `recordContributor(...)` entry we add below into the next unrelated
+      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
+      // Letting `onStoreDocument` fire naturally writes disk AND updates the
+      // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // Force-flush L2 git commit so the restored version appears in the
-      // timeline immediately, rather than waiting for the 30s debounce.
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          console.warn('[rollback] flush git commit failed:', e);
-        });
+      // D22 LOCKED: attribute + record summary ONLY when caller supplied
+      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
+      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
+      // applies when agent-supplied summary was absent; the default goes through
+      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
+      //
+      // When the default is used and it happens to truncate (rare for rollback
+      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
+      // path symmetric with `handleRename` where defaults frequently overflow
+      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
+      // the response: the agent never submitted the long string, so the
+      // "Summary truncated from N chars to 80" message would misattribute
+      // blame to the caller. `summariesTruncated` is also suppressed for
+      // server-generated defaults so the M2 metric reflects agent behavior.
+      let summaryResponse: SummaryResponse | undefined;
+      if (hasAgentId) {
+        const shaShort = commitSha.slice(0, 8);
+        const agentProvidedSummary = normalizedSummary.kind === 'value';
+        const effectiveNormalized = agentProvidedSummary
+          ? normalizedSummary
+          : normalizeSummary(`Restored to ${shaShort}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse =
+          agentProvidedSummary || !fields.response
+            ? fields.response
+            : stripDefaultPathTruncation(fields.response);
+        recordContributor(
+          docName,
+          rollbackAgentId,
+          rollbackAgentName,
+          rollbackColorSeed,
+          formatRollbackSubject(docName, commitSha),
+          buildAgentActor({
+            clientName: rollbackClientName,
+            clientVersion: rollbackClientVersion,
+            label: rollbackLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
       }
+
+      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
+      // restored version + attribution appear in the timeline within ~100ms
+      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
+      // the shared `flushDocToGit` helper (same pattern as the three
+      // agent-write handlers) rather than a raw `flushGitCommit()` which
+      // no-ops when no L2 timer is set yet.
+      flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
       console.log(
         `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
       );
 
-      json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
+      // Parent-git commit for team-visible restore record (non-fatal)
+      if (projectDir) {
+        const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
+        const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
+        const resolvedContentRoot = contentRoot ?? 'content';
+        withParentLock(async () => {
+          const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+          const gitPathspec = resolvedContentRoot || '.';
+          await pg.add(gitPathspec);
+          await pg.commit(restoreMsg, { '--allow-empty': null });
+          console.log(`[rollback] parent-git commit: ${restoreMsg}`);
+        }).catch((e) => {
+          console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+        });
+      }
+
+      // D22: only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (no agentId) must not
+      // trigger a cross-client push-nav as if Claude-1 did the rollback.
+      if (hasAgentId) {
+        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
+          agentName: rollbackAgentName,
+          currentDoc: docName,
+          writeKind: 'rollback-apply',
+          ts: Date.now(),
+        });
+      }
+
+      json(res, 200, {
+        ok: true,
+        restoredFrom: commitSha,
+        timestamp,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rollback]', e);
       const message = e instanceof Error ? e.message : String(e);
@@ -2164,6 +3046,66 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, getParseHealth());
+  }
+
+  async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const principal = getPrincipal?.() ?? null;
+    if (!principal) {
+      json(res, 404, { error: 'Principal not available' });
+      return;
+    }
+    json(res, 200, principal);
+  }
+
+  async function handleMetricsAgentPresence(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + Host-header gate — matches /api/workspace. The presence map
+    // exposes per-agent identity (`displayName` — operator-configured AGENT
+    // label) and the workspace-relative path each agent is currently writing
+    // to (`currentDoc`). Those are local-editing-only signals; if a user
+    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
+    // LAN peers MUST NOT be able to read the map. Authorization runs before
+    // method dispatch so a bad Host never leaks "verb the endpoint expects"
+    // via 405 (same pattern + rationale as handleWorkspace — see its
+    // comment block for the ASVS / DNS-rebinding background).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // Pre-filter stale entries using the same threshold the broadcaster
+    // uses for opportunistic eviction (runs inside setPresence). Eviction
+    // is write-triggered — if the last agent disconnects without the
+    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+    // agent writes after, the raw map keeps the zombie entry. Clients
+    // already filter with their own 5s TTL so this is invisible to the
+    // bar, but `/api/metrics/agent-presence` would otherwise lie to
+    // operators. Filtering here matches what a "live" read returns
+    // without paying for a sparse timer.
+    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+    const now = Date.now();
+    const presence: typeof rawPresence = {};
+    for (const [agentId, entry] of Object.entries(rawPresence)) {
+      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+        presence[agentId] = entry;
+      }
+    }
+    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -2254,40 +3196,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    const now = Date.now();
+    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
+    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
+    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
+    // can treat both as interchangeable unless they need the checkpoint sha.
+    interface RescueRowFlat {
+      docName: string;
+      timestamp: string;
+      size: number;
+      source: 'flat';
+    }
+    interface RescueRowTimeline extends TimelineRescueEntry {
+      source: 'timeline';
+    }
+    const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
+
     const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
-    if (!existsSync(rescueDir)) {
-      json(res, 200, []);
-      return;
+    if (existsSync(rescueDir)) {
+      try {
+        const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
+        for (const file of files) {
+          const filePath = resolve(rescueDir, file);
+          const stat = statSync(filePath);
+          const age = now - stat.mtimeMs;
+
+          if (age > RESCUE_MAX_AGE_MS) {
+            try {
+              unlinkSync(filePath);
+            } catch (e) {
+              console.debug('[rescue] cleanup failed (non-critical):', e);
+            }
+            continue;
+          }
+
+          entries.push({
+            docName: stripDocExtension(file),
+            timestamp: stat.mtime.toISOString(),
+            size: stat.size,
+            source: 'flat',
+          });
+        }
+      } catch (e) {
+        console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+      }
     }
 
-    const now = Date.now();
-    const entries: { docName: string; timestamp: string; size: number }[] = [];
-
+    // Timeline-ref source — merged in so the unified response surfaces all
+    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
-      const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
-      for (const file of files) {
-        const filePath = resolve(rescueDir, file);
-        const stat = statSync(filePath);
-        const age = now - stat.mtimeMs;
-
-        if (age > RESCUE_MAX_AGE_MS) {
-          // Clean up expired rescue buffers
-          try {
-            unlinkSync(filePath);
-          } catch (e) {
-            console.debug('[rescue] cleanup failed (non-critical):', e);
-          }
-          continue;
-        }
-
-        entries.push({
-          docName: stripDocExtension(file),
-          timestamp: stat.mtime.toISOString(),
-          size: stat.size,
-        });
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      for (const t of timelineEntries) {
+        entries.push({ ...t, source: 'timeline' });
       }
     } catch (e) {
-      console.error('[rescue] Failed to list rescue buffers:', e);
+      console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
     }
 
     json(res, 200, entries);
@@ -2309,6 +3273,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
+    // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
+    // this first — the flat-file path is how shutdown-flush delivers the
+    // most recent unflushed state, which is the most relevant artifact.
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
@@ -2316,31 +3283,59 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Invalid document name');
       return;
     }
-    if (!existsSync(filePath)) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-
-    // Check expiry
-    const stat = statSync(filePath);
-    if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // ignore
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath);
+      if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // ignore
+        }
+      } else {
+        const content = readFileSync(filePath, 'utf-8');
+        res.writeHead(200, {
+          'Content-Type': 'text/markdown',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(content);
+        return;
       }
-      res.writeHead(404);
-      res.end('Not found — rescue buffer expired');
-      return;
     }
 
-    const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, {
-      'Content-Type': 'text/markdown',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(content);
+    // Timeline-ref source — fall back to the most recent
+    // `external-change-rescue` checkpoint for this doc on the current
+    // branch (SPEC §6 R7f). Reads the blob via `git cat-file` so large
+    // docs stream directly from git object storage.
+    try {
+      const branch = getCurrentBranch?.() ?? 'main';
+      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+      // Most recent for this doc
+      const match = timelineEntries
+        .filter((e) => e.docName === docName)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+      if (match) {
+        const sg = shadowGit(shadowRef.current);
+        const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
+        // The blob is the single entry; extract its object SHA.
+        const firstLine = tree.split('\n')[0] ?? '';
+        const parts = firstLine.split(/\s+/);
+        const blobSha = parts[2];
+        if (blobSha) {
+          const content = await sg.raw('cat-file', '-p', blobSha);
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          res.end(content);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[rescue] timeline-ref fallback failed:', e);
+    }
+
+    res.writeHead(404);
+    res.end('Not found');
   }
 
   async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -2367,6 +3362,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
+      const {
+        agentId: createPageAgentId,
+        agentName: createPageAgentName,
+        colorSeed: createPageColorSeed,
+        clientName: createPageClientName,
+        clientVersion: createPageClientVersion,
+        label: createPageLabel,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -2408,6 +3411,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
+      recordContributor(
+        docName,
+        createPageAgentId,
+        createPageAgentName,
+        createPageColorSeed,
+        undefined,
+        buildAgentActor({
+          clientName: createPageClientName,
+          clientVersion: createPageClientVersion,
+          label: createPageLabel,
+        }),
+      );
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -2493,6 +3508,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      const {
+        agentId: renameAgentId,
+        agentName: renameAgentName,
+        colorSeed: renameColorSeed,
+        clientName: renameClientName,
+        clientVersion: renameClientVersion,
+        label: renameLabel,
+      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { docName, newDocName } = body as Record<string, unknown>;
       if (typeof docName !== 'string' || typeof newDocName !== 'string') {
         json(res, 400, { ok: false, error: 'docName and newDocName are required' });
@@ -2515,6 +3538,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      // D22 LOCKED 1-way door: only attribute when the caller explicitly
+      // supplies agentId. Any future UI-driven rename (no agentId) stays
+      // anonymous as today — even though the rename handler has no existing
+      // UI call site, adding the guard up front keeps the pattern uniform
+      // with `handleRollback` and prevents `extractAgentIdentity` defaults
+      // from silently attributing future UI paths to Claude.
+      //
+      // Validation runs unconditionally (independent of `hasAgentId`) so a
+      // malformed `summary: 42` returns 400 even when identity is absent —
+      // this surfaces MCP-client identity-passthrough regressions loudly
+      // instead of silently dropping the summary on the floor. The
+      // attribution semantics (D22) are unchanged.
+      const bodyObj = body as Record<string, unknown>;
+      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
+      const normalizedSummary = normalizeSummary(bodyObj.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
       if (!existsSync(sourcePath)) {
@@ -2527,7 +3570,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const result = await _performManagedRename(docName, newDocName);
-      json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
+
+      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
+      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
+      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
+      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
+      // avoid "Claude renamed X → Y" noise on every inbound doc.
+      //
+      // When the default "Renamed X → Y" template overflows the 80-char cap
+      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
+      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
+      // response: the agent never submitted the long string, so the
+      // "Summary truncated from N chars to 80" hint would misattribute blame
+      // to the caller. `summariesTruncated` is also suppressed for
+      // server-generated defaults so the M2 metric reflects agent behavior,
+      // not server-template width.
+      let summaryResponse: SummaryResponse | undefined;
+      if (hasAgentId) {
+        const agentProvidedSummary = normalizedSummary.kind === 'value';
+        const effectiveNormalized = agentProvidedSummary
+          ? normalizedSummary
+          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
+        const fields = summaryResponseFields(effectiveNormalized);
+        summaryResponse =
+          agentProvidedSummary || !fields.response
+            ? fields.response
+            : stripDefaultPathTruncation(fields.response);
+        recordContributor(
+          newDocName as string,
+          renameAgentId,
+          renameAgentName,
+          renameColorSeed,
+          formatRenameSubject(docName as string, newDocName as string),
+          buildAgentActor({
+            clientName: renameClientName,
+            clientVersion: renameClientVersion,
+            label: renameLabel,
+          }),
+          fields.stored,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
+        // pendingContributors entry into its own L2 shadow commit. Parallels
+        // the `flushDocToGit(...)` call in `handleRollback` above; uses
+        // `flushDocToGit(newDocName, ...)` because the source doc may no
+        // longer be open after `_performManagedRename` closed it.
+        flushDocToGit(newDocName as string, 'rename');
+      }
+
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rename]', e);
       json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
@@ -2562,6 +3659,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, fromPath, toPath } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -2614,9 +3712,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renamed.map(({ fromDocName }) => fromDocName),
       );
 
-      const applyRename = (): void => {
-        mkdirSync(dirname(destinationPath), { recursive: true });
-        renameSync(sourcePath, destinationPath);
+      const applyRename = async (): Promise<void> => {
+        const renamedWithGit = await renameTrackedPathInGit(
+          projectDir,
+          sourcePath,
+          destinationPath,
+        );
+        if (!renamedWithGit) {
+          mkdirSync(dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
         syncRenamedDocsToDisk(renamed, liveContents);
       };
 
@@ -2631,7 +3736,46 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
       } else {
-        applyRename();
+        await applyRename();
+
+        const fileIndex = getFileIndex();
+        for (const { fromDocName, toDocName } of renamed) {
+          updateFileIndex(
+            {
+              kind: 'rename',
+              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
+              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
+              oldDocName: fromDocName,
+              newDocName: toDocName,
+              content:
+                liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
+
+        if (backlinkIndex) {
+          for (const { fromDocName, toDocName } of renamed) {
+            backlinkIndex.renameDocument(
+              fromDocName,
+              toDocName,
+              liveContents.get(fromDocName) ??
+                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+            );
+          }
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+
+        signalChannel?.('files');
       }
 
       json(res, 200, { ok: true, renamed });
@@ -2669,6 +3813,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
       const { kind, path } = body as Record<string, unknown>;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
@@ -2719,8 +3864,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string }[] = [];
-      for (const [docName] of index) {
+      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      for (const [docName, entry] of index) {
         let title = docName;
         try {
           const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
@@ -2729,7 +3874,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title });
+        pages.push({ docName, title, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
@@ -2799,6 +3944,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const { filename, buffer, parentDocName } = uploadResult;
+    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
 
     if (!parentDocName) {
       json(res, 400, { ok: false, error: 'parentDocName is required' });
@@ -2893,6 +4042,1129 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
+  // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
+
+  const LOCAL_OP_CLONE_KEY = '/api/local-op/clone';
+  const LOCAL_OP_OPEN_KEY = '/api/local-op/open';
+  /** Wall-clock timeout for clone subprocess (10 min). */
+  const LOCAL_OP_TIMEOUT_MS = 10 * 60 * 1000;
+  /** Max time to wait for a spawned server's lock file to show a port > 0. */
+  const LOCAL_OP_OPEN_TIMEOUT_MS = 45_000;
+
+  /**
+   * POST /api/local-op/clone
+   *
+   * Body: { url: string, dir: string }
+   * Spawns: open-knowledge clone --json --dir <dir> <url>
+   * Streams: NDJSON lines via chunked HTTP.
+   */
+  async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    // Parse request body
+    let url: string;
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { url?: unknown; dir?: unknown };
+      if (typeof parsed.url !== 'string' || !parsed.url) {
+        json(res, 400, { ok: false, error: 'Missing or invalid url' });
+        return;
+      }
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      url = parsed.url;
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: URL protocol allowlist
+    if (!isAllowedGitUrl(url)) {
+      json(res, 400, { ok: false, error: 'URL protocol not allowed' });
+      return;
+    }
+
+    // Security: dir must be within user home dir (no traversal)
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard: reject concurrent requests to this endpoint
+    if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
+      json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
+      return;
+    }
+
+    // Start chunked NDJSON response
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
+    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
+    const targetDir = expandTilde(dir);
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
+
+    let timedOut = false;
+    let settled = false;
+    // The CLI emits `{type:'complete', dir}` on success, but the browser
+    // client expects `{type:'complete', port}`. We intercept the CLI's
+    // complete event, boot a server at the cloned dir, then emit a rewritten
+    // complete with the port. Non-terminal events (progress / error) flow
+    // through unchanged.
+    let cloneCompleteDir: string | null = null;
+    let stdoutBuffer = '';
+
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let parsed: { type?: unknown; dir?: unknown } | null = null;
+        try {
+          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
+        } catch {
+          /* non-JSON — ignore */
+        }
+        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
+          // Swallow this line; we'll emit our own complete after starting the server.
+          cloneCompleteDir = parsed.dir;
+          continue;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
+      }
+    });
+
+    // Buffer stderr so we can surface it when the clone fails; also log.
+    const stderrChunks: Buffer[] = [];
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
+      if (settled) {
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        return;
+      }
+      settled = true;
+
+      void (async () => {
+        try {
+          if (timedOut && !res.writableEnded) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
+            );
+          } else if (code !== 0 && !res.writableEnded) {
+            if (stderrOutput) {
+              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
+            }
+            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
+            );
+          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
+            // Chain into server-start so the client can redirect.
+            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+            if (!res.writableEnded) {
+              if ('port' in result) {
+                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
+              } else {
+                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
+              }
+            }
+          }
+        } finally {
+          if (!res.writableEnded) res.end();
+          localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        }
+      })();
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    });
+  }
+
+  /**
+   * Spawn a detached Open Knowledge server at `dir` and poll the server.lock
+   * until a real port appears. Reused by /api/local-op/open and by the clone
+   * handler to chain clone → server-start → redirect.
+   *
+   * NOTE: The CLI's `start` command has no `--content-dir` flag — it derives
+   * the content dir from cwd + config. So we spawn with `cwd: dir` instead
+   * of passing a flag.
+   */
+  /**
+   * Ensure both the collab server (`ok start`) and the React UI (`ok ui`) are
+   * live for `dir`, and return the UI port — that's the browser-navigable
+   * redirect target post-lifecycle-split. `ok start` serves only the collab
+   * API/WebSocket and returns 404 at `/` with an `ok ui`-pointing message.
+   *
+   * Three cases:
+   *   1. `ui.lock` is live → reuse its port (UI already running in that dir).
+   *   2. `server.lock` live but `ui.lock` absent/stale → spawn `ok ui` alone;
+   *      `ok start` won't re-spawn its UI sibling when the server-lock is held.
+   *   3. Nothing live → spawn `ok start`; it auto-spawns `ok ui` as a sibling
+   *      (see `start.ts` ~line 340, "auto-spawned ok ui sibling").
+   *
+   * Polls `ui.lock` (not `server.lock`) because only `ui.lock.port` hosts the
+   * React bundle. Single polling loop covers cases 2 and 3 uniformly.
+   */
+  async function startServerAtDirAndGetPort(
+    dir: string,
+  ): Promise<{ port: number } | { error: string }> {
+    const absDir = resolve(expandTilde(dir));
+    const lockDir = resolve(absDir, '.open-knowledge');
+
+    // Case 1: UI already live — reuse.
+    const existingUi = readUiLock(lockDir);
+    if (existingUi && existingUi.port > 0) {
+      return { port: existingUi.port };
+    }
+
+    // Case 2 vs 3: pick which CLI command to spawn based on whether the
+    // collab server is already live. `ok ui` alone is correct and necessary
+    // when `server.lock` is held (can't re-run `ok start` under a live lock).
+    const existingServer = readServerLock(lockDir);
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const cliCmd = existingServer && existingServer.port > 0 ? 'ui' : 'start';
+    const spawnArgs = [...baseArgs, cliCmd];
+    // Pipe stderr so we can log why a spawn failed; ignore stdout.
+    const child = spawn(cmd, spawnArgs, {
+      cwd: absDir,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      log.warn(
+        { cwd: absDir, cliCmd, msg: chunk.toString('utf-8').trim() },
+        '[local-op/open] child stderr',
+      );
+    });
+
+    let earlyExitCode: number | null = null;
+    child.on('exit', (code) => {
+      earlyExitCode = code ?? -1;
+    });
+
+    // `unref` so the child survives past the parent. Do it after attaching
+    // the stderr listener so we still capture its output.
+    child.unref();
+
+    const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 500));
+      const uiLock = readUiLock(lockDir);
+      if (uiLock && uiLock.port > 0) {
+        return { port: uiLock.port };
+      }
+      if (earlyExitCode !== null) {
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        return {
+          error: `\`ok ${cliCmd}\` exited (code ${earlyExitCode})${stderr ? ` — ${stderr}` : ''}`,
+        };
+      }
+    }
+    const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+    return {
+      error: `UI did not start within the expected time${stderr ? ` — ${stderr}` : ''}`,
+    };
+  }
+
+  /**
+   * POST /api/local-op/open
+   *
+   * Body: { dir: string }
+   * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
+   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Returns: { port: number }
+   */
+  async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { dir?: unknown };
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: dir must be within user home dir
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard
+    if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
+      json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
+      return;
+    }
+
+    try {
+      const result = await startServerAtDirAndGetPort(dir);
+      if ('port' in result) {
+        json(res, 200, { port: result.port });
+      } else {
+        json(res, 504, { ok: false, error: result.error });
+      }
+    } finally {
+      localOpGuard.release(LOCAL_OP_OPEN_KEY);
+    }
+  }
+
+  // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
+  // FR18: loopback + origin security enforced on all five endpoints.
+  // Each endpoint has its own concurrency key to allow parallel auth operations
+  // (e.g., status check while login is in progress).
+
+  const LOCAL_OP_AUTH_LOGIN_KEY = '/api/local-op/auth/login';
+  const LOCAL_OP_AUTH_STATUS_KEY = '/api/local-op/auth/status';
+  const LOCAL_OP_AUTH_REPOS_KEY = '/api/local-op/auth/repos';
+  const LOCAL_OP_AUTH_SIGNOUT_KEY = '/api/local-op/auth/signout';
+  const LOCAL_OP_AUTH_PAT_KEY = '/api/local-op/auth/pat';
+
+  /**
+   * POST /api/local-op/auth/login
+   *
+   * Body: { host?: string }
+   * Spawns: auth login --json [--host <host>]
+   * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
+   * The device-flow subprocess manages its own timeout.
+   */
+  async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth login operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
+
+    let settled = false;
+    let sawTerminalEvent = false;
+    let stdoutBuffer = '';
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    // Kill the child if the client disconnects so `auth login` doesn't keep
+    // polling in the background and write a token to the keychain that the
+    // user never saw confirmation for.
+    const onClientClose = () => {
+      if (!child.killed) child.kill('SIGTERM');
+    };
+    res.on('close', onClientClose);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+      // Parse line-by-line to detect whether the CLI emitted a terminal event
+      // (`complete` | `error`). If it didn't but the process exits 0, we
+      // synthesize one below so the client never hangs on a silent exit.
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { type?: unknown };
+          if (parsed.type === 'complete' || parsed.type === 'error') {
+            sawTerminalEvent = true;
+          }
+        } catch {
+          /* non-JSON line (e.g. keychain-backend log) — ignore */
+        }
+      }
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      res.off('close', onClientClose);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          if (code === 0 && !sawTerminalEvent) {
+            // CLI exited cleanly without emitting a terminal event — synthesize
+            // one so the client's stream reader can resolve. Login name will be
+            // filled in by the next /api/local-op/auth/status poll.
+            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
+          } else if (code !== 0) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
+            );
+          }
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      res.off('close', onClientClose);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/status
+   *
+   * Body: { host?: string }
+   * Spawns: auth status --json [--host <host>]
+   * Returns: the single NDJSON line as parsed JSON.
+   */
+  async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth status operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve(Buffer.concat(chunks).toString('utf-8'));
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      // The CLI may emit non-JSON log lines on stdout before the terminal
+      // event (e.g. keychain probe messages on older builds). Find the last
+      // parseable JSON line and return that.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          parsed = JSON.parse(lines[i] as string);
+          break;
+        } catch {
+          /* skip non-JSON line */
+        }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
+      } else {
+        json(res, 200, { authenticated: false });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth status failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/repos
+   *
+   * Body: { host?: string }
+   * Spawns: auth repos --json [--host <host>]
+   * Streams: NDJSON via chunked HTTP.
+   */
+  async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth repos operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
+
+    let settled = false;
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/repos] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (code !== 0 && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: `auth repos exited with code ${code}` })}\n`,
+          );
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/signout
+   *
+   * Body: { host?: string }
+   * Spawns: auth signout [--host <host>]
+   * Returns: { ok: true }
+   */
+  async function handleLocalOpAuthSignout(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth signout operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve();
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth signout failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/pat
+   *
+   * Body: { pat: string, host?: string }
+   * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
+   * Returns: the NDJSON complete-event as parsed JSON.
+   */
+  async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    let pat: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { pat?: unknown; host?: unknown };
+      if (typeof parsed.pat !== 'string' || !parsed.pat) {
+        json(res, 400, { ok: false, error: 'Missing or invalid pat' });
+        return;
+      }
+      pat = parsed.pat;
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth pat operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        // Write the PAT to stdin and close it so the CLI readline resolves
+        child.stdin.write(`${pat}\n`);
+        child.stdin.end();
+
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', (code) => {
+          clearTimeout(killTimer);
+          if (code !== 0) {
+            reject(new Error(`auth pat exited with code ${code}`));
+          } else {
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          }
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
+      });
+
+      // Same robustness as status: pick the last JSON line, ignore any
+      // non-JSON output the CLI may have emitted.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          parsed = JSON.parse(lines[i] as string);
+          break;
+        } catch {
+          /* skip non-JSON line */
+        }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
+      } else {
+        json(res, 200, { ok: true });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth pat failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
+    }
+  }
+
+  // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
+  // Reads the resolved git identity via the identity resolution chain.
+  // Returns { ok: true, identity: { name, email } | null }.
+
+  async function handleLocalOpAuthIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+    try {
+      // Step 3 of the chain (OAuth profile fallback) requires a tokenStore; the
+      // server package doesn't import the CLI's token store today, so we resolve
+      // only local + global config tiers here. Sign-in flows pre-fill the form
+      // with OAuth name/email separately.
+      const identity = await resolveGitIdentity(projectDir);
+      json(res, 200, { ok: true, identity });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'identity resolution failed',
+      });
+    }
+  }
+
+  // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
+  // Writes git user.name + user.email to repo-local config via writeGitIdentity
+  // On success, nudges the sync engine to re-probe the identity chain
+  // so the UI unresolved-nudge clears immediately instead of waiting for the
+  // next push cycle.
+
+  const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
+
+  async function handleLocalOpAuthSetIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let name: string;
+    let email: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { name?: unknown; email?: unknown };
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid name' });
+        return;
+      }
+      if (typeof parsed.email !== 'string' || !parsed.email.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid email' });
+        return;
+      }
+      name = parsed.name.trim();
+      email = parsed.email.trim();
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
+      json(res, 429, { ok: false, error: 'A set-identity operation is already in progress' });
+      return;
+    }
+
+    try {
+      writeGitIdentity(projectDir, name, email);
+      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
+      // so the unresolved nudge clears in the UI without waiting on the push timer.
+      void getSyncEngine?.()
+        ?.refreshIdentity()
+        .catch(() => {
+          /* best-effort — status will catch up on next push cycle */
+        });
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'set-identity failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
+    }
+  }
+
+  // ─── Security helpers for sync endpoints ────────────────────────────────────
+  // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
+  // to avoid duplicating the same logic (checkLocalOpSecurity already imported above).
+
+  // ─── Sync endpoints ──────────────────────────────────────────────────────────
+
+  async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
+      // reads these fields unconditionally.
+      json(res, 200, {
+        state: 'dormant',
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        ahead: 0,
+        behind: 0,
+        consecutiveFailures: 0,
+        conflictCount: 0,
+        hasRemote: false,
+        syncEnabled: false,
+        identityUnresolved: false,
+      });
+      return;
+    }
+    json(res, 200, engine.getStatus());
+  }
+
+  async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let op: 'sync' | 'push' | 'pull' = 'sync';
+    try {
+      const body = await readBody(req);
+      if (body.length > 0) {
+        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+        if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
+          op = parsed.op as 'push' | 'pull' | 'sync';
+        }
+      }
+    } catch {
+      // Ignore parse errors — use default op
+    }
+    // Fire-and-return: 202 Accepted immediately, trigger runs in background
+    json(res, 202, { ok: true, op });
+    void engine.trigger(op);
+  }
+
+  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let enabled: boolean;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+      if (typeof parsed.enabled !== 'boolean') {
+        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
+        return;
+      }
+      enabled = parsed.enabled;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    await engine.setEnabled(enabled);
+    json(res, 200, { ok: true, status: engine.getStatus() });
+  }
+
+  async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    const conflicts = engine ? engine.getConflicts() : [];
+    json(res, 200, { conflicts });
+  }
+
+  async function handleSyncResolveConflict(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      const raw = await readBody(req);
+      body = JSON.parse(raw.toString()) as Record<string, unknown>;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    const { file, strategy, content } = body as {
+      file?: string;
+      strategy?: string;
+      content?: string;
+    };
+    if (!file || typeof file !== 'string') {
+      json(res, 400, { ok: false, error: 'Missing required field: file' });
+      return;
+    }
+    if (strategy !== 'mine' && strategy !== 'theirs' && strategy !== 'content') {
+      json(res, 400, {
+        ok: false,
+        error: "Invalid strategy: must be 'mine', 'theirs', or 'content'",
+      });
+      return;
+    }
+    try {
+      await engine.resolveConflict(file, strategy as ResolveStrategy, content);
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleSyncConflictContent(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 503, { ok: false, error: 'Project repo not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const file = url.searchParams.get('file');
+    if (!file) {
+      json(res, 400, { ok: false, error: 'Missing required query param: file' });
+      return;
+    }
+    // Reject obvious path-traversal; git itself rejects paths outside the index.
+    if (file.includes('..') || file.startsWith('/')) {
+      json(res, 400, { ok: false, error: 'Invalid file path' });
+      return;
+    }
+    const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+    // git stages: 1 = base, 2 = ours, 3 = theirs. Any may be missing for
+    // delete/edit or add/add conflicts — tolerate by returning empty content.
+    async function showStage(stage: 1 | 2 | 3): Promise<string> {
+      try {
+        return await pg.raw(['show', `:${stage}:${file}`]);
+      } catch {
+        return '';
+      }
+    }
+    try {
+      const [base, ours, theirs] = await Promise.all([showStage(1), showStage(2), showStage(3)]);
+      json(res, 200, { ok: true, file, base, ours, theirs });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleInstalledAgentsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
+    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
+    // this endpoint discloses a stable OS-level fingerprint of which AI
+    // agents are installed, readable without preflight under the permissive
+    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
+    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
+    // same-origin callers (the editor UI) and refuses cross-origin browser
+    // contexts + DNS-rebinding attempts that would otherwise succeed.
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+  }
+
+  async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    try {
+      await engine.abortMerge();
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
@@ -2914,18 +5186,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
+    '/api/agent-undo': handleAgentUndo,
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
+    '/api/metrics/agent-presence': handleMetricsAgentPresence,
+    '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
+    '/api/sync/status': handleSyncStatus,
+    '/api/sync/trigger': handleSyncTrigger,
+    '/api/sync/set-enabled': handleSyncSetEnabled,
+    '/api/sync/conflicts': handleSyncConflicts,
+    '/api/sync/conflict-content': handleSyncConflictContent,
+    '/api/sync/resolve-conflict': handleSyncResolveConflict,
+    '/api/sync/abort-merge': handleSyncAbortMerge,
+    '/api/local-op/clone': handleLocalOpClone,
+    '/api/local-op/open': handleLocalOpOpen,
+    '/api/local-op/auth/login': handleLocalOpAuthLogin,
+    '/api/local-op/auth/status': handleLocalOpAuthStatus,
+    '/api/local-op/auth/repos': handleLocalOpAuthRepos,
+    '/api/local-op/auth/signout': handleLocalOpAuthSignout,
+    '/api/local-op/auth/pat': handleLocalOpAuthPat,
+    '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
+    '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
+    '/api/installed-agents': handleInstalledAgentsRoute,
   };
 
   if (enableTestRoutes) {
     routes['/api/test-reset'] = handleTestReset;
+    routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
   return {
@@ -2933,6 +5226,47 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     async onRequest({ request, response }: { request: IncomingMessage; response: ServerResponse }) {
       const url = request.url?.split('?')[0];
       if (!url) return;
+
+      // Origin-allowlist CORS for /api/*. Only loopback origins are accepted:
+      // - No Origin header (same-origin browser tab, curl, CLI): passes through.
+      // - Origin "null" (Electron packaged renderer, file:// per Fetch spec §4.3): allowed.
+      // - http(s)://localhost[:port] / 127.x.x.x[:port] / [::1][:port]: allowed.
+      // - Any other Origin: 403 — closes the CSRF door on unauthenticated mutating
+      //   routes (/api/agent-write-md, /api/rollback, /api/manage/delete, etc.)
+      //   without breaking the Electron renderer or local Vite dev servers.
+      //
+      // When an allowed Origin is present, it is reflected verbatim in ACAO (not
+      // `*`) so the browser's preflight check passes while non-loopback origins are
+      // still refused by the gate above. `Vary: Origin` prevents cache poisoning.
+      //
+      // Setting via `setHeader` (not `writeHead`) so handler responses that call
+      // `writeHead(status, { ... })` inherit these headers. The typeof guard handles
+      // unit tests that stub only `writeHead` + `end`.
+      if (url.startsWith('/api/')) {
+        const origin = request.headers.origin;
+        if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+          if (typeof response.setHeader === 'function') {
+            response.setHeader('Content-Type', 'application/json');
+          }
+          response.writeHead(403);
+          response.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+          return;
+        }
+        if (typeof response.setHeader === 'function') {
+          if (origin !== undefined) {
+            response.setHeader('Access-Control-Allow-Origin', origin);
+            response.setHeader('Vary', 'Origin');
+          }
+          response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+          response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        }
+        // OPTIONS preflight — short-circuit with 204 + the headers above.
+        if (request.method === 'OPTIONS') {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+      }
 
       // Static routes
       const handler = routes[url];

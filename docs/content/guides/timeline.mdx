@@ -1,0 +1,46 @@
+---
+title: Timeline
+description: Open Knowledge's Timeline panel — every revision, auto-save, and silent recovery checkpoint for the current document.
+---
+
+Every document in Open Knowledge has a Timeline. It's the single surface that answers "what did this document used to look like?" — covering user-triggered Save Versions, per-writer work-in-progress commits, upstream `git pull` imports, and the automatic checkpoints the editor writes when a concurrent-edit race trips the CRDT's structural limit.
+
+The panel lives next to the editor. Open it from the document header (the clock icon) or with the keyboard shortcut shown there.
+
+## Row types
+
+Each row shows an author, a relative timestamp (e.g. "3 min ago"), and a kind-specific icon:
+
+- **Diamond — "Save Version"**. A user-triggered snapshot. Click to preview the state at that version; the **Restore** action writes that snapshot over the current document as a new edit.
+- **Amber alert-triangle — "Auto-saved before a concurrent edit (size)"**. The editor wrote this checkpoint automatically right before a concurrent-edit merge finalized. If you notice a paragraph blink or lost text, this is where it's preserved. See [[collaboration-recovery]] for the full flow.
+- **Sky file-archive — "Recovered from an external change (size)"**. An external writer (another process, a `git checkout`, a file-watcher sync) overrode an in-memory draft. The draft is preserved under this entry.
+- **Writer chip (bullet + color)** — a per-writer WIP (work-in-progress) auto-commit. Individually noisy; the Timeline folds consecutive same-writer runs. When an agent provided a `summary` on its write, the row carries one bullet per summary underneath the author line — see "Agent summaries" below.
+- **Upstream arrow** — a `git pull` or equivalent brought new content in from outside the editor.
+
+## Agent summaries
+
+Agents writing through MCP (`write_document`, `edit_document`, `rename_document`, `rollback_to_version`) can attach a short `summary` describing the intent of the edit. Summaries appear as bulleted text under the author line on the WIP row — one bullet per summarized write, oldest first, capped at 80 characters each. The first bullet is always visible; additional bullets collapse behind a "Show N more" expander.
+
+The **doc list** on the row (e.g. `foo.md · bar.md`) is still shown as ground truth: it lists every document the commit touched, regardless of whether each got a summary. Bullets enrich that list — they don't replace it.
+
+Legacy commits, WYSIWYG edits, auto-saves, and rollbacks driven by the in-editor Restore button have no bullets. For rename and rollback calls made through MCP, the server fills in a default summary — `Renamed <from> → <to>` or `Restored to <sha-short>` — so those rows are self-describing even when the agent didn't provide one.
+
+## Restoring
+
+Click any row to load it in read-only preview. From the preview you can:
+
+1. **Copy** a specific paragraph or fragment back into the live document manually.
+2. **Restore** the whole snapshot as a new edit on top of the current state.
+
+Restores are always additive — the current state becomes the snapshot's state via a new CRDT edit, so the change itself lands in the Timeline as a new row. You can undo the restore like any other edit.
+
+## Retention
+
+- **Save Version** checkpoints are retained indefinitely — they're the permanent history of your document.
+- **Auto-saved** checkpoints (both kinds above) are retained at most **50 per kind per branch** and **30 days**, whichever is more generous. Older auto-saves garbage-collect themselves so the Timeline stays readable.
+- **Writer WIP** commits are consolidated into the nearest Save Version as the branch progresses; orphaned WIP (branch deleted) is cleaned up after 24 hours.
+
+## See also
+
+- [[collaboration-recovery]] — the user-facing walkthrough for the concurrent-edit recovery UX.
+- [[architecture]] — the settlement-based observer bridge and the post-condition that drives the automatic checkpoints.

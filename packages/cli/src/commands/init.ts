@@ -4,18 +4,19 @@
  * Does two things:
  *   1. Scaffolds `.open-knowledge/` in the current directory via initContent()
  *      (same logic the MCP server's init flow used to call — now factored out).
- *   2. Writes MCP server entries for `open-knowledge` into each selected
- *      editor's config file, preserving any existing entries. Idempotent: skips
- *      if an `open-knowledge` entry is already present, unless `--force`.
+ *   2. Writes Open Knowledge MCP server entries into every detected editor's
+ *      config file. The CLI owns the `open-knowledge` / `open-knowledge-ui`
+ *      entries and rewrites them to the current defaults on every run.
  *
- * Supports Claude Code, Cursor, VS Code, and Windsurf. When run interactively
- * (TTY) without `--editor`, prompts the user to select which editors to
- * configure. When `--editor` is passed or stdin is not a TTY, uses the flag
- * value directly (defaults to `claude`).
+ * Supports Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and Codex.
+ * Missing editor config roots are skipped so init does not create new user-home
+ * directories for tools that are not installed.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { ensureProjectGit, ProjectGitInitError } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
   initContent,
@@ -29,6 +30,8 @@ import {
   EDITOR_TARGETS,
   type EditorId,
   type EditorMcpTarget,
+  type McpInstallOptions,
+  resolveDevCliDistPath,
   resolveEditorTargets,
 } from './editors.ts';
 
@@ -37,11 +40,11 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Read an existing MCP config file (if any) and return its parsed shape.
+ * Read an existing JSON MCP config file (if any) and return its parsed shape.
  * Returns an empty object if the file doesn't exist or is empty.
  * Throws on invalid JSON or permission errors.
  */
-function readMcpConfig(path: string): Record<string, unknown> {
+function readJsonConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   const raw = readFileSync(path, 'utf-8');
   const trimmed = raw.trim();
@@ -61,13 +64,46 @@ function readMcpConfig(path: string): Record<string, unknown> {
 }
 
 /**
+ * Read an existing TOML MCP config file (if any) and return its parsed shape.
+ * Returns an empty object if the file doesn't exist or is empty.
+ * Throws on invalid TOML or permission errors.
+ */
+function readTomlConfig(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const raw = readFileSync(path, 'utf-8');
+  const trimmed = raw.trim();
+  if (trimmed === '') return {};
+  try {
+    const parsed = parseToml(trimmed);
+    if (isObject(parsed)) {
+      return parsed;
+    }
+    throw new Error(`${path} root must be a TOML table`);
+  } catch (err) {
+    throw new Error(
+      `${path} contains invalid TOML: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
  * Write the config to disk as pretty-printed JSON with a trailing newline.
  * Creates parent directories if missing.
  */
-function writeMcpConfig(path: string, config: Record<string, unknown>): void {
+function writeJsonConfig(path: string, config: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
   const serialized = `${JSON.stringify(config, null, 2)}\n`;
   writeFileSync(path, serialized, 'utf-8');
+}
+
+/**
+ * Write the config to disk as TOML with a trailing newline.
+ * Creates parent directories if missing.
+ */
+function writeTomlConfig(path: string, config: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const serialized = stringifyToml(config);
+  writeFileSync(path, serialized.endsWith('\n') ? serialized : `${serialized}\n`, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------
@@ -77,35 +113,49 @@ function writeMcpConfig(path: string, config: Record<string, unknown>): void {
 export interface EditorMcpResult {
   editorId: EditorId;
   label: string;
-  action: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  action: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
   configPath: string;
+  serverName: string;
   error?: string;
 }
 
-export interface InitCommandOptions {
+interface LegacyProjectConfigResult {
+  editorId: EditorId;
+  label: string;
+  path: string;
+}
+
+interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
-  force?: boolean;
+  /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
+  devMcp?: boolean;
   editors?: EditorId[];
   /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
-  /** Override home directory (test-only, for Windsurf global path). */
+  /** Override home directory (test-only, for global editor config paths). */
   home?: string;
+  /** Override the current CLI entry path (test-only; used by --dev-mcp). */
+  cliEntryPath?: string;
 }
 
-export interface InitCommandResult {
+interface InitCommandResult {
   contentCreated: string[];
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
+  /** Legacy project-local MCP configs left in place after global init. */
+  legacyProjectConfigs: LegacyProjectConfigResult[];
   /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
   rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
   /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
   launchJson?: LaunchJsonResult;
+  /** `true` if `ensureProjectGit` ran `git init` during this invocation (SPEC R2 / D9). */
+  didGitInit: boolean;
   // Backward-compat fields (derived from the Claude entry or first editor):
-  mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
+  mcpAction: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
@@ -116,11 +166,11 @@ export interface InitCommandResult {
 // ---------------------------------------------------------------------------
 
 const LAUNCH_JSON_VERSION = '0.0.1';
-const LAUNCH_CONFIG_NAME = 'open-knowledge';
+const LAUNCH_CONFIG_NAME = 'open-knowledge-ui';
 
-export type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'failed';
+type LaunchJsonAction = 'created' | 'merged' | 'failed';
 
-export interface LaunchJsonResult {
+interface LaunchJsonResult {
   action: LaunchJsonAction;
   configPath: string;
   error?: string;
@@ -129,20 +179,41 @@ export interface LaunchJsonResult {
 /**
  * Scaffold or merge a `.claude/launch.json` entry so that Claude Code's
  * built-in preview browser can start the Open Knowledge dev server via
- * `preview_start("open-knowledge")`.
+ * `preview_start("open-knowledge-ui")`.
+ *
+ * `runtimeArgs` launches `open-knowledge ui` (not `open-knowledge start`) —
+ * the UI sibling-process is what the preview pane renders; collab runs in a
+ * separate `open-knowledge start` process auto-spawned by `ok ui` via the
+ * MCP stdio path.
  *
  * - File missing        → create with the OK entry
  * - File exists, no OK  → merge the entry into configurations
- * - File exists, has OK → skip (unless force)
+ * - File exists, has OK → replace with current defaults
  */
-function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
+function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {}): LaunchJsonResult {
   const configPath = join(cwd, '.claude', 'launch.json');
-  const entry = {
-    name: LAUNCH_CONFIG_NAME,
-    runtimeExecutable: 'npx',
-    runtimeArgs: ['open-knowledge', 'start'],
-    port: 3000,
-  };
+  const entry: {
+    name: string;
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+  } =
+    installOptions.mode === 'dev'
+      ? {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'node',
+          runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
+          port: 3000,
+        }
+      : {
+          name: LAUNCH_CONFIG_NAME,
+          runtimeExecutable: 'npx',
+          // Use the fully-qualified package name so `npx` resolves against the npm
+          // registry on a cold cache. `open-knowledge` alone is a bin name that only
+          // works if the package is already installed (local or global).
+          runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+          port: 3000,
+        };
 
   try {
     if (!existsSync(configPath)) {
@@ -163,10 +234,6 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
       (c) => isObject(c) && (c as Record<string, unknown>).name === LAUNCH_CONFIG_NAME,
     );
 
-    if (existingIdx >= 0 && !force) {
-      return { action: 'skipped-existing', configPath };
-    }
-
     if (existingIdx >= 0) {
       configs[existingIdx] = entry;
     } else {
@@ -179,7 +246,10 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
       configurations: configs,
     };
     writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
-    return { action: existingIdx >= 0 ? 'merged' : 'merged', configPath };
+    // Main's #282 refactor fixed the dead ternary my review-fix also targeted
+    // (W1) by distinguishing 'merged' (existing entry updated) from 'created'
+    // (new entry). Main's version is strictly more informative — keep it.
+    return { action: existingIdx >= 0 ? 'merged' : 'created', configPath };
   } catch (err) {
     return {
       action: 'failed',
@@ -193,36 +263,87 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
 // Per-editor write logic
 // ---------------------------------------------------------------------------
 
-function writeEditorMcpConfig(
+function isEditorTargetAvailable(target: EditorMcpTarget, cwd: string, home?: string): boolean {
+  try {
+    const probePath = target.detectPath?.(cwd, home) ?? dirname(target.configPath(cwd, home));
+    return existsSync(probePath);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Per-editor MCP config writer. Exported (US-006) so `@inkeep/open-knowledge`
+ * consumers — specifically Electron main's M6b first-launch consent flow via
+ * `writeUserMcpConfigs` — can invoke the same write logic that the terminal-
+ * origin `ok init` command uses. The `installOptions.skipAvailabilityCheck`
+ * flag distinguishes the two call sites: `ok init` enforces
+ * `isEditorTargetAvailable` so users don't get empty config dirs for editors
+ * they haven't installed; the M6b consent flow bypasses the check because
+ * the user explicitly toggled the editor checkbox in the dialog.
+ */
+export function writeEditorMcpConfig(
   target: EditorMcpTarget,
   cwd: string,
-  force: boolean,
+  installOptions: McpInstallOptions,
   home?: string,
 ): EditorMcpResult {
-  const configPath = target.configPath(cwd, home);
+  const serverName = target.serverName(cwd);
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch (err) {
+    return {
+      editorId: target.id,
+      label: target.label,
+      action: 'failed',
+      configPath: '',
+      serverName,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // M6b bypass (US-006): the consent dialog showed the editor's checkbox and
+  // the user explicitly toggled it. Skipping on `isEditorTargetAvailable` would
+  // silently drop their choice — treat the click as the consent.
+  if (!installOptions.skipAvailabilityCheck && !isEditorTargetAvailable(target, cwd, home)) {
+    return {
+      editorId: target.id,
+      label: target.label,
+      action: 'skipped-missing',
+      configPath,
+      serverName,
+    };
+  }
 
   let config: Record<string, unknown>;
   try {
-    config = readMcpConfig(configPath);
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
   } catch (err) {
     return {
       editorId: target.id,
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
   const servers = (config[target.topLevelKey] as Record<string, unknown> | undefined) ?? {};
-  const existing = servers[MCP_SERVER_NAME];
+  const existing = servers[serverName];
+  let targetEntry: Record<string, unknown>;
 
-  if (existing && !force) {
+  try {
+    targetEntry = target.buildEntry(cwd, installOptions);
+  } catch (err) {
     return {
       editorId: target.id,
       label: target.label,
-      action: 'skipped-existing',
+      action: 'failed',
       configPath,
+      serverName,
+      error: err instanceof Error ? err.message : String(err),
     };
   }
 
@@ -230,18 +351,23 @@ function writeEditorMcpConfig(
     ...config,
     [target.topLevelKey]: {
       ...servers,
-      [MCP_SERVER_NAME]: target.buildEntry(),
+      [serverName]: targetEntry,
     },
   };
 
   try {
-    writeMcpConfig(configPath, nextConfig);
+    if (target.format === 'toml') {
+      writeTomlConfig(configPath, nextConfig);
+    } else {
+      writeJsonConfig(configPath, nextConfig);
+    }
   } catch (err) {
     return {
       editorId: target.id,
       label: target.label,
       action: 'failed',
       configPath,
+      serverName,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -249,29 +375,166 @@ function writeEditorMcpConfig(
   return {
     editorId: target.id,
     label: target.label,
-    action: existing ? 'overwritten' : 'written',
+    action: existing !== undefined ? 'overwritten' : 'written',
     configPath,
+    serverName,
   };
+}
+
+function collectLegacyProjectConfig(
+  target: EditorMcpTarget,
+  cwd: string,
+): LegacyProjectConfigResult | undefined {
+  const legacyPath = target.legacyProjectConfigPath?.(cwd);
+  if (!legacyPath || !existsSync(legacyPath)) return undefined;
+  return {
+    editorId: target.id,
+    label: target.label,
+    path: legacyPath,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// User-scoped MCP config writer (Electron main entry, NOT CLI `ok init`)
+// ---------------------------------------------------------------------------
+
+export interface UserMcpConfigsOptions {
+  /**
+   * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
+   * is responsible for filtering out editors whose existing entry is a
+   * customized shape that should be preserved — those are classified via
+   * `readExistingMcpEntry` + `computeForce` and excluded from this array
+   * BEFORE the call. This function unconditionally overwrites every editor
+   * it receives (aligning with main's `writeEditorMcpConfig` always-rewrite
+   * semantic from PR #282 / "installs stay aligned with current defaults").
+   */
+  editors: EditorId[];
+  /**
+   * Absolute path to the MCP-spawning CLI binary. Written into every editor's
+   * entry as `{ command: cliPath, args: ['mcp'] }`. When unset, falls back to
+   * the canonical `{command:'npx', args:['@inkeep/open-knowledge','mcp']}` shape.
+   */
+  cliPath?: string;
+  /** Override `$HOME` for resolving user-scoped config paths (test hook). */
+  home?: string;
+}
+
+/**
+ * Write MCP config entries for a set of editors without any of `runInit`'s
+ * project-scoped side effects.
+ *
+ * Specifically does NOT run:
+ *   - `ensureProjectGit` — would `git init` wherever `cwd` is (packaged Electron
+ *     apps have `process.cwd() === '/'` by default)
+ *   - `initContent` — scaffolds `.open-knowledge/` in a project
+ *   - `scaffoldLaunchJson` — writes `.claude/launch.json`
+ *   - `upsertRootInstructions` — mutates `AGENTS.md` / `CLAUDE.md`
+ *   - `collectLegacyProjectConfig` — scans for `.mcp.json` / `.cursor/mcp.json`
+ *
+ * Per D-M6-R8, this is the entry point Electron main's first-launch MCP
+ * consent flow calls after the user clicks Add. The terminal-invoked `ok init`
+ * path still uses `runInit` and never sets `cliPath`, so backward compatibility
+ * of the `{command:'npx',...}` shape is preserved.
+ *
+ * Bypasses `isEditorTargetAvailable` via `skipAvailabilityCheck: true` — the
+ * user explicitly toggled the editor checkbox; their click IS the consent,
+ * so skip-on-missing would silently drop their selection.
+ */
+export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<EditorMcpResult[]> {
+  const targets = resolveEditorTargets(opts.editors);
+  const installOptions: McpInstallOptions = {
+    mode: 'published',
+    cliPath: opts.cliPath,
+    skipAvailabilityCheck: true,
+  };
+  // `cwd` is empty — every user-scoped target ignores it (each editor's
+  // `configPath` + `serverName` resolves from `home` or a constant).
+  return targets.map((target) => writeEditorMcpConfig(target, '', installOptions, opts.home));
+}
+
+/**
+ * Read a single editor's existing MCP server entry for use with
+ * `computeForce`-style classification (M6b). Reads the user-scoped config
+ * (format-aware — JSON or TOML), looks up `config[topLevelKey][serverName]`,
+ * and returns it as a plain object. Returns `null` when the config file is
+ * absent, unreadable, unparseable, or has no entry for this editor's
+ * server name.
+ *
+ * **Never-throws contract (load-bearing — Pass 0 Major #13):** the M6b
+ * first-launch consent flow MUST be able to classify every selected editor
+ * without aborting on one malformed config. A corrupt user config (e.g.,
+ * stale `~/.codex/config.toml` from a half-completed third-party edit) on
+ * ANY selected editor would otherwise crash `confirmHandler`, leave the
+ * marker absent, and create an infinite dialog re-fire loop on the user's
+ * machine. Every reachable failure path here returns `null`:
+ *   - configPath() throws → null (platform-mismatched target, e.g.
+ *     Claude Desktop on Linux)
+ *   - readJson/readToml throws → null (unparseable config)
+ *   - top-level mcpServers/servers/mcp_servers key absent → null
+ *   - top-level key value not a plain object → null (e.g., array)
+ *   - server entry value not a plain object → null (e.g., bare string)
+ *
+ * Note: `null` deliberately conflates "absent" with "malformed" — both mean
+ * "no compatible existing entry to merge into" from `computeForce`'s
+ * perspective. The downstream `writeEditorMcpConfig` re-reads via the same
+ * format-aware parser and would itself throw on truly corrupt files; that
+ * write-side error path is what surfaces the corruption to the user via
+ * the `mcp-wiring-write-failed` event in `mcp-wiring.ts` (Pass 0 Critical
+ * #1's toast contract).
+ */
+export function readExistingMcpEntry(
+  target: EditorMcpTarget,
+  cwd: string,
+  home?: string,
+): Record<string, unknown> | null {
+  let configPath: string;
+  try {
+    configPath = target.configPath(cwd, home);
+  } catch {
+    return null;
+  }
+  let config: Record<string, unknown>;
+  try {
+    config = target.format === 'toml' ? readTomlConfig(configPath) : readJsonConfig(configPath);
+  } catch {
+    return null;
+  }
+  const servers = config[target.topLevelKey];
+  if (!isObject(servers)) return null;
+  const existing = servers[target.serverName(cwd)];
+  if (!isObject(existing)) return null;
+  return existing;
 }
 
 // ---------------------------------------------------------------------------
 // Core init logic
 // ---------------------------------------------------------------------------
 
-export function runInit(options: InitCommandOptions = {}): InitCommandResult {
+export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
+  const installOptions: McpInstallOptions = {
+    mode: options.devMcp ? 'dev' : 'published',
+    cliEntryPath: options.cliEntryPath,
+  };
+
+  // 0. Ensure the project has a `.git/` (SPEC D9 — `ok init` is the explicit
+  // "set this project up" verb, so it does the heavier side-effect too).
+  // Propagates `ProjectGitInitError` on git-missing — caller exits non-zero.
+  const gitResult = await ensureProjectGit(cwd);
 
   // 1. Scaffold .open-knowledge/
   let contentResult: ReturnType<typeof initContent>;
   try {
     contentResult = initContent(cwd);
   } catch (err) {
-    const fallbackPath = join(cwd, '.mcp.json');
+    const fallbackPath = EDITOR_TARGETS.claude.configPath(cwd, options.home);
     return {
       contentCreated: [],
       contentSkipped: [],
       editors: [],
+      legacyProjectConfigs: [],
       rootInstructions: [],
+      didGitInit: gitResult.didInit,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -279,53 +542,72 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   }
 
   // 2. Wire MCP config per editor (unless --no-mcp)
-  const editorIds = options.editors ?? ['claude'];
+  const editorIds = options.editors ?? detectInstalledEditors(cwd, options.home);
   const targets = resolveEditorTargets(editorIds as EditorId[]);
+  const availableTargets = targets.filter((target) =>
+    isEditorTargetAvailable(target, cwd, options.home),
+  );
 
   const editorResults: EditorMcpResult[] = [];
   for (const target of targets) {
     if (options.mcp === false) {
+      let configPath = '';
+      try {
+        configPath = target.configPath(cwd, options.home);
+      } catch {
+        // Unsupported-platform target (e.g. Claude Desktop on Linux) — --no-mcp
+        // explicitly means "don't write", so the path is informational only.
+      }
       editorResults.push({
         editorId: target.id,
         label: target.label,
         action: 'skipped-flag',
-        configPath: target.configPath(cwd, options.home),
+        configPath,
+        serverName: target.serverName(cwd),
       });
       continue;
     }
-    editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
+    editorResults.push(writeEditorMcpConfig(target, cwd, installOptions, options.home));
   }
+  const legacyProjectConfigs =
+    options.mcp === false
+      ? []
+      : availableTargets
+          .map((target) => collectLegacyProjectConfig(target, cwd))
+          .filter((result): result is LegacyProjectConfigResult => result !== undefined);
 
   // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
-  const hasClaude = editorIds.includes('claude');
+  const hasClaude = availableTargets.some((target) => target.id === 'claude');
   const launchJson =
-    hasClaude && options.mcp !== false
-      ? scaffoldLaunchJson(cwd, options.force ?? false)
-      : undefined;
+    hasClaude && options.mcp !== false ? scaffoldLaunchJson(cwd, installOptions) : undefined;
 
   // 4. Append/replace the Open Knowledge section in AGENTS.md + per-editor instruction files
-  const extraInstructionFiles = targets
+  const extraInstructionFiles = availableTargets
     .map((t) => t.instructionsPath?.(cwd))
     .filter((p): p is string => p !== undefined)
     .map((p) => (isAbsolute(p) ? relative(cwd, p) : p));
   const rootInstructions =
     options.rootInstructions === false
       ? []
-      : upsertRootInstructions(cwd, options.force ?? false, extraInstructionFiles);
+      : upsertRootInstructions(cwd, true, extraInstructionFiles);
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
+  const defaultAction: EditorMcpResult['action'] =
+    options.mcp === false ? 'skipped-flag' : 'skipped-missing';
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
-      action: 'skipped-flag' as const,
-      configPath: join(cwd, '.mcp.json'),
+      action: defaultAction,
+      configPath: EDITOR_TARGETS.claude.configPath(cwd, options.home),
     };
 
   return {
     contentCreated: contentResult.created,
     contentSkipped: contentResult.skipped,
     editors: editorResults,
+    legacyProjectConfigs,
     rootInstructions,
     launchJson,
+    didGitInit: gitResult.didInit,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -341,6 +623,34 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
  */
 export function formatInitResult(result: InitCommandResult, cwd: string): string {
   const lines: string[] = [];
+  const anyWritten = result.editors.some(
+    (e) => e.action === 'written' || e.action === 'overwritten',
+  );
+  const anyFailed = result.editors.some((e) => e.action === 'failed');
+  const allSkippedFlag =
+    result.editors.length > 0 && result.editors.every((e) => e.action === 'skipped-flag');
+  const allSkippedMissing =
+    result.editors.length > 0 && result.editors.every((e) => e.action === 'skipped-missing');
+  const formatLaunchJsonSummary = (launchJson: LaunchJsonResult): string => {
+    const displayPath = launchJson.configPath.startsWith(cwd)
+      ? relative(cwd, launchJson.configPath)
+      : launchJson.configPath;
+    switch (launchJson.action) {
+      case 'created':
+        return `    app preview server   ${displayPath}  configured for Claude Code Desktop embedded browser`;
+      case 'merged':
+        return `    app preview server   ${displayPath}  updated for Claude Code Desktop embedded browser`;
+      case 'failed':
+        return `    app preview server   ${displayPath}  FAILED: ${launchJson.error}`;
+    }
+  };
+
+  // Auto-git-init disclosure (SPEC R5 / D9) — surfaced when ensureProjectGit
+  // ran `git init` during this invocation. Silent when the project already
+  // had `.git/`.
+  if (result.didGitInit) {
+    lines.push(`Initialized git repo at ${cwd}/.git/ (default branch: main)`);
+  }
 
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
@@ -357,130 +667,127 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   lines.push('');
 
   // MCP config summary — per-editor
-  if (result.editors.length === 0) {
-    // Content scaffolding failed before we got to MCP config
-    if (result.mcpError) {
-      lines.push(`Warning: ${result.mcpError}`);
-    }
-  } else {
-    const anyWritten = result.editors.some(
-      (e) => e.action === 'written' || e.action === 'overwritten',
+  if (result.mcpError && result.editors.length === 0) {
+    lines.push(`Warning: ${result.mcpError}`);
+  } else if (result.editors.length === 0) {
+    lines.push('MCP server configuration:');
+    lines.push(
+      result.mcpAction === 'skipped-flag'
+        ? '  MCP config not written — use without --no-mcp to configure editors'
+        : '  No supported editor config directories detected; skipped MCP registration',
     );
-    const anyFailed = result.editors.some((e) => e.action === 'failed');
-    const allSkippedFlag = result.editors.every((e) => e.action === 'skipped-flag');
-
-    if (allSkippedFlag) {
-      lines.push('MCP config not written — use without --no-mcp to configure editors');
-    } else {
-      lines.push('MCP server configuration:');
-      for (const editor of result.editors) {
-        const displayPath = editor.configPath.startsWith(cwd)
-          ? relative(cwd, editor.configPath)
-          : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
-        const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
-        switch (editor.action) {
-          case 'written':
-            lines.push(`  ${editor.label}${pad}${displayPath}  registered`);
-            break;
-          case 'overwritten':
-            lines.push(`  ${editor.label}${pad}${displayPath}  overwritten (--force)`);
-            break;
-          case 'skipped-existing':
-            lines.push(`  ${editor.label}${pad}${displayPath}  already configured`);
-            break;
-          case 'failed':
-            lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
-            break;
-          case 'skipped-flag':
-            break;
-        }
-      }
-    }
-
-    // Show manual config hint for any failures
-    if (anyFailed) {
-      lines.push('');
-      lines.push('For failed editors, add the MCP server entry manually. See:');
-      lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
-    }
-
-    // Claude Code launch.json summary
-    if (result.launchJson) {
-      const lj = result.launchJson;
-      const displayPath = lj.configPath.startsWith(cwd)
-        ? relative(cwd, lj.configPath)
-        : lj.configPath;
-      switch (lj.action) {
-        case 'created':
+  } else if (allSkippedFlag) {
+    lines.push('MCP config not written — use without --no-mcp to configure editors');
+  } else if (allSkippedMissing) {
+    lines.push('MCP server configuration:');
+    lines.push('  No supported editor config directories detected; skipped MCP registration');
+  } else {
+    lines.push('MCP server configuration:');
+    for (const editor of result.editors) {
+      const displayPath = editor.configPath.startsWith(cwd)
+        ? relative(cwd, editor.configPath)
+        : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
+      const serverNameNote = editor.serverName === MCP_SERVER_NAME ? '' : ` (${editor.serverName})`;
+      const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
+      const restartHint =
+        editor.editorId === 'claude-desktop' &&
+        (editor.action === 'written' || editor.action === 'overwritten')
+          ? ' — quit and relaunch Claude Desktop to activate'
+          : '';
+      switch (editor.action) {
+        case 'written':
           lines.push(
-            `  launch.json   ${displayPath}  created (preview_start("open-knowledge") ready)`,
+            `  ${editor.label}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
           );
           break;
-        case 'merged':
-          lines.push(`  launch.json   ${displayPath}  merged open-knowledge entry`);
+        case 'overwritten':
+          lines.push(
+            `  ${editor.label}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
+          );
           break;
-        case 'skipped-existing':
-          lines.push(`  launch.json   ${displayPath}  already has open-knowledge entry`);
+        case 'skipped-missing':
+          lines.push(`  ${editor.label}${pad}${displayPath}  config root missing; skipped`);
           break;
         case 'failed':
-          lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);
+          lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
+          break;
+        case 'skipped-flag':
           break;
       }
+      if (editor.editorId === 'claude' && result.launchJson) {
+        lines.push(formatLaunchJsonSummary(result.launchJson));
+      }
     }
+  }
 
-    // Root instructions (AGENTS.md) summary
-    if (result.rootInstructions.length > 0) {
-      const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
-      if (visible.length > 0) {
-        lines.push('');
-        lines.push('Root instructions:');
-        for (const r of visible) {
-          const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
-          const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
-          switch (r.action) {
-            case 'created':
-              lines.push(`  ${r.file}${pad}${rel}  created`);
-              break;
-            case 'appended':
-              lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
-              break;
-            case 'replaced':
-              lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section (--force)`);
-              break;
-            case 'skipped-existing':
-              lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
-              break;
-          }
+  // Show manual config hint for any failures
+  if (anyFailed) {
+    lines.push('');
+    lines.push('For failed editors, add the MCP server entry manually. See:');
+    lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
+  }
+
+  if (result.legacyProjectConfigs.length > 0) {
+    lines.push('');
+    lines.push('Legacy project MCP configs detected:');
+    for (const legacy of result.legacyProjectConfigs) {
+      lines.push(`  ${legacy.label}  ${relative(cwd, legacy.path)}`);
+    }
+    lines.push(
+      '  These project-local files may override the new global config. Remove them if you want fully user-scoped MCP setup in this project.',
+    );
+  }
+
+  // Root instructions (AGENTS.md) summary
+  if (result.rootInstructions.length > 0) {
+    const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
+    if (visible.length > 0) {
+      lines.push('');
+      lines.push('Root instructions:');
+      for (const r of visible) {
+        const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
+        const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
+        switch (r.action) {
+          case 'created':
+            lines.push(`  ${r.file}${pad}${rel}  created`);
+            break;
+          case 'appended':
+            lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
+            break;
+          case 'replaced':
+            lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section`);
+            break;
+          case 'skipped-existing':
+            lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
+            break;
         }
       }
     }
+  }
 
-    // Content preview block (between MCP and Next steps)
-    if (result.preview) {
-      lines.push('');
-      lines.push(formatPreviewBlock(result.preview, cwd));
-    } else if (result.previewWarning) {
-      lines.push('');
-      lines.push(`Content preview unavailable: ${result.previewWarning}`);
-    }
+  // Content preview block (between MCP and Next steps)
+  if (result.preview) {
+    lines.push('');
+    lines.push(formatPreviewBlock(result.preview, cwd));
+  } else if (result.previewWarning) {
+    lines.push('');
+    lines.push(`Content preview unavailable: ${result.previewWarning}`);
+  }
 
-    // Next steps (only if something was written)
-    if (anyWritten) {
-      const configuredLabels = result.editors
-        .filter((e) => e.action === 'written' || e.action === 'overwritten')
-        .map((e) => e.label);
+  // Next steps (only if something was written)
+  if (anyWritten) {
+    const configuredLabels = result.editors
+      .filter((e) => e.action === 'written' || e.action === 'overwritten')
+      .map((e) => e.label);
 
-      lines.push('');
-      lines.push('Next steps:');
-      lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
-      lines.push('  2. Approve the MCP server when prompted');
-      lines.push('  3. The knowledge base is ready — use the three workflow tools:');
-      lines.push(
-        '     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase',
-      );
-      lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
-      lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
-    }
+    lines.push('');
+    lines.push('Next steps:');
+    lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
+    lines.push('  2. Approve the MCP server when prompted');
+    lines.push('  3. The knowledge base is ready — use the three workflow tools:');
+    lines.push('     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase');
+    lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
+    lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
   }
 
   return lines.join('\n');
@@ -490,12 +797,24 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-function parseEditorFlag(value: string): EditorId[] {
-  if (value === 'all') return [...ALL_EDITOR_IDS];
-  const ids = value.split(',').map((s) => s.trim()) as EditorId[];
-  // Validate — resolveEditorTargets throws on unknown IDs
-  resolveEditorTargets(ids);
-  return ids;
+/**
+ * Detect every editor whose global config surface already exists. Each target
+ * can override the probe path when the config file itself is a poor signal
+ * (for example Claude Code writes `~/.claude.json`, but installation is better
+ * inferred from the presence of `~/.claude/`).
+ *
+ * Used by `runInit()` and the CLI to install to every editor that already has
+ * a config root on disk without creating new user-home directories for tools
+ * the user does not have.
+ */
+export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
+  const detected: EditorId[] = [];
+  for (const id of ALL_EDITOR_IDS) {
+    if (isEditorTargetAvailable(EDITOR_TARGETS[id], cwd, home)) {
+      detected.push(id);
+    }
+  }
+  return detected;
 }
 
 export function initCommand(): Command {
@@ -505,69 +824,31 @@ export function initCommand(): Command {
     )
     .option('--mcp', 'Register the MCP server for selected editors (default: true)', true)
     .option('--no-mcp', `Scaffold the ${OK_DIR}/ directory but do not touch MCP config`)
-    .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
-      '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated)',
+      '--dev-mcp',
+      'Register a local dev MCP entry using node + packages/cli/dist/cli.mjs with debug logging',
     )
-    .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
+    .action(async (opts: { mcp?: boolean; devMcp?: boolean }) => {
       const cwd = process.cwd();
 
-      let editors: EditorId[];
-
-      if (opts.editor) {
-        // Explicit flag — use directly
-        try {
-          editors = parseEditorFlag(opts.editor);
-        } catch (err) {
-          process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      let result: InitCommandResult;
+      try {
+        result = await runInit({
+          cwd,
+          mcp: opts.mcp,
+          devMcp: opts.devMcp,
+        });
+      } catch (err) {
+        if (err instanceof ProjectGitInitError) {
+          process.stderr.write(
+            "open-knowledge requires git to initialize a parent repo. Install git or run 'git init' yourself, then re-run.\n",
+          );
+          if (err.stderr) process.stderr.write(`${err.stderr.trim()}\n`);
           process.exitCode = 1;
           return;
         }
-      } else if (opts.mcp !== false && process.stdin.isTTY) {
-        // Interactive prompt
-        const { multiselect, isCancel } = await import('@clack/prompts');
-
-        const editorChoices = ALL_EDITOR_IDS.map((id) => {
-          const target = EDITOR_TARGETS[id];
-          const hint =
-            target.scope === 'global'
-              ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
-              : relative(cwd, target.configPath(cwd));
-          // Pre-select editors whose config directory already exists
-          const dirExists =
-            target.scope === 'project' && existsSync(dirname(target.configPath(cwd)));
-          return {
-            value: id,
-            label: target.label,
-            hint,
-            initialValue: dirExists || id === 'claude',
-          };
-        });
-
-        const selected = await multiselect({
-          message: 'Which tools do you use? (space to toggle, enter to confirm)',
-          options: editorChoices,
-          required: true,
-        });
-
-        if (isCancel(selected)) {
-          process.stdout.write('Init cancelled.\n');
-          return;
-        }
-
-        editors = selected as EditorId[];
-      } else {
-        // Non-interactive fallback
-        editors = ['claude'];
+        throw err;
       }
-
-      const result = runInit({
-        cwd,
-        mcp: opts.mcp,
-        force: opts.force,
-        editors,
-      });
 
       try {
         const { previewContent } = await import('../content/preview.ts');

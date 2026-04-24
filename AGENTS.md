@@ -1,6 +1,6 @@
 # Open Knowledge
 
-Bun monorepo (`bun@1.3.11`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
+Bun monorepo (`bun@1.3.13`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
 
 ## Monorepo Structure
 
@@ -10,6 +10,7 @@ packages/
   server/  — @inkeep/open-knowledge-server (Hocuspocus server library)
   cli/     — @inkeep/open-knowledge (published CLI + MCP)
   app/     — React editor frontend (private)
+  desktop/ — @inkeep/open-knowledge-desktop (Electron app, private)
 docs/      — Next.js docs site (Fumadocs)
 ```
 
@@ -19,7 +20,9 @@ docs/      — Next.js docs site (Fumadocs)
 bun install                          # Install all workspace dependencies
 cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
+bun run --filter=@inkeep/open-knowledge-desktop dev   # Launch Electron app in dev mode (macOS)
 bun run build                        # Build all packages via turbo (cli, app, docs)
+bun run build:desktop                # Build desktop bundle via electron-vite (no DMG; see packages/desktop for build:mac / build:mac:unsigned)
 cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 ```
 
@@ -27,28 +30,57 @@ cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 
 ```bash
 bun run check                        # THE gate — lint + typecheck + unit + integration + fidelity (~20-30s warm)
-bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
+bun run check:full:parallel          # Full suite: check + e2e (turbo parallel, ~2 min warm)
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
 cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
 
-`bun run check`** is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
+`bun run check`\*\* is the canonical quality gate for agents and developers.\*\* Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
+
+**Before the final push on any PR that touches Playwright E2E test files** (`packages/app/tests/stress/*.e2e.ts`), also run `bun run check:full:parallel`. This includes `test:e2e` which runs the CI-specific Playwright file subset — `bun run check` does NOT include e2e. The CI `test:e2e` script runs a fixed list of 6 files (see `packages/app/package.json`), which is a DIFFERENT set from `bunx playwright test` (which runs all `*.e2e.ts` via `testMatch`). Changes that pass `bunx playwright test` locally can fail `test:e2e` in CI due to different parallelism profiles and CC1 broadcast cadence. The pre-push hook runs `bun run check` (fast); `check:full:parallel` is the agent/developer responsibility before the final PR push.
 
 ### CI tier structure
 
 Three CI tiers, calibrated against measured baselines (US-016 / SPEC R9). Turbo tasks in `turbo.json` are the canonical task list; workflow files in `.github/workflows/` dispatch them.
 
-| Tier | Cadence | Workflow | Scope | Budget |
-| ---- | ------- | -------- | ----- | ------ |
-| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative), bridge fuzz (default seeds) | 15 min (p95 warm local baseline ≈ 2m30s; runners ≈ 2× slower; 1.5× headroom) |
-| 2    | Nightly (06:17 UTC) + `workflow_dispatch` | `.github/workflows/nightly.yml` | deep fuzz (`STRESS_FUZZ_NIGHTLY=1`), full stress, perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`) | 30 min per job |
-| 3    | Weekly (Sunday 04:23 UTC) + `workflow_dispatch` | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), elevated-seed bridge fuzz, perf-trend benchmark artifact upload | 60 min |
+| Tier | Cadence                         | Workflow                        | Scope                                                                                                                                                                                                                                                                                                                                                                                                                          | Budget                                   |
+| ---- | ------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| 1    | Every PR + push to `main`       | `.github/workflows/ci.yml`      | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples, includes bridge-observer-conversion PBT per `specs/2026-04-19-ci-signal-quality/` FR-1). Playwright E2E on `ubuntu-64gb`. No bridge fuzz or server-authoritative stress jobs — both removed from CI on 2026-04-19 per the CI signal quality spec; sampled on-demand via `bun run measure:fuzz` / `measure:stress` (see Measurement scripts section). | 15 min (p95 warm local baseline ≈ 2m30s) |
+| 2    | On demand (`workflow_dispatch`) | `.github/workflows/nightly.yml` | perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`), R15 guard (`test:perf:r15-guard`). Fuzz + full stress were removed on 2026-04-19 per the CI signal quality spec — sample ad-hoc via `bun run measure:fuzz` / `measure:stress`.                                                                                                        | 30 min per job                           |
+| 3    | On demand (`workflow_dispatch`) | `.github/workflows/weekly.yml`  | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), perf-trend benchmark artifact upload                                                                                                                                                                                                                                                                                                                          | 60 min                                   |
 
-**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR. Tier 2 if it's a perf / health regression gate, a deep fuzz, or any signal that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs), a multi-minute stress scenario, or a trend artifact the team reviews weekly. Off-minute cron slots (`:17`, `:23`) are deliberate to avoid GHA scheduling contention.
+**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR AND is deterministic (zero architectural-residual flake tolerance). Tier 2 if it's a perf / health regression gate that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs) or a trend artifact the team reviews weekly. Tiers 2 and 3 run on-demand only — the scheduled triggers were retired while this project is pre-production (no consumer for background signal; tier-1 catches regressions at merge time). Developers fire them via the GitHub Actions UI ("Run workflow") or `gh workflow run <nightly|weekly>.yml` when stress-testing a risky change.
+
+**When to re-enable `schedule:` triggers.** The retirement is driven by "pre-production + no consumer" — the criterion to flip it back is any of: (a) a product stakeholder (oncall, support, customer-facing team) begins consuming post-merge regression signal, (b) tier-1 green rate drops below its G1 ≥95% target long enough that trend data from the nightly becomes load-bearing for diagnosis, or (c) a new signal class lands in tier 2/3 that tier 1 provably cannot catch (e.g., long-tail perf drift). Flipping the trigger back on is a one-line YAML edit in the relevant workflow + an AGENTS.md tier table footnote recording the rationale.
+
+**Architectural CRDT residual is NOT a CI signal.** The dual-CRDT (Y.XmlFragment + Y.Text) topology has an intrinsic three-way merge residual (D4-LOCKED in `specs/2026-04-16-bridge-correctness/` until H2 2026+). Tests that exercise that residual — `bridge-convergence.fuzz.test.ts`, `server-authoritative-stress.test.ts` — are invocable but are NOT part of any automated tier. Sample their rate via `bun run measure:fuzz` / `measure:stress`; see the Measurement scripts section below. See `specs/2026-04-19-ci-signal-quality/SPEC.md` for the full rationale (G1: PR-tier green rate ≥95% on correct code; NG6: no automated regression detection for architectural residual — accepted cost).
+
+### Measurement scripts (ad-hoc, not CI)
+
+Human-invoked scripts for sampling the architectural CRDT residual rate. Not part of CI. Results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl` — the git history of that file is the trend record.
+
+| Script                   | What it measures                                                          | Typical invocation                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run measure:fuzz`   | Bridge-convergence fuzz seed-failure rate across an arbitrary seed budget | `bun run measure:fuzz --seeds 1000 --context "pre-PR-218 baseline"`                                                                                                                 |
+| `bun run measure:stress` | Server-authoritative 5-client × 30s convergence outcome for one seed      | `bun run measure:stress --seed 42 --context "investigate #206"` (duration is hard-coded to 30s internally — the script accepts no `--duration` override, per "no config that lies") |
+
+**When to run:**
+
+- Before merging a PR that touches `packages/server/src/server-observers.ts`, `packages/core/src/bridge/**`, or Y.js / Hocuspocus deps in `bun.lock`.
+- When investigating a suspected rate shift reported by a teammate.
+- During bridge-correctness spec work (`specs/2026-04-16-bridge-correctness/`).
+
+**Querying the log:** `jq` one-liners are documented in the script file headers (`packages/app/scripts/measure-fuzz.sh`, `measure-stress.sh`) and in `specs/2026-04-16-bridge-correctness/evidence/residual-measurements-SCHEMA.md`.
+
+**Why this isn't in CI:** per NG6 of `specs/2026-04-19-ci-signal-quality/SPEC.md`, the architectural residual cannot be eliminated within the current topology and its \~2-3% per-seed rate across 75 seeds mathematically guarantees >80% PR-red on correct code if enforced. The team convention is: sample ad-hoc, commit the JSONL record as part of any bridge-touching PR, review the file's git history for trend signal. Dep-runner drift goes unnoticed until a bridge-touching PR runs the script — accepted cost.
 
 **Perf gate calibration.** Threshold is `max(2× p99 variance, 10% absolute floor)` per block size. Baseline lives in `packages/core/tests/perf/baseline.json`. Synthetic-regression tests in `tests/perf/regression-gate.test.ts` prove the gate fires on injected slowdown.
+
+**E2E perf baselines.** Playwright perf assertions (currently QA-022 `paste-fidelity.e2e.ts`) read `packages/app/tests/stress/perf-baseline.json`. The assertion shape is `p50 < max(2 × p50Baseline, absolute-floor)` — 2× the median locks in regression signal, the absolute floor (e.g. 32ms for 60fps frame-time) absorbs CI runner-speed variance without tripping. Baselines are captured from the **median-of-5 p50** across consecutive post-merge CI runs (never local), are append-only with git blame trail, and updates require user approval per the protocol in `packages/app/tests/stress/perf-baseline-update.md`. Follow the same shape for any future Playwright perf test — add a new top-level key (`qaXXX`) and extend the assertion; do not invent a second baseline file.
+
+**Nightly E2E stability surveillance.** `.github/workflows/nightly-e2e-stability.yml` runs the full Playwright suite with `--repeat-each=3 --workers=1` at 09:00 UTC daily. On failure it auto-opens a GitHub issue labeled `e2e-flake` with the run URL and artifact pointers. **This is the sole flake-detection tier** — it does not block PR merges, but per `specs/2026-04-17-e2e-observability-determinism/evidence/d-q5-amendment-2026-04-19.md` it is the primary signal since PR-tier Playwright runs with `failOnFlakyTests: false` (retry-success is not promoted to red). The nightly catches slow-burn drift that PR-tier retries would absorb silently — a test that passes 99/100 accumulates a 1% tail only visible under `--repeat-each`. Label setup is one-time: `gh label create e2e-flake --color FBCA04 --description "Surfaced by Nightly E2E stability workflow"`.
 
 ### Agent simulator (requires dev server running)
 
@@ -68,44 +100,54 @@ bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes
 - TypeScript strict mode, `verbatimModuleSyntax: true`
 - Workspace deps use `"workspace:*"` in package.json
 
+### Post-ship corrigendum annotations on shipped specs
+
+When a shipped spec contains a factual claim that subsequent work proves wrong, do **not** rewrite the original prose — shipped specs are moment-in-time artifacts, and silent prose edits create drift between the spec and its surrounding evidence/changelog. Instead, append a corrigendum breadcrumb on the same line in this exact shape:
+
+```
+<original prose unchanged><br>_[Corrected YYYY-MM-DD post-ship: <one-sentence correction>. Authoritative fix in <pointer>.]_
+```
+
+Rules:
+
+- The breadcrumb is italicized, bracketed, dated, and points at the canonical fix location (typically `AGENTS.md` plus a follow-up spec directory).
+- Apply the breadcrumb to **every** occurrence of the corrected claim in the same doc — leaving one updated and another stale defeats the purpose. The second and subsequent breadcrumbs may shorten to "same correction as the breadcrumb at line N above" plus the same pointer.
+- The original prose stays intact in front of the `<br>`. Never mix annotation prose into the original line.
+- The follow-up spec carries the full correction rationale; the breadcrumb is a discoverability pointer, not an explanation.
+
+Originated 2026-04-16 in `specs/2026-04-16-post-ship-docs-polish/` (D4).
+
 ### Architectural precedents (greenfield directive, 2026-04-13)
 
-These are patterns that ALL work in the repo should follow. Established during the collaboration-capabilities audit (`stories/collaboration-capabilities-audit/STORY.md §13`).
+Twenty-seven numbered rules govern how work lands in this repo. Code comments cite them as `precedent #N` across ~50 sites. Full rationale, enforcement, and evidence pointers live in [PRECEDENTS.md](./PRECEDENTS.md) — the list below is a jump index.
 
-1. **Typed transaction origins.** All Y.Doc transaction origins use `LocalTransactionOrigin` objects, never raw strings. One convention. Applies to: observer origin guards, agent-write origins, rollback origins, any future origin.
-2. **Generic primitives over specific ones.** Name primitives for extensibility: `safetyCheckpoint({ action, context })` not `emitPreRollbackSnapshot()`. The first caller is one use case; the primitive serves many.
-3. **Structured event schemas.** Activity-map entries carry `{ actor, timestamp, action: {kind, metadata}, visibility }` — any coarse collaborative action fits the shape. Don't grow ad-hoc fields.
-4. **Shared computation, per-surface rendering.** Logic that determines *what* to render (e.g., which lines to flash) lives in one shared module. Per-surface code (WYSIWYG decorations, CodeMirror decorations) only applies the result. Prevents divergence-by-copy-paste.
-5. **Contract-first MCP tools.** We define the MCP protocol; clients conform. Required parameters are required, not optional-with-fallback. Document the contract.
-6. **Mode state as enums.** Editor state machines use enums (`'wysiwyg' | 'source' | 'diff'`), not boolean flags that implicitly encode state. Booleans don't scale past 2 states.
-7. **Remove broken capabilities rather than shipping them.** A confidently-broken UI is worse than the absence of capability. If a feature scaffold is known to malfunction, remove it; don't ship it alongside the product.
-8. **Separate long-lived identity from short-lived session concerns.** Agent identity (who is this?) is long-lived — stable across conversations, derived from MCP connection primitives. Pass boundaries (what did they do in this burst?) are short-lived — derived from the product's own edit-history model (user-action-bounded grouping). Don't conflate them. See `stories/collaboration-capabilities-audit/ §14`.
-9. **Schema is add-only forever.** ProseMirror schema evolves only by adding node types, adding attrs, and widening content expressions — never by removing or narrowing. Every attr MUST specify `default`. Rationale: `y-prosemirror@1.3.7` at `sync-plugin.js:801,804-810,834-844` destructively deletes `Y.Item`s whose `schema.node()` throws during CRDT → PM materialization. The destructive delete is **CRDT-permanent**, **multi-peer broadcast** (verified: enters `Item.delete()` → `addToDeleteSet` → `writeUpdateMessageFromTransaction` → emitted via standard `'update'` event → fanned out by Hocuspocus to all peers → tombstoned in update log → late-joining peers receive delete during initial sync), and **undo-resistant** (`ySyncPluginKey` is not in `UndoManager`'s default tracked origins). Any schema narrowing (removed attr, renamed attr, narrowed `validate`, narrowed content expression, removed node type) can cause silent multi-peer data loss with no in-product recovery. Enforcement: `packages/core/src/schema-invariant.test.ts` snapshot test fails CI on narrowing. See `specs/2026-04-13-mdx-tolerant-parsing/evidence/y-prosemirror-failure-modes.md` for the full propagation trace. **Safety net:** `patches/y-prosemirror@1.3.7.patch` replaces the destructive-delete path with a substitution — schema-throw failures become visible `rawMdxFallback` nodes (block-context) or log+skip (inline-context). Version-agnostic; upgrades re-port the patch and re-run the Q6 verification test. The patch is a safety net, NOT a license to narrow the schema.
-10. **Opaque-but-content-bearing nodes for Y.Item identity.** Any PM node that stores user-editable raw content AND needs to be opaque in WYSIWYG MUST use `atom: false, content: 'text*'` (or equivalent content expression) — never `atom: true` with raw-content-in-attrs. Combine with `isolating: true`, `selectable: true`, `contenteditable: false` via NodeView to block WYSIWYG editing. Rationale: `updateYFragment` (`y-prosemirror@1.3.7/sync-plugin.js:1145-1298`) uses `equalYTypePNode` deep-attr-equality for atom nodes — any attr value change causes full delete+reinsert of the `Y.XmlElement`, tombstoning the old Y.Item. For any node whose attrs change on every keystroke (raw source atoms), this produces per-keystroke Y.Item churn and cursor jumps for every peer viewing in WYSIWYG. Content-based shape preserves parent Y.XmlElement identity, mutating only the inner Y.Text granularly. Applies to `rawMdxFallback` (R5 in tolerant-parsing spec) and `jsxInline` (Layer 3 target shape).
-11. **Minimize CRDT mutation in sync bridges.** Bridges between CRDT representations (e.g., Y.XmlFragment ↔ Y.Text) must avoid replacing Items unnecessarily. Three concrete patterns enforce this:
-    (a) **Content-comparison gate before delete+insert** — if a sync would replace content with content that's already present at the same offset, skip both operations to preserve existing CRDT Items.
-    (b) **Hybrid diff3+DMP merge for divergent paths** — line-level diff3 handles structural merge and deduplication (D8/T3); character-level DMP within conflict regions handles sub-line edits. `applyFastDiff` (DMP `diff_main`) applies the merged result to Y.Text with character-level precision, preserving CRDT Items for unchanged content.
-    (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (`mergeThreeWay`: line-level diff3 + character-level DMP within conflict regions) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk. Handles all 7 experimentally-validated edge cases: non-overlapping edits, same-position inserts, D8 deduplication, emoji/Unicode, heavy divergence, sub-line conflicts, and delete/edit conflicts.
-    Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
-12. **XmlFragment is authoritative for markdown state; Y.Text mirrors it under minimal mutation.** Server-side agent writes (and any future server-side mutation path) read the current XmlFragment, compose the delta at the markdown level, apply via `updateYFragment` (structural diff preserves user-content Items), then mirror Y.Text via `applyFastDiff` (character-level DMP `diff_main` preserves non-agent Y.Text Items and their origins). The template is `applyAgentMarkdownWrite` in `agent-sessions.ts`. A naive rebuild-from-Y.Text pattern (`syncTextToFragment`) destroys concurrent user XmlFragment content — Bug-A in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`. Applies to all server-side CRDT bridge mutations including V0-14's future `applyAgentUndo` handler. Cross-references precedent #11 (minimize CRDT mutation) and PR #128's D14 (no Y.Map for diagnostics).
-13. **Bridge invariants are auto-enforced and property-verified.** Four sub-principles:
-    (a) **Named invariants are enforced by watchers, not by convention.** If an invariant is in CLAUDE.md (bridge, baseline, item-preservation), a per-transaction watcher asserts it on every enforcing-origin transaction in tests. Manual `assertBridgeInvariant` calls are reinforcement, not the primary guarantee.
-    (b) **Implicit time-coupling is a test smell.** Observer debounces go through an injected `Scheduler` so tests are deterministic; production gets `setTimeout` passthrough. `wait(ms)` in new bridge tests requires justification.
-    (c) **CRDT races are tested by message ordering, not wall-clock timing.** WebSocket-layer `pauseSync`/`resumeSync` reproduces races structurally. Ad-hoc observer disabling or `wait(N)` timing races are the old pattern.
-    (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
-    Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
-14. **Cross-CRDT sync is single-writer, server-side.** Bidirectional observer pairs between Y.XmlFragment and Y.Text must run exclusively on the server. Client-side observer callbacks for cross-CRDT sync do not write the derived CRDT — the write paths are removed, not gated (a flag would be ceremony in a monorepo with atomic client+server deploy). Local-only observer firings (user CodeMirror edit → writes Y.Text directly; user TipTap edit → writes Y.XmlFragment directly) still run client-side because the client is the sole writer for that local edit's source CRDT; the server then mirrors to the derived CRDT. Why: client-side multi-writer bridges interleave at the CRDT protocol layer, producing duplication under concurrent edits (see `specs/2026-04-15-server-authoritative-observer-bridge/`). Applies to all dual-CRDT bridge work.
-15. **Idempotent micromark-extension attachers.** Any remark plugin whose attacher mutates `this.data().micromarkExtensions` (or similar unified `data()` arrays) MUST check-before-push using a module-level singleton extension value — e.g. `const ext = {...}; if (!list.includes(ext)) list.push(ext);`. Rationale: processor caching (precedent-driven, enforced by `createParseProcessor` / `createSerializeProcessor` in `pipeline.ts`) means one processor serves many `parse()` calls; re-running a naive attacher accumulates duplicate extensions and produces divergent tokenization over the processor's lifetime. `remarkMdxAgnostic` (`remark-mdx-agnostic.ts`) and `remarkWikiLink` (`wiki-link-micromark.ts`) both implement this pattern. Evidence: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R16. Applies to every future remark plugin that touches `data().micromarkExtensions`, `data().fromMarkdownExtensions`, or `data().toMarkdownExtensions`.
-16. **Phase-ordered visitor dispatchers when passes consume each other's output.** When multiple mdast transformations depend on each other — e.g. pass N regex-matches on characters pass N-1 restores — the dispatcher MUST be split along the dependency boundary. Merging all passes into a single same-node visitor is wrong when an earlier pass's output is the later pass's input. The concrete template is `pipeline.ts`'s two-phase post-parse walker: Phase A (`restoreFromMdx`) restores PUA sentinels to literal chars as its own visitor pass; Phase B (`mergedPostParseWalkerPlugin`) runs the remaining four passes inside a single `unist-util-visit` callback with explicit intra-phase ordering (pass-5 first with `SKIP`, then pass-2, then pass-4; pass-3 runs as a tree-level pre-step). Rationale: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R17 enumerates why a single-visitor merge was impossible. When adding a new post-parse pass, decide up front whether it reads outputs of existing passes — if yes, it joins Phase B's internal ordering; if it produces outputs a later phase consumes, it becomes a new standalone phase.
-17. **Byte-for-byte equivalence validators gate high-risk refactors.** When a refactor must preserve observable behavior exactly (e.g. merging five visitor passes into two, replacing a library algorithm via patch, restructuring a handler table), commit a one-time mdast / AST / output diff validator that runs across the full fixture corpus and asserts byte-identical output against the pre-refactor baseline. The validator lives in `evidence/` (or equivalent), ships alongside the refactor, and is deleted once the refactor ships green — it is a ratchet, not a regression test. Template: US-007's `r17-mdast-equivalence.md` validator covered 714 fixtures across the seven-subdirectory corpus and was removed after US-008 merged the walker. Applies to any refactor where review reading alone cannot confirm equivalence. Cross-references precedent #13(d) (example-based coverage is a floor, not a ceiling) — the equivalence validator IS the floor for refactor correctness.
-18. **Hybrid Activity + Suspense + `use(promise)` for subscription-source async primitives.** Five sub-principles, narrow scope:
-    (a) **Semantic boundary — subscribe-once vs fetch/refetch.** This precedent covers React-land async that resolves via a **one-shot event** from a long-lived subscription source: HocuspocusProvider `'synced'`, a CRDT snapshot settling, a file-watcher's first emission, a WebSocket handshake. It does NOT cover HTTP fetch/refetch — TanStack Query remains canonical for `useQuery`/`useSuspenseQuery`-shaped data where caching, invalidation policy, retries, pagination, or mutations are load-bearing (see SPEC.md §10 D2 + TkDodo's positioning of `use()` vs TanStack Query in "[React 19 and Suspense: A Drama in 3 Acts](https://tkdodo.eu/blog/react-19-and-suspense-a-drama-in-3-acts)"). Future contributors: if the resolution lifecycle reduces to "wait for one event, then render," this is the right pattern. If you need re-fetch on focus, stale-while-revalidate, or typed cache keys with dependencies, use TanStack Query.
-    (b) **Hybrid Activity-for-warm + Suspense-gated-cold.** For each pooled subscription, render one React subtree wrapped in `<Activity mode={isActive ? 'visible' : 'hidden'}>`. Navigation between already-pooled items becomes a visibility flip — scroll position, cursor, editor undo history, and any other subtree state survive. First-visit to an unpooled item (or revisit to a pooled-but-not-Activity-mounted one) goes through `<Suspense fallback>` gated on `use(subscriptionPromise(key))`. `startTransition` around the navigation state-update keeps the previously-revealed subtree visible through the suspending re-render (SPEC G2 content-continuity). TipTap closed [`ueberdosis/tiptap#5761`](https://github.com/ueberdosis/tiptap/issues/5761) with maintainer @janthurau confirming editor hot-swap is unsupported, which rules out "one editor, swap the ydoc" and motivates per-Activity-entry editor+provider+ydoc triples.
-    (c) **Bounded Activity-mount count, decoupled from the pool size.** Y.js observers (`setupObservers` bridges, awareness listeners, CRDT update handlers) are NOT React effects. They do not pause when Activity flips to `hidden` — a hidden Activity subtree with a pooled provider still processes every remote-peer update at full CPU cost. The fix is an explicit mount-count bound (`ACTIVITY_MOUNT_LIMIT = 3` in `packages/app/src/components/EditorActivityPool.tsx`) that is **separate from the pool-size bound** (`MAX_POOL = 10` in `provider-pool.ts`). The pool keeps warm providers for fast Suspense-gated remount; the Activity-mount list keeps only the most-recently-active N subtrees alive for state preservation. Revisiting a pool-resident-but-not-Activity-mounted item performs a fresh Suspense remount that resolves immediately because `hasSynced=true` (cold mount, warm content).
-    (d) **Module-level promise cache with `use(promise)`.** The subscription promise is keyed by a stable ID in a module-level `Map`, created on first access and torn down on source-lifecycle events (destroy, recycle, explicit `invalidate(key)`) — never on React lifecycle alone. Promise identity must be stable across renders and across StrictMode double-invoke so `use()` returns the same thenable each time. Module state is out of React Compiler's memoization scope (compiler is component-local only — confirmed by React Compiler 1.0 docs), so this is Compiler-safe without manual `useMemo`. Template: `packages/app/src/editor/sync-promise.ts`.
-    (e) **ErrorBoundary pairing via `react-error-boundary`.** Pair every `<Suspense>` fallback with an outer `<ErrorBoundary>` that catches rejections propagated through `use()`. Use `FallbackComponent` + `resetKeys={[activeKey]}` + `onReset` to (i) auto-clear the error when the user navigates away, (ii) invalidate the cached promise on manual retry so the next render re-suspends against a fresh attempt. Retry ordering is load-bearing — `onReset` fires before `react-error-boundary` clears state, so invalidate the cache inside `onReset`, not after. Template: `packages/app/src/components/DocumentErrorBoundary.tsx`.
-    (f) **Transition-wrapped navigation.** The state update that changes `activeKey` must run inside `startTransition` (via `useTransition()` when `isPending` needs to be observable to progress indicators like `NavigationPendingBar`). React then keeps the previous subtree rendered through the suspending re-render, delivering the "old content visible until new content ready" atomic swap. Without `startTransition`, Suspense falls back to the skeleton immediately and the flash returns.
-    Applies to any future subscription-source async surface — agent status panels, CRDT-snapshot loading, WebSocket handshake gates, graph-layout computations that resolve from a streaming source. Does NOT apply to HTTP-fetch panels (BacklinksPanel, OutlinePanel, GraphPanel, ForwardLinksPanel, TimelinePanel) which stay on TanStack Query. See `specs/2026-04-16-page-render-optimization/SPEC.md` §9 (system design), §10 D1 (hybrid), §10 D2 (hand-rolled vs TanStack), §10 DX9 (ACTIVITY_MOUNT_LIMIT decoupled from MAX_POOL), §F14 (precedent scope).
+1. **Typed transaction origins** — `LocalTransactionOrigin` objects; paired-write markers opt in at definition
+2. **Generic primitives over specific ones** — Name for extensibility, not first-caller
+3. **Structured event schemas** — `{actor, timestamp, action, visibility}`; don't grow ad-hoc fields
+4. **Shared computation, per-surface rendering** — Render-deciding logic in one module; surfaces apply only
+5. **Contract-first MCP tools** — Clients conform; required params are required
+6. **Mode state as enums** — No boolean flags for >2 states
+7. **Remove broken capabilities rather than shipping them** — Confidently-broken UI > feature absence
+8. **Long-lived identity vs session concerns** — Agent ID stable; pass boundaries ephemeral
+9. **Schema is add-only forever** — Never remove/narrow PM nodes, attrs, content exprs, or mark excludes
+10. **Opaque-but-content-bearing nodes for Y.Item identity** — `atom:false, content:'text*'` for raw-content atoms
+11. **Minimize CRDT mutation in sync bridges** — Content-gate delete+insert; hybrid diff3+DMP; origin-aware reconciliation
+12. **XmlFragment-authoritative, Y.Text mirrors** — `applyAgentMarkdownWrite` template; no rebuild-from-Y.Text
+13. **Bridge invariants auto-enforced and property-verified** — Watchers + scheduler DI + structural races + fuzzer coverage gate
+14. **Cross-CRDT sync is single-writer, server-side** — Client cross-CRDT write paths removed, not gated
+15. **Idempotent micromark-extension attachers** — Singleton extensions; check-before-push
+16. **Phase-ordered visitor dispatchers** — Split along dependency boundary when passes consume each other
+17. **Byte-for-byte equivalence validators gate high-risk refactors** — One-time ratchet; delete after green
+18. **Hybrid Activity + Suspense + `use(promise)`** — Subscription-source async, bounded pool, warm provider
+19. **Clipboard pipeline is mdast-canonical** — All four paths route through mdast hub
+20. **E2E test infrastructure conventions** — Seven sub-rules; mechanical STOP rule gate
+21. **Ancestor-priority for auto-revealing tree-state derivations** — Auto-reveal + user-toggle merge shape
+22. **Shell-script conventions for repo tooling** — Six sub-rules for bash library code
+23. **Async socket errors at the boundary** — Classify EPIPE/ECONNRESET at upgrade; no userspace pre-filter
+24. **Per-session actor identity at the CRDT origin layer** — Each session creates a frozen `LocalTransactionOrigin`; `extractAgentIdentity` is the canonical entry point; `session.dc.document.transact(fn, session.origin)` is mandatory
+25. **Classified writer IDs + subject-prefix action encoding** — Shadow refs keyed by `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`; commit subjects prefixed `wip:`, `checkpoint:`, `reconcile:`, etc.
+26. **Perf instrumentation as first-class** — `<ProfilerBoundary>` + `mark('ok/<subsystem>/<event>')` for any new React surface on a perceived-perf path; scenarios in `packages/app/tests/perf/scenarios/`
+27. **V2 editor cache + InteractionLayer + Option E split walker (2026-04-20)** — Eight coordinated primitives for cold-load + warm-switch + per-instance React portal cost. Module-level editor cache (raw `view.dom` reparent), InteractionLayer singleton React plane, mdast→React split walker, size-aware cache admission, `content-visibility:hidden` mode toggle, provider prewarm, chip-orchestration 3-plugin wire-up. Also includes #18(b) corrigendum: for TipTap editors specifically, `useEditor.scheduleDestroy(1ms)` destroys the editor on Activity unmount — state does NOT survive the visibility flip without V2 cache; authoritative fix in `specs/2026-04-20-perf-v2-editor-cache-and-cold-load-ux/`
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -135,8 +177,11 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
-- `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/types/awareness.ts` — AwarenessState, AwarenessUser, AgentFlashEntry (renamed from `ActivityEntry` per D57), AgentFocusEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
+- `src/constants/ok-dir.ts` — `OK_DIR = '.open-knowledge'` (canonical project-marker constant; CLI re-exports for compatibility with its existing callers, and desktop imports directly)
+- `src/desktop-bridge.ts` — `OkDesktopBridge` interface — canonical shape of the Electron `window.okDesktop` surface. Documentation anchor; desktop's runtime consumer is a duplicated copy in `packages/desktop/src/shared/bridge-contract.ts` (see Package: desktop for why the duplication is deliberate)
+- `src/handoff/` — Open-in-Agent types + pure URL builders (`claude-url.ts`, `codex-url.ts`, `cursor-url.ts`, `web-fallback-url.ts`) + `prompt-composer.ts`. No React, no Node APIs. Governed by `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.1–§6.3. STOP: do NOT re-introduce a `HandoffTargetDescriptor` type or discriminated-union registry here — target data + dispatch live in app-layer per E1-b DIRECTED.
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
@@ -147,17 +192,18 @@ Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, sh
 
 ```
 Hocuspocus Server
-├── Persistence Extension (CRDT → markdown → disk → shadow git)
+├── Persistence Extension (CRDT → markdown → disk → history git)
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Server Observer Extension (server-authoritative cross-CRDT sync — precedent #14)
-├── Agent Sessions (DirectConnection + UndoManager per agent)
+├── Agent Sessions (DirectConnection + per-session UndoManager per (docName, agentId))
 ├── Content Filter (gitignore + config exclude/include filtering)
 ├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
-├── Shadow Repo (.git/openknowledge/ — attribution journal)
+├── Shadow Repo (.git/open-knowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 ├── Shadow Branch GC (orphaned ref cleanup)
-└── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+├── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+└── Agent Presence Broadcaster (map-valued awareness on __system__ Y.Doc — N-agent coexistence)
 ```
 
 ### CC1 push-over-awareness (derived-view invalidation)
@@ -178,15 +224,74 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 
 **File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
 
+### Agent presence on `__system__` (map-valued awareness)
+
+All agent presence state lives on the `__system__` Y.Doc's awareness as a map-valued `agentPresence: Record<agentId, AgentPresenceEntry>` field. This is the canonical substrate for any "who is writing right now" UI — the current `PresenceBar`, the future Cluster A Activity sidebar, any cross-doc visibility. Per-content-doc agent awareness is structurally unworkable: every Hocuspocus `Document` has one shared `Awareness` with a single `clientID`, so `setLocalState({user:...})` stomps across N concurrent agents. Publishing a map keyed by `agentId` on the single shared `__system__` awareness sidesteps that constraint.
+
+**Key files.**
+- `packages/server/src/agent-presence.ts` — `AgentPresenceBroadcaster` class. API: `setPresence(agentId, entry)` (upsert), `clearPresence(agentId)` (remove one key), `touchMode(agentId, mode)` (update `mode`+`ts` only — no-op if the entry doesn't exist, so incomplete entries never reach the client), `getPresenceMap()` (diagnostic read). Structured pino logs under `[agent-presence]` namespace per precedent #3.
+- `packages/core/src/types/awareness.ts` — `AgentPresenceEntry` shape `{displayName, icon, color, currentDoc, mode:'idle'|'editing', ts}`. `AwarenessUser.type` is narrowed to `'human'`; agents never appear in per-doc awareness under this design.
+- `packages/app/src/lib/agent-presence.ts` — client helpers: `AGENT_PRESENCE_STALE_MS = 5_000`, `pickAgentsForDoc(awareness, activeDocName, now) → {current, crossDoc}`, `pickPrimary(awareness, now)`. Entries with `currentDoc === null` (D8) and entries older than `AGENT_PRESENCE_STALE_MS` are filtered.
+- `packages/app/src/presence/use-presence.ts` / `PresenceBar.tsx` — two-source hook (humans from `activeProvider.awareness`, agents from `systemProvider.awareness`) rendered in the sectioned bar (current-doc | vertical divider | cross-doc dimmed + grayscale).
+- `packages/app/src/components/SystemDocSubscriber.tsx` + `packages/app/src/editor/DocumentContext.tsx` — lift the `__system__` `HocuspocusProvider` to context so `usePresence` can read agent awareness without re-opening the provider.
+
+**Write surface.** The three agent write handlers in `api-extension.ts` (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) all call `agentPresenceBroadcaster.setPresence(..., mode:'editing')` before the transact and `touchMode(agentId, 'idle')` in a `finally` so a thrown transact still flips the badge back to idle. Agent-session lifecycle (`AgentSessionManager.getSession` / `closeSession` / `closeAllForAgent`) no longer touches content-doc awareness at all — there is no per-doc agent state to clear.
+
+**Cleanup is deterministic via the MCP keepalive WS.** The keepalive URL carries `agentId=${connectionId}` (`packages/cli/src/mcp/keepalive.ts`); `boot.ts`'s `/collab/keepalive` upgrade handler parses the param via `parseKeepaliveAgentId()` and wires `ws.on('close') → presenceBroadcaster.clearPresence(agentIdForCleanup)` so the badge disappears within ~ms of process exit. The 5 s TTL filter on the client side (`AGENT_PRESENCE_STALE_MS`) is a belt-and-suspenders fallback for ungraceful disconnects, clock skew, or proxies that eat the close frame.
+
+**STOP — the `agent-` prefix convention.** `api-extension.ts`'s `extractAgentIdentity` stores presence under the key `agent-${rawAgentId}`, but the keepalive URL carries the raw `connectionId`. Use the exported `toBroadcasterKey(rawAgentId)` helper in `packages/server/src/boot.ts` for every translation from a raw URL / HTTP-body agentId to the broadcaster-map key — the close handler, test harnesses, and any future cleanup path. Silent prefix drift between the write path and the cleanup path makes `clearPresence` no-op in production without failing any test.
+
+**Observability.** `GET /api/metrics/agent-presence` returns `{ presence: Record<agentId, AgentPresenceEntry> }` — the current map. **Diagnostic-only** in this iteration: the browser does NOT poll this endpoint. Presence-bar state always comes from the `__system__` provider's awareness sync (delivered in the WS handshake window). The endpoint is stable surface for `curl` + operator dashboards. Wiring it as a client-side cold-start fallback is noted but not load-bearing — awareness replay is fast in practice.
+
 ### Shadow repo & branch runtime
 
-The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode, no project `.git/`). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store.
+The shadow repo is a bare git repo at `<projectRoot>/.git/open-knowledge/` (SPEC 2026-04-21-shadow-repo-single-mode). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store. Projects that lack `.git/` are auto-init'd by `ensureProjectGit` (R2 / D12) before any shadow op runs — this is a fail-fast entrypoint, not a degraded-mode fallback. Legacy `.git/openknowledge/` shadows from pre-spec installs are silently renamed in place on first run (R9 shim in `initShadowRepo`).
 
 **Branch-scoped state:** `reconciledBase` (the three-way merge base) is `Map<branch, Map<docName, string>>`. On branch switch, the active scope switches to the target branch's map. WIP refs are namespaced as `refs/wip/<branch>/<writer-id>`.
 
-**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to shadow refs via `parkBranch()`. On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+**Writer-ID taxonomy (D7, D8, D34, precedent #25).** Every history commit is authored by exactly one classified writer ID. Five categories:
 
-**Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
+| Writer ID | Display name | Email | Source |
+|---|---|---|---|
+| `agent-<connectionId>` | `<agent_type_display> (<short-id>)` e.g. `Claude (a4f2)` | `agent-<connectionId>@openknowledge.local` | MCP subprocess session |
+| `<principalId>` (= `principal-<UUID>`) | `<principal.display_name>` | `<principal.display_email>` | Browser principal (D34 — `human-` prefix dropped) |
+| `file-system` | `File System` | `file-system@openknowledge.local` | Direct disk edit reconciled via file-watcher |
+| `git-upstream` | `Git (upstream)` | `git@openknowledge.local` | Project-repo HEAD-move import |
+| `openknowledge-service` | `Open Knowledge (service)` | `service@openknowledge.local` | Service-level fallback (park snapshots, migrations) |
+
+Subject-prefix action encoding (FR-13, D53): `wip:`, `checkpoint:`, `reconcile:`, `import:`, `park:`, `rollback:`, `rename:` — each commit subject starts with one of these and includes the target doc path / short SHA for `git log` legibility. See `packages/core/src/shadow-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor`.
+
+**Structured `ok-actor:` commit body (FR-8, D13).** Every history commit body includes one `ok-actor:` JSON line per contributing actor:
+
+```
+ok-actor: {"v":1,"principal":"principal-6f3a...","agent_session":"conn-abc","agent_type":"claude","client_name":"claude-code","client_version":"1.5.2","label":null,"display_name":"Claude (a4f2)","color_seed":"claude-code","docs":["notes.md"]}
+```
+
+Parsed by `parseOkActor` in `shadow-repo-layout.ts`; renders back to the Timeline UI.
+
+**L2 drain per-writer fan-out (FR-7, D38).** At the persistence L2 debounce, `contributor-tracker.swapContributors()` drains a snapshot, the loop emits one `commitWip(history, writer, ...)` per distinct writer. All per-writer commits in the same drain share the same tree SHA but have distinct commit SHAs + distinct author/committer/body. Per-writer failure restores only that writer's entries via `restoreContributorEntry()` (no global all-or-nothing).
+
+**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to history refs via `parkBranch()` under the `openknowledge-service` writer (D58 — per-session park deferred). On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+
+**Writer lock:** Only one active writer instance may mutate a given history root. The lock file at `<historyDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
+
+### `bootServer` — canonical HTTP-wrapping entry point
+
+`packages/server/src/boot.ts` exports `bootServer(opts: BootServerOptions): Promise<BootedServer>` — the shared wrapper that composes `createServer()`, the `node:http` listener, the server-lock port-write (`acquireServerLock` → `listen(0)` → `updateServerLockPort`), and the optional `ok ui` sibling + idle-shutdown primitives. Consumers:
+
+- **CLI `ok start`** (`packages/cli/src/commands/start.ts`) — thin Commander wrapper. `bootStartServer` is now a delegation layer; CLI-specific concerns (MCP detached-spawn stderr capture, Commander logging, `runInit` auto-init) are layered on top of `bootServer`.
+- **Electron utility** (`packages/desktop/src/utility/server-entry.ts`) — calls `bootServer({ attachUiSibling: false, idleShutdownMs: null })` so no `ok ui` sibling is spawned and the 30-minute idle-shutdown timer is not attached (D36 in the Electron spec).
+- **Vite dev plugin** (`packages/app/src/server/hocuspocus-plugin.ts`) — calls `createServer()` directly and attaches to Vite's existing HTTP server; it does not need `bootServer`'s HTTP-wrapping layer. Shares the `server.lock` contract so `bun run dev` and `ok start` against the same `contentDir` collide fast.
+
+Opt-out flags on `BootServerOptions`:
+
+| Flag              | Default                   | Purpose                                                                                                 |
+| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `attachUiSibling` | `true`                    | Auto-spawn `ok ui` when `ui.lock` is absent/stale. Electron passes `false`.                             |
+| `idleShutdownMs`  | `30 * 60 * 1000` (30 min) | Tear down the collab process after the threshold of zero WS clients. Pass `null` to disable (Electron). |
+| `skipAutoInit`    | `false`                   | Bypass `initContent` auto-scaffold of `.open-knowledge/` on first start.                                |
+
+`BootedServer` returns `{ httpServer, destroy, port, ready, serverInstance, lockDir }` — the shape `bootStartServer` has always returned; renamed on extraction for canonical naming.
 
 ### Server process lock
 
@@ -196,7 +301,7 @@ One `createServer()` instance at a time per content directory. The lock file at 
 
 `bun run dev` (Vite plugin) and `open-knowledge start` share this lock, so running both against the same content directory fails the second invocation fast. Different content directories are unaffected.
 
-**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
+**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release history lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
 
 ### Symlinks
 
@@ -220,42 +325,52 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 
 ### API Endpoints
 
-| Method | Path                          | Purpose                                                                   |
-| ------ | ----------------------------- | ------------------------------------------------------------------------- |
-| GET    | `/api/document`               | Read live Y.Text state (bypasses persistence debounce; `?docName=` param) |
-| POST   | `/api/agent-write`            | Agent write via Y.Text                                                    |
-| POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                  |
-| POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated          |
-| POST   | `/api/agent-undo`             | Undo last agent edit (agent-write origin only)                            |
-| POST   | `/api/agent-redo`             | Redo last undone agent edit                                               |
-| GET    | `/api/agent-undo-status`      | Check canUndo/canRedo                                                     |
-| POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                    |
-| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                    |
-| GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
-| GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
-| GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
-| GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
-| GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
+| Method | Path                          | Purpose                                                                                                                                                             |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/document`               | Read live Y.Text state (bypasses persistence debounce; `?docName=` param)                                                                                           |
+| POST   | `/api/agent-write`            | Agent write via Y.Text                                                                                                                                              |
+| POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                                                                                                            |
+| POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated                                                                                                    |
+| POST   | `/api/agent-undo`             | Per-session Y.UndoManager undo; body `{ connectionId, scope: 'last' \| 'session' }` (FR-4, V0-14)                                                                    |
+| POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                                                                                                              |
+| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint (FR-9: Co-Authored-By trailers, principal author)                                                            |
+| GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park)                                                                                           |
+| GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)                                                                                                    |
+| GET    | `/api/metrics/agent-presence` | Current `agentPresence` map (diagnostic-only; clients don't poll)                                                                                                   |
+| GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)                                                                                                 |
+| GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                                                                                                                   |
+| GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes)                                                                               |
+| GET    | `/api/installed-agents`       | Web-host install probe for Open-in-Agent dropdown — `{claude, codex, cursor}` booleans; per-OS shell probe (`osascript` / `reg query` / `xdg-mime`) with 60 s cache |
 
 ### Key files
 
 - `src/standalone.ts` — `createServer()` factory; wires HEAD watcher callbacks (park on BatchBegin, reconcile/restore on BatchEnd)
-- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
+- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating; `onStoreDocument` destructures `lastTransactionOrigin` + `lastContext` and routes the commit to the matching session's writer-ID at L2 drain (FR-16)
 - `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
 - `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
 - `src/server-lock.ts` — `acquireServerLock()` / `updateServerLockPort()` / `readServerLock()` / `releaseServerLock()` + `ServerLockCollisionError`. One server per contentDir; advertises real port for MCP discovery
 - `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock and server-lock
 - `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
-- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
+- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection, per-writer TTL (30d for session writers, never for classified writers per D54; FR-18)
+- `src/contributor-tracker.ts` — per-doc contributor snapshot drained at L2 debounce; broadened first-arg semantics from "agentId" to "writerId" so `applyExternalChange` records `file-system` writer without a new function (D41)
+- `src/principal.ts` — `loadOrCreatePrincipal(contentDir)` — stable-UUID + git-config display for the browser-principal identity (FR-10, D9); persists to `.open-knowledge/principal.json`
+- `src/activity-log.ts` — bounded `Y.Map('agent-effects')` ring-buffer (50 entries per doc, oldest-by-timestamp eviction; D49, FR-11). Captures `YTextEvent.delta` per agent transact inside the paired-write drain — no server-side store, no CC1, no REST
+- `src/agent-sessions.ts` — `AgentSessionManager` class; `getSession(docName, agentId, identity)` creates per-session `LocalTransactionOrigin` + per-session `Y.UndoManager` scoped across `[Y.Text('source'), Y.Map('metadata'), Y.Map('agent-flash')]` with `trackedOrigins = new Set([session.origin])` + `ignoreRemoteMapChanges: true` (D3, D25); `applyAgentMarkdownWrite`; `applyAgentUndo(session, scope)` under `session.undoOrigin` (per-session, distinct from `session.origin`; V0-14, precedent #10, #24); `closeAllForAgent(connectionId)` is the teardown primitive wired to keepalive-WS close (boot.ts:263) with 30s grace (D28)
+- `src/agent-focus.ts` — AgentFocus push-nav broadcaster keyed by session; `AgentFocusEntry.writeKind` extends to `'write' | 'edit' | 'undo' | 'rollback-apply' | null` (D43)
+- `src/git-identity-sanitize.ts` — shared `sanitizeGitIdentity()` utility; strips `<>`, CRLF, trims + slices to 128 chars (D36). Applied at `extractAgentIdentity` + principal.json → WriterIdentity boundaries
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
-- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
-- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
-- `src/agent-sessions.ts` — `AgentSessionManager` class
+- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B, and the agent-write-summary adoption triad (`agentWriteCalls`, `summariesProvided`, `summariesTruncated` — M1/M2 per `specs/2026-04-21-agent-write-summaries/SPEC.md` §7)
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin; records `file-system` classified writer via `contributor-tracker` (D41, FR-6)
+- `src/contributor-tracker.ts` — per-writer `ContributorEntry` accumulator drained at L2 by `persistence.ts`. Carries: `docs: Set<string>`, optional `subjectOverride` (D53 subject-prefix), optional `actor: ActorMetadata` (FR-8 tuple), and `summaries: string[]` (agent-write-summaries D23). One `ok-contributors:` JSON line per writer in the WIP commit body; summaries emitted only when non-empty (legacy byte-identity)
+- `src/agent-write-summary.ts` — `normalizeSummary(raw)`: single API-boundary truncation point for the five agent-write handlers. 80-char cap (D24), `{kind: 'absent' | 'invalid' | 'value', value?, truncatedFrom?}` contract. Whitespace-only and empty-string inputs classify as `absent` (no metric bump, no bullet)
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
+- `src/api-extension.ts` — HTTP API; `extractAgentIdentity(body)` is the canonical identity boundary every mutating POST handler calls at entry before any Y.Doc mutation (FR-5, D42, precedent #24). Includes save-version, rescue buffer, link-graph, agent-undo, metrics, and installed-agents endpoints. Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and asserts every POST handler calls `extractAgentIdentity` or is on the explicit allowlist.
+- `src/handoff-api.ts` — `GET /api/installed-agents` handler + per-OS install probes (`osascript` / `reg query` / `xdg-mime`) + per-scheme 60 s cache with in-flight dedup. Web-host parity for the Electron `ok:shell:detect-protocol` IPC
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
-- `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline + 50ms debounce via injected `Scheduler`
+- `src/agent-presence.ts` — `AgentPresenceBroadcaster`; map-valued `agentPresence` field on `__system__` awareness (see "Agent presence on `__system__`" above)
+- `src/boot.ts` — `bootServer()` composition wrapper. Owns the `/collab/keepalive` WS upgrade handler; exports `parseKeepaliveAgentId(url)` + `toBroadcasterKey(rawAgentId)` for the deterministic agent-presence cleanup path
+- `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
 
 ## Package: cli
@@ -264,11 +379,13 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 
 ### CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
-| `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
-| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
+| Command                                   | Description                                                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app                                                                     |
+| `open-knowledge init`                     | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json`                                            |
+| `open-knowledge mcp`                      | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
+
+Bin names: the CLI ships two bins — `open-knowledge` (long form) and `ok` (short alias). Both point to the same entrypoint. Distribution strategy, install UX, telemetry posture, and related LOCKED / NEVER / NOT NOW decisions are codified in **`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`** — read it before making changes to `packages/cli/package.json` bin config, install docs, or anything telemetry-related.
 
 ### Config system
 
@@ -307,7 +424,8 @@ Y.Doc
 ├── Y.XmlFragment('default')  ← TipTap binds here
 ├── Y.Text('source')          ← CodeMirror binds here via y-codemirror.next
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution side-channel
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57 rename of legacy 'activity')
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49; 50 entries total per doc)
 
 Cross-CRDT sync (server-authoritative — precedent #14):
   Server Observer A: XmlFragment → Y.Text  (origin: OBSERVER_SYNC_ORIGIN)
@@ -349,21 +467,37 @@ Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wrap
 
 ### Presence & awareness
 
-- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
-- Agent activity flash via Y.Map('activity') → CSS @keyframes
-- Per-origin undo via server-side UndoManager
-- Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
+- Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source); `AwarenessUser.type === 'human'` only (agents never appear in per-doc awareness)
+- Humans live on the per-doc `HocuspocusProvider.awareness`; agents live on the `__system__` provider's `agentPresence` map. `PresenceBar` reads both sources via `usePresence(activeProvider, systemProvider, activeDocName)` and renders the sectioned layout (current-doc | vertical divider | cross-doc dimmed + grayscale). See "Agent presence on `__system__`" under Package: server for the substrate design.
+- `DocumentContext` exposes `systemProvider: HocuspocusProvider | null`; `SystemDocSubscriber.tsx` is the single mount point that holds the provider ref.
+- Agent activity flash via `Y.Map('agent-flash')` → CSS @keyframes (D57 rename of legacy `Y.Map('activity')`; orthogonal to presence — activity is per-write, presence is session-scoped)
+- Per-session undo via per-session `Y.UndoManager` (precedent #24, D3, D25). `session.um.undo()` reverts only that session's last transaction; cross-session undo is scoped by `trackedOrigins = new Set([session.origin])` identity match
+- Agent writes use `session.dc.document.transact(fn, session.origin)` (precedent #24, D32) — never `session.dc.transact(fn)` (covered by STOP rule in §Known Pitfalls)
 - Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
 
 ### Theming
 
 Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
-- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)<br>_[Corrected 2026-04-22 post-ship: `index.html` never carried a theme FOUC script — `next-themes` handles theme-class injection internally via its `ThemeScript` React component (see `main.tsx` `<ThemeProvider storageKey="ok-theme-v1">`). The only inline script in `index.html` today is the editor-mode FOUC script (see "Editor mode persistence" below). Authoritative fix in `specs/2026-04-21-editor-mode-persistence/SPEC.md` §7.2.]_
 - `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
 - `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
 - `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
 - `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
+### Editor mode persistence
+
+The user's editor-mode choice (`wysiwyg` | `source`) is a user-global UX preference, persisted in `localStorage` under `ok-editor-mode-v1` and applied on first paint via an inline FOUC script in `packages/app/index.html`. Cross-tab sync is intentionally not implemented (SPEC D9 supersedes D7): each tab/window is its own session for its lifetime; the persisted value is read only at load (refresh, new tab, new window). Open tabs do NOT update each other live. Last toggle wins at the next load.
+
+- `packages/app/index.html` — inline `<script>` in `<head>` reads `localStorage('ok-editor-mode-v1')`, validates against `'wysiwyg' | 'source'`, sets `window.__OK_EDITOR_MODE__` before React mounts. First inline FOUC script in-repo; theme FOUC is handled by `next-themes` internally.
+- `src/editor/use-editor-mode.ts` — `useEditorMode()` hook. `EDITOR_MODE_VALUES` const array is the single source of truth — both `EditorModeValue` and `isEditorModeValue()` derive from it. `useState` initializer prefers `window.__OK_EDITOR_MODE__` (typed `unknown` — every reader MUST validate via `isEditorModeValue`), falls back to `localStorage`, then `'wysiwyg'`. Reads localStorage exactly once at mount; no focus listener; no `storage` event listener. Every call to the hook's setter persists to localStorage immediately. Session-local paths that bypass the hook (e.g. `RAW_MDX_NAV_EVENT` → `setEditorMode('source')` directly in `EditorPane`) do not persist. Invalid persisted values produce a `[editor-mode] invalid persisted value` `console.warn` (FR-8); storage throws stay silent.
+- `src/components/EditorPane.tsx` — consumer. `EditorMode = EditorModeValue | 'diff'` structurally encodes "diff is the only non-persistable mode." Seeds session-local `editorMode` from the read-once `persistedMode` on mount. Diff mode is ephemeral; `modeBeforeDiffRef` restores session pre-diff mode on exit (pre-existing repo behavior, unchanged by this feature).
+- Header toggle persists; `RAW_MDX_NAV_EVENT` (tool-forced source flip) is session-only and does NOT persist. Diff mode is ephemeral and never persisted.
+- Key is versioned (`-v1`) matching the `ok-theme-v1` / `ok-pin-v1` precedent. No new dependencies.
+- E2E coverage: `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (seven tests: T1, T2, T3 "open tabs are independent until reload", T4, T6, T8, T9; in the CI `test:e2e` file list).
+- **Drift-guard:** PRs that touch `use-editor-mode.ts` or `EditorPane.tsx` load-time initialization must re-run SPEC §8.4 MQ1 (Electron restart → new window picks up last-persisted mode). There is no `_electron.launch()` Playwright harness at baseline, so this is manual.
+
+Full spec: [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
 
 ### Dev mode
 
@@ -374,7 +508,7 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, and code wrap-preserve-indent. Tables get structure/layout classes (hanging indent only) — no background, no border, no cell bands, no font-size/line-height change. No heading/blockquote/frontmatter decorations.
 
 - `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code, and table decorations) + StateField (doc-wide cross-scan for broken link-ref detection; skips matches inside `FencedCode`/`CodeBlock`/`InlineCode` via the Lezer tree)
-- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (\~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
 - Broken-wikilink detection lives in `src/editor/plugins/wiki-link-source.ts` (extends the existing plugin's `pagesCache` check), not in `source-polish/`
 - CSS: all `.cm-*` classes in `globals.css` under the `/* Source-view minimal polish */` comment block
 
@@ -405,8 +539,83 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/GraphLegend.tsx` — Cluster color legend (fullscreen Explore only; max 10 entries)
 - `src/components/graph-colors.ts` — Deterministic hash-to-color mapping for cluster names (16-color palette, theme-aware)
 - `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
-- `src/presence/PresenceBar.tsx` — Presence bar component
+- `src/presence/PresenceBar.tsx` — Sectioned presence bar (current-doc | divider | cross-doc dimmed + grayscale). Overflow chip (M=4 current, K=3 cross-doc) via shadcn Popover per section; cross-doc tooltip shows `editing [[doc.md]]` with a clickable wiki-link that calls `openDocumentTransition(docName)` and updates `window.location.hash`
+- `src/presence/use-presence.ts` — Two-source hook reading humans from `activeProvider.awareness` + agents from `systemProvider.awareness` via `pickAgentsForDoc`; `~1s` `setInterval` tick ages out stale entries when no awareness events arrive (backup for the `AGENT_PRESENCE_STALE_MS` filter)
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
+- `src/lib/agent-presence.ts` — Client presence helpers (`AGENT_PRESENCE_STALE_MS`, `pickAgentsForDoc`, `pickPrimary`). See the server-side substrate doc under Package: server for the full design
+- `src/components/SystemDocSubscriber.tsx` — Single mount point for the `__system__` `HocuspocusProvider`; lifted to `DocumentContext` so `usePresence` can read agent awareness without re-opening the provider
+- `src/lib/handoff/` — Open-in-Agent dispatch primitives. `dispatch.ts` is the single outbound entry point (AC9 asserts no other sites) with a hand-rolled switch on `HandoffTarget` gated by a `_exhaustive: never` check; `targets.ts` holds the pure `KNOWN_TARGETS` data constant (E1-b DIRECTED — no registry, no `HandoffTargetDescriptor`); `cursor-two-step.ts` runs Cursor's spawn-then-settle-then-fire FSM (Electron only); `open-external.ts` wraps the IPC-vs-anchor-click host branch; `install-detect.ts` unifies Electron + web detection; `telemetry.ts` appends one JSONL line per dispatch to `~/.open-knowledge/stats.jsonl` (local-only, zero network per XQ3 LOCKED)
+- `src/components/handoff/` — Open-in-Agent UI: `OpenInAgentMenu` dropdown, `OpenInAgentMenuItem` with disabled-state tooltip + Claude web fallback, `OpenInAgentContextSubmenu` for the FileTree right-click, `useInstalledAgents` hook (boot + on-open async refresh per SQ5 DIRECTED), `useHandoffDispatch` hook (sonner toast + telemetry on success/failure per E5a/E5b DIRECTED)
+- Mount sites: `src/components/EditorHeader.tsx`, `CommandPalette.tsx`, `FileTree.tsx` all render the shared dropdown (SQ6 DIRECTED)
+
+## Package: desktop
+
+Electron desktop app — `@inkeep/open-knowledge-desktop`, private. Launches the editor as a native macOS app. **Status: M1 + M2 signed-DMG scaffolding + M3 auto-update scaffolding + M4 `openknowledge://` URL scheme + M5 keyring packaged-E2E verification layer shipped** (M2: fuses flip, afterSign notarize+staple+verify, electron-builder hook wiring, `workflow_dispatch` CI; M3: `electron-updater@6.8.4` main-process module, 4 AppState fields, 3 IPC events + 1 request, `UpdateToast` renderer, release-event-triggered `desktop-release.yml`; M4: `openknowledge://` URL-scheme deep-linking end-to-end on macOS — parser, queue-then-flush handler, `OK_ELECTRON_PROTOCOL_HOST=1` utility-fork injection, MCP preview-URL branch, renderer hash listener, warm-start Playwright smoke; M5: utility-process `runKeyringSmoke`, main↔utility debug IPC relay with correlation-ID Map, boot-time auto-smoke mode, unsigned-DMG driver script, 11-step signed runbook — AC1–AC3 + AC8–AC10 green; AC4–AC7 creds-gated on Apple Developer credentials per [`specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md`](specs/2026-04-21-m5-keyring-packaged-e2e/SPEC.md)). M2 end-state DOD (Universal DMG green end-to-end under real Apple creds) is blocked on the bun-workspace universal-merge SHA-parity gap — see [`specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md`](specs/2026-04-20-m2-signed-dmg-scaffolding/SPEC.md) §6. M3 end-state DOD (AC15 install-on-quit round-trip + AC16 J7a kill-mid-download retry smoke) is creds-gated on M2 publishing a signed DMG — see [`specs/2026-04-21-m3-electron-updater/SPEC.md`](specs/2026-04-21-m3-electron-updater/SPEC.md). M4 spec at [`specs/2026-04-21-m4-url-scheme/SPEC.md`](specs/2026-04-21-m4-url-scheme/SPEC.md) + [`packages/desktop/README.md`](packages/desktop/README.md) §Deep linking. M6 shipped (2026-04-23): M6a `Install Command-Line Tools…` menu item creates `/usr/local/bin/{ok,open-knowledge}` symlinks pointing at the bundled `Contents/Resources/cli/bin/ok.sh` wrapper (ELECTRON_RUN_AS_NODE=1), translocation + collision + broken-symlink launch-repair guards; M6b first-launch consent dialog host-agnostic per D-M6-R10, user-scoped marker at `~/.open-knowledge/mcp-status.json`, hybrid `cliPath` per D-M6-R9 (symlink-when-owned → bundle-absolute fallback), NEW CLI surface `writeUserMcpConfigs` avoids `runInit` project-scoped side effects. D-M6-R11 flipped `RunAsNode` fuse to `true` so the wrapper's `ELECTRON_RUN_AS_NODE=1` works in packaged builds — see [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md). M6 P1 E2E smoke (AC2.6) is creds-gated on notarization — same gate as M5's AC4–AC7. Windows/Linux parity (M7) remains deferred — see [`specs/2026-04-11-electron-desktop-app/SPEC.md`](specs/2026-04-11-electron-desktop-app/SPEC.md) §14 for the milestone plan and [`packages/desktop/README.md`](packages/desktop/README.md) for the operational detail.
+
+### Process model
+
+One editor BrowserWindow ↔ one `utilityProcess.fork` ↔ one `createServer` ↔ one `contentDir` (D6 in the Electron spec). Enforced by the shipped `server.lock` contract. Plus one UI-only Navigator BrowserWindow (no utility attached) that acts as a persistent launcher (D24 revised — every project pick spawns a new editor window; D3 revised — there is no switch-in-place UX).
+
+### Key files
+
+- `packages/desktop/src/main/index.ts` — app lifecycle, single-instance lock, menu bar, `runClean` on boot
+- `packages/desktop/src/main/window-manager.ts` — `createProjectWindow` spawns BrowserWindow + utility, tracks `Map<BrowserWindow, ProjectContext>`, collision dispatch, routes `ok:debug:keyring-smoke` to the per-window utility
+- `packages/desktop/src/main/navigator-window.ts` — `createNavigatorWindow` persistent launcher
+- `packages/desktop/src/main/state-store.ts` — electron-store wrapper for recents + window bounds (Zod-validated, corrupt-file recovery)
+- `packages/desktop/src/main/shell-allowlist.ts` — `shell.openExternal` scheme allowlist (D47 + Open-in-Agent: `https | http | mailto | openknowledge | claude | codex | cursor`); `handleShellOpenExternal({ openExternal })` factory is pure + unit-testable (M4 US-008). Drift-detector test in `tests/main/shell-allowlist.test.ts` imports `KNOWN_TARGETS` and fails if a target's scheme is missing from `ALLOWED_SCHEMES`.
+- `packages/desktop/src/main/ipc-handlers.ts` — pure injectable handlers for three Open-in-Agent channels: `detectProtocol` (macOS+Windows `getApplicationInfoForProtocol`, Linux `xdg-mime` fallback, 2 s timeout), `spawnCursor` (resolves binary via Electron's info-for-protocol path → `which cursor` fallback → argv spawn with `shell:false`), `recordHandoff` (append-only JSONL writer to `~/.open-knowledge/stats.jsonl`)
+- `packages/desktop/src/main/url-scheme.ts` — M4: `parseOpenKnowledgeUrl` (pure, exported for unit tests) + `registerProtocolHandler({ app, focusWindowForProject, openProject, sendDeepLink, getAnyReadyWindow, ... })` implements the VS Code queue-then-flush pattern (10 × 500 ms retries) so macOS cold-start Apple Events are never lost. Dev-mode branch calls `setAsDefaultProtocolClient('openknowledge')`. Called synchronously at top of `main/index.ts`, BEFORE `whenReady` (electron/electron#32600).
+- `packages/desktop/src/main/utility-fork-env.ts` — M4: `buildUtilityForkEnv()` injects `OK_ELECTRON_PROTOCOL_HOST=1` into every `utilityProcess.fork({ env })` call. This is the flag the CLI's `preview-url.ts` reads to emit `openknowledge://` URLs instead of HTTP for MCP tool responses. CLI / bunx never set the flag.
+- `packages/desktop/src/main/debug-ipc.ts` — M5 main↔utility debug IPC relay; correlation-ID `Map<id, {resolve,reject,timer}>` with a default 10 s timeout and clean-on-resolve teardown. Substrate for renderer-facing `ok:debug:keyring-smoke` round-trip; only wired up when the runtime gate allows it (dev mode OR `OK_DEBUG_KEYRING_SMOKE=1` in the launching env).
+- `packages/desktop/src/main/driver-boot-smoke.ts` — M5 main-side bridge to the utility auto-smoke. `runDriverBootSmoke({ fork, quit, setTimeout })` short-circuits `app.whenReady()` on the strict conjunctive env gate (`OK_DEBUG_KEYRING_SMOKE='1' && OK_DEBUG_KEYRING_SMOKE_EXIT='1'`) — forks a standalone utility and quits on child exit. Load-bearing for AC8: without it, the packaged-DMG driver can never reach the utility auto-smoke because main opens Navigator on fresh install.
+- `packages/desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('okDesktop', ...)` with preload-side listener wrappers (electron/electron#33328); includes `onDeepLink` subscriber (M4) and exposes the optional `debug?: { keyringSmoke() }` namespace only when the M5 runtime gate allows.
+- `packages/desktop/src/utility/server-entry.ts` — `bootServer({ attachUiSibling: false, idleShutdownMs: null })` + IPC handshake + macOS poll-based parent-death detection (D49) + M5 debug-request dispatcher (`{ kind: 'debug-request' }`) + boot-time keyring auto-smoke gated on `OK_DEBUG_KEYRING_SMOKE` (writes `KeyringSmokeResult` JSON to `OK_DEBUG_KEYRING_SMOKE_OUT`; exits 0 post-write when `OK_DEBUG_KEYRING_SMOKE_EXIT=1`)
+- `packages/desktop/src/utility/keyring-smoke.ts` — M5 `runKeyringSmoke(deps?)` primitive. Namespace-scoped round-trip (`open-knowledge-smoke` / `test-user`) via `@napi-rs/keyring`, cleans up via `deletePassword` on success. `deps` injection enables unit coverage of the YAML-fallback branch without touching the production substrate (SPEC §9 SCOPE lock). Returns `KeyringSmokeResult = { ok, backend, durationMs, timestamp, error? }`.
+- `packages/desktop/src/shared/{ipc-channels,ipc-events,ipc-handler,ipc-invoke}.ts` — typed IPC channel map (D14 hand-rolled, no tRPC); `ok:deep-link` event channel added for M4; M5 added `ok:debug:keyring-smoke` to `RequestChannels`.
+- `packages/desktop/src/shared/bridge-contract.ts` — desktop-local copy of `OkDesktopBridge` (canonical shape in `@inkeep/open-knowledge-core/src/desktop-bridge.ts` — duplication is deliberate; see README); includes `onDeepLink` after M4; M5 added the optional `debug?: { keyringSmoke(): Promise<KeyringSmokeResult> }` namespace.
+- `packages/app/src/components/NavigatorApp.tsx` — React component rendered when `window.okDesktop?.config.mode === 'navigator'`
+- `packages/app/src/lib/use-collab-url.ts` — short-circuits on `window.okDesktop?.config.collabUrl` before the `/api/config` poll path
+- `packages/app/src/lib/install-deep-link-listener.ts` — M4: module-init subscriber wired in `main.tsx` before React mount; on `ok:deep-link` events, sets `window.location.hash = '#/' + encodeURIComponent(doc)` so the existing hash-route listener opens the target doc. No-op in web/CLI (`window.okDesktop` undefined).
+- `packages/app/src/lib/desktop-bridge-types.ts` — M5: app-side mirror of the bridge shape (same deliberate duplication as `packages/desktop/src/shared/bridge-contract.ts`; `OkKeyringSmokeResult` type surfaces here for renderer consumers)
+- `packages/cli/src/mcp/tools/preview-url.ts` — M4: highest-precedence `electron-protocol` source emits `openknowledge://open?project=<realpath>&doc=<docName>` when `OK_ELECTRON_PROTOCOL_HOST=1` + `ctx.contentDir` resolvable; falls through to env/lock/config otherwise
+- `scripts/verify-keyring-in-packaged-dmg.mjs` — M5 driver for creds-free pre-flight. Accepts an `.app` or `.dmg`, launches the packaged app with the `OK_DEBUG_KEYRING_SMOKE*` env triplet, parses the `KeyringSmokeResult` JSON, exits `0` on ok / `1` on smoke failure / `2` on boot timeout / `3` on pre-smoke crash.
+- `packages/desktop/resources/cli/bin/ok.sh` — M6a bundled CLI wrapper. Invokes `ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" "$@"` against `Contents/Resources/cli/dist/cli.mjs`. Self-diagnoses a missing bundle (stderr human-line + JSON `{error:'ok-bundle-missing',hint:...}`, exit 69) per D-M6-R6. Depends on D-M6-R11 `RunAsNode` fuse flip.
+- `packages/desktop/src/main/cli-install.ts` — M6a pure helpers (`isTranslocated`, `wrapperPathInBundle`, `getInstallStatus`, `classifySymlinkState`, `buildAdminAppleScript`, `buildInstallShellCmd`, `buildUninstallShellCmd`, `buildAdminFailureError`, `classifyOsascriptExitCode`) + runtime (`installCli`, `uninstallCli`, `defaultRunAsAdmin`, `createBrokenSymlinkRepairHandler`). DI via `CliInstallDeps { executablePath, dialog, runAsAdmin?, fs? }`. Translocation guard + collision prompt + admin-cancel fallback. POSIX single-quote shell escape via `shellEscapeSingleQuoted` hardens against apostrophes in bundle paths.
+- `packages/desktop/src/main/mcp-wiring.ts` — M6b pure helpers (marker r/w at `<home>/.open-knowledge/mcp-status.json`, hybrid `resolveCliPath` per D-M6-R9 with ownership check, `computeForce` for per-editor classification via `isCompatible` + `-y` variant + prior-cliPath detection) and runtime (`runMcpWiringOnFirstLaunch` — gate → marker check → detection → mount-ack handshake → origin-bound confirm/skip handlers). Deferred-marker semantics on partial failure per OQ-19; per-bundle dismissal token on broken-symlink Skip (Pass 2 Major #3); `forceShow` bypass on the marker-present gate wired to the "Configure AI Tool Integrations…" File menu (Pass 2 Major #5).
+- `packages/desktop/scripts/target-fuses.mjs` — M2 fuse map. **D-M6-R11 (2026-04-23): `RunAsNode=true`** (flipped from false). Required by M6a `ok.sh` which invokes `ELECTRON_RUN_AS_NODE=1` against the packaged bundle; the fuse would otherwise silently ignore the env var and launch the GUI. VS Code / Atom precedent; afterSign verification (`afterSign.mjs`) still diffs against this map byte-for-byte. **STOP: do not revert to `false` without amending D-M6-R11 — doing so breaks every M6a manual-smoke AC (AC1.4 / AC1.5 / AC1.7 / AC1.8) and every M6b cliPath invocation from a real MCP client spawn.**
+- `packages/app/src/lib/mcp-consent-store.ts` — M6b module-level renderer store (factory `createMcpConsentStore()` + singleton `mcpConsentStore` + `installMcpConsentListener`). Attaches at `main.tsx` module-init BEFORE React mounts so a pre-React `ok:mcp-wiring:show` IPC isn't dropped. Mirrors `update-notices-store.ts` pattern.
+- `packages/app/src/components/McpConsentDialog.tsx` — M6b host-agnostic consent dialog + 3 pure helpers (`computeInitialSelection`, `toggleSelectedId`, `selectedIdsOrdered`). Rendered in both `NavigatorApp.tsx` and `App.tsx`; self-gates on `store.getSnapshot() === null`.
+- `packages/cli/src/index.ts` — M6b public surface consumed by desktop main. Exports `ALL_EDITOR_IDS`, `EDITOR_TARGETS`, `detectInstalledEditors`, `readExistingMcpEntry`, `writeUserMcpConfigs` + types (`EditorId`, `EditorMcpTarget`, `McpInstallOptions`, `EditorMcpResult`, `WriteUserMcpConfigsOptions`).
+- `packages/desktop/tests/smoke/keyring-e2e.md` — M5 11-step creds-gated manual runbook for AC4–AC7 (signed-DMG CFBundleDisplayName prompt, relaunch persistence, v0.1.0→v0.1.1 upgrade persistence, `log show` caller-attribution)
+
+### IPC discipline (D19)
+
+Never call `ipcMain.handle` / `ipcRenderer.invoke` directly. Use `createHandler` / `createInvoker` from `packages/desktop/src/shared/ipc-*.ts`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` fails lint on violations. Allowlist (wrapper implementations themselves): `src/shared/ipc-handler.ts`, `src/shared/ipc-invoke.ts`, `src/preload/index.ts`.
+
+### Debug IPC + keyring smoke (M5)
+
+The `window.okDesktop.debug?.keyringSmoke()` surface is the only renderer-facing debug primitive and it is **gated at preload time**. The gate is `!app.isPackaged || process.env.OK_DEBUG_KEYRING_SMOKE === '1'` — in normal packaged runs, `window.okDesktop.debug` is `undefined`, and a typo like `window.okDesktop.debug.keyringSmoke()` surfaces at TypeScript compile time, not at runtime. The renderer→main→utility relay lives in `packages/desktop/src/main/debug-ipc.ts` (correlation-ID `Map<id, {resolve,reject,timer}>` with a 5 s default timeout; `clearTimeout` fires on both resolve and timeout paths so the Map stays bounded).
+
+Three env vars drive boot-time auto-smoke for the creds-free DMG verification path (used by `scripts/verify-keyring-in-packaged-dmg.mjs`):
+
+| Env var | Effect |
+|---|---|
+| `OK_DEBUG_KEYRING_SMOKE=1` | Utility runs `runKeyringSmoke()` at boot, before the `init` IPC handshake. Also opens the renderer-facing `debug` bridge. |
+| `OK_DEBUG_KEYRING_SMOKE_OUT=<path>` | Writes the `KeyringSmokeResult` JSON to `<path>` (driver reads it). Both `runKeyringSmoke` and the debug-IPC dispatcher respect it. |
+| `OK_DEBUG_KEYRING_SMOKE_EXIT=1` | After the result is written, the utility exits `0` immediately. Lets the driver distinguish "pre-smoke crash" (exit without file) from "smoke ok" (exit with file). |
+
+The smoke key is namespace-scoped (`open-knowledge-smoke` / `test-user`) so it never collides with production tokens (`open-knowledge` / `<github-host>`). `runKeyringSmoke` wipes the smoke entry via `deletePassword` on success.
+
+### Running locally
+
+```bash
+bun install                                               # postinstall rebuilds native modules; skip with ELECTRON_SKIP_REBUILD=1
+bun run --filter=@inkeep/open-knowledge-desktop dev        # macOS, opens Navigator window
+bun run build:desktop                                     # electron-vite build (no DMG)
+bun run --cwd packages/desktop build:mac:unsigned         # Local unsigned DMG smoke (see packages/desktop/README.md §M2)
+bun run --cwd packages/desktop build:mac                  # Signed + notarized DMG (requires CSC_LINK + APPLE_* creds)
+node scripts/verify-keyring-in-packaged-dmg.mjs <app|dmg>  # M5 creds-free smoke against a packaged build (exit 0/1/2/3)
+```
 
 ## CRDT Bridge Architecture
 
@@ -422,7 +631,8 @@ Y.Doc
 │  Client observers: baseline tracking only (cross-CRDT write paths deleted)
 │
 ├── Y.Map('metadata')         ← frontmatter cache
-└── Y.Map('activity')         ← agent write attribution
+├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
 ```
 
 ### Three invariants
@@ -433,13 +643,13 @@ Y.Doc
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
-| Write Surface             | → Y.Text                         | → XmlFragment                | → Disk               |
-| ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
-| W1: WYSIWYG (XmlFragment) | Server Observer A                | (direct)                     | Persistence debounce |
-| W2: Source (Y.Text)       | (direct)                         | Server Observer B             | Persistence debounce |
-| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
-| W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
-| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
+| Write Surface             | → Y.Text                                                                | → XmlFragment                     | → Disk               |
+| ------------------------- | ----------------------------------------------------------------------- | --------------------------------- | -------------------- |
+| W1: WYSIWYG (XmlFragment) | Server Observer A                                                       | (direct)                          | Persistence debounce |
+| W2: Source (Y.Text)       | (direct)                                                                | Server Observer B                 | Persistence debounce |
+| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket)                         | applyAgentMarkdownWrite on server | Persistence debounce |
+| W4: Disk (file watcher)   | applyExternalChange                                                     | applyExternalChange               | (direct)             |
+| W5: Agent Undo            | applyAgentUndo (per-session, XmlFragment-authoritative — precedent #10) | applyAgentUndo on server          | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -452,88 +662,100 @@ Y.Doc
 ### Observer A (XmlFragment → Y.Text)
 
 **Server-side (write path)** — `packages/server/src/server-observers.ts`:
+
 - Origin: `OBSERVER_SYNC_ORIGIN` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'observer-sync'`, `skipStoreHooks: true`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
-- **Path B** (Y.Text diverged from baseline): uses hybrid diff3+DMP three-way merge (`mergeThreeWay`), then `applyFastDiff` (character-level DMP `diff_main`) for minimal CRDT mutations. Handles D8 deduplication, sub-line conflicts, and delete/edit conflicts losslessly (see `specs/2026-04-15-lossless-bridge-merge/SPEC.md`)
-- Debounced (50ms) via injected `Scheduler`; also handles frontmatter sync (reads `Y.Map('metadata').get('frontmatter')` and prepends on serialize)
+- **Path B** (Y.Text diverged from baseline): uses hybrid diff3+DMP three-way merge (`mergeThreeWay`), then `applyFastDiff` (character-level DMP `diff_main`) for minimal CRDT mutations. Handles D8 deduplication, sub-line conflicts, and delete/edit conflicts losslessly (see `specs/2026-04-15-lossless-bridge-merge/SPEC.md`). `mergeThreeWay`'s post-condition (`assertContentPreservation` — invariant c + order-preservation) throws `BridgeMergeContentLossError` in dev/test; prod logs + silent `saveInMemoryCheckpoint` + returns `err.info.result` so the editor stays responsive (precedent #11(b), SPEC 2026-04-16 §6 R1/R7, D3-LOCKED)
+- Settlement-dispatched via `doc.on('afterAllTransactions', ...)` — observer callbacks set `xmlDirty` on non-self, non-paired transactions; handler runs the sync once per drain (precedent #13(b), SPEC 2026-04-16 §6 R4, D5-LOCKED). No wall-clock debounce, no injected `Scheduler`.
+- Also handles frontmatter sync (reads `Y.Map('metadata').get('frontmatter')` and prepends on serialize)
 - Fires on both `transaction.local=true` (server-side writes) and `transaction.local=false` (client edits arriving via WebSocket)
 
-**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
-- Origin: `ORIGIN_TREE_TO_TEXT` (retained for origin guards; no cross-CRDT write performed)
-- Maintains `lastSyncedXmlMd` for baseline-refresh reasoning and Bug-B conditional-refresh logic
-- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending, `lastSyncedXmlMd` is NOT refreshed to the post-remote state
+**Client-side (shell only, no CRDT writes)** — `packages/app/src/editor/observers.ts`:
+
+- Origin: `ORIGIN_TREE_TO_TEXT` (object identity retained for `BRIDGE_ENFORCING_ORIGINS` membership; no cross-CRDT write performed)
+- Observer A callback is a no-op under precedent #14 (server owns XmlFragment → Y.Text propagation on its own doc). The subscription keeps the callback slot wired for future read-side instrumentation and symmetric teardown.
 
 ### Observer B (Y.Text → XmlFragment)
 
 **Server-side (write path)** — `packages/server/src/server-observers.ts`:
+
 - Origin: `OBSERVER_SYNC_ORIGIN`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Handles frontmatter sync: reads `stripFrontmatter(md)` and writes `Y.Map('metadata').set('frontmatter', ...)`
-- Debounced (50ms) via injected `Scheduler`
+- After `updateYFragment`, canonicalizes Y.Text via `applyFastDiff` if the raw Y.Text bytes differ from the post-update serialization (preserves the bridge invariant `ytext === serialize(fragment)` after every B drain — replaces the debounce-era reliance on Observer A's subsequent Path B firing). The canonicalization write runs under `OBSERVER_SYNC_ORIGIN` so observers self-skip the inner drain.
+- Settlement-dispatched via `afterAllTransactions` (same handler as Observer A; A runs before B within one drain).
 
-**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
-- Origin: `ORIGIN_TEXT_TO_TREE` (retained for origin guards; no cross-CRDT write performed)
-- Maintains `lastSyncedYText` baseline
-- Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
+**Client-side (shell only)** — `packages/app/src/editor/observers.ts`:
+
+- Origin: `ORIGIN_TEXT_TO_TREE` (object identity retained for the enforcing set)
+- Observer B callback performs diagnostic parse validation: attempts `mdManager.parse(body)`; transient mid-edit errors (`SyntaxError`, `VFileMessage`, "Invalid content for node" `RangeError`) swallowed at debug log. Non-transient failures fire `onSyncError('text-to-tree', err)`. No CRDT write; no debounce; no typing-defer state (deleted in US-011 — D14 DELEGATED outcome = option (a) DELETE).
 
 ### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
 - File: `packages/server/src/agent-sessions.ts`
 - **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
-- Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins)
-- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
+- Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyFastDiff` (character-level DMP `diff_main`; minimal mutation, preserves non-agent Y.Text Items and their origins). See `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` for the reference implementation.
+- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. Both `applyAgentMarkdownWrite` and the landed `applyAgentUndo` follow this template; any new agent write surface must too (see the agent-undo contract STOP rule below and `evidence/bug-d-mechanism.md`).
 
 ### Origin-guard truth table
 
 All transaction origins are `LocalTransactionOrigin` **object references** (precedent #1) exported from their owning module. Identity-based matching in `Set.has` / `Y.UndoManager.trackedOrigins` / `attachBridgeInvariantWatcher` enforcing sets requires the exact object ref — a string literal or a reconstructed object with the same shape will NOT match.
 
+**Paired-write origins** declare `context.paired: true` at their definition site (precedent #1 extension). `isPairedWriteOrigin(origin) === origin?.context?.paired === true` — no hardcoded registry. Observer A AND Observer B both short-circuit symmetrically (synchronously refresh `lastSyncedXmlMd`, cancel any pending debounce). `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R0-R0c; mutation validation in `specs/2026-04-16-bridge-correctness/meta/mutation-validation.md`.
+
 **Server observers** (write cross-CRDT sync — `server-observers.ts`):
 
-| Transaction Origin                                      | Server Observer A (tree→text)                          | Server Observer B (text→tree)                          |
-| ------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
-| `OBSERVER_SYNC_ORIGIN` (server self-writes)             | — (self)                                               | SKIP                                                   |
-| `AGENT_WRITE_ORIGIN` (applyAgentMarkdownWrite)          | Sync (but early-exit: already-in-sync)                 | Sync (but early-exit: already-in-sync)                 |
-| `FILE_WATCHER_ORIGIN` (applyExternalChange)             | Sync (early-exit via setReconciledBase + already-in-sync) | Sync (early-exit)                                   |
-| `ROLLBACK_ORIGIN` (future)                              | Sync                                                   | Sync                                                   |
-| Remote-arrived (no origin; `local=false`)               | Sync                                                   | Sync                                                   |
+| Transaction Origin                                     | Server Observer A (tree→text)                     | Server Observer B (text→tree)                     |
+| ------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------- |
+| `OBSERVER_SYNC_ORIGIN` (server self-writes)            | — (self)                                          | SKIP                                              |
+| `AGENT_WRITE_ORIGIN` (applyAgentMarkdownWrite, paired) | Short-circuit: refresh baseline, cancel debounceA | Short-circuit: refresh baseline, cancel debounceB |
+| `FILE_WATCHER_ORIGIN` (applyExternalChange, paired)    | Short-circuit: refresh baseline, cancel debounceA | Short-circuit: refresh baseline, cancel debounceB |
+| `ROLLBACK_ORIGIN` (api-extension.ts, paired)           | Short-circuit: refresh baseline, cancel debounceA | Short-circuit: refresh baseline, cancel debounceB |
+| `MANAGED_RENAME_ORIGIN` (api-extension.ts, paired)     | Short-circuit: refresh baseline, cancel debounceA | Short-circuit: refresh baseline, cancel debounceB |
+| Remote-arrived (no origin; `local=false`)              | Sync                                              | Sync                                              |
 
 **Client observers** (baseline tracking only — `observers.ts`; cross-CRDT write paths deleted per precedent #14):
 
-| Transaction Origin                                      | Client Observer A (baseline only)                 | Client Observer B (baseline only) |
-| ------------------------------------------------------- | ------------------------------------------------- | --------------------------------- |
-| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                              |
-| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)                          |
-| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Baseline refresh         |
-| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Baseline refresh                                  | Baseline refresh                  |
-| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Baseline refresh                                  | Baseline refresh                  |
-| `OBSERVER_SYNC_ORIGIN` (server-observers.ts)            | Baseline refresh                                  | Baseline refresh                  |
-| `undefined` (WebSocket remote / local WYSIWYG typing)   | Baseline refresh                                  | Baseline refresh                  |
+| Transaction Origin                                    | Client Observer A (baseline only)                              | Client Observer B (baseline only) |
+| ----------------------------------------------------- | -------------------------------------------------------------- | --------------------------------- |
+| `ORIGIN_TREE_TO_TEXT` (observers.ts)                  | — (self)                                                       | SKIP                              |
+| `ORIGIN_TEXT_TO_TREE` (observers.ts)                  | SKIP                                                           | — (self)                          |
+| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)              | Skip local; conditional baseline refresh on remote (Bug-B fix) | Baseline refresh                  |
+| `FILE_WATCHER_ORIGIN` (external-change.ts)            | Baseline refresh                                               | Baseline refresh                  |
+| `ROLLBACK_ORIGIN` (api-extension.ts)                  | Baseline refresh                                               | Baseline refresh                  |
+| `OBSERVER_SYNC_ORIGIN` (server-observers.ts)          | Baseline refresh                                               | Baseline refresh                  |
+| `undefined` (WebSocket remote / local WYSIWYG typing) | Baseline refresh                                               | Baseline refresh                  |
 
 ## Testing
 
 ### Test file naming convention
 
 - `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
-- `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
-- **Do not use **`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+- `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run the CI-specific Playwright file subset via `bun run test:e2e` (from `packages/app`) — the same set dispatched by `.github/workflows/ci.yml`. `bunx playwright test` runs every `*.e2e.ts` under `testMatch` and may diverge from CI's selection.
+- \*\*Do not use \*\*`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
 
 ### Test layers
 
-| Layer       | Type                                                              | Location                                                                                                    | Command                                                    |
-| ----------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit) |
-| B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
-| C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`, `tests/stress/docs-open.e2e.ts` (hybrid-render nav: F1-F11+F13, precedent #18) | `bunx playwright test`                                     |
-| D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
-| Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
-| Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I10) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Layer       | Type                                                                                                                          | Location                                                                                                                                                                                                                                                                                       | Command                                                                |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| A           | Unit (client baseline)                                                                                                        | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit)                                                  |
+| B           | HTTP + server-side CRDT                                                                                                       | `packages/app/tests/stress/stress-api.ts`                                                                                                                                                                                                                                                      | `bun run tests/stress/stress-api.ts` (needs dev server)                |
+| C           | Playwright E2E                                                                                                                | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`, `tests/stress/docs-open.e2e.ts` (hybrid-render nav: F1-F11+F13, precedent #18)                                                                                                                          | `bunx playwright test`                                                 |
+| Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                                                                            | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`                                                                                                                                                                                                 | `bun run test`                                                         |
+| Fidelity    | PBT invariants (I1-I11) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape + bridge-observer-conversion PBT | `packages/app/tests/fidelity/` (I1-I10 + handler PBTs + `bridge-observer-conversion.test.ts`); `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (I11)                                                                                                                   | `bun run test:fidelity` + core unit suite (I11 runs in `bun run test`) |
+
+> **Removed on 2026-04-19 per `specs/2026-04-19-ci-signal-quality/SPEC.md`:**
+>
+> - Layer D (multi-client convergence fuzz, `bridge-convergence.fuzz.test.ts`) — test file preserved; invoke ad-hoc via `bun run measure:fuzz` (see Measurement scripts above).
+> - Stress layer (5-client × 30s convergence, `server-authoritative-stress.test.ts`) — test file preserved; invoke ad-hoc via `bun run measure:stress`.
+>   Both exercised the architectural CRDT residual (dual-CRDT topology, D4-LOCKED until H2 2026+). Running them in CI produced >80% PR-red on correct code — mathematically inevitable given the per-seed race rate × seed count. Detection of conversion-class regressions (design-goal lossless, distinct from CRDT merge) moved to the new `bridge-observer-conversion.test.ts` at the Fidelity layer.
 
 ### Tier 1 integration harness
 
 Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/integration/network-control.ts`
 
 **Core primitives:**
+
 - `createTestServer()` → spins up real Hocuspocus with HTTP/WebSocket on OS-assigned random port
 - `createTestClient(port, docName?, { skipInvariantWatcher?, syncControl? })` → connects HocuspocusProvider + wires `setupObservers()`. Default attaches FR-11 watcher; opt out for tests that deliberately drive divergence. `syncControl: true` wraps the WebSocket with `ControllableWebSocket` exposing `pauseSync()` / `resumeSync()`.
 - `createTestClients(port, { count, docName?, perClientOptions? })` → first-class multi-client factory (FR-14). All clients join the same docName (auto-generated if not given).
@@ -542,26 +764,34 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 - Server uses `debounce: 200` (not production 2s) for fast disk tests
 
 **Bridge invariant watcher (FR-11 / US-005):**
+
 - `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `OBSERVER_SYNC_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
 
 **Origin-preservation probe (FR-12 / US-006):**
+
 - `createItemOriginProbe(ytext, { trackedOrigins: Array<LocalTransactionOrigin>, captureTimeout? })` → wraps `Y.UndoManager`. API: `recordCapture(label?)`, `assertCaptureIntact(label?)`, `capturedContent()`, `undoStackLength()`, `cleanup()`. Use to verify Items survive bridge cycles without origin laundering. `trackedOrigins` must contain object refs — strings fail identity match.
 
 **Server-side state inspector (FR-13 / US-002):**
+
 - `getServerState(server, docName): ServerDocState | null` → returns `{ ytext, fragment, md, fullMd, frontmatter, metaMap, activityMap, connectionCount }` or `null` if doc not loaded. Encapsulates the `(server.instance as any).hocuspocus.documents.get(...)` access — tests should use this helper instead of reaching into hocuspocus internals.
 
-**Observer scheduler DI (FR-15 / US-004):**
-- `createManualScheduler(): ManualScheduler` → test helper with `flush()` (fire all pending synchronously), `advanceTime(ms)`, `pending()`. Pass as `ObserverDeps.scheduler` in `setupObservers` for deterministic debounce control. Production default: arrow-wrapped passthrough to `globalThis.setTimeout`/`clearTimeout`.
+**Structural quiescence gate (bridge-correctness US-010 / SPEC 2026-04-16 §6 R5):**
+
+- `awaitDocQuiescence(doc, opts?)` in `packages/app/tests/integration/test-harness.ts` → resolves once the doc has been quiet on `afterAllTransactions` for N consecutive microtasks (default 2). Use instead of wall-clock `wait(ms)` when a test needs to await pending observer work (including the settlement dispatcher's inner OBSERVER\_SYNC\_ORIGIN cascades) to settle. Does NOT cover inter-doc / inter-client WebSocket propagation — combine with `assertAllConverged` for that.
+- Observer dispatch hook for unit tests: the server observer accepts `onDispatch?: (kind: ObserverDispatchKind) => void` in `SetupServerObserversOpts`, invoked once per drain with `'none' | 'a' | 'b'`. Used by T8/T9/T10 paired-write regression tests to assert paired drains dispatch `'none'` (reverting either paired-write branch produces `'a'` or `'b'`). See `packages/server/src/server-observers.test.ts`.
 
 **Network control (FR-16 / US-010, `network-control.ts`):**
+
 - `ControllableWebSocket` — WebSocket proxy with minimal `pauseInbound()` / `resumeInbound()`. Use via `createTestClient(port, docName, { syncControl: true })` then `client.pauseSync()` / `client.resumeSync()`. Default is passthrough — zero change in default test coverage. Deliberately no `delaySync` / `dropInbound` / `inspectSyncQueue` in v1 (FR-16 minimal surface — add when a concrete reproducer motivates them).
 
 **Regression gates committed by US-011 / US-012:**
+
 - `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
 - `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
-- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
+- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — unskipped with V0-14 landed (FR-10); covers the post-undo XmlFragment-authoritative rebuild under concurrent user typing.
 
 **Mutation validation gates (server-authoritative bridge, US-012):**
+
 - **Mutation E:** revert server Observer B attachment → C2 + concurrent-source-mode fuzzer seeds fail with XmlFragment duplicates.
 - **Mutation F:** revert server Observer A's `skipStoreHooks: true` → persistence-feedback-loop detected as disk-write thrashing.
 - **Mutation G:** revert FR-7 deletion of client Observer A/B write paths → C1, C2, C3 fail with multi-writer RGA interleave. Validates the client write-path deletion is load-bearing.
@@ -604,6 +834,8 @@ Integration tests use per-test docNames via `createTestClient(port)` which auto-
 
 Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
 
+**Playwright E2E tests** (`packages/app/tests/stress/*.e2e.ts`) follow the same isolation principle. Each test creates its own unique doc via `POST /api/create-page` and seeds content via `POST /api/agent-write-md` with an explicit `docName` + `position: 'replace'`. Navigation uses sidebar-scoped locators (`[data-slot="sidebar-container"]`) or direct hash URL (`page.goto(\`$\{BASE}/#/$\{docName}\`)`). **STOP:** Do not use hardcoded `'test-doc'`in Playwright tests — Playwright runs with parallel workers by default and shared doc names cause cross-worker CRDT state corruption. The reference pattern is`docs-open.e2e.ts`'s `seedDocs`helper. Also: the API body key for write mode is`position`(not`mode`) — `mode: 'replace'`silently falls back to`append\`.
+
 ### Observer bridge coverage
 
 Changes to `observers.ts` or `server-observers.ts` require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. The C1-C9 integration tests (`packages/app/tests/integration/c1-*.test.ts` through `c9-*.test.ts`) exercise the full server-authoritative bridge under multi-client concurrent writes.
@@ -612,10 +844,20 @@ Changes to `observers.ts` or `server-observers.ts` require **multi-client test c
 
 Playwright E2E tests run on every PR. The Playwright suite covers DOM-binding and user-interaction regressions that unit/integration tests cannot reach (e.g., TipTap NodeView rendering, CodeMirror key bindings, presence UI). Do not skip Playwright in CI; do not add Playwright tests for pure bridge-logic changes — those belong in `bridge-matrix.test.ts` and `observers.test.ts`.
 
-### Fuzz replay
+**PR-tier flake policy (2026-04-19, per `specs/2026-04-17-e2e-observability-determinism/evidence/d-q5-amendment-2026-04-19.md`):** `failOnFlakyTests: false` globally. Retry-success does NOT promote to PR-red. Persistent-flake detection is `nightly-e2e-stability.yml`'s sole responsibility — it runs `bunx playwright test --repeat-each=3 --workers=1` nightly and auto-opens a GitHub issue labeled `e2e-flake` on consistent failure. If you encounter a flaky PR test, do NOT add `failOnFlakyTests: true` as a one-line fix — that unwinds a deliberate D-Q5 amendment. Investigate the flake, add a condition-based wait per precedent #20(a), and let the nightly catch persistent regressions.
+
+### Fuzz + stress replay (ad-hoc only — not CI)
+
+Fuzz and stress tests are no longer part of any automated tier (see "Measurement scripts" above; full rationale in `specs/2026-04-19-ci-signal-quality/SPEC.md`). For investigation and seed replay:
 
 ```bash
+# Direct bun test invocation (preserves existing seed-replay envs):
 STRESS_FUZZ_SEED=42 bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
+STRESS_SEED=42      bun test packages/app/tests/stress/server-authoritative-stress.test.ts
+
+# Or via the wrapper scripts that append a JSONL record to the trend log:
+bun run measure:fuzz   --seed-replay 42 --context "reproduce flake from PR #218"
+bun run measure:stress --seed 42         --context "reproduce flake from PR #218"
 ```
 
 Fuzz tests write snapshots to `/tmp/fuzz-*` on failure for deterministic reproduction.
@@ -650,13 +892,20 @@ Each worktree has its own content directory. The test harness creates a fresh `t
 
 **Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
 
+**`bun run knip` false-positives in fresh worktrees:** Running the pre-push hook (`bun run check` → `bash scripts/check-knip-clean.sh` → `bun run knip`) from a worktree where `bun install` has not yet run produces spurious "Unused files / Unused dependencies / Unlisted binaries" reports and exits 1, even though the same command passes from the main repo root. Two conjoined causes, both resolved by `bun install` in the worktree:
+
+1. `docs/.source/` is a `fumadocs-mdx` postinstall artifact (gitignored via `docs/.gitignore`) that regenerates `docs/source.config.mjs` + `browser.ts` / `dynamic.ts` / `server.ts`. These files are how knip connects `docs/content/**/*.mdx` back to `zod`, `fumadocs-typescript`, `remark-mdx-snippets`, and the MDX content files. Without them, knip flags the 16 MDX files under `docs/content/**` as unused and three docs deps as unused — the exact report pattern that triggers exit 1.
+2. The `[dev] Shadow repo init failed … ENOTDIR … /.git/open-knowledge` warning is cosmetic-only. Knip's vite-config evaluator imports `packages/app/vite.config.ts` → `./src/server/hocuspocus-plugin.ts`, which has module-top-level side effects including `runDevShadowInit`. In a worktree the `.git` is a pointer file (not a directory), so `mkdirSync('.git/open-knowledge')` throws `ENOTDIR`. The error is classified as non-`ProjectGitInitError` in `handleDevShadowInitError` (`packages/app/src/server/dev-shadow-init.ts`) — warn-only, continues. It does **not** change knip's exit code; the exit 1 is exclusively from cause #1.
+
+Workflow: after `EnterWorktree` (or `git worktree add`), run `bun install` in the worktree before invoking `bun run check` / `git push`. The same `bun install` also fixes the ProseMirror-model dedup case above.
+
 ### Multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
 
 - **Two agents, same worktree:** Each bun process gets its own port (`getFreePort`), its own Hocuspocus tmpdir (`mkdtempSync`), its own Y.Docs, and its own module state.
 - **Two agents, separate worktrees:** Stronger isolation via filesystem separation.
-- **Agent running Playwright + developer running **`bun run dev`**:** Playwright config sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; the manual dev server uses the default `packages/content/`. No contention.
+- **Agent running Playwright + developer running `bun run dev`:** Playwright config sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; the manual dev server uses the default `packages/content/`. No contention.
 
 No environment variables must be set by hand for any of these scenarios.
 
@@ -664,22 +913,26 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** Do NOT call `session.dc.transact(fn)` in server-side agent code. Always use `session.dc.document.transact(fn, session.origin)` instead — the per-session frozen origin object must be passed explicitly so every Y.Doc transaction is attributed to the correct session (precedent #24, D32). Calling `dc.transact(fn)` omits the origin, causing persistence to route the write to `openknowledge-service` instead of the triggering session's writer ref, and breaking per-session undo (the UndoManager's `trackedOrigins` Set-identity match finds no match and silently skips the transaction).
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` + `applyAgentUndo` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Any future handler that mutates the Y.Doc on an agent's behalf must follow the same template — see `evidence/bug-d-mechanism.md` for the reference.
 - **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
 - **STOP:** Server-side observer cross-CRDT writes MUST use `OBSERVER_SYNC_ORIGIN`. Do not re-add client-side cross-CRDT write paths in `observers.ts` (deleted code under precedent #14). See Mutation G in `specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`.
+- **STOP:** Do NOT catch `BridgeMergeContentLossError` and swallow it outside the Observer A Path B wiring in `server-observers.ts`. `mergeThreeWay` always asserts content preservation; the one production catch site emits structured `bridge-merge-content-loss` telemetry, queues a silent `saveInMemoryCheckpoint` via `queueMicrotask`, and applies the merge as-computed (SPEC §10 D3 LOCKED). Adding a second catch site silently drops the observability signal and breaks the Notion-style recovery UX. See `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R7/R7b and Mutation H in `specs/2026-04-16-bridge-correctness/meta/mutation-validation.md`.
+- **STOP:** Do NOT remove or widen the typed paired-write marker (`LocalTransactionOrigin.context.paired`). Any new origin that atomically mutates BOTH Y.XmlFragment and Y.Text in a single `doc.transact(..., ORIGIN)` block MUST declare `context.paired: true` so Observer A + Observer B both short-circuit symmetrically (precedent #1 extension; bridge-correctness SPEC §6 R0). Adding such an origin without the marker re-surfaces the observer-layer amplification class that US-001/US-002 regression-tests T8/T9/T10 guard against.
 - **STOP:** Do not add Y.js observers, CRDT-update handlers, or awareness listeners inside an `<Activity>` subtree without accounting for hidden-mode CPU cost. Y.js observers are NOT React effects and do NOT pause when Activity flips to `hidden` — a hidden Activity entry with a live provider still processes every remote-peer update at full cost. If the cost matters (multi-client collaboration, large docs, remote Hocuspocus), bound the Activity-mount count explicitly via an `ACTIVITY_MOUNT_LIMIT`-style derivation (precedent #18(c); reference: `EditorActivityPool.computeActivityMountList`). For truly per-document observers, prefer wiring them off the pool (which is bounded independently) rather than off the editor component's mount lifecycle.
 - **STOP:** Do not replace the hybrid render tree (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) with a pure key-based remount pattern (e.g. `<Editor key={activeDocName} />`). The hybrid is load-bearing for the flash-free content-continuity UX delivered by SPEC G1-G2-G5 and precedent #18(b). If you need to add a new write surface, wrap it in its own `DocumentBoundary` (Suspense-ready) rather than short-circuiting the tree. See `packages/app/src/components/EditorArea.tsx` for the canonical shape.
-- **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
-  1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
-  2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
-  3. **Extend the FR-17 fuzzer op set** (`packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) with an `agent-undo` op kind. The D18 coverage gate (precedent #13(d)) enforces that every bridge write surface has a corresponding fuzzer op — adding `applyAgentUndo` without extending the fuzzer fails CI.
-  4. **Do NOT re-add client-side cross-CRDT write paths** — even if convenient for client-side undo UX. Mutation G enforces that the deletion is load-bearing; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
-  5. **Depend on the event-loop serialization guarantee** from the server-authoritative spec §7a + A7 — `applyAgentUndo` runs as a synchronous `doc.transact()` block with the subsequent observer fires as `setTimeout` callbacks. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
-  6. **Unskip** `packages/app/tests/integration/bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` (skip-guarded per FR-10).
+- **STOP (agent-undo contract, landed V0-14 / US-009):** `applyAgentUndo(session, scope)` in `packages/server/src/agent-sessions.ts` is the only sanctioned server-side undo write surface. It must continue to satisfy all of the following — any regression reverts the attribution + bridge invariants that US-009 locks in:
+  1. **XmlFragment-authoritative composition** from `applyAgentMarkdownWrite` (precedent #10, #12). After `session.um.undo()`, Y.Text holds the post-undo state — parse → `updateYFragment` → mirror via `applyFastDiff`. Never rebuild XmlFragment from raw Y.Text (Bug-A/Bug-D anti-pattern).
+  2. **Fires under the per-session `session.undoOrigin`** (a `PairedWriteOrigin` with `context.origin: 'agent-undo'` and `paired: true`), distinct from `session.origin` (`'agent-write'`) and `OBSERVER_SYNC_ORIGIN`. Observer A/B short-circuit on `isPairedWriteOrigin` structural check. Per-session UM's `captureTransaction: tr => tr.origin !== session.undoOrigin` keeps undo-of-undo off the stack (D21 defense-in-depth).
+  3. **Fuzzer coverage** — `bridge-convergence.fuzz.test.ts` carries an `agent-undo` op kind + `WRITE_SURFACE_TO_OP_KIND` surface entry (FR-17, NFR-3). The conversion PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`) is the PR-blocking gate for conversion-class regressions — the fuzz suite is ad-hoc as of 2026-04-19 (`specs/2026-04-19-ci-signal-quality/`).
+  4. **No client-side cross-CRDT write paths** — precedent #14. Mutation G enforces the deletion; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
+  5. **Event-loop serialization** — `applyAgentUndo` runs as a single `doc.transact()` block; the observer fires are `setTimeout` callbacks on the same loop. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
 
-  Reference template: `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` (lines 68-113). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`.
+  Reference implementation: `packages/server/src/agent-sessions.ts:applyAgentUndo` (paired with `applyAgentMarkdownWrite`). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`, `specs/2026-04-18-agent-identity-attribution-foundation/SPEC.md` §8.4.
+- **STOP:** When an API handler calls `recordContributor` with a summary, the summary MUST come from `normalizeSummary` in `packages/server/src/agent-write-summary.ts`. Do not scatter truncation, whitespace-trimming, or type-checking across handlers — the single boundary is load-bearing for M1/M2 metric fidelity (whitespace-only inputs classify as `absent` and do not count as adoption). If you add a sixth agent-write handler or need to thread a summary through a different path, route it through `normalizeSummary` first and branch on the discriminated `{kind}` result. SPEC: `specs/2026-04-21-agent-write-summaries/SPEC.md` §6 FR2 + D5/D24.
+- **STOP:** `handleRename` and `handleRollback` MUST guard `extractAgentIdentity` + `recordContributor` on the presence of an explicit `agentId` in the request body. The in-editor Restore button posts with no identity, and the default `claude-1/Claude` fallback in `extractAgentIdentity` would otherwise attribute every human-driven rollback to Claude on the timeline (D22 LOCKED 1-way-door — the UI behavior contract). Adding attribution by default to either handler is a scope-extension and needs user sign-off. SPEC: `specs/2026-04-21-agent-write-summaries/SPEC.md` §10 D22 + NG12.
 
 ### WARN rules
 
@@ -690,6 +943,7 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** TipTap's `editor.view` is a throwing proxy before the ProseMirror mount completes — touching `editor.view.dom` during the recycle→remount race (provider pool recycle, Activity mode flip cold path, etc.) crashes the nearest ErrorBoundary with an opaque "Unknown error". Use `editor.editorView` (non-throwing alternative) to check mount state, and subscribe to the `'create'` event before accessing `view.dom`. See `packages/app/src/editor/TiptapEditor.tsx` for the reference pattern (fixed alongside the hybrid-render precedent #18).
 - **WARN:** React 19.2 `<Activity mode="hidden">` unmounts the hidden subtree's DOM. A scroll container that wraps multiple Activity mounts will lose `scrollTop` on every mode flip because `scrollHeight` collapses and the browser auto-clamps. **Each Activity mount must own its own scroll container** (see `EditorActivityPool.tsx` + `ScrollPreservingContainer` — capture `scrollTop` via a scroll listener, restore via a layout effect + `ResizeObserver` retrying until tall enough). `<Activity>` preserves React state; per-mount scroll containers preserve DOM scroll state. Precedent #18 covers this invariant for any future subscription-source Activity pool.
 - **WARN:** Never narrow a PM mark's `excludes` field. Precedent #9 (schema is add-only forever) covers mark attrs — `excludes` is part of that contract. US-017 deliberately widened the `Code` mark by replacing `@tiptap/extension-code`'s `excludes: '_'` with `excludes: ''` via `CodeMarkFidelity` (`packages/core/src/extensions/code-mark-fidelity.ts`). This lets emphasis/strong coexist with inline code per CommonMark (e.g. `*a \`*\`*`) and is load-bearing for Emphasis + Backslash idempotence. Reverting to `excludes: '_'` — including via a Tiptap upgrade that reinstates the upstream default — would reintroduce those idempotence failures AND narrow the schema in the precedent #9 sense. If a future change needs different co-exclusion behavior, widen further; do not narrow.
+- **WARN:** Playwright's `_electron.launch({ args: [url] })` does NOT fire the macOS `open-url` Apple Event. The URL is delivered via `process.argv`, which exercises only the `second-instance` argv-scan path in `packages/desktop/src/main/url-scheme.ts` — NOT the queue-then-flush cold-start path. A smoke test written as `_electron.launch({ args: ['openknowledge://...'] })` will pass even if the `open-url` listener is broken. Tests that need true Apple-Event delivery must shell out to `execSync('open -g "openknowledge://..."')` (macOS Launch Services → Apple Event → `app.on('open-url')`). The canonical example is `packages/desktop/tests/smoke/deep-link.e2e.ts`, whose file-level comment documents this gotcha at length. True cold-start Apple-Event simulation additionally requires a signed/notarized DMG so Launch Services binds `openknowledge://` to this bundle instead of the generic Electron shell.
 
 ### CM6 footgun: do NOT gate syntax-tree reads on `syntaxTreeAvailable()`
 
@@ -759,23 +1013,23 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 **Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
 
-### Fidelity invariants (I1-I10 active, I11 pending)
+### Fidelity invariants (I1-I11 active)
 
-| ID  | Invariant                   | Description                                                                                         |
-| --- | --------------------------- | --------------------------------------------------------------------------------------------------- |
-| I1  | Identity                    | `serialize(parse(md)) === md` for supported constructs                                              |
-| I2  | Character preservation      | Every literal char in input appears in output — no entity encoding                                  |
-| I3  | Normalization canonicality  | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                     |
-| I4  | Idempotence                 | `serialize(parse(X))` applied twice produces identical output                                       |
-| I5  | Layer A === Layer B         | mdManager path and Y.Doc path produce the same output                                               |
-| I6  | Multi-client preservation   | Content survives Y.Doc state sync between clients                                                   |
-| I7  | Cross-path consistency      | All write paths produce equivalent serialized output                                                |
-| I8  | Crash resistance            | `parse()` never throws non-SyntaxError on fuzzed input; `SyntaxError` allowed only for matched `{…}` with non-JS content |
-| I9  | Guard completeness          | After `protectFromMdx`, remark-mdx never encounters an unmatched `<` or unclosed `{` that crashes  |
-| I10 | Structural crash resistance | Nested / truncated / interleaved constructs (dangerous chars inside marks, half-typed JSX, etc.) parse without unexpected errors |
-| I11 | rawMdxFallback coverage     | Pending — introduced by the tolerant-parsing spec (`specs/2026-04-13-mdx-tolerant-parsing/`); activates when that spec merges |
+| ID  | Invariant                   | Description                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1  | Identity                    | `serialize(parse(md)) === md` for supported constructs                                                                                                                                                                                                                                                                                                                                                          |
+| I2  | Character preservation      | Every literal char in input appears in output — no entity encoding                                                                                                                                                                                                                                                                                                                                              |
+| I3  | Normalization canonicality  | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                                                                                                                                                                                                                                                                                                                                 |
+| I4  | Idempotence                 | `serialize(parse(X))` applied twice produces identical output                                                                                                                                                                                                                                                                                                                                                   |
+| I5  | Layer A === Layer B         | mdManager path and Y.Doc path produce the same output                                                                                                                                                                                                                                                                                                                                                           |
+| I6  | Multi-client preservation   | Content survives Y.Doc state sync between clients                                                                                                                                                                                                                                                                                                                                                               |
+| I7  | Cross-path consistency      | All write paths produce equivalent serialized output                                                                                                                                                                                                                                                                                                                                                            |
+| I8  | Crash resistance            | `parse()` never throws non-SyntaxError on fuzzed input; `SyntaxError` allowed only for matched `{…}` with non-JS content                                                                                                                                                                                                                                                                                        |
+| I9  | Guard completeness          | After `protectFromMdx`, remark-mdx never encounters an unmatched `<` or unclosed `{` that crashes                                                                                                                                                                                                                                                                                                               |
+| I10 | Structural crash resistance | Nested / truncated / interleaved constructs (dangerous chars inside marks, half-typed JSX, etc.) parse without unexpected errors                                                                                                                                                                                                                                                                                |
+| I11 | R23 guard precision         | After `protectFromMdx`, valid MDX (self-closing, paired, attrs/URLs/expressions) survives unchanged — no false-positive PUA replacements. Complements I9 (completeness). PBT at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (1K runs default, 10K under `STRESS_FIDELITY=1`). Originates in `specs/2026-04-13-mdx-tolerant-parsing/` §M4 / §D2 and ships with the R23 guard family. |
 
-PBT invariants live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. US-014 added six handler-specific PBTs alongside them — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
+PBT invariants I1-I10 live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. I11 lives at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts` (colocated with the R23 guard it covers; runs under core's unit suite rather than `test:fidelity`). US-014 added six handler-specific PBTs alongside the I-numbered set — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
 
 ### Irreducible gaps (by design)
 
@@ -871,8 +1125,33 @@ bun run release          # Publish to npm
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
+### Comment discipline (code comments, not docs)
+
+Comments explain the non-obvious **why** — a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader. If removing the comment wouldn't confuse a future reader, don't write it. Well-named identifiers explain the **what**; don't duplicate them in prose.
+
+**Do NOT cite the process that produced the code.** The following all rot and belong in the PR body or commit message, not in source:
+
+- SPEC paths — `specs/2026-04-21-open-in-agent-desktop/SPEC.md §6.4`, `Governing spec: …`.
+- Internal decision numbers — `D5`, `D8`, `D24`, `LOCKED`, `DIRECTED`, `NOT NOW`, `per D44 case (a)`.
+- Non-goal tags — `NG2`, `per NG6`, `NG3 — no beta channel`.
+- Acceptance-criteria / user-story / functional-requirement numbers — `AC9 asserts`, `US-007 wires a mock`, `FR-8 "Warning logged"`, `MQ1`.
+- Audit finding IDs — `DC-M4`, `DC-L7`, `Review M5`, `Review Minor #1`, `audit M6`, `Mutation H`.
+- Dated audit-trail narratives — `post-ship amendment`, `post-implementation fix`, `Per post-ship review`, `2026-04-21 amendment`.
+- Feature-work or milestone tags that mean nothing after the work ships — `M3`, `V0-14`, `V0-1 shipped`, `added for …`.
+
+When one of these appears next to substance worth keeping, strip the citation and keep the substance. When the whole comment only exists to cite, delete it.
+
+**Exempt — keep these:**
+
+- STOP / WARN rules and cross-file contracts (the ones already codified in the "Known Pitfalls" and "STOP rules" sections of this file).
+- External standards with stable numbering: `CommonMark §2.4`, `RFC 3986`, `OAuth 2.1 §4.1.3`, upstream issue numbers like `electron/electron#32600`.
+- `precedent #N` references in this repo — they target [PRECEDENTS.md](./PRECEDENTS.md), which is an intentionally curated long-lived rulebook (not a rotating spec).
+- Explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
+
+**Rule of thumb before writing a comment:** if the "why" is the task ticket, a review suggestion, or a spec paragraph, put it in the PR body and leave the code alone. If it's a permanent structural reason a future reader would stub their toe on, write the permanent reason without the dated pointer.
 
 <!-- open-knowledge:begin -->
+
 ## Open Knowledge
 
 This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowledge/config.yml`** (with optional `~/.open-knowledge/config.yml`; CLI/env may override) is the **path contract**: `content.dir` is the root for relative paths; `content.include` lists globs that **add** markdown; `content.exclude` lists globs that **remove** paths. Nothing else defines scope — not folder names, not "docs vs code." `.gitignore` still applies. When MCP is connected, the server's instructions echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and the YAML as two views of the same rules.
@@ -896,19 +1175,20 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Anti-patterns at a glance:**
 
-| Task                             | Don't                        | Do                                              |
-| -------------------------------- | ---------------------------- | ----------------------------------------------- |
-| List a markdown-heavy dir        | `Bash: ls specs/`            | `exec("ls specs/")`                             |
-| Find all SPEC.md files           | `Glob: **/SPEC.md`           | `exec("find specs -name SPEC.md")`              |
-| Summarize specs across the repo  | `Agent(Explore): "…"`        | `exec("head -25 specs/*/SPEC.md")` + `search`   |
-| Search a phrase across markdown  | `Grep: "pattern" *.md`       | `search({ query: "pattern" })`                  |
-| Read an individual spec          | `Read: specs/foo/SPEC.md`    | `read_document({ path: "specs/foo/SPEC.md" })`  |
+| Task                            | Don't                     | Do                                             |
+| ------------------------------- | ------------------------- | ---------------------------------------------- |
+| List a markdown-heavy dir       | `Bash: ls specs/`         | `exec("ls specs/")`                            |
+| Find all SPEC.md files          | `Glob: **/SPEC.md`        | `exec("find specs -name SPEC.md")`             |
+| Summarize specs across the repo | `Agent(Explore): "…"`     | `exec("head -25 specs/*/SPEC.md")` + `search`  |
+| Search a phrase across markdown | `Grep: "pattern" *.md`    | `search({ query: "pattern" })`                 |
+| Read an individual spec         | `Read: specs/foo/SPEC.md` | `read_document({ path: "specs/foo/SPEC.md" })` |
 
 **Source code and everything else** (`.ts`, `.py`, `package.json`, …): native `Read` / `Grep` / `Glob`.
 
-**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow repo.
+**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
+
 1. Call `get_preview_url` to obtain the browser URL for the target doc.
    - If it returns `null`, the server is not running. Start it with `open-knowledge start` (or `preview_start`), then call `get_preview_url` again — the server writes a lock file that this tool reads.
    - NEVER guess or manually construct the preview URL — always use the URL returned by `get_preview_url`.
@@ -927,3 +1207,4 @@ NEVER call `write_document` or `edit_document` without first navigating the prev
 
 **Non-markdown files.** Use native `Read` / `Edit` / `Grep` / `Bash` for source code, configs, and anything outside the path contract in `config.yml`: under `content.dir`, matching `content.include`, not removed by `content.exclude` or `.gitignore`.
 <!-- open-knowledge:end -->
+

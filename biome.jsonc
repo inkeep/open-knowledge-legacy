@@ -33,6 +33,10 @@
               "react": {
                 "importNames": ["useCallback", "useMemo", "memo"],
                 "message": "The highlighted React API is flagged.\nWe use the React Compiler, which automatically memoizes where needed.\nIn 99% of cases, manual memoization is unnecessary."
+              },
+              "@tiptap/y-tiptap": {
+                "importNames": ["yXmlFragmentToProsemirrorJSON"],
+                "message": "Use `yXmlFragmentToProseMirrorRootNode` instead"
               }
             },
             "patterns": [
@@ -66,7 +70,12 @@
       "!evidence",
       "!meta",
       "!docs/bun.lock",
-      "!worktrees"
+      "!worktrees",
+      "!**/rehype-plugins/fixtures",
+      "!**/tests/perf/results",
+      "!**/tests/perf/playwright-results",
+      "!packages/desktop/out",
+      "!packages/desktop/dist-desktop"
     ]
   }
 }

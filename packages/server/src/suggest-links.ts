@@ -6,10 +6,10 @@ import {
   stripFrontmatter,
   toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
-import { mdManager } from './md-manager.ts';
+import { mdManager, schema } from './md-manager.ts';
 import { extractPageIdentity, type PageIdentity } from './page-identity.ts';
 
 const log = getLogger('suggest-links');
@@ -45,32 +45,32 @@ interface PlainSegment {
   sourceOffsets: number[];
 }
 
-export interface SuggestLinksMention {
+interface SuggestLinksMention {
   source: string;
   excerpt: string;
   offset: number;
 }
 
-export interface SuggestLinksTarget {
+interface SuggestLinksTarget {
   docName: string;
   title: string;
   aliases: string[];
 }
 
-export interface SuggestLinksResult {
+interface SuggestLinksResult {
   target: SuggestLinksTarget;
   mentions: SuggestLinksMention[];
   truncated: boolean;
 }
 
-export interface SuggestLinksObservation {
+interface SuggestLinksObservation {
   durationMs: number;
   corpusDocCount: number;
   candidateCount: number;
   truncated: boolean;
 }
 
-export interface SuggestLinksOptions {
+interface SuggestLinksOptions {
   hocuspocus: Pick<Hocuspocus, 'documents'>;
   fileIndex: ReadonlyMap<string, FileIndexEntry>;
   docName: string;
@@ -498,7 +498,7 @@ function scanMarkdownForMentions(
 
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
-  const body = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+  const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
   const metaMap = document.getMap('metadata');
   const frontmatter = metaMap.get('frontmatter');
   return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);

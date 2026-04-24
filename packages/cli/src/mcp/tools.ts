@@ -218,37 +218,23 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     },
   );
 
-  // Tool 6: undo_agent_edit
+  // Tool 6: undo_agent_edit (V0-14 per-session undo — requires connectionId)
   tool(
     'undo_agent_edit',
-    'Undo the last agent write. Only agent edits (origin: agent-write) are reversed.',
-    {},
-    async () => {
+    'Undo the last agent write for a specific session. Only agent edits (origin: agent-undo) are reversed.',
+    { connectionId: z.string(), docName: z.string(), scope: z.enum(['last', 'session']).optional() },
+    async (args: { connectionId: string; docName: string; scope?: 'last' | 'session' }) => {
       mcpLog('undo_agent_edit');
-      const result = await httpPost(httpUrl, '/api/agent-undo');
-      return textResult(
-        result.ok
-          ? `Undo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
-          : `Cannot undo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
-      );
+      const result = await httpPost(httpUrl, '/api/agent-undo', {
+        connectionId: args.connectionId,
+        docName: args.docName,
+        scope: args.scope ?? 'last',
+      });
+      return textResult(result.ok ? 'Undo performed.' : `Undo failed: ${result.error}`);
     },
   );
 
-  // Tool 7: redo_agent_edit
-  tool(
-    'redo_agent_edit',
-    'Redo the last undone agent write.',
-    {},
-    async () => {
-      mcpLog('redo_agent_edit');
-      const result = await httpPost(httpUrl, '/api/agent-redo');
-      return textResult(
-        result.ok
-          ? `Redo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
-          : `Cannot redo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
-      );
-    },
-  );
+  // Tool 7: redo_agent_edit — deferred (no /api/agent-redo route in V0-14)
 
   // Tool 8: update_frontmatter — merge fields into existing frontmatter
   tool(

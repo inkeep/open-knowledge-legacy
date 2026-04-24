@@ -104,6 +104,46 @@ describe('extractHeadings', () => {
       { level: 2, text: '東京', slug: '東京-1' },
     ]);
   });
+
+  test('ignores `#` comments inside fenced code blocks (parity with TipTap DOM output)', () => {
+    // Mirrors the shape of specs/2026-04-11-electron-desktop-app/SPEC.md §8.9 where
+    // a `# electron-builder.yml` YAML comment inside a ```yaml fence was being
+    // mis-counted as a level-1 heading, shifting every subsequent outline index by one.
+    const content = [
+      '# Top',
+      '',
+      '## Section 8.9',
+      '',
+      '```yaml',
+      '# electron-builder.yml',
+      'appId: com.example',
+      '```',
+      '',
+      '## Section 9 Risks',
+      '',
+      '## Section 10 Decision Log',
+    ].join('\n');
+
+    expect(extractHeadings(content)).toEqual([
+      { level: 1, text: 'Top', slug: 'top' },
+      { level: 2, text: 'Section 8.9', slug: 'section-8-9' },
+      { level: 2, text: 'Section 9 Risks', slug: 'section-9-risks' },
+      { level: 2, text: 'Section 10 Decision Log', slug: 'section-10-decision-log' },
+    ]);
+  });
+
+  test('ignores `#` comments inside tilde-fenced code blocks too', () => {
+    const content = ['# Top', '~~~bash', '# not a heading', '~~~', '## After'].join('\n');
+    expect(extractHeadings(content)).toEqual([
+      { level: 1, text: 'Top', slug: 'top' },
+      { level: 2, text: 'After', slug: 'after' },
+    ]);
+  });
+
+  test('an unclosed fence swallows the rest of the document', () => {
+    const content = ['# Real', '```js', '# inside', '## still inside'].join('\n');
+    expect(extractHeadings(content)).toEqual([{ level: 1, text: 'Real', slug: 'real' }]);
+  });
 });
 
 function makeReq(method: string): IncomingMessage {
@@ -187,13 +227,20 @@ describe('GET /api/pages', () => {
       expect(result.status).toBe(200);
       const body = JSON.parse(result.body) as {
         ok?: boolean;
-        pages?: Array<{ docName: string; title: string }>;
+        pages?: Array<{ docName: string; title: string; size: number; modified: string }>;
       };
       expect(body.ok).toBe(true);
-      expect(body.pages).toEqual([
-        { docName: 'nested/deeper/page', title: 'Nested Page' },
-        { docName: 'root', title: 'Root' },
-      ]);
+      expect(body.pages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ docName: 'nested/deeper/page', title: 'Nested Page' }),
+          expect.objectContaining({ docName: 'root', title: 'Root' }),
+        ]),
+      );
+      // Verify new fields are present
+      for (const page of body.pages ?? []) {
+        expect(typeof page.size).toBe('number');
+        expect(typeof page.modified).toBe('string');
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

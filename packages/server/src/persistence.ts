@@ -11,12 +11,27 @@ import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'n
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import {
+  normalizeBridge,
+  type Principal,
+  prependFrontmatter,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
+import {
+  composeCommitSubject,
+  formatOkActor,
+  formatWipSubject,
+  type OkActorEntry,
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import type { ContributorEntry } from './contributor-tracker.ts';
 import {
-  formatContributorsFrom,
+  contributorCount,
+  hasContributor,
+  recordContributor,
+  restoreContributorEntry,
   restoreContributors,
   swapContributors,
 } from './contributor-tracker.ts';
@@ -24,11 +39,96 @@ import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
-import { incrementGitAutoSaveFailure, incrementPersistenceDiskWrite } from './metrics.ts';
+import {
+  incrementGitAutoSaveFailure,
+  incrementGitWriterCommitFailure,
+  incrementPersistenceDiskWrite,
+} from './metrics.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
-import { commitWip, shadowGit } from './shadow-repo.ts';
+import {
+  buildWipTree,
+  commitWip,
+  commitWipFromTree,
+  FILE_SYSTEM_WRITER,
+  GIT_UPSTREAM_WRITER,
+  SERVICE_WRITER,
+  shadowGit,
+} from './shadow-repo.ts';
 
 const log = getLogger('persistence');
+
+/**
+ * Derive a WriterIdentity from a Hocuspocus transaction origin (D31, D32, FR-16).
+ *
+ * Called from onStoreDocument to determine which writer triggered the store.
+ * Handles the three origin shapes Hocuspocus surfaces:
+ *   - local  + context.session_id  → per-session agent writer
+ *   - local  + context.origin      → classified service writer
+ *   - connection + principalId     → human-browser principal writer (US-024)
+ *
+ * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
+ * Exported for unit-testing the dispatch table without spinning up a server.
+ */
+export function resolveWriterFromOrigin(
+  origin: unknown,
+  getPrincipal?: () => Principal | null,
+): WriterIdentity | null {
+  if (!origin || typeof origin !== 'object') return null;
+  const o = origin as Record<string, unknown>;
+
+  if (o.source === 'local') {
+    const ctx = o.context as Record<string, unknown> | undefined;
+    if (!ctx) return null;
+
+    // Per-session origin (agent write, agent undo) — session_id is the connectionId
+    if (typeof ctx.session_id === 'string') {
+      const sessionId = ctx.session_id;
+      return {
+        id: `agent-${sessionId}`,
+        name: `Agent (${sessionId.slice(0, 8)})`,
+        email: `agent-${sessionId}@openknowledge.local`,
+      };
+    }
+
+    // Classified local origins by context.origin value
+    if (ctx.origin === 'file-watcher') return FILE_SYSTEM_WRITER;
+    if (ctx.origin === 'upstream-import' || ctx.origin === 'git-upstream') {
+      return GIT_UPSTREAM_WRITER;
+    }
+    // park-snapshot, rollback-apply, managed-rename → service fallback
+    return SERVICE_WRITER;
+  }
+
+  if (o.source === 'connection') {
+    // Human browser write — principalId set via onAuthenticate (D50, US-024)
+    const conn = o.connection as Record<string, unknown> | undefined;
+    const ctx = conn?.context as Record<string, unknown> | undefined;
+    if (typeof ctx?.principalId === 'string') {
+      const principalId = ctx.principalId as string;
+      // Post-QA review fix: when the claimed principalId matches the loaded
+      // principal record, use the real display_name / display_email (e.g.
+      // git-config user.name) so `ok-actor:` body + Co-Authored-By trailers
+      // mirror the user's git identity. Fall back to a stub only when the
+      // server has no principal loaded or the claim doesn't match.
+      const loaded = getPrincipal?.();
+      if (loaded && loaded.id === principalId && loaded.display_name && loaded.display_email) {
+        return {
+          id: loaded.id,
+          name: loaded.display_name,
+          email: loaded.display_email,
+        };
+      }
+      return {
+        id: principalId,
+        name: 'Local User',
+        email: `${principalId}@openknowledge.local`,
+      };
+    }
+    return SERVICE_WRITER;
+  }
+
+  return null;
+}
 
 export interface PersistenceOptions {
   contentDir: string;
@@ -43,6 +143,13 @@ export interface PersistenceOptions {
   backlinkIndex?: BacklinkIndex;
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
+  /**
+   * Accessor for the server's principal record. When a browser connection's
+   * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
+   * emits WriterIdentity with the real display_name / display_email instead
+   * of a "Local User" stub (post-QA review fix).
+   */
+  getPrincipal?: () => Principal | null;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -105,23 +212,6 @@ export function deleteReconciledBase(docName: string): void {
   reconciledBaseByBranch.get(activeBranch)?.delete(docName);
 }
 
-/**
- * Legacy flat accessor — returns the active branch's map.
- * Used by standalone.ts for event-driven reconciliation where the flat
- * Map interface is expected.
- */
-export const reconciledBase = {
-  get(docName: string): string | undefined {
-    return getReconciledBase(docName);
-  },
-  set(docName: string, content: string): void {
-    setReconciledBase(docName, content);
-  },
-  delete(docName: string): void {
-    deleteReconciledBase(docName);
-  },
-};
-
 /** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
 let batchInProgress = false;
 
@@ -151,6 +241,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
   const backlinkIndex = options?.backlinkIndex;
+  const getPrincipal = options?.getPrincipal;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -165,12 +256,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const wipRef = options?.wipRef ?? 'refs/wip/main';
   const getCurrentBranch = options?.getCurrentBranch;
 
-  // Default writer identity for L2 commits
-  const defaultWriter: WriterIdentity = {
-    id: 'server',
-    name: 'openknowledge-server',
-    email: 'noreply@openknowledge.local',
-  };
+  // No longer hardcoded — resolved from contributor snapshot (D32, FR-16)
 
   // Debounce git commits
   let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -182,27 +268,131 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     // Read shadow ref at commit time (not construction time) so deferred init propagates
     const shadow = shadowRef?.current;
     if (shadow) {
-      // L2 commits go to shadow repo
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
-      const contributors = formatContributorsFrom(snapshot);
-      const message = `WIP auto-save ${new Date().toISOString()}${contributors}`;
       const branch = getCurrentBranch?.() ?? 'main';
+
+      if (snapshot.size === 0) {
+        // No attributed contributors — fall back to single SERVICE_WRITER commit (D32)
+        const serviceActorEntry: OkActorEntry = {
+          v: 1,
+          writer_id: SERVICE_WRITER.id,
+          principal: null,
+          agent_session: null,
+          agent_type: null,
+          client_name: null,
+          client_version: null,
+          label: null,
+          display_name: SERVICE_WRITER.name,
+          color_seed: SERVICE_WRITER.id,
+          docs: [],
+        };
+        const serviceMessage = `${formatWipSubject([])}\n\n${formatOkActor(serviceActorEntry)}`;
+        try {
+          const sha = await commitWip(shadow, SERVICE_WRITER, contentRoot, serviceMessage, branch);
+          consecutiveGitFailures = 0;
+          log.info(
+            { sha: sha.slice(0, 8), writer: SERVICE_WRITER.id },
+            `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${SERVICE_WRITER.id}`,
+          );
+        } catch (e) {
+          consecutiveGitFailures++;
+          incrementGitAutoSaveFailure();
+          log.error(
+            { err: e, attempt: consecutiveGitFailures },
+            `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
+          );
+          if (consecutiveGitFailures >= 3) {
+            log.error(
+              { attempt: consecutiveGitFailures },
+              '[persistence] CRITICAL: Git auto-save has failed 3+ times. Version history is NOT being recorded.',
+            );
+          }
+        }
+        return;
+      }
+
+      // Per-writer fan-out (FR-7, US-014, precedent #25): build tree once, commit per writer.
+      // All per-writer commits share the same tree SHA for this drain cycle.
+      // Writer IDs follow the taxonomy in parseWriterId (shadow-repo-layout.ts): agent-<connId>,
+      // principal-<UUID>, file-system, git-upstream, openknowledge-service.
+      let treeSha: string;
       try {
-        const sha = await commitWip(shadow, defaultWriter, contentRoot, message, branch);
-        // snapshot discarded on success — new map already accumulating
-        consecutiveGitFailures = 0;
-        log.info(
-          { sha: sha.slice(0, 8), writer: defaultWriter.id },
-          `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${defaultWriter.id}`,
-        );
+        treeSha = await buildWipTree(shadow, contentRoot);
       } catch (e) {
-        restoreContributors(snapshot); // merge snapshot back — don't lose attribution (D16)
+        // Tree build failed — restore all contributors and abort this cycle
+        restoreContributors(snapshot);
         consecutiveGitFailures++;
         incrementGitAutoSaveFailure();
         log.error(
           { err: e, attempt: consecutiveGitFailures },
-          `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
+          `[persistence] Shadow WIP tree build failed (attempt ${consecutiveGitFailures})`,
         );
+        return;
+      }
+
+      let anySuccess = false;
+      for (const [writerId, entry] of snapshot as Map<string, ContributorEntry>) {
+        const writer: WriterIdentity = {
+          id: writerId,
+          name: entry.displayName,
+          email: `${writerId}@openknowledge.local`,
+        };
+        const docs = [...entry.docs];
+        // Consolidated write path: emit ONLY `ok-actor:` (retires the legacy
+        // `ok-contributors:` body line). `writer_id` is now carried as a
+        // first-class field so the commit body is self-describing without a
+        // ref-name join. Reader side (`readContributors` in shadow-repo-layout)
+        // prefers ok-actor and falls back to parseContributors for legacy
+        // on-disk commits — both surfaces keep rendering without migration.
+        const a = entry.actor;
+        // FR-8 / §8.7 — populate full actor tuple from ContributorEntry.actor when present.
+        // Classified writers (file-system, git-upstream, openknowledge-service) leave these
+        // null because they have no principal/agent attribution at record time.
+        const summaries = [...entry.summaries];
+        const actorEntry: OkActorEntry = {
+          v: 1,
+          writer_id: writerId,
+          principal: a?.principalId ?? null,
+          agent_session: writerId.startsWith('agent-') ? writerId.slice(6) : null,
+          agent_type: a?.agentType ?? null,
+          client_name: a?.clientName ?? null,
+          client_version: a?.clientVersion ?? null,
+          label: a?.label ?? null,
+          display_name: entry.displayName,
+          color_seed: entry.colorSeed,
+          docs,
+          ...(summaries.length > 0 ? { summaries } : {}),
+        };
+        const baseSubject = entry.subjectOverride ?? formatWipSubject(docs);
+        // FR14 — project summaries onto the subject line too. Single-summary
+        // writes embed the summary inline (`wip: notes.md — added auth`);
+        // multi-summary drains get `(N edits)` + the bullets in the body.
+        // Zero summaries → baseSubject unchanged (pre-spec byte-identity).
+        const subject = composeCommitSubject(baseSubject, summaries);
+        const writerMessage = `${subject}\n\n${formatOkActor(actorEntry)}`;
+        try {
+          const sha = await commitWipFromTree(shadow, writer, treeSha, writerMessage, branch);
+          anySuccess = true;
+          log.info(
+            { sha: sha.slice(0, 8), writer: writerId, tree: treeSha.slice(0, 8) },
+            `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${writerId}`,
+          );
+        } catch (e) {
+          // Per-writer failure — restore this writer's entry, let others succeed (D38)
+          restoreContributorEntry(writerId, entry);
+          incrementGitWriterCommitFailure();
+          log.error(
+            { err: e, writer: writerId },
+            `[persistence] Per-writer shadow commit failed for ${writerId}`,
+          );
+        }
+      }
+
+      if (anySuccess) {
+        consecutiveGitFailures = 0;
+      } else {
+        consecutiveGitFailures++;
+        incrementGitAutoSaveFailure();
         if (consecutiveGitFailures >= 3) {
           log.error(
             { attempt: consecutiveGitFailures },
@@ -398,16 +588,23 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // false-positive on the first store after load. Raw file content may
       // differ from TipTap's output (blank lines, trailing newlines, list
       // formatting) without any actual content change.
-      const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+      const normalizedBody = mdManager.serialize(
+        yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+      );
       setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
     },
 
-    async onStoreDocument({ document, documentName }) {
+    async onStoreDocument({
+      document,
+      documentName,
+      lastTransactionOrigin,
+      lastContext: _lastContext,
+    }) {
       if (isSystemDoc(documentName)) return;
       if (isBatchInProgress()) return;
 
       const xmlFragment = document.getXmlFragment('default');
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
 
       const body = mdManager.serialize(json);
       const metaMap = document.getMap('metadata');
@@ -423,8 +620,52 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // but would otherwise rewrite the file in normalized form (padded
       // tables, added backslash-escapes, etc.), polluting the user's git
       // working tree on mere file open.
+      //
+      // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
+      // an empty <paragraph> to Y.XmlFragment on every editor mount. That
+      // serializes to extra trailing newlines — byte-unequal to currentBase
+      // but semantically identical. Reusing normalizeBridge (the canonical
+      // bridge-invariant normalization — trim per-line whitespace, collapse
+      // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
+      // consistent with server-observers.ts + the test-harness. Catching this
+      // class as a no-op skips both the disk write AND the principal
+      // safety-net below, preventing phantom commits attributed to the
+      // browser's principal when a later agent write triggers the L2 fan-out.
       const currentBase = getReconciledBase(documentName);
-      if (currentBase !== undefined && markdown === currentBase) return;
+      const markdownSemanticallyUnchanged =
+        currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
+      if (markdownSemanticallyUnchanged) {
+        if (contributorCount() > 0) scheduleGitCommit();
+        return;
+      }
+
+      // Thread origin → contributor tracker (D31, D32, FR-16).
+      // This is a safety-net for writes that bypass api-extension.ts handlers.
+      // Agent write handlers already call recordContributor explicitly; this
+      // handles human-browser connection writes (US-024) and any other origin
+      // that doesn't go through a handler. Gated on `markdown !== currentBase`
+      // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
+      // not record the principal, so the L2 fan-out no longer attributes
+      // phantom commits to the browser alongside a legitimate agent write.
+      const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
+      if (writer && writer.id !== SERVICE_WRITER.id) {
+        // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
+        // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
+        // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
+        // the handler-path entry is in the tracker by the time we get here.
+        // The safety-net only fills in for writes that never pass through an
+        // /api/* handler — specifically browser-principal writes (US-024,
+        // `source: 'connection'`). Skipping when the entry already exists
+        // guarantees the stub `Agent (<short>)` displayName can never
+        // overwrite the handler's rich identity under any ordering edge case
+        // (post-restart replay, test harness, future extension ordering changes).
+        if (!hasContributor(writer.id)) {
+          recordContributor(documentName, writer.id, writer.name, writer.id);
+        }
+        // else: entry exists with rich handler-path identity; keep it untouched.
+        // The docs Set is still correct because the handler path recorded this
+        // docName already when it fired recordContributor for this write.
+      }
 
       // Debug: detect duplication before writing
       if (currentBase && markdown.length > currentBase.length * 1.5) {

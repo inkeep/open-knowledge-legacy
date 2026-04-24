@@ -34,7 +34,6 @@ const DIRECTORY_SCAN_CAP = 1000;
 const DIR_SKIP: ReadonlySet<string> = new Set([
   '.git',
   OK_DIR,
-  '.openknowledge',
   'node_modules',
   '.changeset',
   '.claude',
@@ -178,7 +177,7 @@ export interface EnrichedMeta {
   projectHistorySource: ProjectHistorySource | null;
 }
 
-export interface EnrichPathDeps {
+interface EnrichPathDeps {
   projectDir: string;
   serverUrl?: string | undefined;
   /** History depth for rich mode; defaults to 5. */
@@ -193,7 +192,7 @@ export interface EnrichPathDeps {
   folderRules?: FolderRule[];
 }
 
-export interface EnrichPathOptions {
+interface EnrichPathOptions {
   /**
    * When `true`, populate `backlinkCount` + `history` + `historySource`
    * (rich mode). When `false` (default), those three fields are `null`

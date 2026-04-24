@@ -16,10 +16,22 @@ import type * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { incrementServerObserverError } from './metrics.ts';
 import { setupServerObservers } from './server-observers.ts';
+import type { ShadowRef } from './shadow-repo.ts';
 
 export interface ServerObserverExtensionOptions {
   mdManager: MarkdownManager;
   schema: Schema;
+  /**
+   * Shadow-repo reference threaded into Observer A Path B so content-loss
+   * violations can write silent rescue checkpoints (US-005). Omit when no
+   * shadow is available (e.g., minimal integration harness) — Path B then
+   * skips the checkpoint but still emits structured telemetry.
+   */
+  shadowRef?: ShadowRef;
+  /** Resolver for the current project branch name. Defaults to 'main'. */
+  getCurrentBranch?: () => string | null;
+  /** Absolute content root used to place the rescue blob inside the commit tree. */
+  contentRoot?: string;
 }
 
 /**
@@ -50,6 +62,12 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
             ytext,
             mdManager: opts.mdManager,
             schema: opts.schema,
+            docName: documentName,
+            shadow: opts.shadowRef ? () => opts.shadowRef?.current : undefined,
+            getBranch: opts.getCurrentBranch
+              ? () => opts.getCurrentBranch?.() ?? 'main'
+              : undefined,
+            contentRoot: opts.contentRoot,
           });
           cleanups.set(documentName, unsubscribe);
           return true;

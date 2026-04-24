@@ -1,3 +1,249 @@
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
+
+@layer base {
+  :root {
+    --slide-bg: #fbf9f4;
+    --slide-bg-elevated: #ffffff;
+    --slide-text: #1a1a1a;
+    --slide-muted: #71717a;
+    --slide-accent: #3685ff;
+    --slide-border: #d4d4d0;
+  }
+
+  .dark {
+    --slide-bg: #0c0c0c;
+    --slide-bg-elevated: #171717;
+    --slide-text: #f0f0ee;
+    --slide-muted: #a1a1aa;
+    --slide-accent: #6b8afa;
+    --slide-border: #27272a;
+  }
+}
+
+.slide-btn-accent {
+  background-color: var(--slide-accent);
+  color: #fff;
+}
+
+.slide-btn-accent:hover {
+  opacity: 0.9;
+}
+
+.slide-btn-outline {
+  border: 1px solid var(--slide-border);
+  color: var(--slide-text);
+  background: transparent;
+}
+
+.slide-btn-outline:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 5%, transparent);
+}
+
+/* ------------------------------------------------------------------
+ * .ok-prosemirror — Landing-page editor demo content styles.
+ * Mirrors the real .ProseMirror styles from packages/app/src/globals.css
+ * so the demo looks identical to the shipped product.
+ * ------------------------------------------------------------------ */
+
+.ok-prosemirror h1,
+.ok-prosemirror h2,
+.ok-prosemirror h3 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+.ok-prosemirror h1 {
+  font-size: 1.5em;
+  letter-spacing: -0.04em;
+}
+.ok-prosemirror h2 {
+  font-size: 1.25em;
+  letter-spacing: -0.02em;
+}
+.ok-prosemirror h3 {
+  font-size: 1.1em;
+  letter-spacing: -0.02em;
+}
+.ok-prosemirror p {
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror li {
+  margin-bottom: 0.15em;
+}
+.ok-prosemirror blockquote {
+  border-left: 3px solid var(--slide-border);
+  padding-left: 1em;
+  margin-left: 0;
+  margin-bottom: 0.5em;
+  color: var(--slide-muted);
+}
+.ok-prosemirror pre {
+  background: color-mix(in srgb, var(--slide-text) 4%, transparent);
+  border-radius: 0.5em;
+  padding: 0.75em 1em;
+  margin-bottom: 0.5em;
+  overflow-x: auto;
+}
+.ok-prosemirror code {
+  background: color-mix(in srgb, var(--slide-text) 6%, transparent);
+  border-radius: 0.25em;
+  padding: 0.15em 0.35em;
+  font-family: ui-monospace, monospace;
+  font-size: 0.875em;
+}
+.ok-prosemirror pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.ok-prosemirror a {
+  color: var(--slide-accent);
+  font-weight: 500;
+}
+.ok-prosemirror hr {
+  border: none;
+  border-top: 1px solid var(--slide-border);
+  margin: 1em 0;
+}
+.ok-prosemirror .ok-wikilink {
+  color: var(--slide-accent);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--slide-accent) 8%, transparent);
+  border-radius: 0.25em;
+  padding: 0.1em 0.35em;
+}
+.dark .ok-prosemirror blockquote {
+  border-color: color-mix(in srgb, var(--slide-muted) 40%, transparent);
+}
+.dark .ok-prosemirror pre {
+  background: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+.dark .ok-prosemirror code {
+  background: color-mix(in srgb, var(--slide-text) 10%, transparent);
+}
+
+/* Placeholder */
+.ok-prosemirror p.is-empty::before {
+  content: attr(data-placeholder);
+  pointer-events: none;
+  float: left;
+  height: 0;
+  color: var(--slide-muted);
+  opacity: 0.5;
+}
+
+/* Ordered lists */
+.ok-prosemirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+/* Task lists */
+.ok-prosemirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.ok-prosemirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.ok-prosemirror ul[data-type="taskList"] li > label {
+  margin-top: 0.25em;
+}
+
+/* Tables */
+.ok-prosemirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror th,
+.ok-prosemirror td {
+  border: 1px solid var(--slide-border);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+.ok-prosemirror th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--slide-text) 4%, transparent);
+}
+
+/* Block controls — + button and drag grip (mirrors packages/app/src/globals.css) */
+.ok-block-controls {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 1;
+  transition: opacity 100ms ease-out;
+  user-select: none;
+}
+
+.ok-add-block-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: var(--slide-muted);
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: background-color 100ms ease-out;
+}
+.ok-add-block-btn:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+
+.ok-drag-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  color: var(--slide-muted);
+  border-radius: 3px;
+  transition: background-color 100ms ease-out;
+}
+.ok-drag-grip:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+.ok-drag-grip:active {
+  cursor: grabbing;
+}
+
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
+}
+
+/* Tippy.js — minimal styles for slash command popup (no theme import needed) */
+.tippy-box {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+.tippy-box[data-placement^="bottom"] > .tippy-arrow {
+  display: none;
+}
+.tippy-box[data-placement^="top"] > .tippy-arrow {
+  display: none;
+}
+.tippy-content {
+  padding: 0;
+}

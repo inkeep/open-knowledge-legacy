@@ -1,9 +1,9 @@
 ---
 title: Agent Write Path
-description: How external agents write into the CRDT via markdown, and how the source toggle preserves those writes through three-way merge.
+description: How external agents write into the CRDT via markdown, and how the server-authoritative bridge keeps WYSIWYG and source mode views in sync.
 ---
 
-External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints and a three-way merge to ensure agent writes survive source mode editing.
+External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints; the server-authoritative cross-CRDT bridge then propagates the write to both `Y.XmlFragment` (TipTap) and `Y.Text` (CodeMirror) so the result is visible in either editor mode without any client-side merge.
 
 ## Write endpoints
 
@@ -33,11 +33,11 @@ Accepts a JSON body:
 The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10):
 
 1. Opens a `DirectConnection` to the Y.Doc
-2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message but not yet landed in `Y.Text` on the server (client Observer A is what syncs XmlFragment→Y.Text, and runs on the client with a 50ms debounce)
+2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message. Server-side cross-CRDT sync (precedent #14) runs under a single-writer `afterAllTransactions` settlement dispatch (one fire per outermost `doc.transact()` drain, SPEC 2026-04-16 bridge-correctness §6 R4); the client observer is a baseline-tracking shell that does not write Y.Text.
 3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
 4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
 5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
-6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyByPrefixSuffix` (shared `@inkeep/open-knowledge-core` utility) — minimal mutation, preserves non-agent Y.Text Items and their origins
+6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyFastDiff` (character-level DMP write exported from `@inkeep/open-knowledge-core/bridge`) — minimal mutation, preserves non-agent Y.Text Items and their origins
 
 The XmlFragment-authoritative shape is required to preserve concurrent user WYSIWYG content during agent writes. The prior implementation (`syncTextToFragment`, deleted by the `2026-04-14-bridge-convergence-under-concurrent-writes` spec — FR-9) read `Y.Text` as the authoritative input, which lagged the XmlFragment for client-originated WYSIWYG typing and caused `updateYFragment` to stomp user content (Bug-A, deterministic).
 
@@ -45,43 +45,51 @@ V0-14's future `applyAgentUndo` handler must follow the same pattern — see `ev
 
 ## Source mode live injection
 
-When the user is in source mode (CodeMirror), agent writes are still visible in real-time:
+Source mode (CodeMirror) binds `Y.Text('source')` directly via `y-codemirror.next`. Agent writes are visible in real time without any application-level observer:
 
-1. `App.tsx` subscribes to Y.XmlFragment changes via `onContentChange()` when entering source mode
-2. When an agent write modifies the Y.Doc, the observer fires and serializes the updated content to markdown
-3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
-4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
+1. `applyAgentMarkdownWrite` updates `Y.XmlFragment` and mirrors the canonical markdown to `Y.Text` inside one server-side `doc.transact()` block under `AGENT_WRITE_ORIGIN` (a paired-write origin per AGENTS.md precedent #1).
+2. The Y.Text mutation propagates to every connected client through the standard CRDT sync.
+3. `y-codemirror.next` applies the incoming delta to the CodeMirror buffer with character-level precision — cursor and selection on the local keystroke side are preserved by the binding.
 
-The bidirectional observer sync coordinates with user typing in both editors. When the user is actively typing in source mode, Observer B (text-to-tree sync) defers its tree replacement until typing pauses. This prevents keystroke loss during rapid source-mode editing, including when agent writes arrive concurrently.
+The server's bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). One outermost `doc.transact()` call produces exactly one settlement fire; Observer A (XmlFragment → Y.Text) runs before Observer B (Y.Text → XmlFragment) within each drain, and Observer B canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` holds at every settlement point. There is no debounce window, no injected `Scheduler`, and no wall-clock timing in either bridge observer file (enforced by the grep gate at `packages/server/src/bridge-no-wallclock.test.ts`).
 
-Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
+Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`) declare `context.paired: true` at their definition site. Observer A AND Observer B both detect that marker structurally via `isPairedWriteOrigin(transaction.origin)` and refresh their shared baseline synchronously inside the observer callback — the settlement handler then has no work to dispatch for the drain (the paired writer already made both CRDTs consistent).
 
-## Three-way merge on toggle-back
+Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
 
-When the user toggles back from source to WYSIWYG, a three-way merge (`three-way-merge.ts`) reconciles the user's edits with any concurrent agent writes.
+## Mode toggle (no merge)
 
-### Three versions compared
+The WYSIWYG/source mode toggle is a UI visibility flip, not a serialize-and-merge operation. `EditorActivityPool` mounts both `TiptapEditor` and `SourceEditor` concurrently per active document and uses `display:none` to swap between them. Each editor stays bound to its Y type (`Y.XmlFragment('default')` for TipTap via `Collaboration`; `Y.Text('source')` for CodeMirror via `y-codemirror.next`) for the lifetime of the mount.
 
-- **Base (snapshot):** The markdown captured when entering source mode
-- **Theirs (current Y.Doc):** The Y.Doc's current state, which may include agent writes
-- **Ours (user edits):** The markdown the user edited in CodeMirror
+The server's bidirectional bridge keeps the two Y types continuously in sync, so toggling back from source mode reveals a TipTap view that already reflects every Y.Text edit the user made — no client-side three-way merge runs on toggle. Concurrent agent writes that arrived during a source-mode session are visible to TipTap on toggle-back for the same reason.
 
-### Merge strategy
+Three-way merge for content preservation has moved to the bridge layer itself: when an inbound CRDT update arrives during local Y.XmlFragment editing, Observer A's Path B uses the hybrid diff3+DMP `mergeThreeWay` algorithm (`@inkeep/open-knowledge-core/bridge`) with a content-preservation post-condition (`assertContentPreservation`). On post-condition violation, the production policy is to (a) emit a structured `bridge-merge-content-loss` log, (b) write a silent named version-history checkpoint via `saveInMemoryCheckpoint` (rendered in `TimelinePanel` so users can recover via the existing Restore UI), and (c) apply the merge as-computed so the editor keeps responding. Dev/test re-throws so integration suites fail loudly; conversion-class regressions are caught at PR tier by the deterministic fidelity PBT (`packages/app/tests/fidelity/bridge-observer-conversion.test.ts`). The bridge-convergence fuzz is preserved for ad-hoc sampling via `bun run measure:fuzz` (see `specs/2026-04-19-ci-signal-quality/` for the CI signal quality rationale). See `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R1/R7 for the full contract and `packages/server/src/server-observers.ts` for the wiring.
 
-1. **No user changes:** If the user didn't edit anything, the Y.Doc is left as-is (agent writes fully preserved)
-2. **No agent changes:** If the Y.Doc hasn't changed since the snapshot, the user's edits apply directly
-3. **Both changed (selective merge):**
-   - Agent-added blocks (those beyond the snapshot's paragraph count) are appended to the user's edits
-   - Blocks within the snapshot range that both user and agent modified are conflicts -- user wins
-   - The merged result is applied via `updateYFragment()`
+## Attribution journal (summaries)
 
-### Conflict resolution
+Each agent-write API call records a contributor entry in the in-memory accumulator `pendingContributors: Map<agentId, ContributorEntry>` (`packages/server/src/contributor-tracker.ts`). The optional fifth argument to `recordContributor(docName, agentId, displayName, colorSeed, summary?)` appends a summary to the contributor's flat `summaries: string[]` array, preserving insertion order across the L2 debounce window.
 
-When both the user and an agent modify the same paragraph:
+On the 15-30s L2 debounce, `swapContributors()` drains the accumulator and `formatContributorsFrom(snapshot)` emits one `ok-contributors:` JSON line per contributor into the shadow-repo commit body:
 
-- The user's version wins
-- A warning is logged to the console: `[three-way-merge] Conflict at paragraph N: both user and agent modified. User version wins.`
-- Agent additions to *other* paragraphs are still preserved
+```
+ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","colorSeed":"...","docs":["foo.md","bar.md"],"summaries":["Fixed token-refresh race","Added example block"]}
+```
+
+The `summaries` field is flat (per-contributor, not per-doc) and omitted entirely when no summaries were recorded — legacy commits and summary-less writes are byte-identical to pre-feature behavior. The JSON line stays at `v: 1`; the field is purely additive (precedent #9).
+
+**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. The five API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename`, `/api/rollback`) each call it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
+
+**Attribution guard for rename and rollback.** `handleRename` and `handleRollback` only call `extractAgentIdentity` + `recordContributor` when the request body carries an explicit `agentId` field. The in-editor Restore button (`EditorPane.tsx`) posts with no identity and therefore stays anonymous on the timeline — the "positive externality" of MCP-driven rename/rollback attribution does not leak to human-driven UI calls. This is a LOCKED behavior contract.
+
+**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
+
+**Parser tolerance.** `parseContributors` in `packages/core/src/shadow-repo-layout.ts` accepts both legacy (no `summaries` field) and new commits. A malformed `summaries` value drops just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip policy applied to other optional fields, because decorative loss beats attribution loss.
+
+**Consumers.**
+
+- `TimelinePanel` renders summaries as a collapsible bulleted list under the author line (first bullet inline, remainder behind a "Show N more" expander). The full doc list stays visible as ground truth.
+- `exec` / `read_document` enrichment output carries the field through automatically via `history.contributors[*].summaries`, so agents reading prior timeline state see intent alongside identity.
+- Metrics counters in `packages/server/src/metrics.ts`: `agentWriteCalls` (denominator), `summariesProvided` (numerator for M1 adoption rate), and `summariesTruncated` (M2 cap-efficacy) — all surfaced via `GET /api/metrics/reconciliation`.
 
 ## Agent simulator
 

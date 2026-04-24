@@ -42,7 +42,7 @@ import type { VFile } from 'vfile';
  */
 const ESCAPABLE_CHARS = new Set('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.split(''));
 
-export interface EscapedChar {
+interface EscapedChar {
   /** Offset within the text node value (0-based) */
   offset: number;
   /** The character that was escaped */
@@ -85,7 +85,12 @@ export function applyPositionSliceToNode(
     return;
   }
 
-  node.data = node.data ?? {};
+  // Ensure `node.data` exists before any case writes to it. Using logical
+  // assignment (??=) narrows `node.data` to non-undefined through the
+  // switch cases below — needed because `@types/hast` installed alongside
+  // the rehype deps widened the mdast Data union enough that the old
+  // `node.data = node.data ?? {}` form stopped narrowing.
+  node.data ??= {};
 
   switch (node.type) {
     case 'text': {

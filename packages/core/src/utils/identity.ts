@@ -23,6 +23,12 @@ export const AGENT_ICON_COLORS: Record<string, string> = {
   bot: '#727CF3', // indigo (generic agent fallback)
 };
 
+/** Dark-mode overrides for brands whose light-mode color is too dark to see on dark backgrounds. */
+export const AGENT_ICON_COLORS_DARK: Record<string, string> = {
+  cursor: '#FFFFFF', // white (legible on dark bg)
+  windsurf: '#FFFFFF', // same — both are dark-brand icons that need lifting
+};
+
 export const HUMAN_COLORS = [
   '#f0ece3', // warm gray
   '#fff5e1', // cream
@@ -41,6 +47,32 @@ export function colorFromSeed(seed: string): string {
   let hash = 0;
   for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
   return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
+}
+
+/**
+ * Map known MCP `clientInfo.name` values to icon identifiers used by both
+ * the presence bar (`AGENT_ICON_COLORS[icon]`) and the Timeline dot-color
+ * derivation. Unknown clients map to `'bot'` so the fallback indigo color
+ * is reached via the icon table, not via the colorFromSeed hash palette
+ * (which can collide between e.g. `claude-code` and `cursor-vscode`).
+ *
+ * Kept in core so app (TimelinePanel) and server (api-extension +
+ * agent-sessions) use the identical mapping — drift between surfaces is
+ * how dot-color/badge-color become inconsistent for the same agent.
+ */
+const ICON_MAP: Record<string, string> = {
+  'claude-code': 'claude',
+  'claude-ai': 'claude',
+  cursor: 'cursor',
+  'cursor-vscode': 'cursor',
+  cascade: 'windsurf',
+  codex: 'openai',
+  copilot: 'github',
+  cline: 'cline',
+};
+
+export function iconFromClientName(name?: string): string {
+  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
 }
 
 // --- Color derivation ---

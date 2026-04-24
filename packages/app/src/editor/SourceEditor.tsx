@@ -3,11 +3,28 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { createCodeFenceTracker } from '@inkeep/open-knowledge-core';
 import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
+import { basicSetup } from 'codemirror';
+import { useTheme } from 'next-themes';
+import { useEffect, useRef, useState } from 'react';
+import { yCollab } from 'y-codemirror.next';
+import type * as Y from 'yjs';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
-import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
+import { createSourceClipboardExtension } from './clipboard/index.ts';
+import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
 import { codeLanguages } from './markdown-code-languages';
+import { markUserTyping } from './observers';
+import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
+import { createMdLinkSourceExtension } from './plugins/md-link-source';
+import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
+import {
+  clearPendingSourceNavigation,
+  consumePendingSourceNavigation,
+} from './source-editor-navigation';
+import { createSourcePolishExtension } from './source-polish';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -24,95 +41,207 @@ const lightTheme = basicLightInit({
   },
 });
 
-import { basicSetup } from 'codemirror';
-import { useTheme } from 'next-themes';
-import { useEffect, useRef } from 'react';
-import { yCollab } from 'y-codemirror.next';
-import type * as Y from 'yjs';
-import { markUserTyping } from './observers';
-import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
-import { createMdLinkSourceExtension } from './plugins/md-link-source';
-import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
-import { createSourcePolishExtension } from './source-polish';
-
 interface SourceEditorProps {
+  docName: string;
   ytext: Y.Text;
   provider: HocuspocusProvider;
   placeholder?: string;
+  isSourceModeActive: boolean;
 }
 
 const themeCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
 
-export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps) {
+function applyOutlineNavigation(view: EditorView, detail: OutlineNavDetail): void {
+  const doc = view.state.doc;
+  let startLine = 1;
+  if (doc.lines >= 1 && doc.line(1).text === '---') {
+    for (let i = 2; i <= doc.lines; i++) {
+      if (doc.line(i).text === '---') {
+        startLine = i + 1;
+        break;
+      }
+    }
+  }
+
+  // Skip `#` comments inside fenced code blocks — they render as code, not
+  // headings, so they must stay out of the heading count that maps 1:1 onto
+  // the outline index.
+  const isInCodeFence = createCodeFenceTracker();
+  let seen = 0;
+  for (let i = startLine; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    if (isInCodeFence(line.text)) continue;
+    if (/^#{1,6}\s/.test(line.text)) {
+      if (seen === detail.index) {
+        view.dispatch({
+          selection: EditorSelection.cursor(line.from),
+          effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
+        });
+        view.focus();
+        return;
+      }
+      seen++;
+    }
+  }
+}
+
+function applyRawMdxNavigation(view: EditorView, detail: RawMdxNavDetail): void {
+  requestAnimationFrame(() => {
+    const doc = view.state.doc;
+    // Clamp offset to doc length (offset may exceed doc length if content
+    // differs between Y.Text and originalSpan).
+    const pos = Math.min(detail.offset, doc.length);
+    view.dispatch({
+      selection: EditorSelection.cursor(pos),
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    });
+    view.focus();
+  });
+}
+
+export function SourceEditor({
+  docName,
+  ytext,
+  provider,
+  placeholder,
+  isSourceModeActive,
+}: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Mount failures rethrow into DocumentErrorBoundary (review Minor #26).
+  const [mountError, setMountError] = useState<Error | null>(null);
+  if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
-  // Update awareness mode to 'source' when SourceEditor mounts
+  // Keep awareness aligned with the currently visible editor for this doc.
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    awareness.setLocalStateField('mode', 'source');
+    awareness.setLocalStateField('mode', isSourceModeActive ? 'source' : 'wysiwyg');
     return () => {
       awareness.setLocalStateField('mode', 'wysiwyg');
     };
-  }, [provider]);
+  }, [provider, isSourceModeActive]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedTheme is intentionally excluded — the second effect (below) reconfigures the theme Compartment on change. Adding it here would trigger a full editor remount on every theme switch, which is exactly what Compartment is designed to avoid (per spec D6/D16).
+  // V2 EDITOR CACHE WIRING (US-008)
+  //
+  // Replaces the inline `new EditorView({ parent })` + `view.destroy()` on
+  // unmount with mountCmEditor + parkCmEditor (precedent #18(g) — H1 12/12
+  // probe). The view's DOM is reparented across Activity flips instead of
+  // being destroyed, which preserves selection / undo / yCollab binding /
+  // Y.Text identity / scroll position (cm6-reparent-contract.md §7).
+  //
+  // Cache key is the docName from provider.configuration.name — same key
+  // EditorActivityPool uses for setActivityMountList. Park never destroys;
+  // only evictCmEditor (LRU) does.
+  //
+  // The DOM listener for markUserTyping (R7 fix) attaches to the cached
+  // view's contentDOM exactly once per editor lifetime — the listeners
+  // survive reparent (W3C spec; CM6 cm6-reparent-contract §8). On park
+  // they remain wired; on evict the editor.destroy() in evictCmEditor
+  // removes them with the contentDOM.
+  //
+  // resolvedTheme is intentionally excluded from the deps array below — the
+  // second effect (below) reconfigures the theme Compartment on change.
+  // Adding it here would trigger a full editor remount on every theme switch,
+  // which is exactly what Compartment is designed to avoid.
+  const cmEntryRef = useRef<CmCacheEntry | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const state = EditorState.create({
-      doc: ytext.toString(),
-      extensions: [
-        basicSetup,
-        // Tab inserts indentation instead of escaping focus. CM6's default is
-        // to let Tab move focus (WCAG "no keyboard trap") — for a code-style
-        // editor this is unexpected UX. Users who need to escape focus can
-        // press Esc → Tab, or Ctrl+M (Shift+Alt+M on macOS) to toggle tab-
-        // focus mode. Upstream convention per codemirror.net/examples/tab/.
-        keymap.of([indentWithTab]),
-        markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
-        yCollab(ytext, provider.awareness),
-        createAgentFlashSourceExtension(provider.document),
-        createWikiLinkSourceExtension(),
-        createMdLinkSourceExtension(),
-        createSourcePolishExtension(),
-        themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
-        placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
-        EditorView.lineWrapping,
-        EditorView.theme({
-          '&': {
-            height: '100%',
-          },
-        }),
-      ],
-    });
+    const docName = provider.configuration.name ?? '';
 
-    const view = new EditorView({
-      state,
-      parent: containerRef.current,
-    });
-    viewRef.current = view;
+    let entry: CmCacheEntry | null = null;
+    const mark = () => markUserTyping();
 
-    // Mirror the TiptapEditor DOM listeners so Observer B's typing-defer
-    // window applies uniformly regardless of which editor has focus (R7 fix).
-    const mark = () => markUserTyping(provider.document);
-    const dom = view.contentDOM;
-    dom.addEventListener('keydown', mark);
-    dom.addEventListener('paste', mark);
-    dom.addEventListener('drop', mark);
-    dom.addEventListener('cut', mark);
+    try {
+      // FR3 size-aware cache gate driven at the consumer call site (review
+      // Pass-2 Major #4). CM6 has no per-view expensive NodeView concept
+      // so viewCount=0 is accurate (not an approximation); the bytes gate
+      // is the sole protection for multi-MB docs.
+      const bytes = ytext.length;
+      const sizeStats = { viewCount: 0, bytes };
+      entry = mountCmEditor({
+        docName,
+        container,
+        sizeStats,
+        factory: (el) => {
+          // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
+          // markdown AND text/html canonical rendered HTML via the shared
+          // mdast-to-html pipeline; paste routes through a 4-branch dispatcher
+          // parallel to the WYSIWYG 5-branch.
+          const sourceClipboard = createSourceClipboardExtension({
+            ydoc: provider.document,
+            ytext,
+          });
+          const state = EditorState.create({
+            doc: ytext.toString(),
+            extensions: [
+              basicSetup,
+              keymap.of([indentWithTab]),
+              markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
+              yCollab(ytext, provider.awareness),
+              createAgentFlashSourceExtension(provider.document),
+              createWikiLinkSourceExtension(),
+              createMdLinkSourceExtension(),
+              createSourcePolishExtension(),
+              sourceClipboard,
+              themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+              placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
+              EditorView.lineWrapping,
+              EditorView.theme({
+                '&': {
+                  height: '100%',
+                },
+              }),
+            ],
+          });
+          const view = new EditorView({ state, parent: el });
+          // Wire markUserTyping listeners on first construction. They survive
+          // reparent (W3C MutationObserver / addEventListener bind to the DOM
+          // node, not its position).
+          const dom = view.contentDOM;
+          dom.addEventListener('keydown', mark);
+          dom.addEventListener('paste', mark);
+          dom.addEventListener('drop', mark);
+          dom.addEventListener('cut', mark);
+          return {
+            view,
+            ydoc: provider.document,
+            ytext,
+            provider,
+          };
+        },
+      });
+      cmEntryRef.current = entry;
+      viewRef.current = entry.view;
+    } catch (err) {
+      // Surface mount failures through DocumentErrorBoundary (review Minor #26).
+      console.error('[SourceEditor] mountCmEditor failed', err);
+      cmEntryRef.current = null;
+      viewRef.current = null;
+      setMountError(err instanceof Error ? err : new Error(String(err)));
+    }
 
     return () => {
-      dom.removeEventListener('keydown', mark);
-      dom.removeEventListener('paste', mark);
-      dom.removeEventListener('drop', mark);
-      dom.removeEventListener('cut', mark);
-      view.destroy();
+      const cur = cmEntryRef.current;
+      if (cur) {
+        parkCmEditor(cur);
+      }
+      // Listener cleanup is implicit when evictCmEditor calls view.destroy().
+      // We do NOT remove listeners here because the view is still alive in
+      // the cache (just parked). Pre-V2 destroyed the view here; V2 does not.
+      cmEntryRef.current = null;
       viewRef.current = null;
     };
+    // `placeholder` is intentionally NOT in the deps array (review Pass-2
+    // Major #7). The separate effect below uses `placeholderCompartment.
+    // reconfigure` to hot-swap the placeholder text without tearing down
+    // the view — including `placeholder` here would defeat that by
+    // triggering a full park+remount on every placeholder change.
   }, [ytext, provider]);
 
   useEffect(() => {
@@ -133,62 +262,34 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   useEffect(() => {
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
-      if (!detail || detail.mode !== 'source') return;
+      if (!detail || detail.mode !== 'source' || !isSourceModeActive) return;
       const view = viewRef.current;
       if (!view) return;
-      const doc = view.state.doc;
-      let startLine = 1;
-      if (doc.lines >= 1 && doc.line(1).text === '---') {
-        for (let i = 2; i <= doc.lines; i++) {
-          if (doc.line(i).text === '---') {
-            startLine = i + 1;
-            break;
-          }
-        }
-      }
-      let seen = 0;
-      for (let i = startLine; i <= doc.lines; i++) {
-        const line = doc.line(i);
-        if (/^#{1,6}\s/.test(line.text)) {
-          if (seen === detail.index) {
-            view.dispatch({
-              selection: EditorSelection.cursor(line.from),
-              effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
-            });
-            view.focus();
-            return;
-          }
-          seen++;
-        }
-      }
+      applyOutlineNavigation(view, detail);
+      clearPendingSourceNavigation(docName);
     }
     window.addEventListener(OUTLINE_NAV_EVENT, onNav);
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
-  }, []);
+  }, [docName, isSourceModeActive]);
 
-  // R7: rawMdxFallback click → scroll CodeMirror to the broken region's offset.
-  // EditorPane handles the mode switch; this hook scrolls once the view is active.
+  // Replays the most recent source-navigation intent once the editor chunk is
+  // mounted and visible for this doc. This preserves first-open raw-MDX and
+  // outline jumps even when SourceEditor was lazy-loaded off the initial path.
   useEffect(() => {
-    function onRawMdxNav(e: Event) {
-      const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
-      if (!detail) return;
-      // Delay to allow the source view to mount/become visible after mode switch
-      requestAnimationFrame(() => {
-        const view = viewRef.current;
-        if (!view) return;
-        const doc = view.state.doc;
-        // Clamp offset to doc length (offset may exceed doc length if content differs between Y.Text and originalSpan)
-        const pos = Math.min(detail.offset, doc.length);
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
-        });
-        view.focus();
-      });
+    if (!isSourceModeActive) return;
+    const view = viewRef.current;
+    if (!view) return;
+
+    const pendingNavigation = consumePendingSourceNavigation(docName);
+    if (!pendingNavigation) return;
+
+    if (pendingNavigation.kind === 'outline') {
+      applyOutlineNavigation(view, pendingNavigation.detail);
+      return;
     }
-    window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-    return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
-  }, []);
+
+    applyRawMdxNavigation(view, pendingNavigation.detail);
+  }, [docName, isSourceModeActive]);
 
   return <div ref={containerRef} className="source-editor h-full py-3" />;
 }
