@@ -8,6 +8,7 @@
  * exercised without needing a running Hocuspocus server.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
@@ -16,6 +17,10 @@ import {
   PreSyncDisconnectError,
   syncPromise,
 } from './sync-promise';
+
+function uniqueDocName(prefix = 'pp-us003'): string {
+  return `${prefix}-${randomUUID()}`;
+}
 
 // Use a dummy URL — providers won't connect but pool logic still works
 const DUMMY_WS = 'ws://localhost:1/collab';
@@ -687,7 +692,14 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
 // T9 in the integration test suite.
 // ---------------------------------------------------------------------------
 describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-mismatch')", () => {
-  test("reason 'server-instance-mismatch' recycles every pool entry", () => {
+  // Shape 2+ note: the recycle path is now async — it awaits
+  // `persistence.clearData()` on every entry BEFORE destroying providers
+  // so the fresh providers hydrate empty IDB (the load-bearing ordering
+  // that prevents the content-duplication bug class). Tests below wait a
+  // short real-time tick so fake-indexeddb's `deleteDatabase` can complete
+  // before the recycled state is asserted.
+
+  test("reason 'server-instance-mismatch' recycles every pool entry", async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId('server-old');
 
@@ -700,6 +712,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later
@@ -714,7 +727,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     expect(pool.getActiveDocName()).toBe('doc1');
   });
 
-  test("reason 'server-instance-mismatch' nulls the cached instance ID", () => {
+  test("reason 'server-instance-mismatch' nulls the cached instance ID", async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
@@ -722,6 +735,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
 
     // The re-opened provider's token must NOT carry the old claim — that's
     // the whole point of the recycle. HocuspocusProvider defaults token to
@@ -754,7 +768,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     expect(resolved).toBeDefined();
   });
 
-  test('second mismatch event is a no-op after cache is cleared (idempotence)', () => {
+  test('second mismatch event is a no-op after cache is cleared (idempotence)', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
@@ -762,12 +776,14 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
     const postFirstEntry = pool.entries.get('doc1');
     if (!postFirstEntry) throw new Error('expected post-first entry');
     const postFirstProvider = postFirstEntry.provider;
 
     // A stale sibling's event arriving after cache is null must not churn.
     postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
     const postSecond = pool.entries.get('doc1');
     expect(postSecond?.provider).toBe(postFirstProvider);
   });
@@ -1076,5 +1092,200 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 
     expect(cacheModule.__peekTiptap('dispose-a')).toBeUndefined();
     expect(cacheModule.__peekTiptap('dispose-b')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MECHANISM-ONLY tests for client-side y-indexeddb persistence wiring
+// (US-003 / Shape 2+). These assert that every open() entry gets a
+// ClientPersistenceProvider and that destruction order is persistence-before-
+// provider across every teardown path (close, recycleDisconnectedEntry,
+// evictLru, dispose). They do NOT assert buffer-and-replay — that wires in
+// US-004 via the authenticationFailed handler, covered by an integration
+// test against a real Hocuspocus server.
+//
+// Uses unique doc names per test (randomUUID) so fake-indexeddb state from a
+// prior test doesn't leak across cases — different docNames map to different
+// IDB databases (named `ok-ydoc:${docName}`).
+// ---------------------------------------------------------------------------
+describe('ProviderPool client-persistence attachment (US-003)', () => {
+  test('open() attaches a ClientPersistenceProvider to the pool entry', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    expect(entry.persistence).not.toBeNull();
+    const persistence = entry.persistence;
+    if (!persistence) throw new Error('expected persistence');
+    expect(typeof persistence.destroy).toBe('function');
+    expect(typeof persistence.clearData).toBe('function');
+  });
+
+  test('re-opening the same docName reuses the existing persistence instance', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const entry1 = pool.open(docName);
+    const persistence1 = entry1?.persistence;
+    const entry2 = pool.open(docName);
+    expect(entry2?.persistence).toBe(persistence1);
+  });
+
+  test('prewarm() also attaches a persistence instance', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-prewarm');
+    const entry = pool.prewarm(docName);
+    if (!entry) throw new Error('expected prewarmed entry');
+    expect(entry.persistence).not.toBeNull();
+  });
+
+  test('close() destroys the persistence before the provider', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-close');
+    const entry = pool.open(docName);
+    if (!entry?.persistence) throw new Error('expected persistence');
+
+    const order: string[] = [];
+    const persistenceSpy = mock(async () => {
+      order.push('persistence');
+    });
+    entry.persistence.destroy = persistenceSpy;
+
+    const origProviderDestroy = entry.provider.destroy.bind(entry.provider);
+    entry.provider.destroy = (() => {
+      order.push('provider');
+      origProviderDestroy();
+    }) as typeof entry.provider.destroy;
+
+    pool.close(docName);
+
+    expect(persistenceSpy).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe('persistence');
+    expect(order[1]).toBe('provider');
+  });
+
+  test('recycleDisconnectedEntry destroys the persistence before the provider', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, 50);
+    const docName = uniqueDocName('pp-recycle');
+    const entry = pool.open(docName);
+    if (!entry?.persistence) throw new Error('expected persistence');
+    pool.setActive(docName);
+    // Skip setupObservers when the recycle path re-opens (we aren't testing it)
+    entry.observerCleanup = () => {};
+
+    const order: string[] = [];
+    const persistenceSpy = mock(async () => {
+      order.push('persistence');
+    });
+    entry.persistence.destroy = persistenceSpy;
+
+    const origProviderDestroy = entry.provider.destroy.bind(entry.provider);
+    entry.provider.destroy = (() => {
+      order.push('provider');
+      origProviderDestroy();
+    }) as typeof entry.provider.destroy;
+
+    entry.hasSynced = true;
+    entry.syncState = 'synced';
+    entry.provider.unsyncedChanges = 0;
+    entry.provider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(persistenceSpy).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe('persistence');
+    expect(order[1]).toBe('provider');
+  });
+
+  test('evictLru destroys the persistence on the evicted entry', () => {
+    pool = new ProviderPool(2, DUMMY_WS);
+    const doc1 = uniqueDocName('pp-evict');
+    const doc2 = uniqueDocName('pp-evict');
+    const doc3 = uniqueDocName('pp-evict');
+    pool.open(doc1);
+    pool.setActive(doc1);
+    const entry2 = pool.open(doc2);
+    if (!entry2?.persistence) throw new Error('expected persistence on doc2');
+
+    const destroySpy = mock(async () => {});
+    entry2.persistence.destroy = destroySpy;
+
+    // Opening doc3 at capacity evicts doc2 (doc1 is active + protected)
+    pool.open(doc3);
+
+    expect(pool.has(doc2)).toBe(false);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('dispose() destroys every pool entry’s persistence', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const doc1 = uniqueDocName('pp-dispose');
+    const doc2 = uniqueDocName('pp-dispose');
+    const e1 = pool.open(doc1);
+    const e2 = pool.open(doc2);
+    if (!e1?.persistence || !e2?.persistence) throw new Error('expected persistences');
+
+    const spy1 = mock(async () => {});
+    const spy2 = mock(async () => {});
+    e1.persistence.destroy = spy1;
+    e2.persistence.destroy = spy2;
+
+    pool.dispose();
+
+    expect(spy1).toHaveBeenCalledTimes(1);
+    expect(spy2).toHaveBeenCalledTimes(1);
+  });
+
+  test('server-instance-mismatch calls clearData on every entry before destroying', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const doc1 = uniqueDocName('pp-mismatch');
+    const doc2 = uniqueDocName('pp-mismatch');
+    const e1 = pool.open(doc1);
+    const e2 = pool.open(doc2);
+    if (!e1?.persistence || !e2?.persistence) throw new Error('expected persistences');
+    pool.setActive(doc1);
+    e1.observerCleanup = () => {};
+
+    const clearSpy1 = mock(async () => {});
+    const clearSpy2 = mock(async () => {});
+    e1.persistence.clearData = clearSpy1;
+    e2.persistence.clearData = clearSpy2;
+
+    // server-instance-mismatch: buffer → clearData every entry → recycle
+    e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(clearSpy1).toHaveBeenCalledTimes(1);
+    expect(clearSpy2).toHaveBeenCalledTimes(1);
+    // Non-active doc2 is gone; active doc1 is re-opened with a fresh provider.
+    expect(pool.has(doc2)).toBe(false);
+    expect(pool.has(doc1)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MECHANISM-ONLY tests for buffer-and-replay (US-004 / Shape 2+). These
+// assert the state-vector capture + TAB_REPLAY_ORIGIN path. The end-to-end
+// behavior (burst survives mismatch-recycle) is covered by the T12
+// integration test in `packages/app/tests/integration/`.
+// ---------------------------------------------------------------------------
+describe('ProviderPool buffer-and-replay (US-004)', () => {
+  test('captures the last server-synced state vector on every synced event', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open(uniqueDocName('pp-sv'));
+    if (!entry) throw new Error('expected entry');
+    // Pre-set observerCleanup so onSynced skips setupObservers
+    entry.observerCleanup = () => {};
+    expect(entry.lastServerSyncedSV).toBeNull();
+
+    entry.provider.emit('synced', { state: true });
+    expect(entry.lastServerSyncedSV).toBeInstanceOf(Uint8Array);
+  });
+
+  test('TAB_REPLAY_ORIGIN is a stable frozen object', async () => {
+    const mod = await import('./provider-pool');
+    expect(mod.TAB_REPLAY_ORIGIN.kind).toBe('tab-replay');
+    expect(Object.isFrozen(mod.TAB_REPLAY_ORIGIN)).toBe(true);
   });
 });

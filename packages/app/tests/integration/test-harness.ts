@@ -368,6 +368,30 @@ export function wait(ms: number): Promise<void> {
 }
 
 /**
+ * Wipe every `ok-ydoc:` IDB database in the fake-indexeddb backend so
+ * subsequent tests in the same bun process start from a clean slate.
+ * fake-indexeddb persists state across tests within a single process;
+ * integration tests that share doc names (e.g., the common `'test-doc'`
+ * harness name) need this helper in `afterEach` to avoid hydrating the
+ * next test from stale state.
+ */
+export async function resetFakeIndexedDB(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  const dbs = await indexedDB.databases();
+  await Promise.all(
+    dbs.map((info) => {
+      if (info.name === undefined) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(info.name as string);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    }),
+  );
+}
+
+/**
  * Structural quiescence gate — resolves once the doc has NO in-flight
  * transactions AND no `afterAllTransactions` listener fires for N
  * consecutive microtasks. Use instead of wall-clock `wait(ms)` when a test

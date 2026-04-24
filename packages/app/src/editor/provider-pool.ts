@@ -2,7 +2,15 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import type { HocuspocusAuthToken } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
+import * as Y from 'yjs';
 import { mark } from '../lib/perf/mark';
+import {
+  asDocName,
+  type ClientPersistenceProvider,
+  captureStateVector,
+  computeUnsyncedUpdate,
+  createClientPersistence,
+} from './client-persistence';
 import { appendTraceContextToCollabUrl } from './collab-otel';
 import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -10,10 +18,33 @@ import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
 import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
+/**
+ * Opaque Y.Doc transaction origin applied when the pool replays a buffered
+ * update onto a freshly-recycled provider. Lets tests and future observers
+ * distinguish replay writes from user edits / server sync deliveries.
+ */
+export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
+
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
 interface PoolEntry {
   provider: HocuspocusProvider;
+  /**
+   * Client-side Yjs persistence attached to this entry's Y.Doc. Hydrates
+   * from IndexedDB on cold mount (instant Cmd-R), persists new updates to
+   * the `ok-ydoc:${docName}` database, and is the handle the mismatch
+   * recycle flow uses to `clearData()` before destroying the provider.
+   * Null after the entry has been torn down.
+   */
+  persistence: ClientPersistenceProvider | null;
+  /**
+   * Server state vector captured after every `synced` event. The delta
+   * between this and the Y.Doc's current state is the "unsynced buffer"
+   * that must survive `server-instance-mismatch` recycle — after clearData
+   * wipes the IDB, the buffered bytes are replayed onto the fresh
+   * provider's Y.Doc at its first `synced` event.
+   */
+  lastServerSyncedSV: Uint8Array | null;
   observerCleanup: (() => void) | null;
   syncState: SyncState;
   docName: string;
@@ -161,6 +192,15 @@ export class ProviderPool {
    * legacy token and accepts.
    */
   private cachedServerInstanceId: string | null = null;
+  /**
+   * Unsynced-edit buffer captured per-doc during a `server-instance-mismatch`
+   * recycle. Populated right before `clearData()` wipes IDB; drained at the
+   * fresh provider's FIRST post-recycle `synced` event when the replay
+   * listener applies the bytes back to the Y.Doc. In-memory only — a tab
+   * crash inside the recycle window loses the buffer (accepted trade-off
+   * per SPEC §6).
+   */
+  private readonly bufferedUpdates = new Map<string, Uint8Array>();
 
   constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
@@ -246,8 +286,17 @@ export class ProviderPool {
       ...(token !== undefined ? { token } : {}),
     });
 
+    // Attach client-side Yjs persistence to the provider's Y.Doc. Hydrates
+    // from `ok-ydoc:${docName}` on cold mount and persists every non-self
+    // update back. Additive to the server-side sidecar (Shape 2+ transition
+    // — US-005 will remove the sidecar once US-004 wires clearData into the
+    // mismatch-recycle path).
+    const persistence = createClientPersistence(asDocName(docName), provider.document);
+
     const entry: PoolEntry = {
       provider,
+      persistence,
+      lastServerSyncedSV: null,
       observerCleanup: null,
       syncState: 'connecting',
       docName,
@@ -270,6 +319,10 @@ export class ProviderPool {
       if (entry.tearingDown || this.entries.get(docName) !== entry) return;
       entry.syncState = 'synced';
       entry.hasSynced = true;
+      // Refresh the "last server acked" state vector on every sync event —
+      // the delta between this and the doc's current state is what the
+      // `server-instance-mismatch` recycle buffers before calling clearData.
+      entry.lastServerSyncedSV = captureStateVector(provider.document);
       // Cancel pending recycle — provider reconnected successfully
       if (entry.pendingRecycleTimer) {
         clearTimeout(entry.pendingRecycleTimer);
@@ -334,29 +387,34 @@ export class ProviderPool {
       }
     };
 
-    // CRDT server-restart recovery (US-002 / Commit 4): when the server's
-    // `onAuthenticate` throws with `reason: 'server-instance-mismatch'`, it
-    // means OUR Y.Doc carries ghost items from a prior server incarnation —
-    // Yjs sync is about to merge them additively under a fresh clientID and
-    // the document will duplicate. Null the cached ID so the next open()
-    // sends an empty claim (legacy path), then recycle every pool entry so
-    // each doc gets a fresh Y.Doc before sync. Other rejection reasons
-    // (future auth failures, etc.) are left to bubble through as
-    // syncPromise rejection — no recycle.
+    // CRDT server-restart recovery (Shape 2+): when the server's
+    // `onAuthenticate` throws with `reason: 'server-instance-mismatch'`,
+    // OUR Y.Doc and OUR IndexedDB carry ghost items from the prior server
+    // incarnation — letting Yjs sync merge them additively under the fresh
+    // server's state produces the content-duplication bug class.
     //
-    // Idempotence: after a server restart, every open provider fires its
-    // own authenticationFailed event in quick succession. The first one to
-    // arrive takes the recycle path; subsequent events find
-    // `cachedServerInstanceId` already null and short-circuit. Without the
-    // null-guard we'd recycle N² times (each event triggers N recycles,
-    // each recycle creates a fresh provider which itself may fire the
-    // event if the server rejects again — though in practice the second
-    // generation of providers carry no claim and the server accepts them).
-    const onAuthenticationFailed = ({ reason }: { reason: string }) => {
+    // The recycle flow is:
+    //   1. Buffer each entry's unsynced delta (client's own writes the
+    //      server hasn't yet acked) relative to its last-acked state vector.
+    //   2. `clearData()` every entry's persistence — wipes IDB. Load-bearing:
+    //      must run BEFORE the destroy/recycle path so the fresh provider
+    //      hydrates an EMPTY IDB before sync delivers the markdown-rebuilt
+    //      server state. Without this, the fresh Y.Doc rehydrates pre-
+    //      restart items and observer-bridge resync writes under the new
+    //      clientID produce 3x duplication.
+    //   3. `recycleAllEntries()` — destroys every provider + re-opens the
+    //      active doc with a fresh Y.Doc + fresh (empty) IDB.
+    //   4. On the fresh provider's FIRST `synced` event, replay the buffered
+    //      bytes back onto the Y.Doc so the user's unsynced edits survive.
+    //
+    // Idempotence: after a server restart, every open provider fires
+    // authenticationFailed in quick succession. The first call nulls the
+    // cached ID; subsequent calls find it already null and short-circuit.
+    const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
       if (reason !== 'server-instance-mismatch') return;
       if (this.cachedServerInstanceId === null) return;
       this.cachedServerInstanceId = null;
-      this.recycleAllEntries();
+      this.handleServerInstanceMismatch();
     };
 
     provider.on('status', onStatus);
@@ -364,11 +422,84 @@ export class ProviderPool {
     provider.on('disconnect', onDisconnect);
     provider.on('authenticationFailed', onAuthenticationFailed);
 
+    // Buffer-replay wiring: if this docName has a pending buffered update
+    // from a prior authenticationFailed recycle, apply it to the fresh
+    // Y.Doc on the first `synced` event. The listener self-detaches after
+    // firing once; if no buffered update exists for this docName, this is
+    // a no-op path. Origin `TAB_REPLAY_ORIGIN` lets observers distinguish
+    // replay writes from user edits / server sync deliveries.
+    const buffered = this.bufferedUpdates.get(docName);
+    if (buffered !== undefined) {
+      const replayOnce = (): void => {
+        provider.off('synced', replayOnce);
+        if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+        const current = this.bufferedUpdates.get(docName);
+        if (current === undefined) return;
+        this.bufferedUpdates.delete(docName);
+        Y.applyUpdate(provider.document, current, TAB_REPLAY_ORIGIN);
+      };
+      provider.on('synced', replayOnce);
+    }
+
     this.entries.set(docName, entry);
     this.touch(docName);
     this.notify();
 
     return entry;
+  }
+
+  /**
+   * Top of the `server-instance-mismatch` recycle flow. Split out of the
+   * event handler so the three steps — buffer, clearData, recycle — are
+   * sequenced with explicit awaits. Fire-and-forget at the call site: the
+   * returned promise is owned here; errors are logged structurally and
+   * never rethrown into Hocuspocus's event emitter.
+   */
+  private handleServerInstanceMismatch(): void {
+    // Snapshot entries BEFORE any async work — subsequent recycle mutates
+    // the map via destroyEntry → delete → re-open.
+    const snapshot = Array.from(this.entries.entries());
+
+    for (const [docName, poolEntry] of snapshot) {
+      if (poolEntry.tearingDown) continue;
+      const unsynced = computeUnsyncedUpdate(
+        poolEntry.provider.document,
+        poolEntry.lastServerSyncedSV,
+      );
+      if (unsynced.byteLength > 0) {
+        this.bufferedUpdates.set(docName, unsynced);
+      }
+    }
+
+    const clears: Promise<void>[] = [];
+    for (const [docName, poolEntry] of snapshot) {
+      const persistence = poolEntry.persistence;
+      if (poolEntry.tearingDown || persistence === null) continue;
+      clears.push(
+        persistence.clearData().catch((err: unknown) => {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-client-persistence-clear-failed',
+              docName,
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }),
+      );
+    }
+
+    Promise.all(clears)
+      .then(() => {
+        this.recycleAllEntries();
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          JSON.stringify({
+            event: 'ok-mismatch-recycle-failed',
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      });
   }
 
   /**
@@ -546,6 +677,22 @@ export class ProviderPool {
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
+
+    // Tear down client-side persistence BEFORE the provider. The synchronous
+    // part of y-indexeddb's `destroy()` runs `doc.off('update', _storeUpdate)`
+    // and `doc.off('destroy', this.destroy)` immediately, so by the time
+    // `provider.destroy()` runs (which calls `document.destroy()` internally)
+    // the persistence's listeners are gone — no recursive re-entry. The
+    // returned promise only covers the IDB connection close, which is safe
+    // to run asynchronously against a separate IDB handle. We intentionally
+    // do not `await` here — keeping `destroyEntry` synchronous preserves all
+    // call-site shapes.
+    const pendingPersistenceDestroy = entry.persistence?.destroy();
+    pendingPersistenceDestroy?.catch((err) => {
+      console.warn(`[ProviderPool] persistence destroy failed for ${entry.docName}:`, err);
+    });
+    entry.persistence = null;
+
     try {
       entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
     } catch (err) {
