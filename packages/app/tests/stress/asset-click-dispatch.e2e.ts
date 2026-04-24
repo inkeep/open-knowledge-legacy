@@ -34,6 +34,83 @@ async function getSourceText(page: Page): Promise<string> {
   });
 }
 
+/**
+ * Synthetic drag-drop of a File into the editor. Mirrors
+ * `asset-embed.e2e.ts`'s dropFileIntoEditor — dispatches dragover then
+ * drop so TipTap's FileHandler extension completes its event sequence.
+ */
+async function dropFileIntoEditor(
+  page: Page,
+  bytes: number[],
+  filename: string,
+  mime: string,
+): Promise<void> {
+  await page.evaluate(
+    ({ bytes: byteArr, filename: fn, mime: mt }) => {
+      const editor = document.querySelector('.ProseMirror') as HTMLElement | null;
+      if (!editor) throw new Error('no editor');
+      const file = new File([new Uint8Array(byteArr)], fn, { type: mt });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const rect = editor.getBoundingClientRect();
+      const cx = rect.left + Math.floor(rect.width / 2);
+      const cy = rect.top + Math.floor(rect.height / 2);
+      editor.dispatchEvent(
+        new DragEvent('dragover', {
+          dataTransfer: dt,
+          bubbles: true,
+          cancelable: true,
+          clientX: cx,
+          clientY: cy,
+        }),
+      );
+      editor.dispatchEvent(
+        new DragEvent('drop', {
+          dataTransfer: dt,
+          bubbles: true,
+          cancelable: true,
+          clientX: cx,
+          clientY: cy,
+        }),
+      );
+    },
+    { bytes, filename, mime },
+  );
+}
+
+// 1x1 transparent PNG — valid bytes, minimal size. Byte-identical across
+// test runs so dedup is predictable.
+const TINY_PNG_BYTES = Array.from(
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
+    'base64',
+  ),
+);
+
+// Minimal valid PDF bytes — PDF 1.4 header + catalog + trailer. Chromium's
+// built-in PDF viewer accepts this shape; adversarial tests would want a
+// larger corpus but a valid 1-page PDF is enough to verify server Content-
+// Type + URL resolution.
+const TINY_PDF_BYTES = Array.from(
+  Buffer.from(
+    `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj
+xref
+0 4
+0000000000 65535 f
+0000000010 00000 n
+0000000050 00000 n
+0000000090 00000 n
+trailer<</Size 4/Root 1 0 R>>
+startxref
+140
+%%EOF`,
+    'utf-8',
+  ),
+);
+
 test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', () => {
   let docName: string;
 
@@ -200,5 +277,162 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await page.click('span[data-link]');
     const openedPage = await context.waitForEvent('page', { timeout: 1_000 }).catch(() => null);
     expect(openedPage).toBeNull();
+  });
+
+  // ── 2026-04-24 additions (Bug B/C + Bug A regression guards) ───────────
+  //
+  // The existing P9.1..P9.15 scenarios all seed docs at the content ROOT,
+  // where the doc-relative `<img src>` / `<a href>` coincidentally matches
+  // the server-absolute URL (everything is at `/`). Under hash routing
+  // (editor URL `http://localhost:<port>/#/docs/sub/notes`), the browser
+  // resolves relative URLs against `location.pathname === '/'`, not
+  // against the doc's subdirectory. The bugs surface only when the doc
+  // lives at a non-root path.
+  //
+  // These scenarios pin the user-observable behavior: subdir asset drops
+  // must render (image decodes, PDF tab serves application/pdf), and
+  // `.md` drops must resolve against case-preserved cache entries.
+
+  test('P9.17: subdirectory PNG drop — rendered <img> actually loads (naturalWidth > 0)', async ({
+    page,
+    api,
+  }) => {
+    // Override the root-level docName from beforeEach — use a subdir doc.
+    const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
+    await api.createPage(`${subdirDoc}.md`);
+    await api.replaceDoc(subdirDoc, '# Subdir doc\n');
+    await page.goto(`/#/${subdirDoc}`);
+    await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
+    await page.click('.ProseMirror');
+
+    await dropFileIntoEditor(page, TINY_PNG_BYTES, 'photo.png', 'image/png');
+
+    // Wait for Y.Text to carry the `![[photo.png]]` ref — confirms drop
+    // was consumed by the editor (no client-side crash / wrong shape).
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 5_000 })
+      .toContain('photo.png');
+
+    const img = page.locator('.ProseMirror img').first();
+    await img.waitFor({ state: 'attached', timeout: 5_000 });
+
+    // THE assertion: naturalWidth > 0 means the bytes loaded + decoded.
+    // Pre-fix the <img src> points at root-level `/photo.png` which is
+    // served by Vite's SPA fallback as text/html (not image/png) — the
+    // browser fails to decode, naturalWidth stays 0. The regression
+    // guard catches any future change that breaks subdir-doc image URLs.
+    await expect
+      .poll(
+        async () => {
+          return await img.evaluate((el) => (el as HTMLImageElement).naturalWidth);
+        },
+        { timeout: 5_000, message: 'Subdir-doc PNG drop must render (bytes decoded)' },
+      )
+      .toBeGreaterThan(0);
+  });
+
+  test('P9.18: subdirectory PDF drop — new tab URL serves application/pdf (not text/html SPA fallback)', async ({
+    page,
+    api,
+    context,
+  }) => {
+    // Parallel scenario for non-image asset. PDF drops emit a text + link
+    // mark (wikiembed post-roundtrip) or a transient <a data-wiki-embed>
+    // at drop time. Clicking opens via window.open() → resolves against
+    // location.origin + hash-path-is-`/` → wrong URL → SPA fallback →
+    // blank tab.
+    const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
+    await api.createPage(`${subdirDoc}.md`);
+    await api.replaceDoc(subdirDoc, '# Subdir doc\n');
+    await page.goto(`/#/${subdirDoc}`);
+    await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
+    await page.click('.ProseMirror');
+
+    await dropFileIntoEditor(page, TINY_PDF_BYTES, 'doc.pdf', 'application/pdf');
+
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 5_000 })
+      .toContain('doc.pdf');
+
+    // The chip is the transient wikiLinkEmbed `<a>` at drop time. Its
+    // `target="_blank"` makes click open a new tab via window.open.
+    const chip = page.locator('.ProseMirror a[data-wiki-embed]').first();
+    await chip.waitFor({ state: 'visible', timeout: 5_000 });
+
+    const [newPage] = await Promise.all([
+      context.waitForEvent('page', { timeout: 5_000 }),
+      chip.click(),
+    ]);
+    await newPage.waitForLoadState('load').catch(() => {
+      // PDF tabs don't always fire a traditional 'load' — the built-in
+      // viewer runs its own pipeline. Fallback: request the URL directly
+      // to verify Content-Type.
+    });
+
+    // Verify the server served the PDF, not a text/html SPA fallback. The
+    // response headers are authoritative — the actual render depends on
+    // Chromium's built-in PDF viewer which we can't introspect directly.
+    const response = await page.request.get(newPage.url());
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type'] ?? '').toMatch(/^application\/pdf/);
+  });
+
+  test('P9.20: `.md` drop with case-preserved basename — chip resolves against existing doc', async ({
+    page,
+    api,
+  }) => {
+    // Bug A regression guard. Scenario: an existing doc `CaseSensitive`
+    // (cap-C, mixed-case) is in the cache. User drops `CaseSensitive.md`.
+    // Drop flow: `pickInsertShape('CaseSensitive.md')` → `wiki-link` kind;
+    // `buildUnresolvedWikiLinkAttrs('CaseSensitive')` → target='casesensitive'
+    // (lowercased). Pre-fix: `isResolvedWikiLinkTarget('casesensitive',
+    // {CaseSensitive, ...})` returns false → chip shows as unresolved
+    // (data-resolution-state="unresolved" or missing). Post-fix: case-
+    // insensitive match returns true → chip resolved.
+    //
+    // Use a unique cap-case basename so no case-collision with pre-existing
+    // docs in the fixture.
+    const existingBasename = `CaseCheck${randomUUID().slice(0, 6)}`;
+    await api.createPage(`${existingBasename}.md`);
+    await api.replaceDoc(existingBasename, '# Target doc\n');
+
+    // Drop an .md file whose basename matches the case-preserved existing
+    // docName. beforeEach already navigated to `docName` and clicked into
+    // the editor.
+    await dropFileIntoEditor(
+      page,
+      Array.from(Buffer.from(`# ${existingBasename}\n`, 'utf-8')),
+      `${existingBasename}.md`,
+      'text/markdown',
+    );
+
+    // Y.Text should contain the wiki-link ref. Exact serialization is
+    // `[[<lowercased-slug>|<case-preserved-alias>]]` today (target slug +
+    // alias) — assert via substring so future slug-format changes don't
+    // brittle-break this regression guard.
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 5_000 })
+      .toContain(existingBasename);
+
+    // Chip rendered with `data-link role="link"`. Resolution state is
+    // exposed as `data-resolution-state` attribute on the chip (see
+    // `link-resolution-decoration.ts`). Pre-fix: 'unresolved'; post-fix:
+    // 'resolved'.
+    const chip = page.locator('span[data-link]').first();
+    await chip.waitFor({ state: 'visible', timeout: 5_000 });
+
+    await expect
+      .poll(
+        async () => {
+          return await chip.getAttribute('data-resolution-state');
+        },
+        {
+          timeout: 5_000,
+          message: `Chip for dropped ${existingBasename}.md must resolve against case-preserved cache entry`,
+        },
+      )
+      .toBe('resolved');
   });
 });
