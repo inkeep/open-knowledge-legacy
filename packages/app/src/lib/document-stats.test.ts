@@ -31,6 +31,12 @@ describe('computeBodyStats', () => {
     expect(computeBodyStats('  hello  world  ').words).toBe(2);
   });
 
+  test('markdown syntax tokens (#, >, ---) are not counted as words', () => {
+    expect(computeBodyStats('# test').words).toBe(1);
+    expect(computeBodyStats('> a quote').words).toBe(2);
+    expect(computeBodyStats('--- separator ---').words).toBe(1);
+  });
+
   test('frontmatter-only document has zero body stats', () => {
     expect(computeBodyStats('---\ntitle: Test\ntags: [a, b]\n---\n')).toEqual({
       words: 0,

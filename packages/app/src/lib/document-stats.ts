@@ -15,8 +15,16 @@ export const EMPTY_STATS: DocumentStats = {
 /** CJK / Thai / Khmer etc. have no whitespace word boundaries — detect and route to Intl.Segmenter. */
 const NON_SPACE_SCRIPT_RE = /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯฀-๿ក-៿]/;
 
+/** Tokens like `#`, `>`, `---` are pure markdown syntax — exclude them from word count. */
+const WORD_LIKE_RE = /[\p{L}\p{N}]/u;
+
 function countWordsByWhitespace(text: string): number {
-  return text ? text.split(/\s+/).length : 0;
+  if (!text) return 0;
+  let count = 0;
+  for (const tok of text.split(/\s+/)) {
+    if (WORD_LIKE_RE.test(tok)) count++;
+  }
+  return count;
 }
 
 function countWordsBySegmenter(text: string): number {
