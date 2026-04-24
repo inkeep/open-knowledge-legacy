@@ -155,3 +155,7 @@ Everything except Lima is auto-detected by `bootstrap.sh`.
 - Nothing in here modifies product code (`packages/`, `docs/`, etc.) or build/test config (`turbo.json`, `biome.jsonc`).
 - Recipes live outside the turbo graph — no impact on `bun run check` / `bun run build`.
 - `bootstrap.sh` only writes to: `~/.claude/settings.json` (backed up), your shell rc (backed up), and container image storage.
+
+## Designed to be extractable
+
+The tooling here is general Claude Code infrastructure, not Open-Knowledge-specific. When the time comes to share with teammates via a dedicated repo + `curl | bash` installer, the extraction path is already scaffolded: see [`packaging/`](packaging/README.md) for the playbook. No work in this directory should need to be redone.
