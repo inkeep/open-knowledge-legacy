@@ -10,6 +10,7 @@ import {
   Dialog as DialogRoot,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import type {
   OkScaffoldPlan,
   OkSeedApplyResult,
@@ -28,6 +29,8 @@ type DialogPhase =
   | { kind: 'error'; message: string }
   | { kind: 'applying'; plan: OkScaffoldPlan };
 
+type RootChoice = 'project-root' | 'subfolder';
+
 /**
  * Runtime adapter that returns the right transport for plan/apply — Electron
  * IPC when the desktop bridge is populated, otherwise HTTP fetch to the
@@ -38,13 +41,14 @@ function seedClient() {
   const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
   if (okDesktop?.seed) {
     return {
-      plan: () => okDesktop.seed.plan(),
+      plan: (rootDir?: string) => okDesktop.seed.plan(rootDir),
       apply: (plan: OkScaffoldPlan) => okDesktop.seed.apply(plan),
     };
   }
   return {
-    plan: async (): Promise<OkSeedPlanResult> => {
-      const res = await fetch('/api/seed/plan');
+    plan: async (rootDir?: string): Promise<OkSeedPlanResult> => {
+      const qs = rootDir ? `?rootDir=${encodeURIComponent(rootDir)}` : '';
+      const res = await fetch(`/api/seed/plan${qs}`);
       return (await res.json()) as OkSeedPlanResult;
     },
     apply: async (plan: OkScaffoldPlan): Promise<OkSeedApplyResult> => {
@@ -68,35 +72,55 @@ function seedClient() {
  */
 export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
+  // 'project-root' scaffolds at `.`; 'subfolder' uses the typed `subfolder` value.
+  const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
+  const [subfolder, setSubfolder] = useState<string>('brain');
 
+  // Reset form whenever the dialog opens so users get a predictable starting
+  // state (rather than stale values from a previous cancel).
+  useEffect(() => {
+    if (open) {
+      setRootChoice('project-root');
+      setSubfolder('brain');
+    }
+  }, [open]);
+
+  // Re-plan whenever the chosen root changes. Debounced lightly so typing in
+  // the subfolder field doesn't fire a request per keystroke.
   useEffect(() => {
     if (!open) return;
     setPhase({ kind: 'loading' });
 
+    const effectiveRoot = rootChoice === 'project-root' ? undefined : subfolder.trim() || undefined;
+
     let cancelled = false;
-    seedClient()
-      .plan()
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.ok) {
-          setPhase({ kind: 'error', message: result.error.message });
-          return;
-        }
-        const hasWork = result.plan.created.length > 0 || result.plan.configEdits.length > 0;
-        setPhase(
-          hasWork
-            ? { kind: 'plan', plan: result.plan }
-            : { kind: 'already-seeded', plan: result.plan },
-        );
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setPhase({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-      });
+    const timer = setTimeout(() => {
+      seedClient()
+        .plan(effectiveRoot)
+        .then((result) => {
+          if (cancelled) return;
+          if (!result.ok) {
+            setPhase({ kind: 'error', message: result.error.message });
+            return;
+          }
+          const hasWork = result.plan.created.length > 0 || result.plan.configEdits.length > 0;
+          setPhase(
+            hasWork
+              ? { kind: 'plan', plan: result.plan }
+              : { kind: 'already-seeded', plan: result.plan },
+          );
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setPhase({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        });
+    }, 200);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [open]);
+  }, [open, rootChoice, subfolder]);
 
   async function handleApply() {
     if (phase.kind !== 'plan') return;
@@ -130,6 +154,13 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
+        <RootPicker
+          choice={rootChoice}
+          subfolder={subfolder}
+          onChoiceChange={setRootChoice}
+          onSubfolderChange={setSubfolder}
+        />
+
         <SeedDialogBody phase={phase} />
 
         <DialogFooter>
@@ -147,6 +178,67 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
         </DialogFooter>
       </DialogContent>
     </DialogRoot>
+  );
+}
+
+function RootPicker({
+  choice,
+  subfolder,
+  onChoiceChange,
+  onSubfolderChange,
+}: {
+  choice: RootChoice;
+  subfolder: string;
+  onChoiceChange: (next: RootChoice) => void;
+  onSubfolderChange: (next: string) => void;
+}) {
+  return (
+    <div className="space-y-2 border-y py-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Where should the brain live?
+      </p>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="radio"
+          name="seed-root-choice"
+          checked={choice === 'project-root'}
+          onChange={() => onChoiceChange('project-root')}
+          className="mt-1"
+        />
+        <span>
+          <span className="font-medium">Project root</span>
+          <span className="block text-xs text-muted-foreground">
+            Scaffold the three folders directly under this project.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="radio"
+          name="seed-root-choice"
+          checked={choice === 'subfolder'}
+          onChange={() => onChoiceChange('subfolder')}
+          className="mt-1"
+        />
+        <span className="flex-1">
+          <span className="font-medium">In a subfolder</span>
+          <span className="block text-xs text-muted-foreground">
+            Created if missing. Reuses the folder if it already exists.
+          </span>
+          <Input
+            value={subfolder}
+            onChange={(e) => onSubfolderChange(e.target.value)}
+            onFocus={() => onChoiceChange('subfolder')}
+            placeholder="brain"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            className="mt-1.5 font-mono text-xs"
+            disabled={choice !== 'subfolder'}
+          />
+        </span>
+      </label>
+    </div>
   );
 }
 

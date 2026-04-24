@@ -35,6 +35,13 @@ export interface FileEntry {
   /** Path relative to the project root. */
   path: string;
   kind: 'folder' | 'file';
+  /**
+   * Template id used by apply() to look up the file content. Stable across
+   * `rootDir` choices — the path may be `log.md` or `brain/log.md` depending
+   * on where the user scaffolds, but the template id is always `log.md`.
+   * Required for files; omitted for folders.
+   */
+  template?: string;
   /** For files, first N lines of the content to be written. Omitted for folders. */
   contentPreview?: string;
 }
@@ -100,9 +107,16 @@ export interface ApplyError {
 
 /**
  * Options accepted by planSeed() / applySeed(). `projectDir` defaults to cwd.
+ *
+ * `rootDir` is the folder (relative to `projectDir`) where the knowledge-base
+ * starter pack is scaffolded. Defaults to `.` (project root) which matches the
+ * historical behavior. Pass e.g. `'brain'` to place `external-sources/`,
+ * `research/`, `articles/`, and `log.md` under `brain/`, with config.yml
+ * `folders:` entries scoped to `brain/external-sources/**` etc.
  */
 export interface SeedOptions {
   projectDir?: string;
+  rootDir?: string;
 }
 
 /**

@@ -127,7 +127,7 @@ const bridge: OkDesktopBridge = {
   },
 
   seed: {
-    plan: () => invoke('ok:seed:plan'),
+    plan: (rootDir) => invoke('ok:seed:plan', rootDir),
     apply: (plan) => invoke('ok:seed:apply', plan),
   },
 

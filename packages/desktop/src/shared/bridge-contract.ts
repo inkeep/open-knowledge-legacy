@@ -207,8 +207,12 @@ export interface OkDesktopBridge {
   };
 
   seed: {
-    /** Compute a scaffold plan for the current window's project (read-only). */
-    plan(): Promise<OkSeedPlanResult>;
+    /**
+     * Compute a scaffold plan for the current window's project (read-only).
+     * `rootDir` is a project-relative subfolder; defaults to the project root
+     * when omitted, matching the historical behavior.
+     */
+    plan(rootDir?: string): Promise<OkSeedPlanResult>;
     /** Apply a ScaffoldPlan — writes folders, log.md, and config.yml entries. */
     apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
   };

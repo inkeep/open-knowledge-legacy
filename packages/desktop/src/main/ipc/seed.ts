@@ -48,9 +48,11 @@ interface SeedIpcDeps {
 
 /**
  * `ok:seed:plan` handler — compute a ScaffoldPlan for the current window's
- * project. Pure read; never writes to disk.
+ * project. Pure read; never writes to disk. `rootDir` (relative to the
+ * project root) scopes the scaffold to a subfolder; defaults to `.` (project
+ * root, the historical behavior).
  */
-export async function handleSeedPlan(deps: SeedIpcDeps): Promise<SeedPlanResult> {
+export async function handleSeedPlan(deps: SeedIpcDeps, rootDir?: string): Promise<SeedPlanResult> {
   const projectRoot = deps.resolveProjectRoot();
   if (!projectRoot) {
     return {
@@ -64,7 +66,7 @@ export async function handleSeedPlan(deps: SeedIpcDeps): Promise<SeedPlanResult>
 
   const plan = deps.planSeed ?? planSeedImpl;
   try {
-    const result = await plan({ projectDir: projectRoot });
+    const result = await plan({ projectDir: projectRoot, rootDir });
     return { ok: true, plan: result };
   } catch (err) {
     if (err instanceof SeedPrerequisiteError) {

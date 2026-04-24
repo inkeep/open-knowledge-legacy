@@ -208,7 +208,7 @@ export interface OkDesktopBridge {
     close(): Promise<void>;
   };
   seed: {
-    plan(): Promise<OkSeedPlanResult>;
+    plan(rootDir?: string): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
   update: {

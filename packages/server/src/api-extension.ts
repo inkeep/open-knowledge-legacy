@@ -5333,14 +5333,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Gated on `checkLocalOpSecurity` because the operation mutates the local
   // filesystem; same contract as /api/local-op/* and /api/installed-agents.
 
+  /**
+   * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
+   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
+   * (absolute path, escape segments) surface as `{ ok: false, error }` so
+   * the dialog can render the message without an HTTP failure.
+   */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const rootDir = url.searchParams.get('rootDir') ?? undefined;
     try {
-      const plan = await planSeed({ projectDir: contentDir });
+      const plan = await planSeed({ projectDir: contentDir, rootDir });
       json(res, 200, { ok: true, plan });
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
@@ -5350,8 +5358,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         return;
       }
+      // rootDir-validation rejections come through as plain Errors. Return as
+      // an `internal`-kind result with a 200 (not 500) so the dialog can
+      // render the message inline rather than treat it as a transport failure.
       const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      json(res, 200, { ok: false, error: { kind: 'internal', message } });
     }
   }
 
@@ -5377,6 +5388,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
+      // The plan already has rootDir baked into its entries — apply only
+      // needs projectDir.
       const result = await applySeed(plan, { projectDir: contentDir });
       json(res, 200, { ok: true, result });
     } catch (err) {

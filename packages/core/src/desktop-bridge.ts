@@ -367,7 +367,7 @@ export interface OkDesktopBridge {
    * (`ok seed`). See SPEC 2026-04-23-ok-seed-scaffold.
    */
   seed: {
-    plan(): Promise<OkSeedPlanResult>;
+    plan(rootDir?: string): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
 

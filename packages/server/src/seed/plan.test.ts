@@ -152,6 +152,98 @@ describe('planSeed — partial overlap', () => {
   });
 });
 
+describe('planSeed — rootDir scoping', () => {
+  test('scaffolds starter folders + log.md under a brand-new rootDir', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+
+    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
+    // The root itself comes first, then the three starter folders scoped under it.
+    expect(createdFolders).toEqual([
+      'brain',
+      'brain/external-sources',
+      'brain/research',
+      'brain/articles',
+    ]);
+
+    const createdFiles = plan.created.filter((e) => e.kind === 'file').map((e) => e.path);
+    expect(createdFiles).toEqual(['brain/log.md']);
+
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'brain/external-sources/**',
+      'brain/research/**',
+      'brain/articles/**',
+    ]);
+  });
+
+  test('does not re-create an existing rootDir but still scaffolds children', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    mkdirSync(join(testDir, 'knowledge'), { recursive: true });
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'knowledge' });
+
+    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
+    expect(createdFolders).not.toContain('knowledge');
+    expect(createdFolders).toContain('knowledge/external-sources');
+    expect(plan.skipped.some((s) => s.path === 'knowledge')).toBe(true);
+  });
+
+  test('rootDir="." is equivalent to the default project-root scaffold', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const a = await planSeed({ projectDir: testDir });
+    const b = await planSeed({ projectDir: testDir, rootDir: '.' });
+    expect(a).toEqual(b);
+  });
+
+  test('normalizes trailing slashes and leading ./ in rootDir', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const a = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    const b = await planSeed({ projectDir: testDir, rootDir: './brain/' });
+    expect(a.created.map((e) => e.path)).toEqual(b.created.map((e) => e.path));
+    expect(a.configEdits.map((e) => e.folderMatch)).toEqual(
+      b.configEdits.map((e) => e.folderMatch),
+    );
+  });
+
+  test('rejects absolute rootDir', async () => {
+    scaffoldOkDir(testDir);
+    await expect(planSeed({ projectDir: testDir, rootDir: '/tmp/escape' })).rejects.toThrow(
+      /relative to the project/,
+    );
+  });
+
+  test('rejects rootDir with .. escape segments', async () => {
+    scaffoldOkDir(testDir);
+    await expect(planSeed({ projectDir: testDir, rootDir: '../sibling' })).rejects.toThrow(
+      /must not contain '\.\.'/,
+    );
+  });
+
+  test('rootDir config edits only collide with matching-scoped entries', async () => {
+    // An existing unscoped `external-sources/**` entry should NOT cause the
+    // scoped `brain/external-sources/**` to be skipped — they're distinct.
+    scaffoldOkDir(
+      testDir,
+      `folders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Root scaffold\n`,
+    );
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'brain/external-sources/**',
+      'brain/research/**',
+      'brain/articles/**',
+    ]);
+  });
+
+  test('nested rootDir path works', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'areas/personal' });
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'areas/personal/external-sources/**',
+      'areas/personal/research/**',
+      'areas/personal/articles/**',
+    ]);
+  });
+});
+
 describe('planSeed — corrupt config.yml', () => {
   test('surfaces a warning on unreadable config.yml but still returns a plan', async () => {
     scaffoldOkDir(testDir, ': invalid yaml :::\n');
