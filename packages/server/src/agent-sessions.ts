@@ -480,6 +480,20 @@ export class AgentSessionManager {
       },
     );
 
+    // Stamp wall-clock capture time on each StackItem's meta so the Activity
+    // Panel can order bursts chronologically (SPEC FR-P10). Y.UndoManager
+    // does not auto-populate meta.time — the `stackItemAdded` event is the
+    // documented hook (see `node_modules/yjs/src/utils/UndoManager.js`). We
+    // also handle `stackItemUpdated` (fired when writes within captureTimeout
+    // merge into an existing StackItem) so the latest merged write's ts
+    // becomes the burst's `lastTs` signal.
+    // Y.StackItem is not exported from yjs public API — use structural type.
+    const stampTime = ({ stackItem }: { stackItem: { meta: Map<unknown, unknown> } }): void => {
+      stackItem.meta.set('time', Date.now());
+    };
+    um.on('stack-item-added', stampTime);
+    um.on('stack-item-updated', stampTime);
+
     log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
 
     return { dc, origin, undoOrigin, um, agentId, docName };
