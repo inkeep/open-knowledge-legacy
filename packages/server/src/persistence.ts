@@ -635,7 +635,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
         },
       ).finally(() => {
-        loadDurationHist?.record((Date.now() - started) / 1000, { 'doc.name': documentName });
+        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
+        // would blow up Prometheus label storage at scale. The span carries it.
+        loadDurationHist?.record((Date.now() - started) / 1000);
       });
     },
 
@@ -816,7 +818,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           scheduleGitCommit();
         },
       ).finally(() => {
-        storeDurationHist?.record((Date.now() - started) / 1000, { 'doc.name': documentName });
+        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
+        // would blow up Prometheus label storage at scale. The span carries it.
+        storeDurationHist?.record((Date.now() - started) / 1000);
       });
     },
   };

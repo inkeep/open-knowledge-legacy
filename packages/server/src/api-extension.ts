@@ -74,7 +74,7 @@ import { readUiLock } from './ui-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
-import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import simpleGit from 'simple-git';
 import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
@@ -140,6 +140,21 @@ import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.t
 import type { SyncEngine } from './sync-engine.ts';
 import { getMeter, getTracer } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
+
+// Cache the HTTP duration histogram at module scope — lazy-init at first use
+// so the meter is a real meter (post-`initTelemetry`), not the pre-init no-op.
+// Recreating the histogram every request allocates + registers a fresh
+// instrument on every hit (PR review finding 2026-04-24).
+let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
+function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
+  if (!_httpDurationHist) {
+    _httpDurationHist = getMeter().createHistogram('http.server.request.duration', {
+      description: 'HTTP server request duration in seconds',
+      unit: 's',
+    });
+  }
+  return _httpDurationHist;
+}
 
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
@@ -5332,16 +5347,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             } finally {
               span.end();
               const durSec = (Date.now() - started) / 1000;
-              getMeter()
-                .createHistogram('http.server.request.duration', {
-                  description: 'HTTP server request duration in seconds',
-                  unit: 's',
-                })
-                .record(durSec, {
-                  'http.request.method': method,
-                  'http.route': routeTemplate,
-                  'http.response.status_code': response.statusCode,
-                });
+              httpDurationHist().record(durSec, {
+                'http.request.method': method,
+                'http.route': routeTemplate,
+                'http.response.status_code': response.statusCode,
+              });
             }
           },
         ),
@@ -5349,9 +5359,3 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     },
   };
 }
-
-/**
- * Lazy accessor for the trace context API — used by tests that want to assert
- * the server extracts incoming `traceparent` headers.
- */
-const _otelInternals = { trace, context, propagation };

@@ -27,7 +27,7 @@
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "210 kB",
+      "limit": "215 kB",
       "gzip": true
     },
     {

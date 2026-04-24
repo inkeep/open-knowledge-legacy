@@ -16,8 +16,8 @@
  */
 
 import type { WriteFileOptions } from 'node:fs';
-import { mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from './telemetry.ts';
@@ -103,18 +103,6 @@ export async function tracedMkdir(
   });
 }
 
-async function _tracedUnlink(path: string): Promise<void> {
-  return withSpan('fs.unlink', { attributes: buildAttrs('unlink', path) }, async () => {
-    await unlink(path);
-  });
-}
-
-async function _tracedRm(path: string, options?: Parameters<typeof rm>[1]): Promise<void> {
-  return withSpan('fs.rm', { attributes: buildAttrs('rm', path) }, async () => {
-    await rm(path, options);
-  });
-}
-
 // ── sync wrappers ───────────────────────────────────────────────────────────
 
 export function tracedWriteFileSync(
@@ -155,12 +143,3 @@ export function tracedUnlinkSync(path: string): void {
     unlinkSync(path);
   });
 }
-
-function _tracedRmSync(path: string, options?: Parameters<typeof rmSync>[1]): void {
-  withSpanSync('fs.rmSync', { attributes: buildAttrs('rmSync', path) }, () => {
-    rmSync(path, options);
-  });
-}
-/** Re-export read helpers that don't need instrumentation (convenience). */
-// Direct pass-through (unchanged behavior, but imported from one place). Used by callers that
-// want telemetry-wrapped writes but still need the raw read helpers from the same module.

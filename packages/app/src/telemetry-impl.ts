@@ -26,6 +26,7 @@ import { UserInteractionInstrumentation } from '@opentelemetry/instrumentation-u
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { BatchSpanProcessor, WebTracerProvider } from '@opentelemetry/sdk-trace-web';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { ATTR_DEPLOYMENT_ENVIRONMENT_NAME } from '@opentelemetry/semantic-conventions/incubating';
 
 const TRACER_NAME = 'open-knowledge-app';
 
@@ -47,7 +48,7 @@ export function install(): void {
       resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: 'open-knowledge-app',
         [ATTR_SERVICE_VERSION]: env?.VITE_APP_VERSION ?? 'dev',
-        'deployment.environment': env?.MODE ?? 'dev',
+        [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: env?.MODE ?? 'dev',
       }),
       spanProcessors: [
         new BatchSpanProcessor(new OTLPTraceExporter({ url: `${baseUrl}/v1/traces` }), {
