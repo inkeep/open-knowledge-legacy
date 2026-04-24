@@ -41,10 +41,12 @@ export function install(): void {
   if (installed) return;
   installed = true;
 
+  let provider: WebTracerProvider | null = null;
+  let registered = false;
   try {
     const baseUrl = collectorUrl();
     const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-    const provider = new WebTracerProvider({
+    provider = new WebTracerProvider({
       resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: 'open-knowledge-app',
         [ATTR_SERVICE_VERSION]: env?.VITE_APP_VERSION ?? 'dev',
@@ -60,6 +62,7 @@ export function install(): void {
     // Default StackContextManager — synchronous, good enough for React 19
     // + fetch + user-interaction. ZoneContextManager is not worth the 40 KB.
     provider.register();
+    registered = true;
 
     registerInstrumentations({
       instrumentations: [
@@ -84,6 +87,14 @@ export function install(): void {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[otel] frontend telemetry init failed — continuing without', err);
+    // Tear down any partial registration so a retry doesn't double-register.
+    // `installed = false` alone doesn't unwind provider.register() + span
+    // processors / exporter batch flush timers already wired up.
+    if (registered && provider) {
+      void provider.shutdown().catch(() => {
+        /* best-effort — we're already in the error path */
+      });
+    }
     installed = false;
   }
 }

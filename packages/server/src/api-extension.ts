@@ -75,6 +75,14 @@ import { readUiLock } from './ui-lock.ts';
 export { extractPageTitle } from './page-identity.ts';
 
 import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import {
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_HTTP_ROUTE,
+  ATTR_URL_PATH,
+  ATTR_URL_SCHEME,
+  ATTR_USER_AGENT_ORIGINAL,
+} from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
 import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
 import {
@@ -5311,11 +5319,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           {
             kind: SpanKind.SERVER,
             attributes: {
-              'http.request.method': method,
-              'http.route': routeTemplate,
-              'url.path': url,
-              'url.scheme': 'http',
-              'user_agent.original': request.headers['user-agent'] ?? '',
+              [ATTR_HTTP_REQUEST_METHOD]: method,
+              [ATTR_HTTP_ROUTE]: routeTemplate,
+              [ATTR_URL_PATH]: url,
+              [ATTR_URL_SCHEME]: 'http',
+              [ATTR_USER_AGENT_ORIGINAL]: request.headers['user-agent'] ?? '',
             },
           },
           async (span) => {
@@ -5333,7 +5341,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               }
 
               const status = response.statusCode;
-              span.setAttribute('http.response.status_code', status);
+              span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, status);
               if (status >= 500) {
                 span.setStatus({ code: SpanStatusCode.ERROR, message: `status ${status}` });
               }
@@ -5348,9 +5356,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               span.end();
               const durSec = (Date.now() - started) / 1000;
               httpDurationHist().record(durSec, {
-                'http.request.method': method,
-                'http.route': routeTemplate,
-                'http.response.status_code': response.statusCode,
+                [ATTR_HTTP_REQUEST_METHOD]: method,
+                [ATTR_HTTP_ROUTE]: routeTemplate,
+                [ATTR_HTTP_RESPONSE_STATUS_CODE]: response.statusCode,
               });
             }
           },

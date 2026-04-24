@@ -1,6 +1,7 @@
 import type { Attributes, Meter, Span, SpanOptions, Tracer } from '@opentelemetry/api';
-import { context, metrics, SpanStatusCode, trace } from '@opentelemetry/api';
+import { context, metrics, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
@@ -63,6 +64,15 @@ export function initTelemetry(): { tracer: Tracer; meter: Meter } {
       spanProcessors: [new BatchSpanProcessor(traceExporter)],
     });
     trace.setGlobalTracerProvider(tp);
+
+    // Register the W3C trace-context propagator so `propagation.extract()`
+    // can parse incoming `traceparent` headers (browser → server span
+    // chaining). `setGlobalTracerProvider` alone leaves the no-op propagator
+    // in place — `propagation.extract()` would return the active context
+    // unchanged, and every server-side HTTP span would become a root span
+    // disconnected from the browser trace. sdk-trace-node's `register()`
+    // does this automatically; sdk-trace-base/BasicTracerProvider does not.
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
     // Metrics
     const metricExporter = new OTLPMetricExporter();
