@@ -1,20 +1,20 @@
 /**
- * `ok install-skill` — build + install the Open Knowledge Agent Skill into
- * Claude Desktop / Cowork via the `.skill` file association.
+ * `ok install-skill` — build + open Claude Desktop to install the Open
+ * Knowledge Agent Skill for Claude Chat & Cowork.
  *
- * Default flow (2-click install):
+ * Flow:
  *   1. Build `openknowledge.skill` from the bundled SKILL.md source.
  *   2. Write to ~/Downloads/openknowledge.skill (or `--out <path>`).
- *   3. Invoke the OS file association via `open` / `start` / `xdg-open` so
- *      Claude Desktop's native install dialog appears.
- *   4. User clicks Install in Claude's dialog. Done.
+ *   3. Invoke the OS file association (`open` / `start` / `xdg-open`) —
+ *      this opens the Claude Desktop App but does NOT auto-install.
+ *   4. User completes the manual upload inside the Claude Desktop App:
+ *      Customize → Skills → + → Create skill → Upload skill → pick file.
  *
  * Why this exists: `ok init` installs the skill into Claude Code via
- * `npx skills add`, but that flow doesn't reach Claude Desktop / Cowork
- * (their VM runs an isolated filesystem). Users who installed
- * `@inkeep/open-knowledge` via npm don't have the repo cloned, so
- * `bun run build:skill-zip` isn't available to them. This command packages
- * the build + handoff into a single invocation.
+ * `npx skills add`, but that flow doesn't reach Claude Chat or Cowork
+ * modes (they read from a separate, isolated Skills list inside the
+ * Claude Desktop App). This command produces the `.skill` artifact
+ * and opens the app so the user can complete the upload.
  *
  * Single source of truth: the `buildSkillZip` implementation lives in
  * `@inkeep/open-knowledge-server` and is also used by the CI release
@@ -173,7 +173,9 @@ export async function runInstallSkill(
       message: [
         success(`Built ${build.outputPath}`),
         dim(`  ${build.size} bytes  •  sha256 ${build.sha256.slice(0, 12)}…`),
-        info(`  Double-click the file to install, or right-click → Open With → Claude.`),
+        info(
+          `  Open the Claude Desktop App, then: ${accent('Customize → Skills → + → Create skill → Upload skill')} → pick the file.`,
+        ),
       ].join('\n'),
       exitCode: 0,
     };
@@ -193,7 +195,9 @@ export async function runInstallSkill(
       message: [
         success(`Built ${build.outputPath}`),
         warning(`  Handoff failed: ${invocation.message}`),
-        info(`  Double-click the file to install, or right-click → Open With → Claude.`),
+        info(
+          `  Open the Claude Desktop App, then: ${accent('Customize → Skills → + → Create skill → Upload skill')} → pick the file.`,
+        ),
       ].join('\n'),
       exitCode: 0, // build succeeded; don't return non-zero for a soft handoff failure
     };
@@ -211,9 +215,14 @@ export async function runInstallSkill(
       dim(
         `  ${build.size} bytes  •  sha256 ${build.sha256.slice(0, 12)}…  •  CLI v${build.cliVersion}`,
       ),
-      info(`  Handed off to Claude Desktop. Follow the prompts to complete install.`),
+      info('  Claude Desktop App opened. Now upload the file manually:'),
+      `    1. ${accent('Customize')} (sidebar) → ${accent('Skills')}`,
+      `    2. Click the ${accent('+')} button`,
+      `    3. Click ${accent('Create skill')}`,
+      `    4. Click ${accent('Upload skill')}`,
+      `    5. Pick ${accent('openknowledge.skill')} from Downloads`,
       dim(
-        `  If Claude Desktop didn't open, the file association may be missing — double-click ${accent(build.outputPath)} manually.`,
+        `  If Claude Desktop didn't open, open it and start at step 1. The file is at ${build.outputPath}`,
       ),
     ].join('\n'),
     exitCode: 0,
@@ -224,7 +233,7 @@ export async function runInstallSkill(
 export function installSkillCommand(): Command {
   return new Command('install-skill')
     .description(
-      'Build the Open Knowledge .skill artifact and install it into Claude Desktop / Cowork',
+      'Build openknowledge.skill and open the Claude Desktop App so you can upload it for Claude Chat & Cowork. Not needed for Claude Code — `ok init` covers that separately.',
     )
     .option('--out <path>', 'Custom output path (default: ~/Downloads/openknowledge.skill)')
     .option('--no-open', 'Build the file but skip the OS file-association handoff')

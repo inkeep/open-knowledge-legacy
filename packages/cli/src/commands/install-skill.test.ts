@@ -54,9 +54,10 @@ describe('runInstallSkill', () => {
     expect(statSync(outPath).size).toBeGreaterThan(0);
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(result.cliVersion).toMatch(/^\d+\.\d+\.\d+/);
-    // With --no-open, message mentions the manual-install hint.
-    expect(result.message).toContain('Double-click');
-    expect(result.message).not.toContain('Handed off to Claude Desktop');
+    // With --no-open, message points at the Claude Desktop App manual
+    // upload sequence (the 5-click Customize → Skills → + → ... flow).
+    expect(result.message).toContain('Customize → Skills');
+    expect(result.message).toContain('Upload skill');
   });
 
   it('spawns `open` on darwin when opening is allowed', async () => {
@@ -71,7 +72,11 @@ describe('runInstallSkill', () => {
     expect(result.status).toBe('installed');
     expect(capture.command).toBe('open');
     expect(capture.args).toEqual([outPath]);
-    expect(result.message).toContain('Handed off to Claude Desktop');
+    // Post-handoff message includes the 5-click upload sequence
+    // (.skill opens the Claude Desktop App but doesn't auto-install).
+    expect(result.message).toContain('Claude Desktop App opened');
+    expect(result.message).toContain('Customize (sidebar) → Skills');
+    expect(result.message).toContain('Upload skill');
   });
 
   it('spawns `cmd /c start` on win32', async () => {
