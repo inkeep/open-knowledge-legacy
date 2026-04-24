@@ -697,13 +697,13 @@ function registerIpcHandlers() {
 }
 
 /**
- * Path to the Dock/app icon PNG. Rasterized from packages/app/public/favicon.svg
- * by `scripts/rasterize-icon.mjs` at postinstall time. In packaged builds,
- * electron-builder copies this file into the app bundle and generates .icns
- * from it (electron-builder.yml `icon:` key) — `app.dock.setIcon()` is a no-op
- * for the packaged case because Gatekeeper already knows the bundle's icon.
- * In dev mode, we set it at runtime so the Dock shows the real icon instead
- * of the generic Electron diamond.
+ * Path to the Dock/app icon PNG. Hand-authored 1024² file committed to the
+ * repo at build/icon.png. In packaged builds, electron-builder copies this
+ * into the app bundle and generates .icns from it (electron-builder.yml
+ * `icon:` key) — `app.dock.setIcon()` is a no-op for the packaged case
+ * because Gatekeeper already knows the bundle's icon. In dev mode, we set
+ * it at runtime so the Dock shows the real icon instead of the generic
+ * Electron diamond.
  */
 const ICON_PNG_PATH = join(__dirname, '..', '..', 'build', 'icon.png');
 
@@ -711,9 +711,7 @@ function installDockIcon() {
   if (process.platform !== 'darwin') return;
   if (app.isPackaged) return; // packaged build uses the bundle's .icns
   if (!existsSync(ICON_PNG_PATH)) {
-    console.warn(
-      '[main] skipping dock icon — build/icon.png missing (run `node scripts/rasterize-icon.mjs`)',
-    );
+    console.warn('[main] skipping dock icon — build/icon.png missing');
     return;
   }
   try {
