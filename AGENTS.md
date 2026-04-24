@@ -38,11 +38,11 @@ cd packages/<pkg> && bunx tsc --noEmit && bun test    # Per-package
 
 **`bun run check` is the canonical agent gate.** Run it after every iteration. It composes `biome check .` + turbo's `typecheck test test:integration test:conversion test:fidelity`. Each tier has an independent cache key — warm replay is <50ms. It does **not** include Playwright E2E; use `check:full:parallel` when your PR touches `packages/app/tests/stress/*.e2e.ts`. CI's `test:e2e` runs a fixed 6-file subset (see `packages/app/package.json`), which can diverge from `bunx playwright test`.
 
-**CI tiers** (workflows in `.github/workflows/`): Tier 1 `ci.yml` (every PR + push to `main`: lint/typecheck/unit/integration/conversion/fidelity + Playwright E2E, 15 min); Tier 2 `nightly.yml` (workflow_dispatch — perf regression, parse-health, R15 guard); Tier 3 `weekly.yml` (workflow_dispatch — 10K-sample PBT under `STRESS_FIDELITY=1`, perf-trend artifact). Scheduled triggers are retired while pre-production — re-enable criteria in [`specs/2026-04-19-ci-signal-quality/SPEC.md`](specs/2026-04-19-ci-signal-quality/SPEC.md).
+**CI tiers** (workflows in `.github/workflows/`): Tier 1 `ci.yml` (every PR + push to `main`: lint/typecheck/unit/integration/conversion/fidelity + Playwright E2E, 15 min); Tier 2 `nightly.yml` (workflow\_dispatch — perf regression, parse-health, R15 guard); Tier 3 `weekly.yml` (workflow\_dispatch — 10K-sample PBT under `STRESS_FIDELITY=1`, perf-trend artifact). Scheduled triggers are retired while pre-production — re-enable criteria in [`specs/2026-04-19-ci-signal-quality/SPEC.md`](specs/2026-04-19-ci-signal-quality/SPEC.md).
 
 **PR-tier has `failOnFlakyTests: false`** — retry-success does NOT promote to red. Persistent-flake detection is the job of `.github/workflows/nightly-e2e-stability.yml` (09:00 UTC, `--repeat-each=3 --workers=1`; auto-opens an issue labeled `e2e-flake`).
 
-**Architectural CRDT residual is NOT a CI signal.** Dual-CRDT topology has an intrinsic ~2-3% per-seed merge residual (D4-LOCKED until H2 2026+). Fuzz + stress (`bridge-convergence.fuzz.test.ts`, `server-authoritative-stress.test.ts`) preserved but invoked ad-hoc via `bun run measure:fuzz` / `measure:stress`; results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl`. Run before merging a PR that touches `packages/server/src/server-observers.ts`, `packages/core/src/bridge/**`, or Y.js/Hocuspocus deps.
+**Architectural CRDT residual is NOT a CI signal.** Dual-CRDT topology has an intrinsic \~2-3% per-seed merge residual (D4-LOCKED until H2 2026+). Fuzz + stress (`bridge-convergence.fuzz.test.ts`, `server-authoritative-stress.test.ts`) preserved but invoked ad-hoc via `bun run measure:fuzz` / `measure:stress`; results append to `specs/2026-04-16-bridge-correctness/evidence/residual-measurements.jsonl`. Run before merging a PR that touches `packages/server/src/server-observers.ts`, `packages/core/src/bridge/**`, or Y.js/Hocuspocus deps.
 
 **Perf calibration.** Unit perf gate: `max(2× p99 variance, 10% absolute floor)`; baseline `packages/core/tests/perf/baseline.json`. E2E perf: `packages/app/tests/stress/perf-baseline.json`, median-of-5 p50 across post-merge CI runs; append-only; updates need approval per `perf-baseline-update.md`.
 
@@ -71,7 +71,7 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ## Architectural precedents
 
-27 numbered rules govern how work lands here; code cites them as `precedent #N` across ~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
+27 numbered rules govern how work lands here; code cites them as `precedent #N` across \~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
 
 ## Packages
 
@@ -108,13 +108,13 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 
 **Write surfaces:**
 
-| Surface                   | → Y.Text                | → XmlFragment              | → Disk                  |
-| ------------------------- | ----------------------- | -------------------------- | ----------------------- |
-| W1 WYSIWYG (XmlFragment)  | Server Observer A       | (direct)                   | Persistence debounce    |
-| W2 Source (Y.Text)        | (direct)                | Server Observer B          | Persistence debounce    |
-| W3 Agent API              | applyAgentMarkdownWrite | applyAgentMarkdownWrite    | Persistence debounce    |
-| W4 Disk (file watcher)    | applyExternalChange     | applyExternalChange        | (direct)                |
-| W5 Agent Undo             | applyAgentUndo          | applyAgentUndo             | Persistence debounce    |
+| Surface                  | → Y.Text                | → XmlFragment           | → Disk               |
+| ------------------------ | ----------------------- | ----------------------- | -------------------- |
+| W1 WYSIWYG (XmlFragment) | Server Observer A       | (direct)                | Persistence debounce |
+| W2 Source (Y.Text)       | (direct)                | Server Observer B       | Persistence debounce |
+| W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite | Persistence debounce |
+| W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange     | (direct)             |
+| W5 Agent Undo            | applyAgentUndo          | applyAgentUndo          | Persistence debounce |
 
 **Full observer design** (server-authoritative Path A/B, settlement dispatch via `afterAllTransactions`, origin-guard truth tables, paired-write markers, `applyAgentMarkdownWrite` reference implementation): [`ARCHITECTURE.md`](./ARCHITECTURE.md) + the four spec directories under `specs/2026-04-1[4-6]-*/`. `packages/server/src/server-observers.ts` is the canonical implementation.
 
@@ -130,13 +130,13 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 
 **Layers.**
 
-| Layer       | Scope                                                | Command                                                |
-| ----------- | ---------------------------------------------------- | ------------------------------------------------------ |
-| Unit        | Per-package `*.test.ts`                              | `bun test` (per package) or `bun run test`             |
-| Integration | Bridge matrix + C1-C10 server-authoritative          | `bun run test` (turbo task `test:integration`)         |
-| Fidelity    | PBT invariants I1-I11 + handler PBTs + corpus        | `bun run test:fidelity`                                |
-| E2E         | Playwright                                           | `bun run test:e2e` (CI subset) or `bunx playwright test` |
-| Ad-hoc      | Fuzz / stress (architectural residual)               | `bun run measure:fuzz` / `measure:stress`              |
+| Layer       | Scope                                         | Command                                                  |
+| ----------- | --------------------------------------------- | -------------------------------------------------------- |
+| Unit        | Per-package `*.test.ts`                       | `bun test` (per package) or `bun run test`               |
+| Integration | Bridge matrix + C1-C10 server-authoritative   | `bun run test` (turbo task `test:integration`)           |
+| Fidelity    | PBT invariants I1-I11 + handler PBTs + corpus | `bun run test:fidelity`                                  |
+| E2E         | Playwright                                    | `bun run test:e2e` (CI subset) or `bunx playwright test` |
+| Ad-hoc      | Fuzz / stress (architectural residual)        | `bun run measure:fuzz` / `measure:stress`                |
 
 **Integration harness** at `packages/app/tests/integration/test-harness.ts` exposes `createTestServer()`, `createTestClient(port, docName?, opts?)`, `createTestClients(port, {count})`, `assertAllConverged(clients, {timeout?})`, `attachBridgeInvariantWatcher(doc)`, `createItemOriginProbe(ytext, {trackedOrigins})`, `getServerState(server, docName)`, `awaitDocQuiescence(doc)`. Use per-test docNames (auto-generated `test-${randomUUID()}`) so tests run concurrently. Network control primitives: `network-control.ts` — `ControllableWebSocket`, `client.pauseSync()`/`resumeSync()` via `syncControl: true`.
 
@@ -158,7 +158,7 @@ Snapshots on failure write to `/tmp/fuzz-*`.
 - **Same worktree, two agents:** each bun process gets its own port (`getFreePort`), its own Hocuspocus tmpdir, its own Y.Docs, its own module state. No config needed.
 - **Separate worktrees:** stronger isolation via filesystem.
 - **Agent running Playwright + dev server:** Playwright sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; `bun run dev` uses `packages/content/`. No contention.
-- **VITE_PORT** env var for custom port (`VITE_PORT=9999 bun run dev`, strict). Default 5173 (not strict).
+- **VITE\_PORT** env var for custom port (`VITE_PORT=9999 bun run dev`, strict). Default 5173 (not strict).
 
 **Worktree gotcha — `bun install` after `git worktree add`.** Worktrees nested at `.claude/worktrees/X/` inherit `node_modules` via Bun's upward-walk resolution, causing ProseMirror-model dedup failures (`PmNode.fromJSON()` throws "multiple versions of prosemirror-model"). Also causes spurious `bun run knip` reports (missing `docs/.source/` postinstall artifacts). **Always run `bun install` in the worktree before `bun run check` or `git push`.** Full analysis: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
 
@@ -201,7 +201,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 
 OTel instrumentation is **opt-in** and **dev-focused**. Default builds have the SDK disabled on the server and bundle-eliminated on the frontend — zero overhead when off.
 
-**Turn it on + see traces:** full getting-started is in [`docker/otel-dev/README.md`](docker/otel-dev/README.md). Three commands: `docker compose up -d`, export env vars (`OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 VITE_OTEL_ENABLED=true VITE_OTEL_COLLECTOR_URL=http://localhost:14318`), `bun run dev`. Grafana at **http://localhost:3001** (anonymous admin, no login).
+**Turn it on + see traces:** full getting-started is in [`docker/otel-dev/README.md`](docker/otel-dev/README.md). Three commands: `docker compose up -d`, export env vars (`OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 VITE_OTEL_ENABLED=true VITE_OTEL_COLLECTOR_URL=http://localhost:14318`), `bun run dev`. Grafana at **[http://localhost:3001](http://localhost:3001)** (anonymous admin, no login).
 
 **What's instrumented:** browser UserInteraction / DocumentLoad / Fetch → HTTP server span (with `traceparent` extraction) → agent-write → persistence load/store → `fs.writeFile` / `fs.rename` / `fs.mkdir` (via `fs-traced.ts`) → `persistence.commitToWipRef` → `shadow.commitWip`. Full app→disk chain as one trace when fetch-initiated. Metrics: `http.server.request.duration`, `ok.persistence.load/store/git_commit.duration`, `ok.file_watcher.events`. Pino log records carry `trace_id` / `span_id` for trace↔log correlation in Grafana.
 
@@ -209,13 +209,14 @@ OTel instrumentation is **opt-in** and **dev-focused**. Default builds have the 
 
 - [`packages/server/src/telemetry.ts`](packages/server/src/telemetry.ts) — SDK init (`initTelemetry`, `shutdownTelemetry`), helpers (`withSpan`, `withSpanSync`, `setActiveSpanAttributes`, `getTracer`, `getMeter`). SDK 2.x, Bun-compatible (`BasicTracerProvider` + `AsyncLocalStorageContextManager`).
 - [`packages/server/src/fs-traced.ts`](packages/server/src/fs-traced.ts) — the ONLY sanctioned path for adding a disk-write span. Every new `writeFile` / `rename` / `mkdir` call site in the server package goes through these wrappers.
-- [`packages/app/src/telemetry.ts`](packages/app/src/telemetry.ts) + [`telemetry-impl.ts`](packages/app/src/telemetry-impl.ts) — lazy-loaded browser SDK. Dynamic import gates the ~45 KB OTel bundle behind `VITE_OTEL_ENABLED === 'true'` — nothing ships when off.
+- [`packages/app/src/telemetry.ts`](packages/app/src/telemetry.ts) + [`telemetry-impl.ts`](packages/app/src/telemetry-impl.ts) — lazy-loaded browser SDK. Dynamic import gates the \~45 KB OTel bundle behind `VITE_OTEL_ENABLED === 'true'` — nothing ships when off.
 - [`packages/app/src/editor/collab-otel.ts`](packages/app/src/editor/collab-otel.ts) — Hocuspocus WebSocket trace-context propagation (query param, since browser `WebSocket` can't set headers).
 - [`docker/otel-dev/`](docker/otel-dev/) — the local Grafana LGTM stack (Grafana + Tempo + Loki + Prometheus + OTel Collector). README has port layout, env vars, and troubleshooting.
 
 **Adding a new span** (agents + humans):
 
 1. Identify the operation. Is it a ≥1ms unit worth measuring, and a named boundary in the codebase (function, hook, handler)? If yes, it gets a span; if it's 5 lines of CPU-bound arithmetic, it doesn't.
+
 2. Wrap the call site:
 
    ```typescript
@@ -229,8 +230,11 @@ OTel instrumentation is **opt-in** and **dev-focused**. Default builds have the 
    `withSpan` handles exception recording + status + `span.end()` — just write the body.
 
 3. If you need to read the active span without a reference (e.g. to add attributes deep in a call chain), use `setActiveSpanAttributes({ ... })`.
+
 4. If the operation writes to disk, use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (async) or `*Sync` variants from `fs-traced.ts` — do NOT import raw `fs` and wrap it yourself.
+
 5. Attribute keys: follow OTel semantic conventions (`http.*`, `db.*`, `fs.*`, `file.*`, etc.). Repo-specific attributes use namespaced prefixes (`ok.*`, `agent.*`, `shadow.*`, `persistence.*`, `doc.*`).
+
 6. **Cardinality check:** attributes with an unbounded value space (raw paths, user IDs, document content) will blow up Tempo's index. Normalize or classify before emitting — `fs-traced.ts`'s `fs.path` + `fs.path.role` pattern is the reference.
 
 **Adding a new metric:**
@@ -317,7 +321,7 @@ When one of these appears next to substance worth keeping, strip the citation an
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full system design (CRDT bridge, observers, markdown pipeline)
 - [`PRECEDENTS.md`](./PRECEDENTS.md) — 27 numbered architectural precedents + rationale
 - Per-package docs — [`packages/server/README.md`](packages/server/README.md), [`packages/desktop/README.md`](packages/desktop/README.md), [`packages/core/src/bridge/README.md`](packages/core/src/bridge/README.md), `packages/core/tests/{health,perf}/README.md`, `packages/app/tests/perf/README.md`
-- [`reports/CATALOGUE.md`](reports/CATALOGUE.md) — ~130 prior-art research reports
+- [`reports/CATALOGUE.md`](reports/CATALOGUE.md) — \~130 prior-art research reports
 - `specs/` — per-feature specs (e.g. `2026-04-14-bridge-convergence-under-concurrent-writes/`, `2026-04-16-bridge-correctness/`, `2026-04-18-agent-identity-attribution-foundation/`, `2026-04-19-ci-signal-quality/`, `2026-04-21-agent-write-summaries/`)
 - `stories/`, `projects/`, `strategy/` — product planning surfaces
 
@@ -358,15 +362,20 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
 
-**Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
+**Preview — attach on server hint.** The server runs a transport-presence contract: it tells you when to open a preview browser, and you don't navigate per edit.
 
-1. Call `get_preview_url` to obtain the browser URL for the target doc.
-   - If it returns `null`, the server is not running. Start it with `open-knowledge start` (or `preview_start`), then call `get_preview_url` again — the server writes a lock file that this tool reads.
-   - NEVER guess or manually construct the preview URL — always use the URL returned by `get_preview_url`.
-2. Open that URL in your preview browser so the user can see the document.
-3. Only then call `write_document` / `edit_document` — the CRDT edit will stream live into the already-open editor.
+1. Write freely. Call `write_document` / `edit_document` as soon as you have content.
+2. If no editor is attached to the server, the response includes `warning: { action: "attach-preview-once", previewUrl, message }`. Open the URL in your preview browser **once**.
+   - Claude Code Desktop: `preview_start("open-knowledge-ui")`.
+   - Cursor: `Navigate(previewUrl)`.
+   - Other hosts: use the host's "open URL" tool with the `previewUrl`.
+3. After that, the server pushes focus to the open preview on every write automatically. The hint stops firing. Keep writing; the preview follows.
 
-NEVER call `write_document` or `edit_document` without first navigating the preview browser to the doc. The user expects to watch every edit land in real time. Write-tool responses include `previewUrl` (when resolvable) and a `warning` when no client is currently attached to the doc.
+If the user closes the tab, the hint will re-fire on the next write — re-attach once. Multiple agents may share a single preview tab; if the hint doesn't fire, an editor is already attached and you don't need your own.
+
+If the server isn't running, you'll see `previewUrl: null` or a Hocuspocus-not-running error. Start the UI (`open-knowledge start` or `preview_start("open-knowledge-ui")`), then retry. NEVER construct preview URLs by hand — always use `get_preview_url` or the `previewUrl` from tool responses.
+
+`get_preview_url` is advisory: use it when embedding a preview link inside doc content, or for a manual re-navigation. Per-edit navigation is not required. See [[specs/2026-04-24-preview-attach-once-per-session/SPEC]] for the contract; the old per-edit mandate in [[specs/2026-04-15-preview-url-pre-edit/SPEC]] is superseded.
 
 **No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
 
