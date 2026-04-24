@@ -8,12 +8,33 @@
  */
 import {
   AGENT_ICON_COLORS,
+  AGENT_ICON_COLORS_DARK,
   colorFromSeed,
   iconFromClientName,
   type TimelineEntry,
 } from '@inkeep/open-knowledge-core';
-import { AlertTriangle, ChevronDown, ChevronRight, Diamond, FileArchive } from 'lucide-react';
+import type { LucideProps } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ChevronDown,
+  ChevronRight,
+  Diamond,
+  FileArchive,
+  GitBranch,
+  HardDrive,
+  Sparkles,
+  User,
+} from 'lucide-react';
+import { useTheme } from 'next-themes';
+import type { SVGProps } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { ClaudeIcon } from '@/components/icons/claude';
+import { ClineIcon } from '@/components/icons/cline';
+import { CodexIcon } from '@/components/icons/codex';
+import { CopilotIcon } from '@/components/icons/copilot';
+import { CursorIcon } from '@/components/icons/cursor';
+import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Skeleton } from '@/components/ui/skeleton';
 
 // ─── Public props ────────────────────────────────────────────────────────────
@@ -57,52 +78,61 @@ export function displayAuthor(entry: TimelineEntry): string {
   return entry.author;
 }
 
-/**
- * Dot color for an entry. Returns either a Tailwind className or an inline hex color.
- * Structured contributors take precedence; pre-attribution entries use the existing heuristic.
- *
- * Contributor color derivation matches the presence bar: first look up the
- * per-client-type brand color via `AGENT_ICON_COLORS[iconFromClientName(seed)]`
- * (so `claude-code` is always Claude-orange, `cursor-vscode` is always
- * Cursor-dark, etc.), and fall back to the hash-based `colorFromSeed` palette
- * only for unknown client names. Previously this used `colorFromSeed` directly
- * on the contributor name, which hashes into a 7-color palette and could
- * collide across different client types (e.g. `claude-code` and
- * `cursor-vscode` both mapped to the indigo `bot` color).
- */
-function getAuthorColor(
-  entry: TimelineEntry,
-): { className: string; hex?: undefined } | { hex: string; className?: undefined } {
+function AgentBrandIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
+  if (icon === 'claude') return <ClaudeIcon {...props} />;
+  if (icon === 'cursor') return <CursorIcon {...props} />;
+  if (icon === 'windsurf') return <WindsurfIcon {...props} />;
+  if (icon === 'openai') return <CodexIcon {...props} />;
+  if (icon === 'cline') return <ClineIcon {...props} />;
+  if (icon === 'github') return <CopilotIcon {...props} />;
+  return <Sparkles strokeWidth={1.5} {...(props as LucideProps)} />;
+}
+
+/** Icon for a timeline entry contributor. Brand icons for agents, lucide icons for system writers. */
+function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: boolean }) {
+  const iconClass = 'size-3.5 shrink-0 text-muted-foreground';
+
+  if (entry.type === 'upstream') return <GitBranch className={iconClass} />;
+
   if (entry.contributors.length > 0) {
     const c = entry.contributors[0];
     const seed = c.colorSeed ?? c.name;
     const icon = iconFromClientName(seed);
-    const brandColor = AGENT_ICON_COLORS[icon];
-    return { hex: brandColor ?? colorFromSeed(seed) };
-  }
-  if (entry.type === 'upstream') return { className: 'bg-muted-foreground/50' };
-  if (entry.authorEmail.includes('openknowledge.local') || entry.type === 'wip') {
-    if (
-      entry.authorEmail.includes('agent') ||
-      entry.author.includes('agent') ||
-      entry.authorEmail.includes('cursor') ||
-      entry.authorEmail.includes('claude')
-    ) {
-      return { className: 'bg-[--color-agent]' };
-    }
-  }
-  return { className: 'bg-[--color-azure-blue]' };
-}
+    const brandColor = isDark
+      ? (AGENT_ICON_COLORS_DARK[icon] ?? AGENT_ICON_COLORS[icon])
+      : AGENT_ICON_COLORS[icon];
+    const color = brandColor ?? colorFromSeed(seed);
 
-function authorDot(entry: TimelineEntry) {
-  const color = getAuthorColor(entry);
-  return (
-    <span
-      aria-hidden="true"
-      style={color.hex ? { backgroundColor: color.hex } : undefined}
-      className={`inline-block size-2 rounded-full shrink-0 ${color.className ?? ''}`}
-    />
-  );
+    // Known agent brand → brand icon with brand color (dark override when available)
+    if (icon !== 'bot') {
+      return (
+        <AgentBrandIcon icon={icon} width={14} height={14} className="shrink-0" style={{ color }} />
+      );
+    }
+
+    // Classified system writers
+    if (c.name === 'File System') return <HardDrive className={iconClass} />;
+    if (c.name === 'Open Knowledge (service)' || c.name === 'Git (upstream)') {
+      return <ArrowDownToLine className={iconClass} />;
+    }
+
+    // Human or unknown contributor
+    return <User className={iconClass} />;
+  }
+
+  // Pre-attribution fallback
+  if (
+    entry.authorEmail.includes('agent') ||
+    entry.author.includes('agent') ||
+    entry.authorEmail.includes('cursor') ||
+    entry.authorEmail.includes('claude')
+  ) {
+    return <Sparkles className={iconClass} />;
+  }
+  if (entry.author === 'openknowledge-server' || entry.author === 'server') {
+    return <ArrowDownToLine className={iconClass} />;
+  }
+  return <User className={iconClass} />;
 }
 
 // ─── "Current version" pinned row ────────────────────────────────────────────
@@ -112,17 +142,18 @@ function CurrentVersionRow({ selected, onSelect }: { selected: boolean; onSelect
     <button
       type="button"
       className={[
-        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset border-b border-border/50',
-        selected ? 'bg-muted' : 'hover:bg-muted/40',
+        'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        selected ? 'bg-muted' : 'hover:bg-muted/50',
       ].join(' ')}
       onClick={onSelect}
     >
-      <span className="mt-1.5 flex shrink-0 items-center">
-        <span className="inline-block size-2 rounded-full bg-emerald-500" />
-      </span>
+      <div className="flex items-center justify-center w-3.5 h-3.5">
+        {' '}
+        <span className="inline-block size-2 rounded-full bg-emerald-500 shrink-0" />
+      </div>
+
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">Current version</p>
-        <p className="text-xs text-muted-foreground">Live document</p>
       </div>
     </button>
   );
@@ -156,11 +187,11 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupP
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-0.5">
       <button
         type="button"
         aria-expanded={expanded}
-        className="flex items-center gap-1 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors text-left"
+        className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors text-left"
         onClick={() => setExpanded((e) => !e)}
       >
         {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
@@ -312,36 +343,50 @@ interface EntryRowProps {
 }
 
 function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProps) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
   const allSummaries = allSummariesFor(entry);
 
-  // Div-with-role rather than <button>: the row contains a nested SummaryBullets
-  // expander that needs to be a real <button> (nested native buttons are
-  // invalid HTML). The div is clickable + Enter/Space-activatable to preserve
-  // the same keyboard semantics the previous <button> had.
-  //
-  // Focus styling: native `<button>` gets the UA default focus ring for free;
-  // `<div role="button">` gets NOTHING without explicit CSS. Without a
-  // focus-visible ring, keyboard users tabbing through the timeline see no
-  // visible focus indicator (selected-state `bg-muted` follows `selected`,
-  // not focus, so a focused-but-unselected row is invisible). `ring-inset`
-  // keeps the ring within the row bounds — the timeline rows are flush with
-  // each other, so an outset ring would overflow into neighboring rows.
   const handleActivate = () => onSelect?.(entry);
+
+  // Leading icon: checkpoint variants get special icons, others get contributor icon
+  const leadingIcon = prominent ? (
+    (() => {
+      const variant = checkpointVariant(entry);
+      if (variant === 'bridge-merge-loss') {
+        return (
+          <AlertTriangle
+            className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+            aria-hidden="true"
+          />
+        );
+      }
+      if (variant === 'external-change-rescue') {
+        return (
+          <FileArchive
+            className="size-3.5 shrink-0 text-sky-600 dark:text-sky-400"
+            aria-hidden="true"
+          />
+        );
+      }
+      return <Diamond className="size-3.5 shrink-0 text-muted-foreground" />;
+    })()
+  ) : (
+    <ContributorIcon entry={entry} isDark={isDark} />
+  );
+
   return (
     // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
     <div
       role="button"
       tabIndex={0}
       className={[
-        'group flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-        selected ? 'bg-muted' : 'hover:bg-muted/40',
-        prominent ? 'border-b border-border/50' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+        'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        selected ? 'bg-muted' : 'hover:bg-muted/50',
+      ].join(' ')}
       onClick={handleActivate}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -350,42 +395,33 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
         }
       }}
     >
-      {prominent ? (
-        (() => {
-          const variant = checkpointVariant(entry);
-          if (variant === 'bridge-merge-loss') {
-            return (
-              <AlertTriangle
-                className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
-                aria-hidden="true"
-              />
-            );
-          }
-          if (variant === 'external-change-rescue') {
-            return (
-              <FileArchive
-                className="mt-0.5 size-3.5 shrink-0 text-sky-600 dark:text-sky-400"
-                aria-hidden="true"
-              />
-            );
-          }
-          return <Diamond className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />;
-        })()
-      ) : (
-        <div className="mt-1.5 flex shrink-0 items-center">{authorDot(entry)}</div>
-      )}
+      {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
+      <span className="mt-0.5 shrink-0">{leadingIcon}</span>
 
-      <div className="min-w-0 flex-1">
-        {prominent && (
-          <div className="mb-0.5 flex items-center gap-1.5">
-            <span className="text-xs font-medium text-foreground">
-              {checkpointHeadlineLabel(entry)}
-            </span>
-            {authorDot(entry)}
-            <span className="truncate text-xs text-muted-foreground">{authorName}</span>
-          </div>
-        )}
-        {!prominent && <p className="truncate text-xs text-foreground">{authorName}</p>}
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {/* Row 1: title + date, vertically centered with the icon */}
+        <div className="flex items-center gap-1.5">
+          {prominent ? (
+            <>
+              <span className="text-xs text-foreground truncate">
+                {checkpointHeadlineLabel(entry)}
+              </span>
+              <span className="text-xs text-muted-foreground/50">·</span>
+              <span className="truncate text-xs text-muted-foreground">{authorName}</span>
+            </>
+          ) : (
+            <span className="truncate text-xs text-foreground">{authorName}</span>
+          )}
+          <time
+            className="ml-auto shrink-0 text-xs text-muted-foreground/80"
+            dateTime={entry.timestamp}
+            title={entry.timestamp}
+          >
+            {relative}
+          </time>
+        </div>
+
+        {/* Row 2: details, aligned with title start */}
         {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
         {allDocs.length > 0 ? (
           <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
@@ -397,14 +433,6 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
           </p>
         )}
       </div>
-
-      <time
-        className="shrink-0 text-xs text-muted-foreground"
-        dateTime={entry.timestamp}
-        title={entry.timestamp}
-      >
-        {relative}
-      </time>
     </div>
   );
 }
@@ -502,19 +530,18 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
         {/* Loading skeleton */}
         {loading && (
           <div
-            className="flex flex-col gap-2 p-4"
+            className="flex flex-col gap-1 p-2"
             role="status"
             aria-busy="true"
             aria-label="Loading timeline history"
           >
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="flex items-center gap-2.5">
-                <Skeleton className="size-3.5 rounded-full" />
-                <div className="flex-1 space-y-1">
-                  <Skeleton className="h-3 w-24" />
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
+                <Skeleton className="size-3.5 rounded mt-0.5 shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-3 w-28" />
                   <Skeleton className="h-3 w-40" />
                 </div>
-                <Skeleton className="h-3 w-14" />
               </div>
             ))}
           </div>
@@ -536,7 +563,7 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
 
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-1 p-2">
             <CurrentVersionRow
               selected={isViewingCurrent}
               onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
@@ -554,7 +581,7 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
 
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-1 p-2">
             <CurrentVersionRow
               selected={isViewingCurrent}
               onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}

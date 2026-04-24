@@ -23,6 +23,12 @@ export const AGENT_ICON_COLORS: Record<string, string> = {
   bot: '#727CF3', // indigo (generic agent fallback)
 };
 
+/** Dark-mode overrides for brands whose light-mode color is too dark to see on dark backgrounds. */
+export const AGENT_ICON_COLORS_DARK: Record<string, string> = {
+  cursor: '#FFFFFF', // white (legible on dark bg)
+  windsurf: '#FFFFFF', // same — both are dark-brand icons that need lifting
+};
+
 export const HUMAN_COLORS = [
   '#f0ece3', // warm gray
   '#fff5e1', // cream
