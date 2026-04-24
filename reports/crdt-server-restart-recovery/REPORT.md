@@ -24,6 +24,8 @@ topics:
 
 # CRDT Server-Restart Recovery
 
+> **Post-ship status (2026-04-23):** The architecture recommended in this report shipped in the CRDT server-restart recovery PR (branch `worktree-fix-crdt-restart-sidecar`). All 11 bug-class integration tests are green. The implementation lands in seven commits (316fb8e9 preparatory + 0bb46aaf schema + 1399c34e server-info + 3fe79b18 client-cache + 67a9686c server-enforce + a84577e1 sidecar-write + 91feb226 sidecar-load + 8753b805 branch-switch composition). See `packages/server/README.md` §"CRDT server-restart recovery — instance ID + Yjs binary sidecar" for the landed surface.
+
 **Purpose:** Produce an architecturally clean, product-coherent solution for the CRDT content-duplication bug class that manifests when a Yjs-based server restarts while a browser tab holds live CRDT state. Builds on the [`auto-persistence-version-history-patterns`](../auto-persistence-version-history-patterns/REPORT.md) report which identified the bug class and recommended "dual persistence" at the pattern level; this report drives that recommendation to implementation-ready architecture, pressure-tests alternatives, and establishes the product UX bar.
 
 A developer reading this report should be able to implement the fix with confidence in the pattern chosen, know the specific gotchas (Yjs binary format has no version header; `applyUpdate` has three distinct corruption failure modes), and have a clear product contract for what the user sees during restart.

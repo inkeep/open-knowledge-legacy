@@ -233,10 +233,15 @@ describe('ProviderPool disconnect recycling', () => {
   // `packages/app/tests/integration/provider-pool-reconnect.test.ts` under the
   // T4 scenario ("unsynced local changes during disconnect/restart").
   //
-  // Important: a green "mechanism" test here does NOT imply the feature works.
-  // The CRDT clientID-mismatch bug class at T4 currently fails despite this
-  // mechanism test passing. /tdd "coverage is not a quality signal" — verify
-  // behavior, not mechanism, when judging whether a change is safe.
+  // As of the CRDT server-restart recovery fix (commit SHA tbd — see
+  // `reports/crdt-server-restart-recovery/REPORT.md`), T4 PASSES end-to-end:
+  // the server-side sidecar preserves the in-flight edit across restart, and
+  // the client's authenticationFailed recycle + fresh sync delivers the
+  // preserved state back. This disconnect-path "skip recycle on unsynced" is
+  // still the active mechanism for same-network-same-server blips; the
+  // authenticationFailed recycle is the path that fires on server-instance
+  // mismatch. The two paths compose. A green mechanism test here is
+  // necessary-but-not-sufficient for T4.
   test('keeps the provider when disconnect occurs with unsynced local changes', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');
@@ -413,13 +418,15 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   // reconnects (emits `synced` before `RECYCLE_DEBOUNCE_MS` fires). It does
   // NOT check whether the resulting Y.Doc content is correct after reconnect.
   //
-  // Behavior-level coverage of the same code path (and its consequences when
-  // the server underneath has been restarted with a fresh clientID) lives in
+  // Behavior-level coverage of the same code path lives in
   // `packages/app/tests/integration/provider-pool-reconnect.test.ts` under
-  // the T1 scenario ("fast server restart <4s"). T1 currently fails because
-  // cancelling the recycle on fast reconnect exposes the CRDT clientID-
-  // mismatch bug class. A green state on THIS test is not a green state on T1.
-  // Verify the integration test before concluding the feature is correct.
+  // the T1 scenario ("fast server restart <4s"). With the CRDT restart-
+  // recovery fix landed (see `reports/crdt-server-restart-recovery/REPORT.md`),
+  // T1 PASSES — the authenticationFailed recycle fires on instance-ID
+  // mismatch even when this disconnect-path debounce is cancelled, forcing
+  // the fresh Y.Doc that prevents duplication. This mechanism test remains
+  // load-bearing for the same-server network-blip UX — a green state here
+  // is necessary-but-not-sufficient for T1.
   test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
     pool = new ProviderPool(3, DUMMY_WS, 200);
     const entry = pool.open('doc1');
