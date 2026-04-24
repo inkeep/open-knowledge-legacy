@@ -6,8 +6,17 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { renderToString } from 'react-dom/server';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { FileData } from '@/lib/use-activity-panel';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
+
+// The header-row undo buttons are wrapped in Radix `Tooltip`, which requires
+// a `TooltipProvider` ancestor. Production wires this at the app root
+// (`main.tsx`); tests wrap here so `renderToString` does not throw
+// "`Tooltip` must be used within `TooltipProvider`".
+function render(ui: React.ReactElement): string {
+  return renderToString(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 function sampleFile(overrides?: Partial<FileData>): FileData {
   return {
@@ -28,7 +37,7 @@ const noopAsync = async (_d: string): Promise<void> => {};
 
 describe('ActivityPanelFileRow (static render)', () => {
   test('returns null when file has no bursts (D-P18 defensive guard)', () => {
-    const html = renderToString(
+    const html = render(
       <ActivityPanelFileRow
         file={sampleFile({ bursts: [] })}
         sessionAlive={true}
@@ -43,7 +52,7 @@ describe('ActivityPanelFileRow (static render)', () => {
   });
 
   test('collapsed state: shows filename, stat, relative timestamp', () => {
-    const html = renderToString(
+    const html = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}
@@ -66,7 +75,7 @@ describe('ActivityPanelFileRow (static render)', () => {
   });
 
   test('writing indicator renders only when isWriting=true', () => {
-    const off = renderToString(
+    const off = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}
@@ -79,7 +88,7 @@ describe('ActivityPanelFileRow (static render)', () => {
     );
     expect(off).not.toContain('writing…');
 
-    const on = renderToString(
+    const on = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}
@@ -93,8 +102,8 @@ describe('ActivityPanelFileRow (static render)', () => {
     expect(on).toContain('writing…');
   });
 
-  test('collapsed row does not render undo buttons or dialog', () => {
-    const html = renderToString(
+  test('collapsed row renders both undo buttons in the header, confirm dialog not shown', () => {
+    const html = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}
@@ -105,13 +114,47 @@ describe('ActivityPanelFileRow (static render)', () => {
         fetchBurstDiff={noopFetch}
       />,
     );
-    expect(html).not.toContain('Undo last edit');
-    expect(html).not.toContain('Undo all edits');
+    // Both undo buttons are now always in the header row (not gated on
+    // expansion) — verified via data-testids that are stable across layout
+    // shifts. aria-label carries the docName for screen-reader context.
+    expect(html).toContain('data-testid="activity-panel-undo-last"');
+    expect(html).toContain('data-testid="activity-panel-undo-all"');
+    expect(html).toContain('aria-label="Undo last edit on notes.md"');
+    expect(html).toContain('aria-label="Undo all edits on notes.md"');
+    // Radix Dialog uses a Portal which emits nothing in SSR when `open=false`,
+    // so the dialog title text never appears on the collapsed row.
     expect(html).not.toContain('Undo all edits on this file?');
   });
 
+  test('undo buttons are disabled when sessionAlive=false', () => {
+    const html = render(
+      <ActivityPanelFileRow
+        file={sampleFile()}
+        sessionAlive={false}
+        isWriting={false}
+        onNavigate={() => {}}
+        onUndoLast={noopAsync}
+        onUndoAll={noopAsync}
+        fetchBurstDiff={noopFetch}
+      />,
+    );
+    // Both buttons carry the disabled attribute so click events won't fire
+    // and screen readers announce the unavailable state.
+    const undoLastIdx = html.indexOf('data-testid="activity-panel-undo-last"');
+    const undoAllIdx = html.indexOf('data-testid="activity-panel-undo-all"');
+    expect(undoLastIdx).toBeGreaterThan(-1);
+    expect(undoAllIdx).toBeGreaterThan(-1);
+    // Scan the surrounding button tag for `disabled` — React serializes the
+    // attribute with no value (just the bare word).
+    const windowBefore = 400;
+    const undoLastSlice = html.slice(Math.max(0, undoLastIdx - windowBefore), undoLastIdx);
+    const undoAllSlice = html.slice(Math.max(0, undoAllIdx - windowBefore), undoAllIdx);
+    expect(undoLastSlice).toContain('disabled');
+    expect(undoAllSlice).toContain('disabled');
+  });
+
   test('collapsed row carrot uses right-pointing chevron (▸), not down (▾)', () => {
-    const html = renderToString(
+    const html = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}
@@ -128,7 +171,7 @@ describe('ActivityPanelFileRow (static render)', () => {
   });
 
   test('filename click target has correct aria-label and data-testid', () => {
-    const html = renderToString(
+    const html = render(
       <ActivityPanelFileRow
         file={sampleFile()}
         sessionAlive={true}

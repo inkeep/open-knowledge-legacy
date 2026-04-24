@@ -1,21 +1,27 @@
 /**
  * ActivityPanelFileRow — one file entry in the Activity Panel's scrollable
- * body. Collapsed header shows {carrot, filename link, cumulative `+N −M`
- * stat, timestamp, optional 'writing…' indicator} per FR-P13.
+ * body. The header row is:
+ *   {carrot, filename link, [↶] Undo last, [⏪] Undo all, +N −M, timestamp,
+ *    optional writing indicator}.
  *
- * Carrot click toggles expand/collapse. Filename click navigates the main
- * editor without closing the panel (D-P10, FR-P16). Two distinct click
- * zones — no overloading.
+ * The two undo buttons are icon-only (`Undo2` + `Rewind` from lucide) with
+ * tooltips; they live on the header row rather than the expanded-section
+ * footer so per-file actions are discoverable without first expanding the
+ * burst list. Carrot click toggles expand/collapse; filename click navigates
+ * the main editor without closing the panel (D-P10, FR-P16). The undo
+ * buttons `stopPropagation` so clicking them doesn't also toggle the carrot.
  *
- * Expanded state (FR-P14) renders each burst via <ActivityPanelBurstRow>
- * + an action row at the bottom with two buttons:
- *   1. 'Undo last edit on this file' — dispatches onUndoLast, no confirm.
- *   2. 'Undo all edits on this file' — opens a shadcn Dialog confirmation;
- *      on confirm, calls onUndoAll. Blast-radius asymmetry per D-P16.
+ * Expanded state (FR-P14) renders each burst via <ActivityPanelBurstRow>.
  *
- * Both buttons disabled when sessionAlive === false OR bursts.length === 0.
+ * Undo semantics:
+ *   - `[↶]` Undo last — fires immediately, no confirm (matches today).
+ *   - `[⏪]` Undo all — opens a shadcn Dialog; confirm dispatches onUndoAll.
+ *     Blast-radius asymmetry preserved per D-P16.
+ *
+ * Both buttons disabled when `sessionAlive === false` OR `bursts.length === 0`.
+ * The row itself also disappears when `bursts.length === 0` (D-P18).
  */
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Rewind, Undo2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { FileData } from '@/lib/use-activity-panel';
 import { ActivityPanelBurstRow } from './ActivityPanelBurstRow';
 
@@ -75,14 +82,26 @@ export function ActivityPanelFileRow({
   if (file.bursts.length === 0) return null;
 
   const disabled = !sessionAlive || file.bursts.length === 0 || undoInFlight;
+  const disabledReason = !sessionAlive
+    ? 'Session ended — undo unavailable'
+    : file.bursts.length === 0
+      ? 'Nothing to undo on this file'
+      : null;
 
-  const handleUndoLast = (): void => {
+  const handleUndoLast = (e: React.MouseEvent): void => {
+    e.stopPropagation();
     if (disabled) return;
     setUndoInFlight(true);
     Promise.resolve(onUndoLast(file.docName)).finally(() => setUndoInFlight(false));
   };
 
-  const handleUndoAll = (): void => {
+  const handleUndoAllClick = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    if (disabled) return;
+    setConfirmOpen(true);
+  };
+
+  const handleUndoAllConfirm = (): void => {
     setConfirmOpen(false);
     if (disabled) return;
     setUndoInFlight(true);
@@ -91,7 +110,7 @@ export function ActivityPanelFileRow({
 
   return (
     <div className="border-b border-border" data-testid="activity-panel-file-row">
-      {/* Collapsed header: carrot | filename | stat | ts | writing indicator. */}
+      {/* Header row: carrot | filename | undo-last | undo-all | stat | ts | writing. */}
       <div className="flex items-center gap-2 px-3 py-2 text-sm">
         <button
           type="button"
@@ -117,6 +136,40 @@ export function ActivityPanelFileRow({
         >
           {file.docName}
         </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6 shrink-0"
+              onClick={handleUndoLast}
+              disabled={disabled}
+              aria-label={`Undo last edit on ${file.docName}`}
+              data-testid="activity-panel-undo-last"
+            >
+              <Undo2 className="size-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{disabledReason ?? 'Undo last edit'}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6 shrink-0"
+              onClick={handleUndoAllClick}
+              disabled={disabled}
+              aria-label={`Undo all edits on ${file.docName}`}
+              data-testid="activity-panel-undo-all"
+            >
+              <Rewind className="size-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{disabledReason ?? 'Undo all edits'}</TooltipContent>
+        </Tooltip>
         <span className="shrink-0 font-mono text-xs">
           <span className="text-green-600 dark:text-green-400">+{file.additionsTotal}</span>{' '}
           <span className="text-red-600 dark:text-red-400">−{file.deletionsTotal}</span>
@@ -132,76 +185,50 @@ export function ActivityPanelFileRow({
       </div>
 
       {expanded ? (
-        <>
-          <div>
-            {file.bursts.map((burst) => (
-              <ActivityPanelBurstRow
-                key={`${file.docName}:${burst.stackIndex}`}
-                burst={burst}
-                docName={file.docName}
-                fetchBurstDiff={fetchBurstDiff}
-              />
-            ))}
-          </div>
-          {/* Action row (FR-P14 bottom): two undo buttons side-by-side. */}
-          <div className="flex items-center justify-end gap-2 border-t border-border/70 bg-muted/20 px-3 py-2">
+        <div>
+          {file.bursts.map((burst) => (
+            <ActivityPanelBurstRow
+              key={`${file.docName}:${burst.stackIndex}`}
+              burst={burst}
+              docName={file.docName}
+              fetchBurstDiff={fetchBurstDiff}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Undo all edits on this file?</DialogTitle>
+            <DialogDescription>
+              This will revert every change this agent has made to{' '}
+              <span className="font-mono text-foreground">{file.docName}</span> in their current
+              session ({file.bursts.length} burst
+              {file.bursts.length === 1 ? '' : 's'}). Other files and other writers are not
+              affected.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
             <Button
               type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleUndoLast}
-              disabled={disabled}
-              aria-label={`Undo last edit on ${file.docName}`}
-              data-testid="activity-panel-undo-last"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              data-testid="activity-panel-undo-all-cancel"
             >
-              Undo last edit
+              Cancel
             </Button>
             <Button
               type="button"
               variant="destructive"
-              size="sm"
-              onClick={() => setConfirmOpen(true)}
-              disabled={disabled}
-              aria-label={`Undo all edits on ${file.docName}`}
-              data-testid="activity-panel-undo-all"
+              onClick={handleUndoAllConfirm}
+              data-testid="activity-panel-undo-all-confirm"
             >
-              Undo all edits
+              Undo all
             </Button>
-          </div>
-          <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Undo all edits on this file?</DialogTitle>
-                <DialogDescription>
-                  This will revert every change this agent has made to{' '}
-                  <span className="font-mono text-foreground">{file.docName}</span> in their current
-                  session ({file.bursts.length} burst
-                  {file.bursts.length === 1 ? '' : 's'}). Other files and other writers are not
-                  affected.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setConfirmOpen(false)}
-                  data-testid="activity-panel-undo-all-cancel"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={handleUndoAll}
-                  data-testid="activity-panel-undo-all-confirm"
-                >
-                  Undo all
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </>
-      ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
