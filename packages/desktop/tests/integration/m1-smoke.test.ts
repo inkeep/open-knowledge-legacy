@@ -276,6 +276,96 @@ describe('M1 smoke', () => {
     }
   });
 
+  test('M1 invariant: EditorId literal-union drift catcher (Pass 0 Major #3)', async () => {
+    // The `EditorId` literal union — `'claude' | 'claude-desktop' | 'cursor'
+    // | 'vscode' | 'windsurf' | 'codex'` — appears verbatim in FOUR files
+    // (the canonical CLI source + 3 bridge-contract mirrors). The
+    // OkDesktopBridge member-name walker above does not look inside type
+    // alias bodies, so a future contributor adding `'jetbrains'` to one
+    // copy without the other three would silently desynchronize the consent
+    // dialog without failing any existing test. This drift catcher extracts
+    // the literal-union member set from each file and asserts equality.
+    //
+    // The four files (canonical + three mirrors):
+    //   - packages/cli/src/commands/editors.ts             (`EditorId`)
+    //   - packages/desktop/src/shared/ipc-channels.ts      (`McpWiringEditorId`)
+    //   - packages/core/src/desktop-bridge.ts              (`OkMcpWiringEditorId`)
+    //   - packages/app/src/lib/desktop-bridge-types.ts     (`OkMcpWiringEditorId`)
+    //
+    // If a fifth copy is added, append the path here.
+    // __dirname = packages/desktop/tests/integration; 3 ups = `packages/`.
+    const packagesRoot = join(__dirname, '..', '..', '..');
+    const cliEditorsPath = join(packagesRoot, 'cli', 'src', 'commands', 'editors.ts');
+    const ipcChannelsPath = join(__dirname, '..', '..', 'src', 'shared', 'ipc-channels.ts');
+    const corePath = join(packagesRoot, 'core', 'src', 'desktop-bridge.ts');
+    const appPath = join(packagesRoot, 'app', 'src', 'lib', 'desktop-bridge-types.ts');
+    const { readFileSync } = await import('node:fs');
+
+    /**
+     * Extract the string-literal members of a `type Foo = 'a' | 'b' | …`
+     * declaration. The declaration may span multiple lines (one literal per
+     * line) — we accumulate from the first `=` after the type name through
+     * the line whose trailing token is `;`. Returns a set of the literal
+     * VALUES (no quotes).
+     */
+    const extractLiteralUnion = (src: string, typeName: string): Set<string> => {
+      const declRegex = new RegExp(`type\\s+${typeName}\\s*=([^;]+);`, 'm');
+      const match = src.match(declRegex);
+      if (!match?.[1]) return new Set();
+      const body = match[1];
+      const literals = body.match(/'([^']+)'/g) ?? [];
+      return new Set(literals.map((l) => l.slice(1, -1)));
+    };
+
+    const cliMembers = extractLiteralUnion(readFileSync(cliEditorsPath, 'utf-8'), 'EditorId');
+    const ipcMembers = extractLiteralUnion(
+      readFileSync(ipcChannelsPath, 'utf-8'),
+      'McpWiringEditorId',
+    );
+    const coreMembers = extractLiteralUnion(readFileSync(corePath, 'utf-8'), 'OkMcpWiringEditorId');
+    const appMembers = extractLiteralUnion(readFileSync(appPath, 'utf-8'), 'OkMcpWiringEditorId');
+
+    // Guardrail — every extraction must find members; otherwise the regex
+    // is broken and the equality checks below are meaningless.
+    expect(cliMembers.size).toBeGreaterThan(0);
+    expect(ipcMembers.size).toBeGreaterThan(0);
+    expect(coreMembers.size).toBeGreaterThan(0);
+    expect(appMembers.size).toBeGreaterThan(0);
+
+    // Pin the canonical member count — when the spec adds a 7th editor,
+    // the maintainer updates this number AND all 4 unions in lockstep.
+    expect(cliMembers.size).toBe(6);
+
+    const diff = (a: Set<string>, b: Set<string>) => Array.from(a).filter((x) => !b.has(x));
+    const failures: string[] = [];
+    for (const [otherLabel, otherMembers] of [
+      ['ipc-channels.ts (McpWiringEditorId)', ipcMembers],
+      ['core/desktop-bridge.ts (OkMcpWiringEditorId)', coreMembers],
+      ['app/desktop-bridge-types.ts (OkMcpWiringEditorId)', appMembers],
+    ] as const) {
+      const cliMinusOther = diff(cliMembers, otherMembers);
+      const otherMinusCli = diff(otherMembers, cliMembers);
+      if (cliMinusOther.length || otherMinusCli.length) {
+        failures.push(
+          `  ${otherLabel} drift vs cli/editors.ts (canonical):\n` +
+            `    cli has but ${otherLabel} missing: [${cliMinusOther.join(', ')}]\n` +
+            `    ${otherLabel} has but cli missing: [${otherMinusCli.join(', ')}]`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        [
+          'EditorId literal-union drift across the four copies:',
+          ...failures,
+          '',
+          'Fix: update every union body so all four files agree on the literal members.',
+        ].join('\n'),
+      );
+    }
+  });
+
   test('M1 invariant: KeyringSmokeResult shape drift catcher (M5)', async () => {
     // Walks the `KeyringSmokeResult` (desktop utility source), and
     // `OkKeyringSmokeResult` (core + app mirror) interfaces and asserts the

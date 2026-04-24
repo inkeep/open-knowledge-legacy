@@ -242,6 +242,7 @@
       "name": "@inkeep/open-knowledge-desktop",
       "version": "0.0.0",
       "dependencies": {
+        "@inkeep/open-knowledge": "workspace:*",
         "@inkeep/open-knowledge-core": "workspace:*",
         "@inkeep/open-knowledge-server": "workspace:*",
         "@napi-rs/keyring": "^1.2.0",

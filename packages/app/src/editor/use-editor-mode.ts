@@ -1,35 +1,24 @@
 /**
- * useEditorMode — persists the user's editor mode (`wysiwyg` / `source`) as a
- * user-global preference that survives refreshes, new tabs, and new Electron
- * windows on the same origin.
+ * useEditorMode — persists the user's editor mode (`wysiwyg` / `source`) to
+ * localStorage as a user-global preference.
  *
- * Read-once at load (SPEC D9, supersedes D7): the hook reads localStorage
- * exactly once via its `useState` initializer. `persistAndSet` writes to
- * localStorage on every caller invocation so the last toggle wins at the next
- * load. Open tabs/windows do NOT update each other live — each is its own
- * session for its lifetime. Cross-window sync (Excalidraw Pattern C / next-
- * themes Pattern A / BroadcastChannel Pattern B) was rejected: the spontaneous
- * mode-flip on tab-focus surprises the user regardless of IME/drag-selection
- * protection.
+ * Read-once: the hook reads localStorage exactly once in its `useState`
+ * initializer. Every `setMode` call writes to localStorage so the last toggle
+ * wins at the next load. Open tabs/windows do NOT update each other live —
+ * each is its own session for its lifetime. Cross-window sync was
+ * deliberately rejected because a spontaneous mode flip on tab-focus
+ * surprises the user regardless of IME/drag-selection protection.
  *
- * The `useState` initializer prefers `window.__OK_EDITOR_MODE__`, which the
- * FOUC-prevention inline script in `packages/app/index.html` sets before React
- * mounts. This gives flash-free first paint for users whose persisted mode is
- * `source`.
- *
- * Consumed by `EditorPane` only. Do NOT wrap in a React Context (ASK_FIRST
- * per SPEC §15 — consumer count is 1, Context would add indirection without
- * benefit).
+ * The initializer prefers `window.__OK_EDITOR_MODE__`, set by the FOUC
+ * inline script in `packages/app/index.html` for flash-free first paint when
+ * the persisted mode is `source`.
  */
 import { useState } from 'react';
 
 const STORAGE_KEY = 'ok-editor-mode-v1';
 
-/**
- * Single source of truth for the persistable editor-mode value set. Derive
- * `EditorModeValue` and the `isEditorModeValue` guard from this constant so a
- * future mode addition updates the type and the guard atomically.
- */
+// Single source for the persistable mode set — `EditorModeValue` and the
+// type guard both derive from this so adding a value updates both atomically.
 export const EDITOR_MODE_VALUES = ['wysiwyg', 'source'] as const;
 
 export type EditorModeValue = (typeof EDITOR_MODE_VALUES)[number];
@@ -40,10 +29,8 @@ declare global {
   interface Window {
     /**
      * Set by the FOUC-prevention inline script in `packages/app/index.html`
-     * before React mounts. The inline script is untyped, so the value here is
-     * untrusted — readers MUST validate via `isEditorModeValue()` before use.
-     * Typed as `unknown` (not `EditorModeValue`) so the compiler compels that
-     * validation at every read site.
+     * before React mounts. Untyped origin — readers MUST validate via
+     * `isEditorModeValue()` before use; `unknown` forces that.
      */
     __OK_EDITOR_MODE__?: unknown;
   }
@@ -55,15 +42,10 @@ export function isEditorModeValue(raw: unknown): raw is EditorModeValue {
 }
 
 /**
- * Read the persisted mode directly from storage. Returns the default on miss,
- * invalid value, or storage access throw. Pure + injectable — exported for
- * unit testing.
- *
- * On a structurally invalid persisted value (SPEC FR-8: prior-version schema
- * violation or manual localStorage tampering), logs a single bracket-prefix
- * `console.warn` so "my preference doesn't persist" reports are diagnosable.
- * The storage-throw branch stays silent — privacy-mode / quota throws are a
- * normal environmental condition, not a bug.
+ * Read the persisted mode. Default on miss, invalid value, or storage throw.
+ * Logs a diagnostic warn only on structurally invalid values — storage-throw
+ * stays silent because privacy-mode / quota are normal environmental
+ * conditions, not bugs.
  */
 export function readPersistedMode(
   storage: Pick<Storage, 'getItem'> = localStorage,
@@ -75,17 +57,16 @@ export function readPersistedMode(
     console.warn('[editor-mode] invalid persisted value, falling back to default', { raw });
   } catch {
     // Privacy mode / quota / serialization — stay silent; only the invalid-
-    // value branch above logs (FR-8 "Warning logged").
+    // value branch above logs.
   }
   return DEFAULT_MODE;
 }
 
 /**
- * Read the initial mode for the hook's useState initializer. Precedence:
- *   1. `window.__OK_EDITOR_MODE__` — set by the FOUC inline script (authoritative first-paint value)
- *   2. Fresh localStorage read — fallback for SSR / test harnesses / unexpected boot order
- *   3. Default (`'wysiwyg'`)
- * Pure + injectable — exported for unit testing.
+ * Initial mode for the useState initializer. Precedence:
+ *   1. `window.__OK_EDITOR_MODE__` (FOUC inline script — first-paint)
+ *   2. localStorage (SSR / test harnesses / unexpected boot order)
+ *   3. Default `'wysiwyg'`.
  */
 export function readInitialMode(
   win: { __OK_EDITOR_MODE__?: unknown } = window,
@@ -98,9 +79,7 @@ export function readInitialMode(
 
 /**
  * Persist mode to storage. Swallows throws (privacy mode, quota) with a
- * `[editor-mode]` bracket-prefix console.warn per CLAUDE.md logging
- * conventions. Returns true on success, false on throw. Pure + injectable —
- * exported for unit testing.
+ * console.warn; returns false on throw.
  */
 export function persistMode(
   next: EditorModeValue,
@@ -116,11 +95,9 @@ export function persistMode(
 }
 
 /**
- * React hook. Returns `[mode, setMode]`. Reads localStorage exactly once via
- * the `useState` initializer. Every `setMode` call updates React state AND
- * writes to localStorage so the last toggle wins at the next load. The hook
- * does NOT listen for cross-window changes — open tabs remain independent
- * until one reloads (SPEC D9).
+ * Returns `[mode, setMode]`. `setMode` updates React state AND persists to
+ * localStorage. Does NOT listen for cross-window changes — open tabs remain
+ * independent until one reloads.
  */
 export function useEditorMode(): readonly [EditorModeValue, (next: EditorModeValue) => void] {
   const [mode, setMode] = useState<EditorModeValue>(readInitialMode);

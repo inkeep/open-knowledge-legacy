@@ -1,41 +1,23 @@
 /**
  * GET /api/installed-agents — server-side install-detection for the web host.
  *
- * Web-host parity for the Electron `ok:shell:detect-protocol` IPC in
- * `packages/desktop/src/main/ipc-handlers.ts`. The browser can't enumerate the
- * OS's scheme handlers directly; this endpoint probes on its behalf so the
- * Open-in-Agent dropdown renders correctly in the `open-knowledge start` web
- * build.
+ * The browser can't enumerate the OS's scheme handlers directly, so the server
+ * probes on its behalf. Web-host parity for the Electron
+ * `ok:shell:detect-protocol` IPC in `packages/desktop/src/main/ipc-handlers.ts`.
  *
- * Per SPEC `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.4:
- *   - macOS:   `osascript -e 'id of app "<AppName>"'` — stdout has bundle id
- *              when installed; non-zero exit + error when not. We try multiple
- *              candidate display names per scheme because vendor apps rename
- *              (e.g. Codex shipped as "Codex" at /Applications/Codex.app but
- *              some builds use "OpenAI Codex"). Any non-empty id wins.
- *   - Windows: `reg query "HKCR\<scheme>" /ve` — exit 0 when the scheme has a
- *              registered handler anywhere in the merged HKCR view. HKCR is
- *              the merge of HKCU\Software\Classes and HKLM\Software\Classes,
- *              so this catches both user-scope and machine-scope (MSI / system-
- *              wide installer) registrations. Querying HKCU alone would miss
- *              HKLM entries.
- *   - Linux:   `xdg-mime query default x-scheme-handler/<scheme>` — non-empty
- *              stdout when a `.desktop` handler is registered.
+ * Per-OS probe:
+ *   - macOS:   `osascript -e 'id of app "<AppName>"'` — non-empty stdout means
+ *              installed. Multiple candidate display names per scheme because
+ *              vendors rename between versions.
+ *   - Windows: `reg query "HKCR\<scheme>" /ve` — HKCR is the merged view of
+ *              HKCU\Software\Classes + HKLM\Software\Classes, so this catches
+ *              both user-scope and machine-scope (MSI / enterprise) installs.
+ *              Querying HKCU alone would miss machine-scope registrations.
+ *   - Linux:   `xdg-mime query default x-scheme-handler/<scheme>`.
  *
- * Cache policy: per-scheme 60 s TTL (SPEC §6.4) with in-flight dedup so a burst
- * of 3 requests triggers exactly one OS probe per scheme. Conservative
- * fallback on probe timeout / error: `installed: false`.
- *
- * Response body shape (flat per spec.json US-005 AC):
- *     { claude: boolean, codex: boolean, cursor: boolean }
- * Cowork + Code both map to the single `claude:` scheme; the endpoint flattens
- * to one boolean per scheme rather than per target.
- *
- * Per E4 DIRECTED (SPEC §2 Non-Goals): web-host Cursor is still probed here,
- * but the client UI in `packages/app/src/components/handoff/OpenInAgentMenu.tsx`
- * always renders the Cursor row disabled-with-tooltip on web hosts regardless
- * of the boolean returned. Leaving the probe in place keeps the response shape
- * stable and the server-side logic uniform.
+ * Cache policy: per-scheme 60 s TTL with in-flight dedup so a burst of
+ * requests triggers exactly one OS probe per scheme. Probe timeout / error →
+ * `installed: false`.
  */
 
 import { execFile } from 'node:child_process';
@@ -44,23 +26,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 export const INSTALLED_AGENTS_SCHEMES = ['claude', 'codex', 'cursor'] as const;
 export type InstalledAgentScheme = (typeof INSTALLED_AGENTS_SCHEMES)[number];
 
-/** SPEC §6.4: `results cached server-side for 60s`. */
 export const INSTALLED_AGENTS_CACHE_TTL_MS = 60_000;
-
-/** SPEC §6.4: `Per-OS shell invocation with 2s timeout`. */
 const INSTALLED_AGENTS_PROBE_TIMEOUT_MS = 2000;
 
 /**
- * macOS app-name candidates per scheme. The `osascript` probe asks for an app
- * by its Launch Services display name and rejects hard if the name doesn't
- * match a registered bundle — an exact-name mismatch masquerades as "not
- * installed." Some vendors rename between versions (Codex shipped as
- * "Codex" at `/Applications/Codex.app` in the current desktop release; older
- * internal builds used "OpenAI Codex"), so we try every candidate in order
- * and treat the first non-empty `id of app` result as installed.
- *
- * Keep the vendor's current marketing name first; add aliases conservatively
- * when a real install-detection miss is observed in the wild.
+ * macOS app-name candidates per scheme. `osascript` asks for an app by its
+ * Launch Services display name and rejects hard on an exact-name mismatch —
+ * so a vendor rename masquerades as "not installed." Try every candidate in
+ * order; first non-empty `id of app` result wins. Keep the vendor's current
+ * marketing name first; add aliases only after an observed install-detection
+ * miss in the wild.
  */
 const MACOS_APP_NAMES: Record<InstalledAgentScheme, ReadonlyArray<string>> = {
   claude: ['Claude'],
@@ -103,8 +78,7 @@ type CacheEntry =
  *   - Stale or absent → launch a new probe; stash the in-flight promise so a
  *     second caller before resolution still joins the same probe.
  *   - Probe rejection is swallowed: cache `{installed:false}` for the full TTL
- *     so a flaky probe doesn't re-fire on every request (SPEC §6.4 "on probe
- *     timeout or unexpected error, respond {installed:false}").
+ *     so a flaky probe doesn't re-fire on every request.
  */
 export function createInstalledAgentsProbe(deps: InstalledAgentsProbeDeps): {
   probeAll: () => Promise<Record<InstalledAgentScheme, boolean>>;
@@ -152,20 +126,12 @@ export function createInstalledAgentsProbe(deps: InstalledAgentsProbeDeps): {
 }
 
 /**
- * HTTP handler for GET /api/installed-agents.
- *
  * 405 on non-GET. 200 + flat `{claude, codex, cursor}` body on success.
- * 500 is unreachable under `createInstalledAgentsProbe` semantics (probe
- * rejections are swallowed into `false`), but defended against for robustness.
  *
- * Error envelopes use the bare `{error}` shape — NOT the `{ok:true,...}` /
- * `{ok:false,...}` envelope some peer endpoints emit. The success shape is
- * dictated by SPEC §6.4 ("Response body: JSON { claude, codex, cursor }") and
- * is consumed directly by `probeViaFetch` in `packages/app/src/lib/handoff/
- * install-detect.ts`, which keys off the three literal scheme names. Wrapping
- * success in `{ok:true, agents:...}` would break that consumer without
- * benefit; aligning errors to the bare shape keeps the envelope uniform
- * across both status branches of this endpoint (Review Minor #1).
+ * Response body is bare (no `{ok:true,...}` envelope) because the consumer
+ * `probeViaFetch` in `packages/app/src/lib/handoff/install-detect.ts` keys off
+ * the three literal scheme names directly. Errors use a bare `{error}` to
+ * match.
  */
 export async function handleInstalledAgents(
   req: IncomingMessage,
@@ -240,11 +206,8 @@ function probeMacOs(scheme: InstalledAgentScheme, exec: ExecFileLike): Promise<b
 
 function probeWindows(scheme: InstalledAgentScheme, exec: ExecFileLike): Promise<boolean> {
   return new Promise((resolve) => {
-    // Query HKCR (the merged view of HKCU\Software\Classes and HKLM\Software\
-    // Classes) so both user-scope installs AND system-wide installers (the
-    // default for MSI / enterprise-packaged builds) register as installed.
-    // Querying HKCU alone would miss machine-scope registrations and report
-    // the row as permanently disabled for any user with a system-wide install.
+    // HKCR is the merged view of HKCU\Software\Classes + HKLM\Software\Classes;
+    // querying HKCU alone misses MSI / system-wide installs.
     exec(
       'reg',
       ['query', `HKCR\\${scheme}`, '/ve'],

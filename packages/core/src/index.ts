@@ -172,6 +172,7 @@ export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,
+  AGENT_ICON_COLORS_DARK,
   colorFromSeed,
   deriveIconColor,
   generateRandomColor,

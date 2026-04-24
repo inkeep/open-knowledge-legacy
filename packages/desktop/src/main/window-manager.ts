@@ -1,29 +1,28 @@
 /**
  * Main-process window manager — spawns BrowserWindow + utilityProcess pairs
- * per project (D6, D39), with an attach branch that reuses an existing
- * live same-host Open Knowledge server (CLI sibling, another Electron
- * instance, or any bootServer caller).
+ * per project, with an attach branch that reuses an existing live same-host
+ * Open Knowledge server (CLI sibling, another Electron instance, or any
+ * bootServer caller).
  *
  * Each project window either:
- *   - (spawn mode, the common case) owns one utilityProcess forked with
- *     `windowLifecycleBound: true, windowLifecycleGraceTime: 6000` per D39
- *     + a BrowserWindow with preload-injected `--ok-collab-url` argv flags,
- *   - (attach mode) just owns the BrowserWindow. `window.okDesktop.config
- *     .collabUrl` points at the already-listening server; no utility of
- *     ours is spawned and none is torn down on close. `ProjectContext
- *     .ownsServer === false` gates every lifecycle action accordingly.
+ *   - (spawn mode, the common case) owns one `utilityProcess.fork` with
+ *     `windowLifecycleBound: true, windowLifecycleGraceTime: 6000` + a
+ *     BrowserWindow with preload-injected `--ok-collab-url` argv flags.
+ *   - (attach mode) just owns the BrowserWindow;
+ *     `window.okDesktop.config.collabUrl` points at the already-listening
+ *     server, nothing is torn down on close. `ProjectContext.ownsServer ===
+ *     false` gates every lifecycle action.
  *
  * Attach trigger: `<contentDir>/.open-knowledge/server.lock` references a
- * live same-host pid with `port > 0`. The lock contract is authoritative
- * per SPEC §6 (V0-1 shipped). Stale locks flow through the existing
- * `runClean` pass and then spawn-mode proceeds.
+ * live same-host pid with `port > 0`. Stale locks flow through `runClean`
+ * first, then spawn-mode proceeds.
  *
- * Per D44 case (a): if a project's contentDir is already open in another
- * window of THIS app, surface "Focus existing window" instead of spawning
- * a duplicate. Track via `Map<contentDir, ProjectContext>`.
+ * If a project's contentDir is already open in another window of THIS app,
+ * surface "Focus existing window" instead of spawning a duplicate. Tracked
+ * via `Map<contentDir, ProjectContext>`.
  *
- * The functions here are pure factories that take injected `electron` deps,
- * making them unit-testable without a real Electron runtime.
+ * Pure factories take injected `electron` deps so tests don't need a real
+ * Electron runtime.
  */
 
 import { realpathSync } from 'node:fs';
@@ -130,7 +129,7 @@ interface ProjectContext {
   utility: UtilityProcessLike | null;
   /**
    * Whether this window's process owns the utility/server lifecycle. Gates
-   * shutdown IPC on window close and the D39 post-exit liveness probe. When
+   * shutdown IPC on window close and the post-exit liveness probe. When
    * `false`, closing the window leaves the sibling-owned server running.
    */
   ownsServer: boolean;
@@ -211,8 +210,8 @@ export interface WindowManagerDeps {
   isProcessAlive?(pid: number): boolean;
   /**
    * Current host — `os.hostname()` in production. Used to compare against
-   * `server.lock`'s `hostname` field so we only attach on same-host locks
-   * (foreign-host locks are D44 case c — refuse and fall through).
+   * `server.lock`'s `hostname` field so we only attach on same-host locks;
+   * foreign-host locks fall through to spawn-mode.
    */
   hostname?(): string;
   /**
@@ -230,12 +229,10 @@ export interface WindowManagerDeps {
     error(obj: object, msg: string): void;
   };
   /**
-   * Post-init persistent message listener. Installed once after the
-   * init-phase `ready` handshake settles, so messages like
-   * `debug-keyring-smoke-result` (M5 US-004) are routed to their main-side
-   * consumer without competing with the init-phase listener. Invoked for
-   * every subsequent utility message regardless of shape; consumer is
-   * expected to narrow by `msg.type` and no-op on unknown shapes.
+   * Post-init persistent message listener, installed once after the
+   * init-phase `ready` handshake settles — routes messages like
+   * `debug-keyring-smoke-result` without competing with the init-phase
+   * listener. Consumer narrows by `msg.type`.
    */
   onUtilityMessage?(msg: unknown): void;
   /**
@@ -295,16 +292,13 @@ export class WindowManager {
    * minimized, show if hidden) + return it for the caller to push a deep-link
    * event to. Returns `null` when no window matches.
    *
-   * Complements `createProjectWindow`, which is the find-or-spawn helper —
-   * this one is find-or-nothing, leaving the "spawn new window for a not-yet-
-   * open project" decision to the caller (SPEC D24: every project pick spawns
-   * a new window; only the same-project warm deep-link case reuses).
+   * Find-or-nothing. Callers decide whether to spawn a new window when no
+   * match exists — every project pick spawns a new window; only the
+   * same-project warm deep-link case reuses.
    *
-   * Path matching uses `canonicalizeKey` (realpath + resolve) — the same
-   * canonicalization `createProjectWindow` applies before storing in
-   * `windowsByPath`. A deep-link URL carrying the canonical realpath
-   * (emitted by `preview-url.ts:realpathSync(ctx.contentDir)`) therefore
-   * matches a window opened via a symlinked project path.
+   * Path matching uses `canonicalizeKey` (realpath + resolve), the same
+   * canonicalization `createProjectWindow` applies — so a deep-link URL
+   * carrying a realpath matches a window opened via a symlinked path.
    */
   focusWindowForProject(projectPath: string): BrowserWindowLike | null {
     const ctx = this.windowsByPath.get(this.canonicalizeKey(projectPath));
@@ -340,7 +334,7 @@ export class WindowManager {
     const canonicalKey = this.canonicalizeKey(projectPath);
     const existing = this.windowsByPath.get(canonicalKey);
     if (existing) {
-      // D44 case (a) — focus existing rather than spawn a duplicate.
+      // Focus existing rather than spawn a duplicate.
       existing.window.focus();
       return existing;
     }
@@ -445,21 +439,20 @@ export class WindowManager {
 
     const { port, apiOrigin, didGitInit } = await ready;
 
-    // Persistent post-init message listener (M5 US-004). The init-phase
-    // listener (above) was detached by `settle()` once `ready`/`error`
-    // resolved; this new listener observes every subsequent message so
-    // main-side consumers (e.g., the debug-ipc relay's correlation map)
-    // can route replies. No-op when `onUtilityMessage` is not wired.
+    // Persistent post-init message listener. The init-phase listener above was
+    // detached by `settle()` once `ready`/`error` resolved; this observes every
+    // subsequent message so main-side consumers (e.g., debug-ipc relay's
+    // correlation map) can route replies. No-op when `onUtilityMessage` is unset.
     if (this.deps.onUtilityMessage) {
       const onMessage = this.deps.onUtilityMessage;
       utility.on('message', (msg) => onMessage(msg));
     }
 
-    // D39 post-exit liveness probe — covers the case where utilityProcess.on('exit')
-    // fires but the pid is still alive (VS Code Issue #194477). This handler runs
-    // for the lifetime of the window; the init-phase exit handler above wired a
-    // separate listener that rejected `ready` if exit fired early. Both listeners
-    // can coexist on the same `exit` event — they observe independently.
+    // Post-exit liveness probe — covers the case where
+    // utilityProcess.on('exit') fires but the pid is still alive (see VS Code
+    // Issue #194477). The init-phase exit handler above rejects `ready` when
+    // exit fires early; both listeners coexist on the same event and observe
+    // independently.
     utility.on('exit', (code) => {
       this.deps.log?.info({ pid: utility.pid, code }, 'utility exited');
       this.windowsByPath.delete(canonicalKey);
@@ -496,14 +489,12 @@ export class WindowManager {
       title: formatEditorTitle(projectName),
     });
 
-    // SPEC R5b / D10 — dispatch `git-init-notice` to the renderer so it can
-    // surface a sonner toast. Register the `dom-ready` listener BEFORE awaiting
-    // `loadURL` / `loadFile` because their returned promises resolve on
-    // `did-finish-load`, which fires AFTER `dom-ready` — registering after the
-    // await would silently miss the one-shot event and the toast would never
-    // fire. Deferring to `dom-ready` (rather than firing synchronously) also
-    // ensures the renderer's bridge subscriber has mounted before the event
-    // lands (defeats the SPEC §14 subscriber-mount race).
+    // Dispatch `git-init-notice` to the renderer so it can surface a sonner
+    // toast. Register the `dom-ready` listener BEFORE awaiting `loadURL` /
+    // `loadFile` — their returned promises resolve on `did-finish-load`, which
+    // fires AFTER `dom-ready`. Registering after the await would miss the
+    // one-shot event. Deferring to `dom-ready` also ensures the renderer's
+    // bridge subscriber has mounted before the event lands.
     if (didGitInit) {
       const gitDir = resolve(projectPath, '.git');
       window.webContents.once('dom-ready', () => {
@@ -511,16 +502,11 @@ export class WindowManager {
       });
     }
 
-    // M4 deep-link gate — same pattern as git-init-notice: register the
-    // `dom-ready` listener BEFORE `await loadURL` so the event lands AFTER
-    // the renderer's `ok:deep-link` subscriber has mounted (main.tsx module-
-    // init) but not so late that it's missed entirely. Without this gate,
-    // `ok:deep-link` was sent synchronously from the cold-path `.then()` in
-    // `url-scheme.ts`'s routeUrl, which worked in practice only because
-    // main.tsx's subscriber install is synchronous at module-init — a
-    // future refactor (dynamic import, Suspense boundary, React effect)
-    // would silently drop the event. Co-located with git-init-notice so
-    // both one-shot renderer events share one ordering primitive.
+    // Deep-link gate — same dom-ready ordering pattern as git-init-notice. A
+    // synchronous send from url-scheme.ts's routeUrl would work today only
+    // because main.tsx's subscriber install is synchronous at module-init;
+    // any future refactor (dynamic import, Suspense boundary, React effect)
+    // would silently drop the event.
     if (opts.pendingDeepLinkDoc) {
       const doc = opts.pendingDeepLinkDoc;
       window.webContents.once('dom-ready', () => {
@@ -592,9 +578,9 @@ export class WindowManager {
    *
    * Returns the lock metadata when all of the following hold:
    *   - lock file exists and parses as valid JSON
-   *   - `hostname` matches this host (foreign locks are D44 case c — we
-   *     refuse and fall through to spawn-mode, which will surface the
-   *     collision via `ServerLockCollisionError` from `acquireServerLock`)
+   *   - `hostname` matches this host (foreign locks fall through to spawn
+   *     mode, which surfaces the collision via `ServerLockCollisionError`
+   *     from `acquireServerLock`)
    *   - `isProcessAlive(pid)` is true (stale locks fall through — `runClean`
    *     will prune them before we spawn)
    *   - `port > 0` (port 0 means the holder is still starting — racing it

@@ -4,6 +4,7 @@ import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
+import { McpConsentDialog } from '@/components/McpConsentDialog';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
 import { resolveNavigationTarget } from '@/components/navigation-targets';
 import { PageListProvider, usePageList } from '@/components/PageListContext';
@@ -115,6 +116,11 @@ export function App() {
           <SystemDocSubscriber />
           <NavigationHandler />
           <NewItemShortcutHandler />
+          {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
+              Self-gates on the shared `mcpConsentStore` snapshot; renders
+              nothing until main fires `ok:mcp-wiring:show`. Mounted
+              identically in NavigatorApp. */}
+          <McpConsentDialog />
           {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
           <SidebarProvider className="h-screen overflow-hidden">
             <FileSidebar />

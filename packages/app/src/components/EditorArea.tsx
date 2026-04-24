@@ -3,7 +3,7 @@ import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel } from '@/components/DocPanel';
+import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
@@ -25,6 +25,8 @@ interface EditorAreaProps {
   previewEntry: TimelineEntry | null;
   diffLayout: DiffLayout;
   onNoDiff?: () => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
 }
 
 export function EditorArea(props: EditorAreaProps) {
@@ -35,7 +37,14 @@ export function EditorArea(props: EditorAreaProps) {
   );
 }
 
-function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
+function EditorAreaInner({
+  editorMode,
+  previewEntry,
+  diffLayout,
+  onNoDiff,
+  onEntrySelect,
+  selectedSha,
+}: EditorAreaProps) {
   const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
@@ -65,6 +74,9 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
+
+  // Lifted activeTab state — DocPanel is controlled (spec D2).
+  const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -321,7 +333,14 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
             <SheetHeader className="sr-only">
               <SheetTitle>Document panel</SheetTitle>
             </SheetHeader>
-            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+            <DocPanel
+              docName={activeDocName}
+              isSourceMode={isSourceMode}
+              activeTab={activeTab}
+              onActiveTabChange={setActiveTab}
+              onEntrySelect={onEntrySelect}
+              selectedSha={selectedSha}
+            />
           </SheetContent>
         </Sheet>
       </div>
@@ -349,7 +368,14 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
           className="flex flex-col bg-muted/20"
         >
-          <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          <DocPanel
+            docName={activeDocName}
+            isSourceMode={isSourceMode}
+            activeTab={activeTab}
+            onActiveTabChange={setActiveTab}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
