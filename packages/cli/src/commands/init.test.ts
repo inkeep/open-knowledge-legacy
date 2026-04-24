@@ -490,6 +490,50 @@ describe('runInit', () => {
         /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
       );
     });
+
+    // Cowork install hint — SPEC 2026-04-24-skill-dual-track-install FR5 / D12.
+    // When Claude Desktop's config dir exists, `ok init` appends a one-line
+    // hint pointing at the docs + the pinned-version .skill release asset.
+    it('flags claudeDesktopDetected=true when Claude config dir exists', async () => {
+      // Create the config-dir parent that detectClaudeDesktopPresence probes.
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(true);
+    });
+
+    it('flags claudeDesktopDetected=false when Claude config dir is absent', async () => {
+      // No Claude config dir created — fakeHome/.claude exists (from beforeEach)
+      // but not the Application Support/Claude dir.
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(false);
+    });
+
+    it('renders the Cowork install hint when Claude Desktop is detected', async () => {
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      expect(output).toContain('Claude Desktop detected. For Cowork:');
+      expect(output).toContain(
+        'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork',
+      );
+      // Pinned-version release URL shape — version is read from constants.ts.
+      expect(output).toMatch(
+        /https:\/\/github\.com\/inkeep\/open-knowledge\/releases\/download\/v\d+\.\d+\.\d+\/openknowledge\.skill/,
+      );
+    });
+
+    it('omits the Cowork install hint when Claude Desktop is absent', async () => {
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      expect(output).not.toContain('Claude Desktop detected. For Cowork:');
+      expect(output).not.toContain('openknowledge.skill');
+    });
   });
 
   describe('Windsurf', () => {

@@ -53,6 +53,10 @@ export {
   recordContributor,
 } from './contributor-tracker.ts';
 export {
+  type DetectClaudeDesktopOptions,
+  detectClaudeDesktopPresence,
+} from './detect-claude-desktop.ts';
+export {
   applyExternalChange,
   createExternalChangeHandler,
   FILE_WATCHER_ORIGIN,
