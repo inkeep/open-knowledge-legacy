@@ -155,23 +155,32 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     // resolved disk-relative path replaces the literal target in src/href.
     // Target/anchor/alias attrs still carry the original target for reverse
     // round-trip.
+    //
+    // 2026-04-24 amendment (Bug B/C fix): the emitted src/href is
+    // server-absolute (`/<contentDir-relative>`) so under hash routing the
+    // browser resolves the URL against origin, not against the doc's
+    // subdirectory. Pre-fix the literal `resolveEmbed` output was used
+    // verbatim — doc-relative paths worked only at content root; subdir
+    // docs rendered broken images + blank PDF tabs via the Vite SPA
+    // fallback.
     const resolved = mdManager.parse('![[photo.png]]', {
       resolveEmbed: (target) => (target === 'photo.png' ? 'attachments/photo.png' : null),
       sourcePath: 'docs/meeting.md',
     });
     const image = resolved.content?.[0]?.content?.[0];
     expect(image?.type).toBe('image');
-    expect(image?.attrs?.src).toBe('attachments/photo.png');
+    expect(image?.attrs?.src).toBe('/attachments/photo.png');
     expect(image?.attrs?.target).toBe('photo.png');
 
-    // Non-image case: href is the resolved path, target keeps the literal.
+    // Non-image case: href is the server-absolute resolved path, target
+    // keeps the literal.
     const resolvedLink = mdManager.parse('![[draft.pdf]]', {
       resolveEmbed: (target) => (target === 'draft.pdf' ? 'attachments/draft.pdf' : null),
       sourcePath: 'docs/meeting.md',
     });
     const text = resolvedLink.content?.[0]?.content?.[0];
     const linkMark = text?.marks?.find((mk) => mk.type === 'link');
-    expect(linkMark?.attrs?.href).toBe('attachments/draft.pdf');
+    expect(linkMark?.attrs?.href).toBe('/attachments/draft.pdf');
     expect(linkMark?.attrs?.target).toBe('draft.pdf');
   });
 

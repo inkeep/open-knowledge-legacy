@@ -13,7 +13,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { PageListCacheSnapshot } from '../page-list-cache';
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import { buildPagesBySlugIndex, type PageListCacheSnapshot } from '../page-list-cache';
 import {
   computeLinkResolutionAttrs,
   computeLinkResolutionState,
@@ -25,9 +26,11 @@ function makeCache(opts: {
   pages?: Iterable<string>;
   folderPaths?: Iterable<string>;
 }): PageListCacheSnapshot {
+  const pages = new Set(opts.pages ?? []);
   return {
-    pages: new Set(opts.pages ?? []),
+    pages,
     folderPaths: new Set(opts.folderPaths ?? []),
+    pagesBySlug: buildPagesBySlugIndex(pages, toWikiLinkSlug),
   };
 }
 

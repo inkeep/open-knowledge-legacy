@@ -704,9 +704,22 @@ function buildMdastToPmHandlers(
       const resolved =
         resolveEmbed && sourcePath ? (resolveEmbed(target, sourcePath) ?? null) : null;
 
+      // Bug B/C fix (2026-04-24 amendment): emit server-absolute URLs for
+      // resolved embed refs. `resolveEmbed` returns a contentDir-relative
+      // path (e.g. `stories/X/IMG.PNG`). The editor runs under hash
+      // routing — the browser's `location.pathname` is always `/`, so a
+      // doc-relative `<img src>` / `<a href>` resolves to the wrong URL
+      // for any doc not at content root, triggering the Vite SPA fallback
+      // (`text/html` response → broken images + blank PDF tabs). Prefixing
+      // with `/` roots the URL at origin, which is exactly the contentDir
+      // served by sirv. Unresolved refs (basename-index miss) keep the
+      // bare target — the server would 404 them either way, and the
+      // markdown-on-disk stays `![[name.ext]]` regardless of render shape.
+      const srcOrTarget = resolved ? `/${resolved}` : target;
+
       if (WIKI_EMBED_IMAGE_EXTS.has(ext) && n.image) {
         return n.image.createAndFill({
-          src: resolved ?? target,
+          src: srcOrTarget,
           alt: alias ?? target,
           title: null,
           sourceForm: 'wikiembed',
@@ -717,9 +730,8 @@ function buildMdastToPmHandlers(
 
       const label = alias || (anchor ? `${target}#${anchor}` : target);
       if (WIKI_EMBED_NON_IMAGE_EXTS.has(ext) && m.link) {
-        const href = resolved ?? target;
         const linkMark = m.link.create({
-          href,
+          href: srcOrTarget,
           title: null,
           linkStyle: 'inline',
           refLabel: null,

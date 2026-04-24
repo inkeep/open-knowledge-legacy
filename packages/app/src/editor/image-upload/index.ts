@@ -295,8 +295,27 @@ export async function uploadAndInsert(
   // `shortestImageRef` wants contentDir-relative paths for BOTH inputs.
   // `assetContentPath` is already contentDir-relative from the server;
   // `parentDocName` already is too (the client built it from the docName
-  // at the top of this function).
+  // at the top of this function). The doc-relative `relPath` is the
+  // ON-DISK markdown shape (e.g. `photo.png` / `../photo.png`) —
+  // preserved as the href for the markdown-link fallback kind where the
+  // browser resolves against the current page URL under hash routing
+  // (root = `/`, so same-dir drops at content root resolve correctly).
   const relPath = shortestImageRef(assetContentPath, parentDocName);
+
+  // Bug B/C fix (2026-04-24 amendment): `resolvedSrc` is the in-editor
+  // render hint for `<img src>` / `<a href>` — it must be server-absolute
+  // (`/<contentDir-relative>`) so the browser resolves it against origin
+  // regardless of the current doc's hash-routed URL. Under hash routing,
+  // `location.pathname === '/'` always, so a doc-relative path (bare
+  // basename for same-dir) resolves to `http://origin/<basename>` — which
+  // only exists at content root. For any subdirectory doc the path would
+  // 404 (masked by Vite SPA fallback as text/html, producing broken
+  // images + blank PDF tabs). `assetContentPath` is contentDir-relative
+  // from the server — prefixing `/` roots it at origin, which sirv serves
+  // from contentDir. Post-roundtrip, `handlers.wikiLinkEmbed` in core
+  // applies the same `/` prefix so PM image/link nodes carry the same
+  // absolute URL shape.
+  const resolvedSrc = `/${assetContentPath}`;
 
   if (shape.kind === 'wikiembed') {
     const node = state.schema.nodes.wikiLinkEmbed;
@@ -307,12 +326,9 @@ export async function uploadAndInsert(
     }
     // Target stays the bare basename (Obsidian shape). The NodeView
     // (`WikiLinkEmbed.renderHTML`) applies `data-resolved-src` for image
-    // rendering so the in-page `<img>` honors attachmentFolderPath even
-    // before the next round-trip hits the basename-index resolver.
-    tr.insert(
-      mappedPos,
-      node.create({ target: src, alias: null, anchor: null, resolvedSrc: relPath }),
-    );
+    // rendering so the in-page `<img>` / `<a>` resolves correctly
+    // regardless of attachmentFolderPath or doc subdirectory.
+    tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null, resolvedSrc }));
   } else if (shape.kind === 'image') {
     const imageNode = state.schema.nodes.image;
     if (!imageNode) {
@@ -321,7 +337,7 @@ export async function uploadAndInsert(
       return;
     }
     const alt = file.name.replace(/\.[^.]+$/, '');
-    tr.insert(mappedPos, imageNode.create({ src: relPath, alt }));
+    tr.insert(mappedPos, imageNode.create({ src: resolvedSrc, alt }));
   } else if (shape.kind === 'wiki-link') {
     const wikiLinkNode = state.schema.nodes.wikiLink;
     if (!wikiLinkNode) {

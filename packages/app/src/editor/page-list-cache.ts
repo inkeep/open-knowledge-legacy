@@ -40,6 +40,20 @@
 export interface PageListCacheSnapshot {
   readonly pages: ReadonlySet<string>;
   readonly folderPaths: ReadonlySet<string>;
+  /**
+   * Slug-keyed index: `toWikiLinkSlug(docName) → original docName`.
+   * Populated alongside `pages` by `setPageListCache` (2026-04-24
+   * amendment). Enables O(1) resolution for wiki-link targets that
+   * arrive in slug form (e.g. dropped `.md` → target='readme' via
+   * `buildUnresolvedWikiLinkAttrs` / `toWikiLinkSlug`) against
+   * case-preserved + non-slug-form cache entries (`README`,
+   * `BA_for_Depression_Research`). Handles both case-folding
+   * (`README` → `readme`) and separator normalization (`_` / space
+   * / punctuation → `-`) in one index. First-wins on slug collision —
+   * if both `README.md` and `ReadMe.md` exist, resolver picks the
+   * insertion-order-first entry (Map preserves insertion order).
+   */
+  readonly pagesBySlug: ReadonlyMap<string, string>;
 }
 
 type CacheListener = (snapshot: PageListCacheSnapshot) => void;
@@ -64,6 +78,11 @@ export function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
  * Pure helper — returns true when prev and next represent the same cache state
  * (same pages set content AND same folderPaths set content). Used by
  * setPageListCache to gate notify() and by tests.
+ *
+ * `pagesBySlug` is DERIVED from `pages` — when `pages` is unchanged, the
+ * slug index is also unchanged. The equality check skips `pagesBySlug` on
+ * purpose; adding a Map equality would double-scan without catching any
+ * state change `setsEqual(pages, ...)` misses.
  */
 export function snapshotsEqual(
   prev: PageListCacheSnapshot | null,
@@ -72,6 +91,25 @@ export function snapshotsEqual(
   if (prev === null) return false;
   if (prev === next) return true;
   return setsEqual(prev.pages, next.pages) && setsEqual(prev.folderPaths, next.folderPaths);
+}
+
+/**
+ * Build the slug-keyed index from a pages set. First-wins on slug collision
+ * (Map insertion order preserved; iteration order of a Set follows insertion
+ * order per ES spec). Accepts the slug function as a parameter so this
+ * module stays free of a `@inkeep/open-knowledge-core` import (the actual
+ * slugger lives there); callers pass `toWikiLinkSlug`.
+ */
+export function buildPagesBySlugIndex(
+  pages: ReadonlySet<string>,
+  slugFn: (text: string) => string,
+): ReadonlyMap<string, string> {
+  const index = new Map<string, string>();
+  for (const page of pages) {
+    const key = slugFn(page);
+    if (key && !index.has(key)) index.set(key, page);
+  }
+  return index;
 }
 
 /**

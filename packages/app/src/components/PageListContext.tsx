@@ -1,5 +1,6 @@
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
-import { setPageListCache } from '@/editor/page-list-cache';
+import { buildPagesBySlugIndex, setPageListCache } from '@/editor/page-list-cache';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { deriveKnownFolderPaths } from './navigation-targets';
 
@@ -168,9 +169,17 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   // Publish to the page-list-cache side-channel so plain-DOM chip consumers
   // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
   // state without React context. `setPageListCache` absorbs no-op calls via
-  // Set-content equality — safe to call every render.
+  // Set-content equality — safe to call every render. `pagesBySlug` is
+  // derived from `pages` via `buildPagesBySlugIndex` (first-wins on slug
+  // collision) so slug-normalized wiki-link resolution is O(1) in the hot
+  // path — dropped `.md` files carry lowercased slugs as targets; the
+  // index bridges that to the case-preserved / non-slug-form cache entries.
   useEffect(() => {
-    setPageListCache({ pages, folderPaths });
+    setPageListCache({
+      pages,
+      folderPaths,
+      pagesBySlug: buildPagesBySlugIndex(pages, toWikiLinkSlug),
+    });
   }, [pages, folderPaths]);
 
   return (
